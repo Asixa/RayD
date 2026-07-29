@@ -34,18 +34,11 @@ class BVH1RemovalTests(unittest.TestCase):
                 self.assertNotIn(symbol, text, f"{symbol} remains in {path.relative_to(ROOT)}")
 
     def test_historical_hlbvh_baseline_is_retained_as_a_rejected_strategy(self):
-        path = (
-            ROOT
-            / "benchmarks"
-            / "baselines"
-            / "bvh0_strategy_stage_20260711.json"
-        )
+        path = ROOT / "benchmarks" / "baselines" / "bvh0_strategy_stage_20260711.json"
         payload = json.loads(path.read_text(encoding="utf-8"))
 
         self.assertIn("hybrid_top_level_sah", payload["single_mesh"]["strategies"])
-        self.assertTrue(
-            any("deletion decision baseline" in note for note in payload["observations"])
-        )
+        self.assertTrue(any("deletion decision baseline" in note for note in payload["observations"]))
 
     def test_combined_backend_documentation_uses_canonical_name(self):
         agent_guide = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
@@ -55,15 +48,13 @@ class BVH1RemovalTests(unittest.TestCase):
     def test_atomic_bottom_up_builds_publish_before_arrival(self):
         # P3 Stage A moved the primitive-agnostic build kernels into the shared
         # BVH core; the atomic publish-before-arrival invariant is pinned there.
-        source = (
-            ROOT / "src" / "bvh" / "build_shared.cu"
-        ).read_text(encoding="utf-8")
+        source = (ROOT / "src" / "bvh" / "build_shared.cu").read_text(encoding="utf-8")
         kernels = {
             "finalize_leaves_and_bounds_kernel": (
                 r"while \(current >= 0\) \{"
                 r".*?__threadfence\(\);"
                 r"\s*if \(atomicAdd\((?:params\.)?merge_counters \+ current, 1\) == 0\)"
-            ),
+            )
         }
         for kernel, pattern in kernels.items():
             with self.subTest(kernel=kernel):

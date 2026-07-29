@@ -28,45 +28,29 @@ struct HitPayload {
     unsigned int instance = 0u;
 };
 
-static __forceinline__ __device__ void clear_payload(HitPayload &payload) {
+static __forceinline__ __device__ void clear_payload(HitPayload& payload) {
     payload.hit = 0u;
     payload.t = __float_as_uint(1e8f);
     payload.prim = 0u;
     payload.instance = 0u;
 }
 
-static __forceinline__ __device__ void set_payload(const HitPayload &payload) {
+static __forceinline__ __device__ void set_payload(const HitPayload& payload) {
     optixSetPayload_0(payload.hit);
     optixSetPayload_1(payload.t);
     optixSetPayload_2(payload.prim);
     optixSetPayload_3(payload.instance);
 }
 
-static __forceinline__ __device__ void trace_handle(OptixTraversableHandle handle,
-                                                    float3 origin,
-                                                    float3 direction,
-                                                    float tmax,
-                                                    HitPayload &payload) {
+static __forceinline__ __device__ void trace_handle(OptixTraversableHandle handle, float3 origin, float3 direction,
+                                                    float tmax, HitPayload& payload) {
     clear_payload(payload);
     if (handle == 0ull || tmax <= kRayTMin) {
         return;
     }
 
-    optixTrace(handle,
-               origin,
-               direction,
-               kRayTMin,
-               tmax,
-               0.0f,
-               255u,
-               OPTIX_RAY_FLAG_DISABLE_ANYHIT,
-               0,
-               1,
-               0,
-               payload.hit,
-               payload.t,
-               payload.prim,
-               payload.instance);
+    optixTrace(handle, origin, direction, kRayTMin, tmax, 0.0f, 255u, OPTIX_RAY_FLAG_DISABLE_ANYHIT, 0, 1, 0,
+               payload.hit, payload.t, payload.prim, payload.instance);
 }
 
 static __forceinline__ __device__ HitPayload choose_hit(HitPayload a, HitPayload b) {
@@ -80,9 +64,7 @@ static __forceinline__ __device__ HitPayload choose_hit(HitPayload a, HitPayload
 }
 
 template <bool SplitScene>
-static __forceinline__ __device__ HitPayload trace_scene(float3 origin,
-                                                         float3 direction,
-                                                         float tmax) {
+static __forceinline__ __device__ HitPayload trace_scene(float3 origin, float3 direction, float tmax) {
     HitPayload primary;
     trace_handle(params.primary_handle, origin, direction, tmax, primary);
     if (!SplitScene) {
@@ -96,33 +78,20 @@ static __forceinline__ __device__ HitPayload trace_scene(float3 origin,
 // Boolean occlusion test: terminate on the first hit and skip closest-hit
 // shading entirely. The shared miss program writes payload_0 = 0, so a payload
 // initialized to 1 survives only when something blocks the segment.
-static __forceinline__ __device__ bool occlusion_blocked_handle(OptixTraversableHandle handle,
-                                                                float3 origin,
-                                                                float3 direction,
-                                                                float tmax) {
+static __forceinline__ __device__ bool occlusion_blocked_handle(OptixTraversableHandle handle, float3 origin,
+                                                                float3 direction, float tmax) {
     if (handle == 0ull || tmax <= kRayTMin) {
         return false;
     }
     unsigned int blocked = 1u;
-    optixTrace(handle,
-               origin,
-               direction,
-               kRayTMin,
-               tmax,
-               0.0f,
-               255u,
-               OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT |
-                   OPTIX_RAY_FLAG_DISABLE_ANYHIT |
+    optixTrace(handle, origin, direction, kRayTMin, tmax, 0.0f, 255u,
+               OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT | OPTIX_RAY_FLAG_DISABLE_ANYHIT |
                    OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT,
-               0,
-               1,
-               0,
-               blocked);
+               0, 1, 0, blocked);
     return blocked != 0u;
 }
 
-template <bool SplitScene>
-static __forceinline__ __device__ bool visible_segment(float3 start, float3 end) {
+template <bool SplitScene> static __forceinline__ __device__ bool visible_segment(float3 start, float3 end) {
     const float3 delta = end - start;
     const float dist = norm3(delta);
     if (dist <= 1e-5f) {
@@ -142,36 +111,28 @@ static __forceinline__ __device__ bool visible_segment(float3 start, float3 end)
     return true;
 }
 
-static __forceinline__ __device__ float read_f32(const float *ptr, int stride, int idx) {
+static __forceinline__ __device__ float read_f32(const float* ptr, int stride, int idx) {
     return ptr[idx * stride];
 }
 
-static __forceinline__ __device__ int read_i32(const int *ptr, int stride, int idx) {
+static __forceinline__ __device__ int read_i32(const int* ptr, int stride, int idx) {
     return ptr[idx * stride];
 }
 
-static __forceinline__ __device__ uint8_t read_u8(const uint8_t *ptr, int stride, int idx) {
+static __forceinline__ __device__ uint8_t read_u8(const uint8_t* ptr, int stride, int idx) {
     return ptr[idx * stride];
 }
 
-static __forceinline__ __device__ float3 vec_from_storage(const float *aos,
-                                                          int aos_stride0,
-                                                          int aos_stride1,
-                                                          const float *x,
-                                                          const float *y,
-                                                          const float *z,
-                                                          int idx) {
+static __forceinline__ __device__ float3 vec_from_storage(const float* aos, int aos_stride0, int aos_stride1,
+                                                          const float* x, const float* y, const float* z, int idx) {
     if (aos != nullptr) {
         const int base = idx * aos_stride0;
-        return make_float3(aos[base + 0 * aos_stride1],
-                           aos[base + 1 * aos_stride1],
-                           aos[base + 2 * aos_stride1]);
+        return make_float3(aos[base + 0 * aos_stride1], aos[base + 1 * aos_stride1], aos[base + 2 * aos_stride1]);
     }
     return make_f3(x[idx], y[idx], z[idx]);
 }
 
-static __forceinline__ __device__ float material_gain_for_faces(int face0_prim,
-                                                                int face1_prim) {
+static __forceinline__ __device__ float material_gain_for_faces(int face0_prim, int face1_prim) {
     if (params.material_gain == nullptr || params.material_count <= 0) {
         return 1.f;
     }
@@ -193,46 +154,27 @@ static __forceinline__ __device__ bool state_active(int state_idx) {
     return params.active_mask[state_idx] != 0u;
 }
 
-static __forceinline__ __device__ float path_weight(int state_idx,
-                                                    float3 edge_point,
-                                                    float3 receiver) {
-    const float3 source =
-        vec_from_storage(params.state_src_aos,
-                         params.state_src_stride0,
-                         params.state_src_stride1,
-                         params.state_src_x,
-                         params.state_src_y,
-                         params.state_src_z,
-                         state_idx);
+static __forceinline__ __device__ float path_weight(int state_idx, float3 edge_point, float3 receiver) {
+    const float3 source = vec_from_storage(params.state_src_aos, params.state_src_stride0, params.state_src_stride1,
+                                           params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
     const float source_distance = fmaxf(norm3(edge_point - source), kPathEps);
     const float receiver_distance = fmaxf(norm3(receiver - edge_point), kPathEps);
-    const float edge_length = fmaxf(
-        read_f32(params.state_edge_t_max, params.state_edge_t_max_stride, state_idx) -
-            read_f32(params.state_edge_t_min, params.state_edge_t_min_stride, state_idx),
-        0.f);
+    const float edge_length = fmaxf(read_f32(params.state_edge_t_max, params.state_edge_t_max_stride, state_idx) -
+                                        read_f32(params.state_edge_t_min, params.state_edge_t_min_stride, state_idx),
+                                    0.f);
     const float exterior_angle =
-        fmaxf(read_f32(params.state_exterior_angle, params.state_exterior_angle_stride, state_idx),
-              0.25f * kPi);
+        fmaxf(read_f32(params.state_exterior_angle, params.state_exterior_angle_stride, state_idx), 0.25f * kPi);
     const float wedge_scale = fminf(exterior_angle / (2.f * kPi), 2.f);
     const float material_gain =
         material_gain_for_faces(read_i32(params.state_prim0, params.state_prim0_stride, state_idx),
                                 read_i32(params.state_prim1, params.state_prim1_stride, state_idx));
     const float wave_gain = params.wavelength * (1.f / (4.f * kPi));
-    return read_f32(params.state_src_power, params.state_src_power_stride, state_idx) *
-           material_gain *
-           edge_length *
-           wedge_scale *
-           wave_gain *
-           wave_gain /
+    return read_f32(params.state_src_power, params.state_src_power_stride, state_idx) * material_gain * edge_length *
+           wedge_scale * wave_gain * wave_gain /
            (source_distance * source_distance * receiver_distance * receiver_distance);
 }
 
-static __forceinline__ __device__ void write_point(float *aos,
-                                                   float *x,
-                                                   float *y,
-                                                   float *z,
-                                                   int idx,
-                                                   float3 value) {
+static __forceinline__ __device__ void write_point(float* aos, float* x, float* y, float* z, int idx, float3 value) {
     if (aos != nullptr) {
         aos[idx * 3 + 0] = value.x;
         aos[idx * 3 + 1] = value.y;
@@ -309,32 +251,16 @@ static __forceinline__ __device__ utd::FaceMaterialParams face_material_params(i
     return m;
 }
 
-static __forceinline__ __device__ utd::PairInputs direct_pair_inputs(
-    int state_idx,
-    float3 source,
-    float3 edge_pos,
-    float3 edge_dir,
-    float t_min,
-    float t_max) {
+static __forceinline__ __device__ utd::PairInputs direct_pair_inputs(int state_idx, float3 source, float3 edge_pos,
+                                                                     float3 edge_dir, float t_min, float t_max) {
     utd::PairInputs p = {};
     p.edgePos = to_utd(edge_pos);
     p.edgeDir = to_utd(edge_dir);
-    p.n0 = to_utd(vec_from_storage(params.state_n0_aos,
-                                   params.state_n0_stride0,
-                                   params.state_n0_stride1,
-                                   params.state_n0_x,
-                                   params.state_n0_y,
-                                   params.state_n0_z,
-                                   state_idx));
-    p.nn = to_utd(vec_from_storage(params.state_n1_aos,
-                                   params.state_n1_stride0,
-                                   params.state_n1_stride1,
-                                   params.state_n1_x,
-                                   params.state_n1_y,
-                                   params.state_n1_z,
-                                   state_idx));
-    p.wedgeN = read_f32(params.state_exterior_angle, params.state_exterior_angle_stride, state_idx) /
-               utd::UTD_PI;
+    p.n0 = to_utd(vec_from_storage(params.state_n0_aos, params.state_n0_stride0, params.state_n0_stride1,
+                                   params.state_n0_x, params.state_n0_y, params.state_n0_z, state_idx));
+    p.nn = to_utd(vec_from_storage(params.state_n1_aos, params.state_n1_stride0, params.state_n1_stride1,
+                                   params.state_n1_x, params.state_n1_y, params.state_n1_z, state_idx));
+    p.wedgeN = read_f32(params.state_exterior_angle, params.state_exterior_angle_stride, state_idx) / utd::UTD_PI;
     p.edgeLineMin = t_min;
     p.edgeLineMax = t_max;
     p.sourcePos = to_utd(source);
@@ -354,20 +280,10 @@ static __forceinline__ __device__ utd::PairInputs direct_pair_inputs(
 // Q. normalize3's eps guard shrinks the offset toward zero for near-coplanar
 // faces (thin screens), where the along-ray bias already covers the trace.
 static __forceinline__ __device__ float3 edge_visibility_offset(int state_idx) {
-    const float3 n0 = vec_from_storage(params.state_n0_aos,
-                                       params.state_n0_stride0,
-                                       params.state_n0_stride1,
-                                       params.state_n0_x,
-                                       params.state_n0_y,
-                                       params.state_n0_z,
-                                       state_idx);
-    const float3 n1 = vec_from_storage(params.state_n1_aos,
-                                       params.state_n1_stride0,
-                                       params.state_n1_stride1,
-                                       params.state_n1_x,
-                                       params.state_n1_y,
-                                       params.state_n1_z,
-                                       state_idx);
+    const float3 n0 = vec_from_storage(params.state_n0_aos, params.state_n0_stride0, params.state_n0_stride1,
+                                       params.state_n0_x, params.state_n0_y, params.state_n0_z, state_idx);
+    const float3 n1 = vec_from_storage(params.state_n1_aos, params.state_n1_stride0, params.state_n1_stride1,
+                                       params.state_n1_x, params.state_n1_y, params.state_n1_z, state_idx);
     return kDfrRayBias * normalize3(n0 + n1);
 }
 
@@ -380,32 +296,19 @@ static __forceinline__ __device__ utd::MaterialParams paths_material_params(int 
     mat.gain = 1.f;
     mat.omega = params.omega;
     const int pol_idx = params.tx_pol_count == 1 ? 0 : tx_idx;
-    const float3 pol = vec_from_storage(
-        params.tx_pol_aos,
-        params.tx_pol_stride0,
-        params.tx_pol_stride1,
-        nullptr,
-        nullptr,
-        nullptr,
-        pol_idx);
+    const float3 pol = vec_from_storage(params.tx_pol_aos, params.tx_pol_stride0, params.tx_pol_stride1, nullptr,
+                                        nullptr, nullptr, pol_idx);
     mat.txPolX = pol.x;
     mat.txPolY = pol.y;
     mat.txPolZ = pol.z;
     return mat;
 }
 
-template <bool SplitScene>
-static __forceinline__ __device__ void trace_paths_order1_impl() {
+template <bool SplitScene> static __forceinline__ __device__ void trace_paths_order1_impl() {
     const unsigned int lane = optixGetLaunchIndex().x;
-    if (lane >= static_cast<unsigned int>(params.n_rays) ||
-        params.capacity <= 0 ||
-        params.tx_count <= 0 ||
-        params.rx_count <= 0 ||
-        params.state_count <= 0 ||
-        params.state_limit <= 0 ||
-        params.max_order != 1 ||
-        (params.strategy_mask & RAYD_TORCH_DFR_DIRECT) == 0 ||
-        params.receiver_model != RAYD_TORCH_DFR_MATCHED_ISO) {
+    if (lane >= static_cast<unsigned int>(params.n_rays) || params.capacity <= 0 || params.tx_count <= 0 ||
+        params.rx_count <= 0 || params.state_count <= 0 || params.state_limit <= 0 || params.max_order != 1 ||
+        (params.strategy_mask & RAYD_TORCH_DFR_DIRECT) == 0 || params.receiver_model != RAYD_TORCH_DFR_MATCHED_ISO) {
         return;
     }
 
@@ -419,67 +322,42 @@ static __forceinline__ __device__ void trace_paths_order1_impl() {
         return;
     }
 
-    const float3 source =
-        vec_from_storage(params.state_src_aos,
-                         params.state_src_stride0,
-                         params.state_src_stride1,
-                         params.state_src_x,
-                         params.state_src_y,
-                         params.state_src_z,
-                         state_idx);
+    const float3 source = vec_from_storage(params.state_src_aos, params.state_src_stride0, params.state_src_stride1,
+                                           params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
     const float3 edge_pos =
-        vec_from_storage(params.state_edge_pos_aos,
-                         params.state_edge_pos_stride0,
-                         params.state_edge_pos_stride1,
-                         params.state_edge_pos_x,
-                         params.state_edge_pos_y,
-                         params.state_edge_pos_z,
-                         state_idx);
-    const float3 edge_dir =
-        normalize3(vec_from_storage(params.state_edge_dir_aos,
-                                    params.state_edge_dir_stride0,
-                                    params.state_edge_dir_stride1,
-                                    params.state_edge_dir_x,
-                                    params.state_edge_dir_y,
-                                    params.state_edge_dir_z,
-                                    state_idx));
+        vec_from_storage(params.state_edge_pos_aos, params.state_edge_pos_stride0, params.state_edge_pos_stride1,
+                         params.state_edge_pos_x, params.state_edge_pos_y, params.state_edge_pos_z, state_idx);
+    const float3 edge_dir = normalize3(vec_from_storage(params.state_edge_dir_aos, params.state_edge_dir_stride0,
+                                                        params.state_edge_dir_stride1, params.state_edge_dir_x,
+                                                        params.state_edge_dir_y, params.state_edge_dir_z, state_idx));
     const float t_min = read_f32(params.state_edge_t_min, params.state_edge_t_min_stride, state_idx);
     const float t_max = read_f32(params.state_edge_t_max, params.state_edge_t_max_stride, state_idx);
     const float edge_length = t_max - t_min;
-    const float3 receiver =
-        vec_from_storage(params.rx_pos_aos,
-                         params.rx_pos_stride0,
-                         params.rx_pos_stride1,
-                         params.rx_pos_x,
-                         params.rx_pos_y,
-                         params.rx_pos_z,
-                         rx_idx);
+    const float3 receiver = vec_from_storage(params.rx_pos_aos, params.rx_pos_stride0, params.rx_pos_stride1,
+                                             params.rx_pos_x, params.rx_pos_y, params.rx_pos_z, rx_idx);
 
-    if (!isfinite(source.x) || !isfinite(source.y) || !isfinite(source.z) ||
-        !isfinite(edge_pos.x) || !isfinite(edge_pos.y) || !isfinite(edge_pos.z) ||
-        !isfinite(receiver.x) || !isfinite(receiver.y) || !isfinite(receiver.z) ||
-        !(edge_length > 1.0e-6f)) {
+    if (!isfinite(source.x) || !isfinite(source.y) || !isfinite(source.z) || !isfinite(edge_pos.x) ||
+        !isfinite(edge_pos.y) || !isfinite(edge_pos.z) || !isfinite(receiver.x) || !isfinite(receiver.y) ||
+        !isfinite(receiver.z) || !(edge_length > 1.0e-6f)) {
         return;
     }
     const float3 edge_origin = edge_pos + t_min * edge_dir;
-    const float parameter = utd::first_order_diffraction_parameter(
-        to_utd(source), to_utd(receiver), to_utd(edge_origin), to_utd(edge_dir));
+    const float parameter =
+        utd::first_order_diffraction_parameter(to_utd(source), to_utd(receiver), to_utd(edge_origin), to_utd(edge_dir));
     if (!isfinite(parameter)) {
         return;
     }
     const float clamped_parameter = fminf(fmaxf(parameter, 0.f), edge_length);
     const float3 edge_point = edge_origin + clamped_parameter * edge_dir;
     const float3 vis_point = edge_point + edge_visibility_offset(state_idx);
-    if (!visible_segment<SplitScene>(source, vis_point) ||
-        !visible_segment<SplitScene>(vis_point, receiver)) {
+    if (!visible_segment<SplitScene>(source, vis_point) || !visible_segment<SplitScene>(vis_point, receiver)) {
         return;
     }
 
     const utd::PairInputs pair = direct_pair_inputs(state_idx, source, edge_pos, edge_dir, t_min, t_max);
     const utd::PairOutputs utd_out =
         utd::compute_pair_contribution(pair, to_utd(receiver), params.k, paths_material_params(tx_idx));
-    const float field_norm = utd::cplx_abs_sqr(utd_out.vectorField.x) +
-                             utd::cplx_abs_sqr(utd_out.vectorField.y) +
+    const float field_norm = utd::cplx_abs_sqr(utd_out.vectorField.x) + utd::cplx_abs_sqr(utd_out.vectorField.y) +
                              utd::cplx_abs_sqr(utd_out.vectorField.z);
     if (!(field_norm > 1.0e-30f) || !isfinite(field_norm)) {
         return;
@@ -497,8 +375,7 @@ static __forceinline__ __device__ void trace_paths_order1_impl() {
     params.out_tx_id[out_idx] = tx_idx;
     params.out_rx_id[out_idx] = rx_idx;
     params.out_order[out_idx] = 1;
-    params.out_edge0[out_idx] =
-        read_i32(params.state_edge_index, params.state_edge_index_stride, state_idx);
+    params.out_edge0[out_idx] = read_i32(params.state_edge_index, params.state_edge_index_stride, state_idx);
     params.out_delay[out_idx] = path_length / kSpeedOfLight;
     params.out_field_x_re[out_idx] = utd_out.vectorField.x.re * amplitude_scale;
     params.out_field_x_im[out_idx] = utd_out.vectorField.x.im * amplitude_scale;
@@ -506,23 +383,13 @@ static __forceinline__ __device__ void trace_paths_order1_impl() {
     params.out_field_y_im[out_idx] = utd_out.vectorField.y.im * amplitude_scale;
     params.out_field_z_re[out_idx] = utd_out.vectorField.z.re * amplitude_scale;
     params.out_field_z_im[out_idx] = utd_out.vectorField.z.im * amplitude_scale;
-    write_point(params.out_p0_aos, params.out_p0_x, params.out_p0_y, params.out_p0_z,
-                out_idx, edge_point);
+    write_point(params.out_p0_aos, params.out_p0_x, params.out_p0_y, params.out_p0_z, out_idx, edge_point);
 }
 
-static __forceinline__ __device__ bool paths_order1_lane(unsigned int lane,
-                                                         int &state_idx,
-                                                         int &rx_idx,
-                                                         int &tx_idx) {
-    if (lane >= static_cast<unsigned int>(params.n_rays) ||
-        params.capacity <= 0 ||
-        params.tx_count <= 0 ||
-        params.rx_count <= 0 ||
-        params.state_count <= 0 ||
-        params.state_limit <= 0 ||
-        params.max_order != 1 ||
-        (params.strategy_mask & RAYD_TORCH_DFR_DIRECT) == 0 ||
-        params.receiver_model != RAYD_TORCH_DFR_MATCHED_ISO) {
+static __forceinline__ __device__ bool paths_order1_lane(unsigned int lane, int& state_idx, int& rx_idx, int& tx_idx) {
+    if (lane >= static_cast<unsigned int>(params.n_rays) || params.capacity <= 0 || params.tx_count <= 0 ||
+        params.rx_count <= 0 || params.state_count <= 0 || params.state_limit <= 0 || params.max_order != 1 ||
+        (params.strategy_mask & RAYD_TORCH_DFR_DIRECT) == 0 || params.receiver_model != RAYD_TORCH_DFR_MATCHED_ISO) {
         return false;
     }
 
@@ -532,46 +399,30 @@ static __forceinline__ __device__ bool paths_order1_lane(unsigned int lane,
     const int pair_idx = static_cast<int>(lane / static_cast<unsigned int>(state_limit));
     rx_idx = pair_idx % rx_count;
     tx_idx = pair_idx / rx_count;
-    return tx_idx < params.tx_count &&
-           state_idx < params.state_count &&
-           state_active(state_idx);
+    return tx_idx < params.tx_count && state_idx < params.state_count && state_active(state_idx);
 }
 
 static __forceinline__ __device__ float3 paths_edge_point(int state_idx) {
     const float3 edge_pos =
-        vec_from_storage(params.state_edge_pos_aos,
-                         params.state_edge_pos_stride0,
-                         params.state_edge_pos_stride1,
-                         params.state_edge_pos_x,
-                         params.state_edge_pos_y,
-                         params.state_edge_pos_z,
-                         state_idx);
-    const float3 edge_dir =
-        normalize3(vec_from_storage(params.state_edge_dir_aos,
-                                    params.state_edge_dir_stride0,
-                                    params.state_edge_dir_stride1,
-                                    params.state_edge_dir_x,
-                                    params.state_edge_dir_y,
-                                    params.state_edge_dir_z,
-                                    state_idx));
-    const float mid_t =
-        0.5f * (read_f32(params.state_edge_t_min, params.state_edge_t_min_stride, state_idx) +
-                read_f32(params.state_edge_t_max, params.state_edge_t_max_stride, state_idx));
+        vec_from_storage(params.state_edge_pos_aos, params.state_edge_pos_stride0, params.state_edge_pos_stride1,
+                         params.state_edge_pos_x, params.state_edge_pos_y, params.state_edge_pos_z, state_idx);
+    const float3 edge_dir = normalize3(vec_from_storage(params.state_edge_dir_aos, params.state_edge_dir_stride0,
+                                                        params.state_edge_dir_stride1, params.state_edge_dir_x,
+                                                        params.state_edge_dir_y, params.state_edge_dir_z, state_idx));
+    const float mid_t = 0.5f * (read_f32(params.state_edge_t_min, params.state_edge_t_min_stride, state_idx) +
+                                read_f32(params.state_edge_t_max, params.state_edge_t_max_stride, state_idx));
     return edge_pos + mid_t * edge_dir;
 }
 
-static __forceinline__ __device__ bool finite_paths_points(float3 source,
-                                                           float3 edge_point,
-                                                           float3 receiver) {
-    return isfinite(source.x) && isfinite(source.y) && isfinite(source.z) &&
-           isfinite(edge_point.x) && isfinite(edge_point.y) && isfinite(edge_point.z) &&
-           isfinite(receiver.x) && isfinite(receiver.y) && isfinite(receiver.z);
+static __forceinline__ __device__ bool finite_paths_points(float3 source, float3 edge_point, float3 receiver) {
+    return isfinite(source.x) && isfinite(source.y) && isfinite(source.z) && isfinite(edge_point.x) &&
+           isfinite(edge_point.y) && isfinite(edge_point.z) && isfinite(receiver.x) && isfinite(receiver.y) &&
+           isfinite(receiver.z);
 }
 
 static __forceinline__ __device__ void trace_paths_order1_source_visibility_primary_impl() {
     const unsigned int lane = optixGetLaunchIndex().x;
-    if (lane >= static_cast<unsigned int>(params.n_rays) ||
-        params.temp_visibility == nullptr) {
+    if (lane >= static_cast<unsigned int>(params.n_rays) || params.temp_visibility == nullptr) {
         return;
     }
     params.temp_visibility[lane] = 0u;
@@ -585,17 +436,11 @@ static __forceinline__ __device__ void trace_paths_order1_source_visibility_prim
     (void)rx_idx;
     (void)tx_idx;
 
-    const float3 source =
-        vec_from_storage(params.state_src_aos,
-                         params.state_src_stride0,
-                         params.state_src_stride1,
-                         params.state_src_x,
-                         params.state_src_y,
-                         params.state_src_z,
-                         state_idx);
+    const float3 source = vec_from_storage(params.state_src_aos, params.state_src_stride0, params.state_src_stride1,
+                                           params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
     const float3 edge_point = paths_edge_point(state_idx);
-    if (!isfinite(source.x) || !isfinite(source.y) || !isfinite(source.z) ||
-        !isfinite(edge_point.x) || !isfinite(edge_point.y) || !isfinite(edge_point.z)) {
+    if (!isfinite(source.x) || !isfinite(source.y) || !isfinite(source.z) || !isfinite(edge_point.x) ||
+        !isfinite(edge_point.y) || !isfinite(edge_point.z)) {
         return;
     }
 
@@ -619,23 +464,11 @@ static __forceinline__ __device__ void trace_paths_order1_target_export_primary_
         return;
     }
 
-    const float3 source =
-        vec_from_storage(params.state_src_aos,
-                         params.state_src_stride0,
-                         params.state_src_stride1,
-                         params.state_src_x,
-                         params.state_src_y,
-                         params.state_src_z,
-                         state_idx);
+    const float3 source = vec_from_storage(params.state_src_aos, params.state_src_stride0, params.state_src_stride1,
+                                           params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
     const float3 edge_point = paths_edge_point(state_idx);
-    const float3 receiver =
-        vec_from_storage(params.rx_pos_aos,
-                         params.rx_pos_stride0,
-                         params.rx_pos_stride1,
-                         params.rx_pos_x,
-                         params.rx_pos_y,
-                         params.rx_pos_z,
-                         rx_idx);
+    const float3 receiver = vec_from_storage(params.rx_pos_aos, params.rx_pos_stride0, params.rx_pos_stride1,
+                                             params.rx_pos_x, params.rx_pos_y, params.rx_pos_z, rx_idx);
 
     if (!finite_paths_points(source, edge_point, receiver)) {
         return;
@@ -664,13 +497,11 @@ static __forceinline__ __device__ void trace_paths_order1_target_export_primary_
     params.out_tx_id[out_idx] = tx_idx;
     params.out_rx_id[out_idx] = rx_idx;
     params.out_order[out_idx] = 1;
-    params.out_edge0[out_idx] =
-        read_i32(params.state_edge_index, params.state_edge_index_stride, state_idx);
+    params.out_edge0[out_idx] = read_i32(params.state_edge_index, params.state_edge_index_stride, state_idx);
     params.out_delay[out_idx] = path_length / kSpeedOfLight;
     params.out_field_x_re[out_idx] = amplitude * phase_c;
     params.out_field_x_im[out_idx] = amplitude * phase_s;
-    write_point(params.out_p0_aos, params.out_p0_x, params.out_p0_y, params.out_p0_z,
-                out_idx, edge_point);
+    write_point(params.out_p0_aos, params.out_p0_x, params.out_p0_y, params.out_p0_z, out_idx, edge_point);
 }
 
 extern "C" __global__ void __raygen__diffraction_paths_order1_primary() {
@@ -690,4 +521,3 @@ extern "C" __global__ void __raygen__diffraction_paths_order1_target_export_prim
 }
 
 } // namespace rayd::torch_backend
-

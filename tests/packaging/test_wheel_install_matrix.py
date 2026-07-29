@@ -60,12 +60,7 @@ class WheelInstallMatrixTests(unittest.TestCase):
         return root / "bin" / "python"
 
     def command(self, python, *args):
-        completed = subprocess.run(
-            [str(python), *map(str, args)],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        completed = subprocess.run([str(python), *map(str, args)], text=True, capture_output=True, check=False)
         if completed.returncode:
             self.fail(f"command failed: {completed.args}\n{completed.stdout}\n{completed.stderr}")
 
@@ -74,13 +69,7 @@ class WheelInstallMatrixTests(unittest.TestCase):
         env["RAYD_ACCEPTANCE_BASE_SITE"] = self.base_site
         env["RAYD_ACCEPTANCE_EXPECTED"] = json.dumps(expected)
         env["RAYD_ACCEPTANCE_ABSENT"] = json.dumps(absent)
-        completed = subprocess.run(
-            [str(python), "-c", PROBE],
-            env=env,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        completed = subprocess.run([str(python), "-c", PROBE], env=env, text=True, capture_output=True, check=False)
         if completed.returncode:
             self.fail(f"wheel probe failed\n{completed.stdout}\n{completed.stderr}")
 
@@ -93,15 +82,7 @@ class WheelInstallMatrixTests(unittest.TestCase):
         return self.venv_python(root)
 
     def install(self, python, backend):
-        self.command(
-            python,
-            "-m",
-            "pip",
-            "install",
-            "--no-deps",
-            "--ignore-installed",
-            self.wheels[backend],
-        )
+        self.command(python, "-m", "pip", "install", "--no-deps", "--ignore-installed", self.wheels[backend])
 
     def install_legacy_editable(self, python, root):
         package = root / "rayd"
@@ -117,7 +98,7 @@ class LegacyRayDFinder(importlib.abc.MetaPathFinder):
         if fullname == "rayd":
             return importlib.util.spec_from_file_location(
                 fullname,
-                {str(package / '__init__.py')!r},
+                {str(package / "__init__.py")!r},
                 submodule_search_locations=[{str(package)!r}],
             )
         return None
@@ -152,11 +133,7 @@ info.mkdir()
     encoding="utf-8",
 )
 """
-        self.command(
-            python,
-            "-c",
-            seed,
-        )
+        self.command(python, "-c", seed)
 
     def test_both_install_orders(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -194,11 +171,7 @@ info.mkdir()
             self.install(python, "drjit")
             self.install(python, "torch")
             self.install_legacy_editable(python, root / "legacy")
-            self.command(
-                python,
-                "-c",
-                "import rayd; assert rayd.__file__ is not None; assert rayd.LEGACY",
-            )
+            self.command(python, "-c", "import rayd; assert rayd.__file__ is not None; assert rayd.LEGACY")
             self.command(
                 python,
                 "-m",

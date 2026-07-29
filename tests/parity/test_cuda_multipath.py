@@ -8,10 +8,7 @@ import rayd.torch as rt
 
 
 def _scene(backend: str):
-    vertices = torch.tensor(
-        [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
-        device="cuda",
-    )
+    vertices = torch.tensor([[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]], device="cuda")
     faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
     scene = rt.Scene(trace_backend=backend, edge_bvh_backend=backend)
     scene.add_mesh(rt.Mesh(vertices, faces))
@@ -83,9 +80,7 @@ class CudaMultipathParityTests(unittest.TestCase):
         self.assertTrue(torch.equal(cuda.valid, optix.valid))
         self.assertTrue(torch.equal(cuda.prim_ids, optix.prim_ids))
         torch.testing.assert_close(cuda.t, optix.t, atol=2e-6, rtol=2e-6)
-        torch.testing.assert_close(
-            cuda.image_sources, optix.image_sources, atol=2e-6, rtol=2e-6
-        )
+        torch.testing.assert_close(cuda.image_sources, optix.image_sources, atol=2e-6, rtol=2e-6)
 
     def test_reflection_accumulation_nonzero_matches_optix(self):
         cuda_scene = _scene("cuda")
@@ -164,18 +159,8 @@ class CudaMultipathParityTests(unittest.TestCase):
         self.assertTrue(torch.equal(cuda.direct_count, optix.direct_count))
         self.assertTrue(torch.equal(cuda.keller_count, optix.keller_count))
         self.assertTrue(torch.equal(cuda.suffix_count, optix.suffix_count))
-        for name in (
-            "power",
-            "field_x_re",
-            "field_x_im",
-            "field_y_re",
-            "field_y_im",
-            "field_z_re",
-            "field_z_im",
-        ):
-            torch.testing.assert_close(
-                getattr(cuda, name), getattr(optix, name), atol=2e-8, rtol=2e-6
-            )
+        for name in ("power", "field_x_re", "field_x_im", "field_y_re", "field_y_im", "field_z_re", "field_z_im"):
+            torch.testing.assert_close(getattr(cuda, name), getattr(optix, name), atol=2e-8, rtol=2e-6)
 
     def _assert_diffraction_params_are_isolated_across_streams(self, backend: str):
         try:
@@ -197,35 +182,22 @@ class CudaMultipathParityTests(unittest.TestCase):
         # two streams carry different scene parameters.
         for _ in range(8):
             with torch.cuda.stream(stream_a):
-                concurrent_a_results.append(
-                    _accumulate(scene_a, states_a, grid, material, direct=2048)
-                )
+                concurrent_a_results.append(_accumulate(scene_a, states_a, grid, material, direct=2048))
             with torch.cuda.stream(stream_b):
-                concurrent_b_results.append(
-                    _accumulate(scene_b, states_b, grid, material, direct=2048)
-                )
+                concurrent_b_results.append(_accumulate(scene_b, states_b, grid, material, direct=2048))
         stream_a.synchronize()
         stream_b.synchronize()
 
-        for concurrent_a, concurrent_b in zip(
-            concurrent_a_results, concurrent_b_results
-        ):
+        for concurrent_a, concurrent_b in zip(concurrent_a_results, concurrent_b_results):
             self.assertTrue(torch.equal(concurrent_a.direct_count, reference_a.direct_count))
             self.assertTrue(torch.equal(concurrent_b.direct_count, reference_b.direct_count))
             torch.testing.assert_close(concurrent_a.power, reference_a.power, atol=0, rtol=0)
             torch.testing.assert_close(concurrent_b.power, reference_b.power, atol=0, rtol=0)
-            torch.testing.assert_close(
-                concurrent_a.field_x_re, reference_a.field_x_re, atol=0, rtol=0
-            )
-            torch.testing.assert_close(
-                concurrent_b.field_x_re, reference_b.field_x_re, atol=0, rtol=0
-            )
+            torch.testing.assert_close(concurrent_a.field_x_re, reference_a.field_x_re, atol=0, rtol=0)
+            torch.testing.assert_close(concurrent_b.field_x_re, reference_b.field_x_re, atol=0, rtol=0)
         concurrent_a = concurrent_a_results[-1]
         concurrent_b = concurrent_b_results[-1]
-        self.assertNotEqual(
-            float(concurrent_a.power.sum().item()),
-            float(concurrent_b.power.sum().item()),
-        )
+        self.assertNotEqual(float(concurrent_a.power.sum().item()), float(concurrent_b.power.sum().item()))
 
     def test_diffraction_params_are_isolated_across_cuda_streams(self):
         self._assert_diffraction_params_are_isolated_across_streams("cuda")

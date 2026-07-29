@@ -1,0 +1,32 @@
+# Copyright Xingyu Chen.
+# Defines the native source formatting contract.
+
+---
+Language: Cpp
+BasedOnStyle: LLVM
+Standard: c++17
+ColumnLimit: 120
+IndentWidth: 4
+ContinuationIndentWidth: 4
+TabWidth: 4
+UseTab: Never
+BinPackArguments: true
+BinPackParameters: true
+AllowAllParametersOfDeclarationOnNextLine: true
+BreakFunctionDefinitionParameters: false
+AlignAfterOpenBracket: Align
+PointerAlignment: Left
+ReferenceAlignment: Pointer
+DerivePointerAlignment: false
+BreakBeforeBraces: Attach
+BreakBeforeBinaryOperators: None
+PenaltyBreakBeforeFirstCallParameter: 200
+PenaltyReturnTypeOnItsOwnLine: 1000
+AllowShortBlocksOnASingleLine: Empty
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLambdasOnASingleLine: All
+SortIncludes: Never
+IncludeBlocks: Preserve
+ReflowComments: false
+...

@@ -20,11 +20,7 @@ TORCH = ROOT / "torch"
 class TorchStableAbiBoundaryTests(unittest.TestCase):
     def test_machine_readable_audit_is_current(self):
         result = subprocess.run(
-            [
-                sys.executable,
-                str(TORCH / "scripts" / "audit_abi_boundary.py"),
-                "--check",
-            ],
+            [sys.executable, str(TORCH / "scripts" / "audit_abi_boundary.py"), "--check"],
             cwd=TORCH,
             text=True,
             capture_output=True,
@@ -33,10 +29,7 @@ class TorchStableAbiBoundaryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_stable_sources_use_only_stable_torch_headers(self):
-        sources = [
-            ROOT / "src" / "camera" / "camera_stable.cu",
-            ROOT / "src" / "scene" / "intersection_stable.cu",
-        ]
+        sources = [ROOT / "src" / "camera" / "camera_stable.cu", ROOT / "src" / "scene" / "intersection_stable.cu"]
         self.assertTrue(all(path.is_file() for path in sources))
         combined = "\n".join(path.read_text(encoding="utf-8") for path in sources)
         for forbidden in ("at::", "c10::", "py::", "torch/extension.h", "torch/library.h"):
@@ -52,7 +45,7 @@ class TorchStableAbiBoundaryTests(unittest.TestCase):
         self.assertIn('m.def("contract_values"', source)
 
         cmake = (TORCH / "CMakeLists.txt").read_text(encoding="utf-8")
-        c_target = cmake[cmake.index("Python_add_library(_C"):]
+        c_target = cmake[cmake.index("Python_add_library(_C") :]
         c_target = c_target[: c_target.index("endif()")]
         self.assertIn("src/bindings/module.cpp", c_target)
         self.assertNotIn("src/bindings/library.cpp", c_target)
@@ -74,7 +67,7 @@ class TorchStableAbiBoundaryTests(unittest.TestCase):
 
         loader = (ROOT / "python" / "rayd" / "_impl" / "runtime.py").read_text(encoding="utf-8")
         self.assertIn('_candidates("_legacy_ops", "RAYD_TORCH_LEGACY_LIBRARY")', loader)
-        self.assertIn('RAYD_TORCH_LEGACY_LIBRARY', loader)
+        self.assertIn("RAYD_TORCH_LEGACY_LIBRARY", loader)
         self.assertIn("torch.ops.load_library", loader)
         self.assertIn("torch.classes.rayd_torch", loader)
 
@@ -85,18 +78,18 @@ class TorchStableAbiBoundaryTests(unittest.TestCase):
         environment["PYTHONPATH"] = str(ROOT / "python")
         bootstrap = (
             "import importlib.machinery, sys, types\n"
-            "rayd = types.ModuleType(\"rayd\")\n"
+            'rayd = types.ModuleType("rayd")\n'
             f"rayd.__path__ = [{str(ROOT / 'python' / 'rayd')!r}]\n"
-            "rayd.__package__ = \"rayd\"\n"
+            'rayd.__package__ = "rayd"\n'
             "rayd.__spec__ = importlib.machinery.ModuleSpec("
-            "\"rayd\", loader=None, is_package=True)\n"
-            "sys.modules[\"rayd\"] = rayd\n"
+            '"rayd", loader=None, is_package=True)\n'
+            'sys.modules["rayd"] = rayd\n'
             "spec = importlib.util.spec_from_file_location("
-            "\"rayd.torch\", "
+            '"rayd.torch", '
             f"{str(ROOT / 'python' / 'rayd' / 'torch' / '__init__.py')!r}, "
             f"submodule_search_locations=[{str(ROOT / 'python' / 'rayd' / 'torch')!r}])\n"
             "module = importlib.util.module_from_spec(spec)\n"
-            "sys.modules[\"rayd.torch\"] = module\n"
+            'sys.modules["rayd.torch"] = module\n'
             "spec.loader.exec_module(module)\n"
         )
         result = subprocess.run(
@@ -185,12 +178,8 @@ class TorchStableAbiBoundaryTests(unittest.TestCase):
         self.assertIn('"rayd.torch.integration"', typed)
         self.assertIn("at::Tensor", scene)
 
-        self.assertFalse(
-            (ROOT / "src" / "bindings" / "integration_v2_internal.h").exists()
-        )
-        self.assertFalse(
-            (ROOT / "tests" / "native" / "integration_v2_test.cpp").exists()
-        )
+        self.assertFalse((ROOT / "src" / "bindings" / "integration_v2_internal.h").exists())
+        self.assertFalse((ROOT / "tests" / "native" / "integration_v2_test.cpp").exists())
         cmake = (TORCH / "CMakeLists.txt").read_text(encoding="utf-8")
         self.assertNotIn("integration_v2", cmake)
         self.assertIn("rayd_torch_integration_test", cmake)
@@ -210,15 +199,12 @@ class TorchStableAbiBoundaryTests(unittest.TestCase):
         self.assertFalse(audit["artifacts"]["_C"]["links_native_core"])
         self.assertTrue(audit["artifacts"]["_legacy_ops"]["owns_scene_custom_class"])
         self.assertIn("intersection_valid", audit["migration"]["stable"])
-        self.assertEqual(set(audit["migration"]["legacy_retained"]), {
-            "scene_custom_class_and_stateful_queries",
-            "geometry_ad_and_multipath",
-        })
-        self.assertNotIn("integration_h", audit["artifacts"])
         self.assertEqual(
-            set(audit["migration"]["retired"]),
-            {"plan13_extern_c_integration"},
+            set(audit["migration"]["legacy_retained"]),
+            {"scene_custom_class_and_stateful_queries", "geometry_ad_and_multipath"},
         )
+        self.assertNotIn("integration_h", audit["artifacts"])
+        self.assertEqual(set(audit["migration"]["retired"]), {"plan13_extern_c_integration"})
 
 
 if __name__ == "__main__":

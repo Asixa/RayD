@@ -18,9 +18,9 @@
 // device code is generated exactly as before.
 
 #if defined(__CUDACC__)
-#  define RAYD_DEVICE __device__ __forceinline__
-#  define RAYD_HOST_DEVICE __host__ __device__ __forceinline__
+#define RAYD_DEVICE __device__ __forceinline__
+#define RAYD_HOST_DEVICE __host__ __device__ __forceinline__
 #else
-#  define RAYD_DEVICE inline
-#  define RAYD_HOST_DEVICE inline
+#define RAYD_DEVICE inline
+#define RAYD_HOST_DEVICE inline
 #endif

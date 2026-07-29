@@ -23,10 +23,7 @@ def make_scene(center_z: float = 0.0) -> rd.SurfelScene:
 
 def main() -> None:
     scene = make_scene()
-    ray = rd.Ray(
-        dr.cuda.Array3f([0.25], [0.25], [1.0]),
-        dr.cuda.Array3f([0.0], [0.0], [-1.0]),
-    )
+    ray = rd.Ray(dr.cuda.Array3f([0.25], [0.25], [1.0]), dr.cuda.Array3f([0.0], [0.0], [-1.0]))
     its = scene.intersect(ray)
     print("Surfel ray intersection example")
     print(

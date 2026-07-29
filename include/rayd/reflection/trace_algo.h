@@ -6,7 +6,7 @@
 #include <cmath>
 #include <cstdint>
 
-#include <vector_types.h>  // float4 for the optional packed-triangle inputs.
+#include <vector_types.h> // float4 for the optional packed-triangle inputs.
 
 #include <rayd/math.h>
 #include <rayd/reflection/trace_params.h>
@@ -68,7 +68,7 @@ RAYD_HOST_DEVICE bool is_finite(float value) {
 #endif
 }
 
-RAYD_HOST_DEVICE Vec3f load_vec3(const float *values) {
+RAYD_HOST_DEVICE Vec3f load_vec3(const float* values) {
     return math::make_vec3(values[0], values[1], values[2]);
 }
 
@@ -80,9 +80,8 @@ RAYD_HOST_DEVICE Vec3f normalize(Vec3f value) {
     return math::scale(value, reciprocal_sqrt(fmaxf(math::dot(value, value), 1e-12f)));
 }
 
-RAYD_HOST_DEVICE ::rayd::shared::rt::TriangleHit choose_nearest_hit(
-    ::rayd::shared::rt::TriangleHit a,
-    ::rayd::shared::rt::TriangleHit b) {
+RAYD_HOST_DEVICE ::rayd::shared::rt::TriangleHit choose_nearest_hit(::rayd::shared::rt::TriangleHit a,
+                                                                    ::rayd::shared::rt::TriangleHit b) {
     if (a.hit == 0u)
         return b;
     if (b.hit == 0u)
@@ -91,10 +90,7 @@ RAYD_HOST_DEVICE ::rayd::shared::rt::TriangleHit choose_nearest_hit(
 }
 
 template <typename Policy>
-RAYD_HOST_DEVICE int output_slot(
-    const ReflectionTraceParams &params,
-    unsigned int ray_index,
-    int bounce) {
+RAYD_HOST_DEVICE int output_slot(const ReflectionTraceParams& params, unsigned int ray_index, int bounce) {
     if constexpr (Policy::honor_output_layout) {
         if (params.output_layout != 0)
             return bounce * params.n_rays + static_cast<int>(ray_index);
@@ -103,10 +99,7 @@ RAYD_HOST_DEVICE int output_slot(
 }
 
 template <typename Policy>
-RAYD_HOST_DEVICE void clear_output_slot(
-    const ReflectionTraceParams &params,
-    unsigned int ray_index,
-    int bounce) {
+RAYD_HOST_DEVICE void clear_output_slot(const ReflectionTraceParams& params, unsigned int ray_index, int bounce) {
     if constexpr (!Policy::clear_empty_slots) {
         return;
     } else {
@@ -144,36 +137,24 @@ RAYD_HOST_DEVICE void clear_output_slot(
     }
 }
 
-template <typename Policy>
-RAYD_HOST_DEVICE TriangleData load_triangle(
-    const ReflectionTraceParams &params,
-    int prim) {
+template <typename Policy> RAYD_HOST_DEVICE TriangleData load_triangle(const ReflectionTraceParams& params, int prim) {
     if constexpr (Policy::allow_packed_triangles) {
-        if (params.tri_p0_packed != nullptr &&
-            params.tri_e1_packed != nullptr &&
-            params.tri_e2_packed != nullptr &&
+        if (params.tri_p0_packed != nullptr && params.tri_e1_packed != nullptr && params.tri_e2_packed != nullptr &&
             params.tri_fn_packed != nullptr) {
-            return {
-                load_vec3(params.tri_p0_packed[prim]),
-                load_vec3(params.tri_e1_packed[prim]),
-                load_vec3(params.tri_e2_packed[prim]),
-                load_vec3(params.tri_fn_packed[prim])};
+            return {load_vec3(params.tri_p0_packed[prim]), load_vec3(params.tri_e1_packed[prim]),
+                    load_vec3(params.tri_e2_packed[prim]), load_vec3(params.tri_fn_packed[prim])};
         }
     }
 
-    return {
-        math::make_vec3(params.tri_p0_x[prim], params.tri_p0_y[prim], params.tri_p0_z[prim]),
-        math::make_vec3(params.tri_e1_x[prim], params.tri_e1_y[prim], params.tri_e1_z[prim]),
-        math::make_vec3(params.tri_e2_x[prim], params.tri_e2_y[prim], params.tri_e2_z[prim]),
-        math::make_vec3(params.tri_fn_x[prim], params.tri_fn_y[prim], params.tri_fn_z[prim])};
+    return {math::make_vec3(params.tri_p0_x[prim], params.tri_p0_y[prim], params.tri_p0_z[prim]),
+            math::make_vec3(params.tri_e1_x[prim], params.tri_e1_y[prim], params.tri_e1_z[prim]),
+            math::make_vec3(params.tri_e2_x[prim], params.tri_e2_y[prim], params.tri_e2_z[prim]),
+            math::make_vec3(params.tri_fn_x[prim], params.tri_fn_y[prim], params.tri_fn_z[prim])};
 }
 
 template <typename Policy>
-RAYD_HOST_DEVICE void load_ray(
-    const ReflectionTraceParams &params,
-    unsigned int ray_index,
-    Vec3f &origin,
-    Vec3f &direction) {
+RAYD_HOST_DEVICE void load_ray(const ReflectionTraceParams& params, unsigned int ray_index, Vec3f& origin,
+                               Vec3f& direction) {
     if constexpr (Policy::allow_aos_inputs) {
         if (params.ray_o_aos != nullptr) {
             origin = load_vec3(params.ray_o_aos + ray_index * 3);
@@ -187,9 +168,7 @@ RAYD_HOST_DEVICE void load_ray(
 }
 
 template <typename Policy>
-RAYD_HOST_DEVICE float first_trace_tmax(
-    const ReflectionTraceParams &params,
-    unsigned int ray_index) {
+RAYD_HOST_DEVICE float first_trace_tmax(const ReflectionTraceParams& params, unsigned int ray_index) {
     if constexpr (Policy::nullable_ray_tmax) {
         return params.ray_tmax != nullptr ? params.ray_tmax[ray_index] : kTraceTMax;
     }
@@ -202,11 +181,9 @@ RAYD_HOST_DEVICE float first_trace_tmax(
 /// Traverser oracles over the two acceleration structures (secondary consulted
 /// only when params.split_mode != 0), and `ray_index` is this lane's ray id.
 template <typename Config>
-RAYD_DEVICE void reflection_trace_algo(
-    const ::rayd::shared::optix::ReflectionTraceParams &params,
-    std::uint32_t ray_index,
-    const typename Config::Traverser &primary,
-    const typename Config::Traverser &secondary) {
+RAYD_DEVICE void reflection_trace_algo(const ::rayd::shared::optix::ReflectionTraceParams& params,
+                                       std::uint32_t ray_index, const typename Config::Traverser& primary,
+                                       const typename Config::Traverser& secondary) {
     using namespace reflection_trace_algo_detail;
     using Policy = typename Config::Layout;
     using ::rayd::shared::rt::TriangleHit;
@@ -233,17 +210,13 @@ RAYD_DEVICE void reflection_trace_algo(
     int bounce_count = 0;
 
     for (int bounce = 0; bounce < bounce_limit; ++bounce) {
-        const float tmax_input = bounce == 0
-            ? first_trace_tmax<Policy>(params, ray_index)
-            : kTraceTMax;
+        const float tmax_input = bounce == 0 ? first_trace_tmax<Policy>(params, ray_index) : kTraceTMax;
         const float trace_tmax = is_finite(tmax_input) ? tmax_input : kTraceTMax;
 
-        const TriangleHit primary_hit =
-            primary.trace_closest(origin, direction, kTraceTMin, trace_tmax);
+        const TriangleHit primary_hit = primary.trace_closest(origin, direction, kTraceTMin, trace_tmax);
         TriangleHit hit = primary_hit;
         if (params.split_mode != 0) {
-            const TriangleHit secondary_hit =
-                secondary.trace_closest(origin, direction, kTraceTMin, trace_tmax);
+            const TriangleHit secondary_hit = secondary.trace_closest(origin, direction, kTraceTMin, trace_tmax);
             hit = choose_nearest_hit(primary_hit, secondary_hit);
         }
         if (hit.hit == 0u)
@@ -251,8 +224,7 @@ RAYD_DEVICE void reflection_trace_algo(
 
         const int shape_id = hit.instance;
         const int local_prim = hit.prim;
-        const int face_offset =
-            shape_id >= 0 && shape_id < params.n_meshes ? params.face_offsets[shape_id] : 0;
+        const int face_offset = shape_id >= 0 && shape_id < params.n_meshes ? params.face_offsets[shape_id] : 0;
         const int global_prim = face_offset + local_prim;
         const float t = hit.t;
         const float bary_u = hit.bary_u;
@@ -262,20 +234,16 @@ RAYD_DEVICE void reflection_trace_algo(
         Vec3f geo_normal = math::make_vec3(0.0f, 0.0f, 1.0f);
         if (global_prim >= 0 && global_prim < params.n_triangles) {
             const TriangleData tri = load_triangle<Policy>(params, global_prim);
-            hit_point = math::add(
-                math::add(tri.p0, math::scale(tri.e1, bary_u)),
-                math::scale(tri.e2, bary_v));
+            hit_point = math::add(math::add(tri.p0, math::scale(tri.e1, bary_u)), math::scale(tri.e2, bary_v));
             geo_normal = normalize(tri.fn);
         }
         geo_normal = reflection::orient_normal_against(direction, geo_normal);
 
         const bool write_image_source =
             (Policy::allow_extended_outputs && params.out_img != nullptr) ||
-            (params.out_img_x != nullptr && params.out_img_y != nullptr &&
-             params.out_img_z != nullptr);
+            (params.out_img_x != nullptr && params.out_img_y != nullptr && params.out_img_z != nullptr);
         if (write_image_source) {
-            image_source =
-                reflection::reflect_point_across_plane(image_source, hit_point, geo_normal);
+            image_source = reflection::reflect_point_across_plane(image_source, hit_point, geo_normal);
         }
 
         const int slot = output_slot<Policy>(params, ray_index, bounce);
@@ -370,20 +338,16 @@ RAYD_DEVICE void reflection_trace_algo(
         if (params.out_trailing_origin_z != nullptr)
             params.out_trailing_origin_z[ray_index] = origin.z;
 
-        const TriangleHit primary_hit =
-            primary.trace_closest(origin, direction, kTraceTMin, kTraceTMax);
+        const TriangleHit primary_hit = primary.trace_closest(origin, direction, kTraceTMin, kTraceTMax);
         TriangleHit trailing = primary_hit;
         if (params.split_mode != 0) {
-            const TriangleHit secondary_hit =
-                secondary.trace_closest(origin, direction, kTraceTMin, kTraceTMax);
+            const TriangleHit secondary_hit = secondary.trace_closest(origin, direction, kTraceTMin, kTraceTMax);
             trailing = choose_nearest_hit(primary_hit, secondary_hit);
         }
         if (trailing.hit != 0u) {
             const int shape_id = trailing.instance;
             const int local_prim = trailing.prim;
-            const int face_offset = shape_id >= 0 && shape_id < params.n_meshes
-                ? params.face_offsets[shape_id]
-                : 0;
+            const int face_offset = shape_id >= 0 && shape_id < params.n_meshes ? params.face_offsets[shape_id] : 0;
             if (params.out_trailing_t != nullptr)
                 params.out_trailing_t[ray_index] = trailing.t;
             if (params.out_trailing_prim != nullptr)

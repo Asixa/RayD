@@ -16,13 +16,9 @@ from typing import Any
 THIS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = THIS_DIR.parents[1]
 THIS_DIR_NORM = os.path.normcase(os.path.abspath(THIS_DIR))
-sys.path = [
-    entry for entry in sys.path
-    if os.path.normcase(os.path.abspath(entry or ".")) != THIS_DIR_NORM
-]
+sys.path = [entry for entry in sys.path if os.path.normcase(os.path.abspath(entry or ".")) != THIS_DIR_NORM]
 if os.path.normcase(os.path.abspath(REPO_ROOT)) not in {
-    os.path.normcase(os.path.abspath(entry or "."))
-    for entry in sys.path
+    os.path.normcase(os.path.abspath(entry or ".")) for entry in sys.path
 }:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -30,10 +26,11 @@ import drjit as dr
 import drjit.cuda as cuda
 import rayd.drjit as pj
 
-from tests.benchmark_support import _cleanup_drjit
-from tests.benchmark_support import _make_grid_mesh_data
-from tests.benchmark_support import _measure
-from tests.benchmark_support import _summarize_timings
+from benchmarks.common import to_scalar as _to_scalar
+from benchmarks.drjit.benchmark_support import _cleanup_drjit
+from benchmarks.drjit.benchmark_support import _make_grid_mesh_data
+from benchmarks.drjit.benchmark_support import _measure
+from benchmarks.drjit.benchmark_support import _summarize_timings
 
 
 @dataclass(frozen=True)
@@ -46,11 +43,7 @@ class MaskScenario:
     @property
     def keep_ratio(self) -> float:
         edge_count = int(dr.width(self.mask))
-        return (
-            0.0
-            if edge_count == 0
-            else float(self.active_edge_count) / float(edge_count)
-        )
+        return 0.0 if edge_count == 0 else float(self.active_edge_count) / float(edge_count)
 
 
 def _shift_mesh_data(
@@ -78,12 +71,7 @@ def _make_scene_mesh(mesh_data: dict[str, list[float] | list[int]]) -> Any:
 
 
 def _build_tiled_scene(
-    *,
-    mesh_resolution: int,
-    tiles_x: int,
-    tiles_y: int,
-    tile_spacing: float,
-    row_z_stride: float,
+    *, mesh_resolution: int, tiles_x: int, tiles_y: int, tile_spacing: float, row_z_stride: float
 ) -> tuple[Any, dict[str, float]]:
     scene = pj.Scene()
     base_mesh = _make_grid_mesh_data(mesh_resolution)
@@ -110,11 +98,7 @@ def _build_tiled_scene(
     return scene, bounds
 
 
-def _make_world_query_grid(
-    side: int,
-    bounds: dict[str, float],
-    z_value: float,
-) -> cuda.Array3f:
+def _make_world_query_grid(side: int, bounds: dict[str, float], z_value: float) -> cuda.Array3f:
     xs: list[float] = []
     ys: list[float] = []
     zs: list[float] = []
@@ -130,19 +114,10 @@ def _make_world_query_grid(
     return cuda.Array3f(xs, ys, zs)
 
 
-def _make_downward_rays(
-    side: int,
-    bounds: dict[str, float],
-    z_origin: float,
-    *,
-    tmax: float | None,
-) -> Any:
+def _make_downward_rays(side: int, bounds: dict[str, float], z_origin: float, *, tmax: float | None) -> Any:
     origins = _make_world_query_grid(side, bounds, z_origin)
     count = len(origins[0])
-    ray = pj.Ray(
-        origins,
-        cuda.Array3f([0.0] * count, [0.0] * count, [-1.0] * count),
-    )
+    ray = pj.Ray(origins, cuda.Array3f([0.0] * count, [0.0] * count, [-1.0] * count))
     if tmax is not None:
         ray.tmax = cuda.Float([tmax] * count)
     return ray
@@ -177,15 +152,6 @@ def _eval_ray_result(result: Any) -> None:
     )
 
 
-def _to_scalar(value: Any) -> float:
-    if isinstance(value, (int, float)):
-        return float(value)
-    try:
-        return float(value)
-    except TypeError:
-        return float(value[0])
-
-
 def _to_json_scalar(value: Any) -> float | None:
     scalar = _to_scalar(value)
     return scalar if math.isfinite(scalar) else None
@@ -196,10 +162,7 @@ def _edge_count(scene: Any) -> int:
 
 
 def _summarize_latency(times_s: list[float]) -> dict[str, float]:
-    return {
-        "min_ms": min(times_s) * 1000.0,
-        "avg_ms": statistics.fmean(times_s) * 1000.0,
-    }
+    return {"min_ms": min(times_s) * 1000.0, "avg_ms": statistics.fmean(times_s) * 1000.0}
 
 
 def _profile_to_sample(profile: Any) -> dict[str, float | int]:
@@ -221,9 +184,7 @@ def _profile_to_sample(profile: Any) -> dict[str, float | int]:
     }
 
 
-def _summarize_profile_samples(
-    samples: list[dict[str, float | int]],
-) -> dict[str, float | int]:
+def _summarize_profile_samples(samples: list[dict[str, float | int]]) -> dict[str, float | int]:
     summary: dict[str, float | int] = {}
     if not samples:
         return summary
@@ -258,22 +219,13 @@ def _bvh_stats_to_json(scene: Any) -> dict[str, Any]:
     }
 
 
-def _build_mask_scenarios(
-    scene: Any,
-    *,
-    tiles_x: int,
-    keep_stride: int,
-) -> tuple[Any, list[MaskScenario]]:
+def _build_mask_scenarios(scene: Any, *, tiles_x: int, keep_stride: int) -> tuple[Any, list[MaskScenario]]:
     edge_count = _edge_count(scene)
     edge_info = scene.edge_info()
     shape_ids = [int(value) for value in list(edge_info.shape_id)]
     boundary_flags = [bool(value) for value in list(edge_info.is_boundary)]
 
-    def make_mask(
-        name: str,
-        description: str,
-        values: list[bool],
-    ) -> MaskScenario:
+    def make_mask(name: str, description: str, values: list[bool]) -> MaskScenario:
         return MaskScenario(
             name=name,
             description=description,
@@ -284,45 +236,20 @@ def _build_mask_scenarios(
     full_values = [True] * edge_count
     empty_values = [False] * edge_count
     stride_sparse_values = [(edge_idx % keep_stride) == 0 for edge_idx in range(edge_count)]
-    checker_tile_values = [
-        (((shape_id % tiles_x) + (shape_id // tiles_x)) % 2) == 0
-        for shape_id in shape_ids
-    ]
+    checker_tile_values = [(((shape_id % tiles_x) + (shape_id // tiles_x)) % 2) == 0 for shape_id in shape_ids]
     boundary_only_values = list(boundary_flags)
     interior_only_values = [not value for value in boundary_flags]
 
     full_mask = cuda.Bool(full_values)
     scenarios = [
+        make_mask("full", "All edges active. Baseline traversal and post-query gather cost.", full_values),
+        make_mask("checker_tiles", "Spatially coherent 50% mesh checkerboard mask.", checker_tile_values),
+        make_mask("boundary_only", "Only boundary edges kept.", boundary_only_values),
+        make_mask("interior_only", "Only non-boundary edges kept.", interior_only_values),
         make_mask(
-            "full",
-            "All edges active. Baseline traversal and post-query gather cost.",
-            full_values,
+            "stride_sparse", f"Index-strided sparse mask keeping every {keep_stride}-th edge.", stride_sparse_values
         ),
-        make_mask(
-            "checker_tiles",
-            "Spatially coherent 50% mesh checkerboard mask.",
-            checker_tile_values,
-        ),
-        make_mask(
-            "boundary_only",
-            "Only boundary edges kept.",
-            boundary_only_values,
-        ),
-        make_mask(
-            "interior_only",
-            "Only non-boundary edges kept.",
-            interior_only_values,
-        ),
-        make_mask(
-            "stride_sparse",
-            f"Index-strided sparse mask keeping every {keep_stride}-th edge.",
-            stride_sparse_values,
-        ),
-        make_mask(
-            "empty",
-            "No edges active. Measures query fixed overhead after a degenerate rebuild.",
-            empty_values,
-        ),
+        make_mask("empty", "No edges active. Measures query fixed overhead after a degenerate rebuild.", empty_values),
     ]
     return full_mask, scenarios
 
@@ -351,13 +278,7 @@ def _measure_build(
 
 
 def _benchmark_queries(
-    scene: Any,
-    *,
-    point_queries: cuda.Array3f,
-    finite_rays: Any,
-    infinite_rays: Any,
-    repeats: int,
-    warmup: int,
+    scene: Any, *, point_queries: cuda.Array3f, finite_rays: Any, infinite_rays: Any, repeats: int, warmup: int
 ) -> tuple[dict[str, dict[str, float]], dict[str, float | int]]:
     point_result = scene.nearest_edge(point_queries)
     finite_result = scene.nearest_edge(finite_rays)
@@ -367,28 +288,16 @@ def _benchmark_queries(
     _eval_ray_result(infinite_result)
     dr.sync_thread()
 
-    def run_point() -> None:
-        result = scene.nearest_edge(point_queries)
-        _eval_point_result(result)
-
-    def run_finite_ray() -> None:
-        result = scene.nearest_edge(finite_rays)
-        _eval_ray_result(result)
-
-    def run_infinite_ray() -> None:
-        result = scene.nearest_edge(infinite_rays)
-        _eval_ray_result(result)
-
     query_count = len(point_queries[0])
     timings = {
-        "point_query": _summarize_timings(_measure(run_point, repeats, warmup), query_count),
+        "point_query": _summarize_timings(
+            _measure(lambda: _eval_point_result(scene.nearest_edge(point_queries)), repeats, warmup), query_count
+        ),
         "finite_ray_query": _summarize_timings(
-            _measure(run_finite_ray, repeats, warmup),
-            query_count,
+            _measure(lambda: _eval_ray_result(scene.nearest_edge(finite_rays)), repeats, warmup), query_count
         ),
         "infinite_ray_query": _summarize_timings(
-            _measure(run_infinite_ray, repeats, warmup),
-            query_count,
+            _measure(lambda: _eval_ray_result(scene.nearest_edge(infinite_rays)), repeats, warmup), query_count
         ),
     }
 
@@ -411,12 +320,7 @@ def _ensure_mask(scene: Any, mask: Any) -> None:
 
 
 def _measure_mask_transition(
-    scene: Any,
-    *,
-    target_mask: Any,
-    baseline_mask: Any,
-    repeats: int,
-    warmup: int,
+    scene: Any, *, target_mask: Any, baseline_mask: Any, repeats: int, warmup: int
 ) -> dict[str, Any]:
     def run_once() -> tuple[float, dict[str, float | int]]:
         _ensure_mask(scene, baseline_mask)
@@ -438,10 +342,7 @@ def _measure_mask_transition(
         profile_samples.append(profile_sample)
 
     _ensure_mask(scene, baseline_mask)
-    return {
-        "wall_ms": _summarize_latency(wall_times_s),
-        "profile_avg": _summarize_profile_samples(profile_samples),
-    }
+    return {"wall_ms": _summarize_latency(wall_times_s), "profile_avg": _summarize_profile_samples(profile_samples)}
 
 
 def _benchmark_mask_scenario(
@@ -459,11 +360,7 @@ def _benchmark_mask_scenario(
     restore_full = None
     if scenario.name != "full":
         sync_to_mask = _measure_mask_transition(
-            scene,
-            target_mask=scenario.mask,
-            baseline_mask=full_mask,
-            repeats=repeats,
-            warmup=warmup,
+            scene, target_mask=scenario.mask, baseline_mask=full_mask, repeats=repeats, warmup=warmup
         )
 
     _ensure_mask(scene, scenario.mask)
@@ -478,11 +375,7 @@ def _benchmark_mask_scenario(
 
     if scenario.name != "full":
         restore_full = _measure_mask_transition(
-            scene,
-            target_mask=full_mask,
-            baseline_mask=scenario.mask,
-            repeats=repeats,
-            warmup=warmup,
+            scene, target_mask=full_mask, baseline_mask=scenario.mask, repeats=repeats, warmup=warmup
         )
     else:
         _ensure_mask(scene, full_mask)
@@ -541,23 +434,9 @@ def main() -> int:
     )
     edge_count = _edge_count(scene)
     point_queries = _make_world_query_grid(args.query_grid_side, bounds, args.point_z)
-    finite_rays = _make_downward_rays(
-        args.query_grid_side,
-        bounds,
-        args.ray_z_origin,
-        tmax=args.finite_ray_tmax,
-    )
-    infinite_rays = _make_downward_rays(
-        args.query_grid_side,
-        bounds,
-        args.ray_z_origin,
-        tmax=None,
-    )
-    full_mask, mask_scenarios = _build_mask_scenarios(
-        scene,
-        tiles_x=args.tiles_x,
-        keep_stride=args.mask_keep_stride,
-    )
+    finite_rays = _make_downward_rays(args.query_grid_side, bounds, args.ray_z_origin, tmax=args.finite_ray_tmax)
+    infinite_rays = _make_downward_rays(args.query_grid_side, bounds, args.ray_z_origin, tmax=None)
+    full_mask, mask_scenarios = _build_mask_scenarios(scene, tiles_x=args.tiles_x, keep_stride=args.mask_keep_stride)
     _ensure_mask(scene, full_mask)
 
     build_timings = _measure_build(

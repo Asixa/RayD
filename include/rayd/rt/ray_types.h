@@ -14,25 +14,25 @@ namespace rayd::shared::rt {
 // JIT paths can hand device pointers straight through without materializing
 // packed buffers.
 struct RayBatchView {
-    const float *origin_x;
-    const float *origin_y;
-    const float *origin_z;
-    const float *direction_x;
-    const float *direction_y;
-    const float *direction_z;
-    const float *tmax;
-    const std::uint8_t *active;
+    const float* origin_x;
+    const float* origin_y;
+    const float* origin_z;
+    const float* direction_x;
+    const float* direction_y;
+    const float* direction_z;
+    const float* tmax;
+    const std::uint8_t* active;
     std::uint32_t count;
 };
 
 struct SegmentBatchView {
-    const float *start_x;
-    const float *start_y;
-    const float *start_z;
-    const float *end_x;
-    const float *end_y;
-    const float *end_z;
-    const std::uint8_t *active;
+    const float* start_x;
+    const float* start_y;
+    const float* start_z;
+    const float* end_x;
+    const float* end_y;
+    const float* end_z;
+    const std::uint8_t* active;
     std::uint32_t count;
 };
 

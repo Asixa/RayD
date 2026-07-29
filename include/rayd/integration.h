@@ -17,7 +17,6 @@
 namespace rayd::torch {
 
 inline constexpr std::uint32_t kIntegrationApiVersion = 8;
-inline constexpr std::string_view kIntegrationHeaderIdentity =
-    "rayd.torch.integration";
+inline constexpr std::string_view kIntegrationHeaderIdentity = "rayd.torch.integration";
 
 } // namespace rayd::torch

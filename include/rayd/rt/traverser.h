@@ -47,53 +47,40 @@ static_assert(std::is_trivially_copyable_v<TriangleHit>);
 //
 // origin/direction are math::Vec3f; the ignore list names mesh-global primitive
 // ids to treat as non-occluding (parity with the OptiX anyhit ignore filter).
-template <typename T, typename = void>
-struct is_traverser : std::false_type {};
+template <typename T, typename = void> struct is_traverser : std::false_type {};
 
 template <typename T>
 struct is_traverser<
-    T,
-    std::void_t<
-        decltype(std::declval<const T &>().trace_closest(
-            std::declval<math::Vec3f>(), std::declval<math::Vec3f>(),
-            std::declval<float>(), std::declval<float>())),
-        decltype(std::declval<const T &>().trace_occluded(
-            std::declval<math::Vec3f>(), std::declval<math::Vec3f>(),
-            std::declval<float>(), std::declval<float>())),
-        decltype(std::declval<const T &>().trace_occluded_ignore(
-            std::declval<math::Vec3f>(), std::declval<math::Vec3f>(),
-            std::declval<float>(), std::declval<float>(),
-            std::declval<const std::int32_t *>(), std::declval<int>())),
-        decltype(std::declval<const T &>().trace_first_blocker(
-            std::declval<math::Vec3f>(), std::declval<math::Vec3f>(),
-            std::declval<float>(), std::declval<float>(),
-            std::declval<const std::int32_t *>(), std::declval<int>()))>>
+    T, std::void_t<
+           decltype(std::declval<const T&>().trace_closest(std::declval<math::Vec3f>(), std::declval<math::Vec3f>(),
+                                                           std::declval<float>(), std::declval<float>())),
+           decltype(std::declval<const T&>().trace_occluded(std::declval<math::Vec3f>(), std::declval<math::Vec3f>(),
+                                                            std::declval<float>(), std::declval<float>())),
+           decltype(std::declval<const T&>().trace_occluded_ignore(
+               std::declval<math::Vec3f>(), std::declval<math::Vec3f>(), std::declval<float>(), std::declval<float>(),
+               std::declval<const std::int32_t*>(), std::declval<int>())),
+           decltype(std::declval<const T&>().trace_first_blocker(
+               std::declval<math::Vec3f>(), std::declval<math::Vec3f>(), std::declval<float>(), std::declval<float>(),
+               std::declval<const std::int32_t*>(), std::declval<int>()))>>
     : std::bool_constant<
           std::is_same_v<
-              decltype(std::declval<const T &>().trace_closest(
-                  std::declval<math::Vec3f>(), std::declval<math::Vec3f>(),
-                  std::declval<float>(), std::declval<float>())),
+              decltype(std::declval<const T&>().trace_closest(std::declval<math::Vec3f>(), std::declval<math::Vec3f>(),
+                                                              std::declval<float>(), std::declval<float>())),
               TriangleHit> &&
           std::is_same_v<
-              decltype(std::declval<const T &>().trace_occluded(
-                  std::declval<math::Vec3f>(), std::declval<math::Vec3f>(),
-                  std::declval<float>(), std::declval<float>())),
+              decltype(std::declval<const T&>().trace_occluded(std::declval<math::Vec3f>(), std::declval<math::Vec3f>(),
+                                                               std::declval<float>(), std::declval<float>())),
               bool> &&
-          std::is_same_v<
-              decltype(std::declval<const T &>().trace_occluded_ignore(
-                  std::declval<math::Vec3f>(), std::declval<math::Vec3f>(),
-                  std::declval<float>(), std::declval<float>(),
-                  std::declval<const std::int32_t *>(), std::declval<int>())),
-              bool> &&
-          std::is_same_v<
-              decltype(std::declval<const T &>().trace_first_blocker(
-                  std::declval<math::Vec3f>(), std::declval<math::Vec3f>(),
-                  std::declval<float>(), std::declval<float>(),
-                  std::declval<const std::int32_t *>(), std::declval<int>())),
-              TriangleHit>> {};
+          std::is_same_v<decltype(std::declval<const T&>().trace_occluded_ignore(
+                             std::declval<math::Vec3f>(), std::declval<math::Vec3f>(), std::declval<float>(),
+                             std::declval<float>(), std::declval<const std::int32_t*>(), std::declval<int>())),
+                         bool> &&
+          std::is_same_v<decltype(std::declval<const T&>().trace_first_blocker(
+                             std::declval<math::Vec3f>(), std::declval<math::Vec3f>(), std::declval<float>(),
+                             std::declval<float>(), std::declval<const std::int32_t*>(), std::declval<int>())),
+                         TriangleHit>> {};
 
-template <typename T>
-inline constexpr bool is_traverser_v = is_traverser<T>::value;
+template <typename T> inline constexpr bool is_traverser_v = is_traverser<T>::value;
 
 // TraceConfig merges the two independent axes of a migrated pipeline (audit A3):
 //   * Layout    - the backend storage/layout policy (AoS vs SoA inputs, packed
@@ -114,8 +101,7 @@ inline constexpr bool is_traverser_v = is_traverser<T>::value;
 //
 // Torch has no committed CUDA-BVH traverser path; it is OptiX-only. The CUDA BVH
 // traverser is a Dr.Jit-backend eager-native path.
-template <typename LayoutPolicy, typename TraverserType>
-struct TraceConfig {
+template <typename LayoutPolicy, typename TraverserType> struct TraceConfig {
     using Layout = LayoutPolicy;
     using Traverser = TraverserType;
 };

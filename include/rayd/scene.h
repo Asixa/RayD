@@ -29,18 +29,18 @@ struct MeshInput {
 };
 
 class SceneResource final {
-public:
-    SceneResource(SceneResource &&) noexcept;
-    SceneResource &operator=(SceneResource &&) noexcept;
+  public:
+    SceneResource(SceneResource&&) noexcept;
+    SceneResource& operator=(SceneResource&&) noexcept;
     ~SceneResource() noexcept;
 
-    SceneResource(const SceneResource &) = delete;
-    SceneResource &operator=(const SceneResource &) = delete;
+    SceneResource(const SceneResource&) = delete;
+    SceneResource& operator=(const SceneResource&) = delete;
 
     bool valid() const noexcept;
     int device_index() const;
 
-private:
+  private:
     class Impl;
     explicit SceneResource(std::unique_ptr<Impl> impl) noexcept;
 
@@ -67,7 +67,7 @@ struct SceneEdgeRecordsResult {
     at::Tensor edge_opposite;
 };
 
-SceneEdgeRecordsResult scene_edge_records(const SceneResource &scene);
+SceneEdgeRecordsResult scene_edge_records(const SceneResource& scene);
 
 struct RayBatch {
     at::Tensor ray_o;
@@ -91,10 +91,7 @@ struct IntersectResult {
     at::Tensor global_prim_id;
 };
 
-IntersectResult intersect_forward(
-    const SceneResource &scene,
-    const RayBatch &rays,
-    std::int64_t flags);
+IntersectResult intersect_forward(const SceneResource& scene, const RayBatch& rays, std::int64_t flags);
 
 struct IntersectBackwardRequest {
     RayBatch rays;
@@ -119,9 +116,7 @@ struct IntersectBackwardResult {
     at::Tensor grad_ray_tmax;
 };
 
-IntersectBackwardResult intersect_backward(
-    const SceneResource &scene,
-    const IntersectBackwardRequest &request);
+IntersectBackwardResult intersect_backward(const SceneResource& scene, const IntersectBackwardRequest& request);
 
 struct IntersectJvpRequest {
     at::Tensor ray_o;
@@ -144,10 +139,7 @@ struct IntersectJvpResult {
     at::Tensor tangent_barycentric;
 };
 
-IntersectJvpResult intersect_jvp(
-    const SceneResource &scene,
-    const IntersectJvpRequest &request);
-
+IntersectJvpResult intersect_jvp(const SceneResource& scene, const IntersectJvpRequest& request);
 
 struct MaterialPayload {
     at::Tensor eta_r;

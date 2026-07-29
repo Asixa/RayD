@@ -66,12 +66,8 @@ class SdfSharedHeaderTests(unittest.TestCase):
         for path in (GRID_HEADER, TRACE_HEADER):
             source = path.read_text(encoding="utf-8")
             for forbidden in FORBIDDEN_TOKENS:
-                self.assertNotIn(
-                    forbidden, source, f"{forbidden} in {path.relative_to(ROOT)}"
-                )
-            self.assertIsNone(
-                FLOAT3_TOKEN.search(source), f"float3 in {path.relative_to(ROOT)}"
-            )
+                self.assertNotIn(forbidden, source, f"{forbidden} in {path.relative_to(ROOT)}")
+            self.assertIsNone(FLOAT3_TOKEN.search(source), f"float3 in {path.relative_to(ROOT)}")
 
     def test_headers_spell_the_shared_host_device_qualifier(self):
         for path in (GRID_HEADER, TRACE_HEADER):
@@ -83,14 +79,7 @@ class SdfSharedHeaderTests(unittest.TestCase):
 
     def test_grid_and_trace_surfaces_are_complete(self):
         grid = GRID_HEADER.read_text(encoding="utf-8")
-        for symbol in (
-            "grid_cells",
-            "grid_coord",
-            "base_index",
-            "trilinear_cell",
-            "sample_cell",
-            "local_gradient",
-        ):
+        for symbol in ("grid_cells", "grid_coord", "base_index", "trilinear_cell", "sample_cell", "local_gradient"):
             self.assertIn(symbol, grid)
         trace = TRACE_HEADER.read_text(encoding="utf-8")
         for symbol in (
@@ -122,11 +111,7 @@ class SdfSharedHeaderTests(unittest.TestCase):
         # Reaching a PTX module's closure would silently stale the committed
         # `*_ptx.h` headers (ADR-0037 section 9, repository PTX identity rule).
         record = json.loads(PTX_SOURCES.read_text(encoding="utf-8"))
-        closure = {
-            source
-            for module in record["modules"].values()
-            for source in module["sources"]
-        }
+        closure = {source for module in record["modules"].values() for source in module["sources"]}
         for path in (GRID_HEADER, TRACE_HEADER):
             relative = path.relative_to(ROOT).as_posix()
             self.assertNotIn(relative, closure)
@@ -148,28 +133,30 @@ class SdfHostSmokeTests(unittest.TestCase):
         out_dir.mkdir(parents=True, exist_ok=True)
         executable = out_dir / "sdf_shared_math_smoke.exe"
         compile_cmd = [
-            cl, "/nologo", "/std:c++17", "/EHsc", "/W3",
+            cl,
+            "/nologo",
+            "/std:c++17",
+            "/EHsc",
+            "/W3",
             f"/I{SHARED_INCLUDE}",
             str(SMOKE_TU),
             f"/Fo{out_dir}\\",
             f"/Fe{executable}",
         ]
-        built = subprocess.run(compile_cmd, cwd=str(out_dir), env=env,
-                               capture_output=True, text=True, check=False)
+        built = subprocess.run(compile_cmd, cwd=str(out_dir), env=env, capture_output=True, text=True, check=False)
         self.assertEqual(
-            built.returncode, 0,
-            f"host compile failed.\nCMD: {' '.join(compile_cmd)}\n"
-            f"STDOUT:\n{built.stdout}\nSTDERR:\n{built.stderr}",
+            built.returncode,
+            0,
+            f"host compile failed.\nCMD: {' '.join(compile_cmd)}\nSTDOUT:\n{built.stdout}\nSTDERR:\n{built.stderr}",
         )
 
         # Each check in the smoke TU owns a distinct exit code, so a failure
         # names the numerical claim that broke.
-        ran = subprocess.run([str(executable)], cwd=str(out_dir),
-                             capture_output=True, text=True, check=False)
+        ran = subprocess.run([str(executable)], cwd=str(out_dir), capture_output=True, text=True, check=False)
         self.assertEqual(
-            ran.returncode, 0,
-            f"sdf_shared_math_smoke check #{ran.returncode} failed.\n"
-            f"STDOUT:\n{ran.stdout}\nSTDERR:\n{ran.stderr}",
+            ran.returncode,
+            0,
+            f"sdf_shared_math_smoke check #{ran.returncode} failed.\nSTDOUT:\n{ran.stdout}\nSTDERR:\n{ran.stderr}",
         )
 
 

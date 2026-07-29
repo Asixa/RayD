@@ -18,11 +18,7 @@ class TorchNativeImportTests(unittest.TestCase):
             """
         )
         proc = subprocess.run(
-            [sys.executable, "-c", code],
-            check=True,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            [sys.executable, "-c", code], check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
         lines = proc.stdout.strip().splitlines()
         self.assertEqual(lines[0], "False")
@@ -43,17 +39,14 @@ class TorchNativeImportTests(unittest.TestCase):
             """
         )
         proc = subprocess.run(
-            [sys.executable, "-c", code],
-            check=True,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            [sys.executable, "-c", code], check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
         lines = proc.stdout.strip().splitlines()
         self.assertEqual(lines[-1], "False")
 
     def test_native_extension_loads(self):
         import rayd.torch as rt
+
         self.assertTrue(hasattr(rt, "_C"))
         self.assertTrue(hasattr(rt._C, "build_info"))
         info = rt._C.build_info()

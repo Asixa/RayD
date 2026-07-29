@@ -34,9 +34,7 @@ class SdfGridRef:
     @property
     def cells(self) -> Tensor:
         # Per-axis `N_i - 1`, the span of the grid coordinate `u`.
-        extent = torch.tensor(
-            self.values.shape, device=self.values.device, dtype=self.values.dtype
-        )
+        extent = torch.tensor(self.values.shape, device=self.values.device, dtype=self.values.dtype)
         return extent - 1
 
 
@@ -104,8 +102,7 @@ def base_index(u: Tensor, cells: Tensor) -> Tensor:
 def sample(values: Tensor, u: Tensor, base: Tensor) -> tuple[Tensor, Tensor]:
     ny, nz = values.shape[1], values.shape[2]
     offsets = values.new_tensor(
-        [0, 1, nz, nz + 1, ny * nz, ny * nz + 1, ny * nz + nz, ny * nz + nz + 1],
-        dtype=torch.long,
+        [0, 1, nz, nz + 1, ny * nz, ny * nz + 1, ny * nz + nz, ny * nz + nz + 1], dtype=torch.long
     )
     linear = (base[:, 0] * ny + base[:, 1]) * nz + base[:, 2]
     corners = values.reshape(-1)[linear.unsqueeze(-1) + offsets].reshape(-1, 2, 2, 2)
@@ -130,9 +127,7 @@ def world_gradient(grid: SdfGridRef, d_du: Tensor, rot: Tensor) -> Tensor:
 
 
 # Ray/box overlap in the local frame, plus the lanes that may be traced at all.
-def slab_clip(
-    o_l: Tensor, w_l: Tensor, scale: Tensor, tmax: float
-) -> tuple[Tensor, Tensor, Tensor]:
+def slab_clip(o_l: Tensor, w_l: Tensor, scale: Tensor, tmax: float) -> tuple[Tensor, Tensor, Tensor]:
     half = 0.5 * scale
     parallel = w_l.abs() <= EPS_PARALLEL
     denom = torch.where(parallel, torch.ones_like(w_l), w_l)
@@ -151,17 +146,13 @@ def slab_clip(
 # Structural finiteness of the placement, which a lane cannot recover from.
 def placement_is_usable(grid: SdfGridRef) -> Tensor:
     finite = (
-        torch.isfinite(grid.position).all()
-        & torch.isfinite(grid.rotation).all()
-        & torch.isfinite(grid.scale).all()
+        torch.isfinite(grid.position).all() & torch.isfinite(grid.rotation).all() & torch.isfinite(grid.scale).all()
     )
     return finite & (grid.scale > 0).all()
 
 
 # Detached sphere trace producing the frozen winner of ADR-0037 section 4.
-def march(
-    grid: SdfGridRef, origins: Tensor, directions: Tensor, cfg: TraceConfig
-) -> Tape:
+def march(grid: SdfGridRef, origins: Tensor, directions: Tensor, cfg: TraceConfig) -> Tape:
     with torch.no_grad():
         rot = rotation_matrix(grid.rotation)
         wh = unit(directions)
@@ -229,20 +220,11 @@ def march(
             hi = torch.where(moving & ~keep_lo, mid, hi)
             failed, alive = failed | bad, moving
 
-        return Tape(
-            t=t,
-            hit=(hit | bisected) & ~failed,
-            base=base,
-            value=d,
-            steps=steps,
-            bisected=bisected,
-        )
+        return Tape(t=t, hit=(hit | bisected) & ~failed, base=base, value=d, steps=steps, bisected=bisected)
 
 
 # Differentiable last step: the frozen-winner IFT of ADR-0037 section 6.
-def reattach(
-    grid: SdfGridRef, origins: Tensor, directions: Tensor, tape: Tape
-) -> SdfIntersectionRef:
+def reattach(grid: SdfGridRef, origins: Tensor, directions: Tensor, tape: Tape) -> SdfIntersectionRef:
     rot = rotation_matrix(grid.rotation)
     wh = unit(directions)
     lane = tape.hit.unsqueeze(-1)
@@ -257,9 +239,7 @@ def reattach(
 
     hit_point = origins + t.unsqueeze(-1) * wh
     x_l_hit = (hit_point - grid.position) @ rot
-    _, d_du_hit = sample(
-        grid.values, grid_coord(x_l_hit, grid.scale, grid.cells), base
-    )
+    _, d_du_hit = sample(grid.values, grid_coord(x_l_hit, grid.scale, grid.cells), base)
     normal = unit(world_gradient(grid, d_du_hit, rot))
 
     zero = torch.zeros_like(hit_point)
@@ -274,9 +254,6 @@ def reattach(
 
 # Public reference entry point: detached march plus differentiable reattachment.
 def intersect(
-    grid: SdfGridRef,
-    origins: Tensor,
-    directions: Tensor,
-    cfg: TraceConfig = TraceConfig(),
+    grid: SdfGridRef, origins: Tensor, directions: Tensor, cfg: TraceConfig = TraceConfig()
 ) -> SdfIntersectionRef:
     return reattach(grid, origins, directions, march(grid, origins, directions, cfg))

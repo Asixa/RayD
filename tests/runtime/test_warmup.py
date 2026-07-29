@@ -104,10 +104,7 @@ class WarmUpSingleDeviceTests(unittest.TestCase):
         self.assertLessEqual(after, before + 4096)
 
 
-@unittest.skipUnless(
-    torch.cuda.is_available() and torch.cuda.device_count() >= 2,
-    "two CUDA devices are required",
-)
+@unittest.skipUnless(torch.cuda.is_available() and torch.cuda.device_count() >= 2, "two CUDA devices are required")
 class WarmUpMultiDeviceTests(unittest.TestCase):
     def setUp(self) -> None:
         self._entry_device = torch.cuda.current_device()
@@ -131,9 +128,7 @@ class WarmUpMultiDeviceTests(unittest.TestCase):
             with self.subTest(device=index):
                 device = torch.device("cuda", index)
                 vertices = torch.tensor(
-                    [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [0.0, 1.0, 0.0]],
-                    dtype=torch.float32,
-                    device=device,
+                    [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [0.0, 1.0, 0.0]], dtype=torch.float32, device=device
                 )
                 faces = torch.tensor([[0, 1, 2]], dtype=torch.int32, device=device)
                 with torch.cuda.device(index):
@@ -141,12 +136,8 @@ class WarmUpMultiDeviceTests(unittest.TestCase):
                     scene.add_mesh(rt.Mesh(vertices, faces))
                     scene.build()
                 ray = rt.Ray(
-                    torch.tensor(
-                        [[0.0, 0.0, -1.0]], dtype=torch.float32, device=device
-                    ),
-                    torch.tensor(
-                        [[0.0, 0.0, 1.0]], dtype=torch.float32, device=device
-                    ),
+                    torch.tensor([[0.0, 0.0, -1.0]], dtype=torch.float32, device=device),
+                    torch.tensor([[0.0, 0.0, 1.0]], dtype=torch.float32, device=device),
                 )
                 hit = scene.intersect(ray)
                 self.assertEqual(hit.t.device.index, index)
@@ -209,9 +200,7 @@ class WarmUpMultiDeviceTests(unittest.TestCase):
 
         self.assertEqual(elapsed, {0: 0.125, 1: 0.125})
         self.assertEqual(sorted(observed), [0, 1])
-        self.assertNotEqual(
-            observed[0], observed[1], "both devices ran on the same thread"
-        )
+        self.assertNotEqual(observed[0], observed[1], "both devices ran on the same thread")
 
     def test_a_failure_on_one_device_does_not_hide_the_other(self):
         started = threading.Event()
@@ -267,10 +256,7 @@ class ConcurrentHostThreadTests(unittest.TestCase):
         failures: list[BaseException] = []
         threads = [
             threading.Thread(
-                target=self._churn,
-                args=(index, self.ROUNDS, failures),
-                name=f"rayd-churn-{index}",
-                daemon=True,
+                target=self._churn, args=(index, self.ROUNDS, failures), name=f"rayd-churn-{index}", daemon=True
             )
             # Two threads even on one device: the deadlock is a host-thread
             # defect, not a multi-device one.

@@ -33,9 +33,7 @@ import rayd.drjit as rd
 
 
 DXGL_APPLE_URL = "https://dx.gl/api/v/EJbs8npt2RVM/vCHDLxjWG65d/dataset"
-SONIC_NERF_BASE_URL = (
-    "https://huggingface.co/datasets/hayden-donnelly/sonic-nerf/resolve/main/multi_view_renders"
-)
+SONIC_NERF_BASE_URL = "https://huggingface.co/datasets/hayden-donnelly/sonic-nerf/resolve/main/multi_view_renders"
 SONIC_NERF_REFERENCE = "https://huggingface.co/datasets/hayden-donnelly/sonic-nerf"
 DXGL_REFERENCE = "https://huggingface.co/datasets/dxgl/multiview-datasets"
 SH_Y00 = 0.28209479177387814
@@ -61,10 +59,7 @@ def evaluate_sh_rgb(coeffs: np.ndarray, view_dirs: np.ndarray, degree: int) -> n
     if degree == 0:
         basis = np.ones((coeffs.shape[0], 1), dtype=np.float32)
     else:
-        basis = np.concatenate(
-            [np.ones((coeffs.shape[0], 1), dtype=np.float32), view_dirs],
-            axis=1,
-        )
+        basis = np.concatenate([np.ones((coeffs.shape[0], 1), dtype=np.float32), view_dirs], axis=1)
     if coeffs.shape[2] != basis.shape[1]:
         raise ValueError("SH coefficient count does not match degree.")
     return np.einsum("ncb,nb->nc", coeffs, basis, optimize=True)
@@ -169,9 +164,7 @@ def resolve_fit_size(args, first_image_path: Path) -> int:
     with Image.open(first_image_path) as image:
         width, height = image.size
     if width != height:
-        raise ValueError(
-            f"Native fit currently expects square images; got {width}x{height} from {first_image_path}."
-        )
+        raise ValueError(f"Native fit currently expects square images; got {width}x{height} from {first_image_path}.")
     return int(width)
 
 
@@ -213,28 +206,14 @@ def camera_intrinsics(transforms: dict, size: int) -> tuple[float, float, float,
     return fx, fy, cx, cy
 
 
-def make_camera_rays(transform: np.ndarray,
-                     fx: float,
-                     fy: float,
-                     cx: float,
-                     cy: float,
-                     size: int,
-                     ad_mode: bool):
+def make_camera_rays(transform: np.ndarray, fx: float, fy: float, cx: float, cy: float, size: int, ad_mode: bool):
     origins, directions = camera_ray_arrays(transform, fx, fy, cx, cy, size)
 
     array3 = ad.Array3f if ad_mode else cuda.Array3f
     scalar = ad.Float if ad_mode else cuda.Float
     return (rd.RayAD if ad_mode else rd.Ray)(
-        array3(
-            scalar(origins[:, 0].tolist()),
-            scalar(origins[:, 1].tolist()),
-            scalar(origins[:, 2].tolist()),
-        ),
-        array3(
-            scalar(directions[:, 0].tolist()),
-            scalar(directions[:, 1].tolist()),
-            scalar(directions[:, 2].tolist()),
-        ),
+        array3(scalar(origins[:, 0].tolist()), scalar(origins[:, 1].tolist()), scalar(origins[:, 2].tolist())),
+        array3(scalar(directions[:, 0].tolist()), scalar(directions[:, 1].tolist()), scalar(directions[:, 2].tolist())),
     )
 
 
@@ -244,35 +223,19 @@ def make_rays_from_arrays(origins: np.ndarray, directions: np.ndarray, ad_mode: 
     array3 = ad.Array3f if ad_mode else cuda.Array3f
     scalar = ad.Float if ad_mode else cuda.Float
     return (rd.RayAD if ad_mode else rd.Ray)(
-        array3(
-            scalar(origins[:, 0].tolist()),
-            scalar(origins[:, 1].tolist()),
-            scalar(origins[:, 2].tolist()),
-        ),
-        array3(
-            scalar(directions[:, 0].tolist()),
-            scalar(directions[:, 1].tolist()),
-            scalar(directions[:, 2].tolist()),
-        ),
+        array3(scalar(origins[:, 0].tolist()), scalar(origins[:, 1].tolist()), scalar(origins[:, 2].tolist())),
+        array3(scalar(directions[:, 0].tolist()), scalar(directions[:, 1].tolist()), scalar(directions[:, 2].tolist())),
     )
 
 
-def camera_ray_arrays(transform: np.ndarray,
-                      fx: float,
-                      fy: float,
-                      cx: float,
-                      cy: float,
-                      size: int) -> tuple[np.ndarray, np.ndarray]:
-    xs, ys = np.meshgrid(np.arange(size, dtype=np.float32) + 0.5,
-                         np.arange(size, dtype=np.float32) + 0.5)
-    cam_dirs = np.stack([(xs - cx) / fx,
-                         -(ys - cy) / fy,
-                         -np.ones_like(xs)], axis=-1).reshape(-1, 3)
+def camera_ray_arrays(
+    transform: np.ndarray, fx: float, fy: float, cx: float, cy: float, size: int
+) -> tuple[np.ndarray, np.ndarray]:
+    xs, ys = np.meshgrid(np.arange(size, dtype=np.float32) + 0.5, np.arange(size, dtype=np.float32) + 0.5)
+    cam_dirs = np.stack([(xs - cx) / fx, -(ys - cy) / fy, -np.ones_like(xs)], axis=-1).reshape(-1, 3)
     directions = cam_dirs @ np.asarray(transform[:3, :3], dtype=np.float32).T
     directions /= np.maximum(np.linalg.norm(directions, axis=1, keepdims=True), 1e-8)
-    origins = np.repeat(np.asarray(transform[:3, 3], dtype=np.float32)[None, :],
-                        size * size,
-                        axis=0)
+    origins = np.repeat(np.asarray(transform[:3, 3], dtype=np.float32)[None, :], size * size, axis=0)
     return origins.astype(np.float32), directions.astype(np.float32)
 
 
@@ -281,9 +244,7 @@ def normalize_rows(values: np.ndarray) -> np.ndarray:
     return values / np.maximum(norms, 1e-6)
 
 
-def random_tangent_basis(rng: np.random.Generator,
-                         count: int,
-                         scale: float) -> tuple[np.ndarray, np.ndarray]:
+def random_tangent_basis(rng: np.random.Generator, count: int, scale: float) -> tuple[np.ndarray, np.ndarray]:
     normals = normalize_rows(rng.normal(size=(count, 3)).astype(np.float32))
     helper = np.tile(np.array([[0.0, 1.0, 0.0]], dtype=np.float32), (count, 1))
     near_parallel = np.abs(np.sum(helper * normals, axis=1)) > 0.9
@@ -302,12 +263,7 @@ def initialize_random_surfel_field(args) -> tuple[np.ndarray, np.ndarray, np.nda
     centers = rng.uniform(-radius, radius, size=(count, 3)).astype(np.float32)
     tangent_u, tangent_v = random_tangent_basis(rng, count, scale)
     colors = rng.uniform(0.2, 0.8, size=(count, 3)).astype(np.float32)
-    info = {
-        "source": "random",
-        "sample_count": count,
-        "random_radius": radius,
-        "initial_scale": scale,
-    }
+    info = {"source": "random", "sample_count": count, "random_radius": radius, "initial_scale": scale}
     return centers, colors, tangent_u, tangent_v, info
 
 
@@ -325,11 +281,9 @@ def surfel_scales(tangent_u: np.ndarray, tangent_v: np.ndarray) -> np.ndarray:
     return ((scale_u + scale_v) * 0.5).astype(np.float32)
 
 
-def scheduled_learning_rate(iteration: int,
-                            base_lr: float,
-                            final_lr: float,
-                            warmup_iters: int,
-                            total_iters: int) -> float:
+def scheduled_learning_rate(
+    iteration: int, base_lr: float, final_lr: float, warmup_iters: int, total_iters: int
+) -> float:
     if total_iters <= 1:
         return float(final_lr)
     if warmup_iters > 0 and iteration <= warmup_iters:
@@ -355,14 +309,16 @@ def next_power_of_two(value: int) -> int:
     return 1 << (value - 1).bit_length()
 
 
-def analytic_hit_counts_for_rays(centers: np.ndarray,
-                                 tangent_u: np.ndarray,
-                                 tangent_v: np.ndarray,
-                                 opacity: np.ndarray,
-                                 ray_origins: np.ndarray,
-                                 ray_directions: np.ndarray,
-                                 alpha_min: float,
-                                 surfel_chunk: int = 128) -> np.ndarray:
+def analytic_hit_counts_for_rays(
+    centers: np.ndarray,
+    tangent_u: np.ndarray,
+    tangent_v: np.ndarray,
+    opacity: np.ndarray,
+    ray_origins: np.ndarray,
+    ray_directions: np.ndarray,
+    alpha_min: float,
+    surfel_chunk: int = 128,
+) -> np.ndarray:
     centers = np.asarray(centers, dtype=np.float32).reshape(-1, 3)
     tangent_u = np.asarray(tangent_u, dtype=np.float32).reshape(-1, 3)
     tangent_v = np.asarray(tangent_v, dtype=np.float32).reshape(-1, 3)
@@ -408,22 +364,18 @@ def analytic_hit_counts_for_rays(centers: np.ndarray,
     return counts
 
 
-def estimate_candidate_hit_capacity(centers: np.ndarray,
-                                    tangent_u: np.ndarray,
-                                    tangent_v: np.ndarray,
-                                    opacity: np.ndarray,
-                                    views: list[dict],
-                                    args,
-                                    alpha_min: float = 1.0 / 255.0) -> dict:
+def estimate_candidate_hit_capacity(
+    centers: np.ndarray,
+    tangent_u: np.ndarray,
+    tangent_v: np.ndarray,
+    opacity: np.ndarray,
+    views: list[dict],
+    args,
+    alpha_min: float = 1.0 / 255.0,
+) -> dict:
     manual = int(getattr(args, "max_candidate_hits", 0))
     if manual > 0:
-        return {
-            "mode": "manual",
-            "capacity": manual,
-            "hit_count_quantile": 0.0,
-            "hit_count_max": 0,
-            "sampled_rays": 0,
-        }
+        return {"mode": "manual", "capacity": manual, "hit_count_quantile": 0.0, "hit_count_max": 0, "sampled_rays": 0}
 
     origins = []
     directions = []
@@ -451,13 +403,7 @@ def estimate_candidate_hit_capacity(centers: np.ndarray,
         ray_directions = ray_directions[indices]
 
     counts = analytic_hit_counts_for_rays(
-        centers,
-        tangent_u,
-        tangent_v,
-        opacity,
-        ray_origins,
-        ray_directions,
-        alpha_min,
+        centers, tangent_u, tangent_v, opacity, ray_origins, ray_directions, alpha_min
     )
     quantile = float(np.quantile(counts, float(getattr(args, "candidate_hit_quantile", 0.99))))
     raw = int(math.ceil(quantile * float(getattr(args, "candidate_hit_safety", 1.1))))
@@ -473,16 +419,18 @@ def estimate_candidate_hit_capacity(centers: np.ndarray,
     }
 
 
-def densify_and_prune_surfel_arrays(centers: np.ndarray,
-                                    tangent_u: np.ndarray,
-                                    tangent_v: np.ndarray,
-                                    opacity: np.ndarray,
-                                    values: np.ndarray,
-                                    degree: int,
-                                    grad_norm: np.ndarray,
-                                    args,
-                                    seed: int,
-                                    screen_radius: np.ndarray | None = None) -> dict:
+def densify_and_prune_surfel_arrays(
+    centers: np.ndarray,
+    tangent_u: np.ndarray,
+    tangent_v: np.ndarray,
+    opacity: np.ndarray,
+    values: np.ndarray,
+    degree: int,
+    grad_norm: np.ndarray,
+    args,
+    seed: int,
+    screen_radius: np.ndarray | None = None,
+) -> dict:
     centers = np.asarray(centers, dtype=np.float32).reshape(-1, 3)
     tangent_u = np.asarray(tangent_u, dtype=np.float32).reshape(-1, 3)
     tangent_v = np.asarray(tangent_v, dtype=np.float32).reshape(-1, 3)
@@ -539,7 +487,9 @@ def densify_and_prune_surfel_arrays(centers: np.ndarray,
                 break
             offsets = rng.normal(0.0, 1.0, size=(child_count, 2)).astype(np.float32)
             for offset_u, offset_v in offsets:
-                new_centers.append((centers[index] + tangent_u[index] * offset_u + tangent_v[index] * offset_v).astype(np.float32))
+                new_centers.append(
+                    (centers[index] + tangent_u[index] * offset_u + tangent_v[index] * offset_v).astype(np.float32)
+                )
                 new_u.append((tangent_u[index] * child_scale).astype(np.float32))
                 new_v.append((tangent_v[index] * child_scale).astype(np.float32))
                 new_opacity.append(float(opacity[index]))
@@ -574,7 +524,7 @@ def densify_and_prune_surfel_arrays(centers: np.ndarray,
 
     pruned = int(np.count_nonzero(prune_mask))
     if np.all(prune_mask):
-        keep_index = int(np.argmax(np.maximum(grad_norm[:prune_parent.shape[0]], opacity[:prune_parent.shape[0]])))
+        keep_index = int(np.argmax(np.maximum(grad_norm[: prune_parent.shape[0]], opacity[: prune_parent.shape[0]])))
         prune_mask[keep_index] = False
         pruned -= 1
 
@@ -604,11 +554,7 @@ def densify_and_prune_surfel_arrays(centers: np.ndarray,
 
 
 def array3_ad(values: np.ndarray):
-    return ad.Array3f(
-        ad.Float(values[:, 0].tolist()),
-        ad.Float(values[:, 1].tolist()),
-        ad.Float(values[:, 2].tolist()),
-    )
+    return ad.Array3f(ad.Float(values[:, 0].tolist()), ad.Float(values[:, 1].tolist()), ad.Float(values[:, 2].tolist()))
 
 
 def native_sh_flat_from_coeffs(coeffs: np.ndarray) -> np.ndarray:
@@ -669,27 +615,16 @@ def make_options(max_candidate_hits: int) -> rd.SurfelTraceOptions:
     return opts
 
 
-def make_dynamic_options(centers: np.ndarray,
-                         tangent_u: np.ndarray,
-                         tangent_v: np.ndarray,
-                         opacity: np.ndarray,
-                         views: list[dict],
-                         args) -> tuple[rd.SurfelTraceOptions, dict]:
-    estimate = estimate_candidate_hit_capacity(
-        centers,
-        tangent_u,
-        tangent_v,
-        opacity,
-        views,
-        args,
-    )
+def make_dynamic_options(
+    centers: np.ndarray, tangent_u: np.ndarray, tangent_v: np.ndarray, opacity: np.ndarray, views: list[dict], args
+) -> tuple[rd.SurfelTraceOptions, dict]:
+    estimate = estimate_candidate_hit_capacity(centers, tangent_u, tangent_v, opacity, views, args)
     return make_options(int(estimate["capacity"])), estimate
 
 
-def projected_surfel_screen_radius(centers: np.ndarray,
-                                   tangent_u: np.ndarray,
-                                   tangent_v: np.ndarray,
-                                   views: list[dict]) -> np.ndarray:
+def projected_surfel_screen_radius(
+    centers: np.ndarray, tangent_u: np.ndarray, tangent_v: np.ndarray, views: list[dict]
+) -> np.ndarray:
     centers = np.asarray(centers, dtype=np.float32).reshape(-1, 3)
     scale = surfel_scales(tangent_u, tangent_v)
     radii = np.zeros((centers.shape[0],), dtype=np.float32)
@@ -704,17 +639,19 @@ def projected_surfel_screen_radius(centers: np.ndarray,
     return radii.astype(np.float32)
 
 
-def render_rgb(centers: np.ndarray,
-               tangent_u: np.ndarray,
-               tangent_v: np.ndarray,
-               opacity: np.ndarray,
-               coeffs: np.ndarray,
-               degree: int,
-               rays,
-               camera_origin: np.ndarray,
-               opts: rd.SurfelTraceOptions,
-               size: int,
-               background: float = 0.0) -> np.ndarray:
+def render_rgb(
+    centers: np.ndarray,
+    tangent_u: np.ndarray,
+    tangent_v: np.ndarray,
+    opacity: np.ndarray,
+    coeffs: np.ndarray,
+    degree: int,
+    rays,
+    camera_origin: np.ndarray,
+    opts: rd.SurfelTraceOptions,
+    size: int,
+    background: float = 0.0,
+) -> np.ndarray:
     del camera_origin
     state = GpuSurfelFitState(
         centers,
@@ -738,18 +675,15 @@ def render_rgb(centers: np.ndarray,
 
 def target_ad_arrays(target: np.ndarray, mask: np.ndarray) -> tuple[ad.Array3f, ad.Float, float]:
     target_ad = ad.Array3f(
-        ad.Float(target[:, 0].tolist()),
-        ad.Float(target[:, 1].tolist()),
-        ad.Float(target[:, 2].tolist()),
+        ad.Float(target[:, 0].tolist()), ad.Float(target[:, 1].tolist()), ad.Float(target[:, 2].tolist())
     )
     mask_ad = ad.Float(mask.tolist())
     return target_ad, mask_ad, max(float(mask.sum()), 1.0)
 
 
-def select_training_pixel_indices(view: dict,
-                                  batch_size: int,
-                                  rng: np.random.Generator,
-                                  foreground_fraction: float) -> np.ndarray:
+def select_training_pixel_indices(
+    view: dict, batch_size: int, rng: np.random.Generator, foreground_fraction: float
+) -> np.ndarray:
     pixel_count = int(view.get("pixel_count", np.asarray(view["mask"]).shape[0]))
     batch_size = int(batch_size)
     if batch_size <= 0 or batch_size >= pixel_count:
@@ -787,30 +721,32 @@ def gather_training_batch(view: dict, indices: np.ndarray | None):
 
 
 class GpuSurfelFitState:
-    def __init__(self,
-                 centers: np.ndarray,
-                 tangent_u: np.ndarray,
-                 tangent_v: np.ndarray,
-                 opacity: np.ndarray,
-                 initial_values: np.ndarray,
-                 degree: int,
-                 opts: rd.SurfelTraceOptions,
-                 optimizer: str,
-                 background: float,
-                 fit_opacity: bool,
-                 fit_geometry: bool,
-                 geometry_lr_scale: float,
-                  center_bound: float,
-                  tangent_min: float,
-                  tangent_max: float,
-                  render_normals: bool = False,
-                  beta1: float = 0.9,
-                  beta2: float = 0.999,
-                  eps: float = 1e-8,
-                  train_build_count_base: int = 0,
-                  preview_build_count_base: int = 0,
-                  train_geometry_update_count_base: int = 0,
-                  preview_geometry_update_count_base: int = 0):
+    def __init__(
+        self,
+        centers: np.ndarray,
+        tangent_u: np.ndarray,
+        tangent_v: np.ndarray,
+        opacity: np.ndarray,
+        initial_values: np.ndarray,
+        degree: int,
+        opts: rd.SurfelTraceOptions,
+        optimizer: str,
+        background: float,
+        fit_opacity: bool,
+        fit_geometry: bool,
+        geometry_lr_scale: float,
+        center_bound: float,
+        tangent_min: float,
+        tangent_max: float,
+        render_normals: bool = False,
+        beta1: float = 0.9,
+        beta2: float = 0.999,
+        eps: float = 1e-8,
+        train_build_count_base: int = 0,
+        preview_build_count_base: int = 0,
+        train_geometry_update_count_base: int = 0,
+        preview_geometry_update_count_base: int = 0,
+    ):
         self.surfel_count = int(centers.shape[0])
         self.degree = degree
         self.opts = opts
@@ -869,9 +805,7 @@ class GpuSurfelFitState:
 
     def rebuild_preview_scene(self) -> None:
         geometry = rd.SurfelGeometry(
-            dr.detach(self.center_values),
-            dr.detach(self.tangent_u_values),
-            dr.detach(self.tangent_v_values),
+            dr.detach(self.center_values), dr.detach(self.tangent_u_values), dr.detach(self.tangent_v_values)
         )
         if hasattr(self, "preview_scene"):
             self.preview_scene.update_geometry(geometry)
@@ -902,29 +836,20 @@ class GpuSurfelFitState:
             make_appearance_from_native_values(self.opacity_values, self.values, self.degree)
         )
 
-    def render_loss(self,
-                    view: dict,
-                    render_options: rd.SurfelRenderOptions,
-                    indices: np.ndarray | None = None):
+    def render_loss(self, view: dict, render_options: rd.SurfelRenderOptions, indices: np.ndarray | None = None):
         rays_ad, target_ad, mask_ad, denom, _ = gather_training_batch(view, indices)
         pred = self.train_scene.render(rays_ad, render_options).rgb
         delta = pred - target_ad
         residual = (delta[0] * delta[0] + delta[1] * delta[1] + delta[2] * delta[2]) * mask_ad
         return dr.sum(residual) / denom
 
-    def optimizer_step_param(self,
-                             values,
-                             momentum,
-                             velocity,
-                             lr: float,
-                             minimum: float,
-                             maximum: float):
+    def optimizer_step_param(self, values, momentum, velocity, lr: float, minimum: float, maximum: float):
         grad = dr.detach(dr.grad(values))
         if self.optimizer == "adam":
             momentum = dr.detach(self.beta1 * momentum + (1.0 - self.beta1) * grad)
             velocity = dr.detach(self.beta2 * velocity + (1.0 - self.beta2) * grad * grad)
-            m_hat = momentum / (1.0 - self.beta1 ** self.step_index)
-            v_hat = velocity / (1.0 - self.beta2 ** self.step_index)
+            m_hat = momentum / (1.0 - self.beta1**self.step_index)
+            v_hat = velocity / (1.0 - self.beta2**self.step_index)
             updated = values - lr * m_hat / (dr.sqrt(v_hat) + self.eps)
         else:
             updated = values - lr * grad
@@ -957,12 +882,7 @@ class GpuSurfelFitState:
         )
         if self.fit_opacity:
             self.opacity_values, self.opacity_momentum, self.opacity_velocity = self.optimizer_step_param(
-                self.opacity_values,
-                self.opacity_momentum,
-                self.opacity_velocity,
-                lr,
-                0.0,
-                0.99,
+                self.opacity_values, self.opacity_momentum, self.opacity_velocity, lr, 0.0, 0.99
             )
         if self.fit_geometry:
             geometry_lr = lr * self.geometry_lr_scale
@@ -1017,9 +937,15 @@ class GpuSurfelFitState:
 
     def geometry_numpy(self) -> dict[str, np.ndarray]:
         return {
-            "centers": np.stack([np.asarray(dr.detach(self.center_values[i]), dtype=np.float32) for i in range(3)], axis=1),
-            "tangent_u": np.stack([np.asarray(dr.detach(self.tangent_u_values[i]), dtype=np.float32) for i in range(3)], axis=1),
-            "tangent_v": np.stack([np.asarray(dr.detach(self.tangent_v_values[i]), dtype=np.float32) for i in range(3)], axis=1),
+            "centers": np.stack(
+                [np.asarray(dr.detach(self.center_values[i]), dtype=np.float32) for i in range(3)], axis=1
+            ),
+            "tangent_u": np.stack(
+                [np.asarray(dr.detach(self.tangent_u_values[i]), dtype=np.float32) for i in range(3)], axis=1
+            ),
+            "tangent_v": np.stack(
+                [np.asarray(dr.detach(self.tangent_v_values[i]), dtype=np.float32) for i in range(3)], axis=1
+            ),
         }
 
     def center_grad_norm_numpy(self) -> np.ndarray:
@@ -1027,7 +953,9 @@ class GpuSurfelFitState:
             return np.zeros((self.surfel_count,), dtype=np.float32)
         grad = dr.detach(dr.grad(self.center_values))
         channels = [np.asarray(grad[i], dtype=np.float32) for i in range(3)]
-        return np.sqrt(channels[0] * channels[0] + channels[1] * channels[1] + channels[2] * channels[2]).astype(np.float32)
+        return np.sqrt(channels[0] * channels[0] + channels[1] * channels[1] + channels[2] * channels[2]).astype(
+            np.float32
+        )
 
     def accumulate_densification_stats(self, grad_norm: np.ndarray) -> None:
         grad_norm = np.asarray(grad_norm, dtype=np.float32).reshape(-1)
@@ -1062,14 +990,16 @@ class GpuSurfelFitState:
         }
 
 
-def make_fit_state(centers: np.ndarray,
-                   tangent_u: np.ndarray,
-                   tangent_v: np.ndarray,
-                   opacity: np.ndarray,
-                   initial_values: np.ndarray,
-                   args,
-                   opts: rd.SurfelTraceOptions,
-                   build_count_base: dict[str, int] | None = None) -> GpuSurfelFitState:
+def make_fit_state(
+    centers: np.ndarray,
+    tangent_u: np.ndarray,
+    tangent_v: np.ndarray,
+    opacity: np.ndarray,
+    initial_values: np.ndarray,
+    args,
+    opts: rd.SurfelTraceOptions,
+    build_count_base: dict[str, int] | None = None,
+) -> GpuSurfelFitState:
     build_count_base = build_count_base or {"train_scene": 0, "preview_scene": 0}
     return GpuSurfelFitState(
         centers,
@@ -1095,12 +1025,14 @@ def make_fit_state(centers: np.ndarray,
     )
 
 
-def fit_color_coefficients(state: GpuSurfelFitState,
-                           views: list[dict],
-                           args,
-                           opts: rd.SurfelTraceOptions,
-                           frame_callback=None,
-                           video_every: int = 1) -> tuple[GpuSurfelFitState, list[dict], list[dict]]:
+def fit_color_coefficients(
+    state: GpuSurfelFitState,
+    views: list[dict],
+    args,
+    opts: rd.SurfelTraceOptions,
+    frame_callback=None,
+    video_every: int = 1,
+) -> tuple[GpuSurfelFitState, list[dict], list[dict]]:
     state.optimizer = args.optimizer
     log = []
     refinement_log = []
@@ -1112,13 +1044,7 @@ def fit_color_coefficients(state: GpuSurfelFitState,
     progress_every = int(getattr(args, "progress_every", 0))
     progress_path = Path(args.output_dir) / "progress.jsonl"
     for iteration in range(1, args.iterations + 1):
-        lr = scheduled_learning_rate(
-            iteration,
-            args.lr,
-            args.lr_final,
-            args.lr_warmup_iters,
-            args.iterations,
-        )
+        lr = scheduled_learning_rate(iteration, args.lr, args.lr_final, args.lr_warmup_iters, args.iterations)
         state.prepare_values()
         state.update_train_appearance()
         loss_sum = ad.Float([0.0])
@@ -1155,10 +1081,7 @@ def fit_color_coefficients(state: GpuSurfelFitState,
             snapshot = state.snapshot_numpy()
             densification_grad = state.densification_grad_numpy()
             screen_radius = projected_surfel_screen_radius(
-                snapshot["centers"],
-                snapshot["tangent_u"],
-                snapshot["tangent_v"],
-                views,
+                snapshot["centers"], snapshot["tangent_u"], snapshot["tangent_v"], views
             )
             refined = densify_and_prune_surfel_arrays(
                 snapshot["centers"],
@@ -1177,12 +1100,7 @@ def fit_color_coefficients(state: GpuSurfelFitState,
                 opacity = np.minimum(opacity, float(args.opacity_reset_value)).astype(np.float32)
             build_count_base = state.build_counts()
             opts, candidate_stats = make_dynamic_options(
-                refined["centers"],
-                refined["tangent_u"],
-                refined["tangent_v"],
-                opacity,
-                views,
-                args,
+                refined["centers"], refined["tangent_u"], refined["tangent_v"], opacity, views, args
             )
             state = make_fit_state(
                 refined["centers"],
@@ -1198,14 +1116,16 @@ def fit_color_coefficients(state: GpuSurfelFitState,
             refine_entry["iteration"] = iteration
             refine_entry["candidate_hits"] = candidate_stats
             refinement_log.append(refine_entry)
-            entry.update({
-                "surfel_count": int(refine_entry["surfel_count"]),
-                "densified": True,
-                "pruned": int(refine_entry["pruned"]),
-                "cloned": int(refine_entry["cloned"]),
-                "split": int(refine_entry["split"]),
-                "max_candidate_hits": int(candidate_stats["capacity"]),
-            })
+            entry.update(
+                {
+                    "surfel_count": int(refine_entry["surfel_count"]),
+                    "densified": True,
+                    "pruned": int(refine_entry["pruned"]),
+                    "cloned": int(refine_entry["cloned"]),
+                    "split": int(refine_entry["split"]),
+                    "max_candidate_hits": int(candidate_stats["capacity"]),
+                }
+            )
         else:
             entry["densified"] = False
 
@@ -1228,9 +1148,7 @@ def fit_color_coefficients(state: GpuSurfelFitState,
             flush=True,
         )
         if progress_every > 0 and (
-            iteration % progress_every == 0
-            or iteration == args.iterations
-            or stop_reason is not None
+            iteration % progress_every == 0 or iteration == args.iterations or stop_reason is not None
         ):
             append_progress_entry(progress_path, log[-1])
         if frame_callback is not None and (iteration % video_every == 0 or iteration == args.iterations):
@@ -1241,12 +1159,14 @@ def fit_color_coefficients(state: GpuSurfelFitState,
     return state, log, refinement_log
 
 
-def make_convergence_frame(target: np.ndarray,
-                           pred: np.ndarray,
-                           iteration: int,
-                           loss: float,
-                           elapsed_seconds: float | None = None,
-                           train_pixels: int | None = None) -> Image.Image:
+def make_convergence_frame(
+    target: np.ndarray,
+    pred: np.ndarray,
+    iteration: int,
+    loss: float,
+    elapsed_seconds: float | None = None,
+    train_pixels: int | None = None,
+) -> Image.Image:
     size = target.shape[0]
     error = np.abs(pred - target)
     panels = [
@@ -1288,11 +1208,9 @@ def save_montage(target: np.ndarray, pred: np.ndarray, path: Path) -> None:
     canvas.save(path)
 
 
-def save_convergence_videos(frames: list[Image.Image],
-                            output_dir: Path,
-                            video_format: str,
-                            gif_duration_ms: int,
-                            mp4_fps: int) -> dict[str, str]:
+def save_convergence_videos(
+    frames: list[Image.Image], output_dir: Path, video_format: str, gif_duration_ms: int, mp4_fps: int
+) -> dict[str, str]:
     outputs: dict[str, str] = {}
     if not frames:
         return outputs
@@ -1300,12 +1218,7 @@ def save_convergence_videos(frames: list[Image.Image],
     if video_format in ("gif", "both"):
         gif_path = output_dir / "surfel_multiview_color_fit_convergence.gif"
         frames[0].save(
-            gif_path,
-            save_all=True,
-            append_images=frames[1:],
-            duration=gif_duration_ms,
-            loop=0,
-            optimize=False,
+            gif_path, save_all=True, append_images=frames[1:], duration=gif_duration_ms, loop=0, optimize=False
         )
         outputs["gif"] = str(gif_path)
     if video_format in ("mp4", "both"):
@@ -1338,13 +1251,13 @@ def query_host_available_gb() -> float | None:
         status = MemoryStatus()
         status.dwLength = ctypes.sizeof(status)
         if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
-            return float(status.ullAvailPhys) / float(1024 ** 3)
+            return float(status.ullAvailPhys) / float(1024**3)
         return None
     if hasattr(os, "sysconf"):
         try:
             pages = os.sysconf("SC_AVPHYS_PAGES")
             page_size = os.sysconf("SC_PAGE_SIZE")
-            return float(pages * page_size) / float(1024 ** 3)
+            return float(pages * page_size) / float(1024**3)
         except (OSError, ValueError):
             return None
     return None
@@ -1353,11 +1266,7 @@ def query_host_available_gb() -> float | None:
 def query_gpu_status() -> dict[str, float] | None:
     try:
         result = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=memory.used,memory.total,utilization.gpu",
-                "--format=csv,noheader,nounits",
-            ],
+            ["nvidia-smi", "--query-gpu=memory.used,memory.total,utilization.gpu", "--format=csv,noheader,nounits"],
             check=True,
             capture_output=True,
             text=True,
@@ -1423,85 +1332,164 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Fit per-surfel RGB/degree-1 SH color from posed multi-view images using RayD surfel ray tracing."
     )
-    parser.add_argument("--scene-dir", type=Path, default=None,
-                        help="Dataset directory containing transforms.json and posed images.")
-    parser.add_argument("--download-dxgl-apple", action="store_true",
-                        help="Download the DX.GL Apple sample referenced by Hugging Face dxgl/multiview-datasets.")
-    parser.add_argument("--download-sonic-nerf", action="store_true",
-                        help="Download the requested number of full-resolution views from Hugging Face hayden-donnelly/sonic-nerf.")
+    parser.add_argument(
+        "--scene-dir", type=Path, default=None, help="Dataset directory containing transforms.json and posed images."
+    )
+    parser.add_argument(
+        "--download-dxgl-apple",
+        action="store_true",
+        help="Download the DX.GL Apple sample referenced by Hugging Face dxgl/multiview-datasets.",
+    )
+    parser.add_argument(
+        "--download-sonic-nerf",
+        action="store_true",
+        help="Download the requested number of full-resolution views from Hugging Face hayden-donnelly/sonic-nerf.",
+    )
     parser.add_argument("--download-dir", type=Path, default=Path("artifacts/datasets"))
     parser.add_argument("--output-dir", type=Path, default=Path("artifacts/surfel_multiview_color_fit"))
-    parser.add_argument("--size", type=int, default=0,
-                        help="Square fit resolution. Use 0 for the source image's native resolution.")
+    parser.add_argument(
+        "--size", type=int, default=0, help="Square fit resolution. Use 0 for the source image's native resolution."
+    )
     parser.add_argument("--views", type=int, default=3)
     parser.add_argument("--surfels", type=int, default=2048)
     parser.add_argument("--iterations", type=int, default=300)
     parser.add_argument("--lr", type=float, default=0.005)
-    parser.add_argument("--lr-final", type=float, default=0.0005,
-                        help="Final learning rate for exponential decay after warmup.")
-    parser.add_argument("--lr-warmup-iters", type=int, default=16,
-                        help="Linearly warm up from 10%% of --lr over this many iterations.")
+    parser.add_argument(
+        "--lr-final", type=float, default=0.0005, help="Final learning rate for exponential decay after warmup."
+    )
+    parser.add_argument(
+        "--lr-warmup-iters", type=int, default=16, help="Linearly warm up from 10%% of --lr over this many iterations."
+    )
     parser.add_argument("--optimizer", choices=["adam", "sgd"], default="adam")
     parser.add_argument("--sh-degree", type=int, choices=[0, 1], default=1)
     parser.add_argument("--random-radius", type=float, default=1.25)
     parser.add_argument("--initial-scale", type=float, default=0.16)
     parser.add_argument("--opacity", type=float, default=0.25)
     parser.add_argument("--background", type=float, default=1.0)
-    parser.add_argument("--render-normals", action=argparse.BooleanOptionalAction, default=False,
-                        help="Request RayD's alpha-weighted surfel normal buffer during render calls.")
-    parser.add_argument("--fit-opacity", action=argparse.BooleanOptionalAction, default=True,
-                        help="Optimize per-surfel opacity along with color; use --no-fit-opacity for color-only fitting.")
-    parser.add_argument("--fit-geometry", action=argparse.BooleanOptionalAction, default=True,
-                        help="Optimize surfel centers and tangent vectors; enabled for random-field reconstruction.")
+    parser.add_argument(
+        "--render-normals",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Request RayD's alpha-weighted surfel normal buffer during render calls.",
+    )
+    parser.add_argument(
+        "--fit-opacity",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Optimize per-surfel opacity along with color; use --no-fit-opacity for color-only fitting.",
+    )
+    parser.add_argument(
+        "--fit-geometry",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Optimize surfel centers and tangent vectors; enabled for random-field reconstruction.",
+    )
     parser.add_argument("--geometry-lr-scale", type=float, default=0.05)
-    parser.add_argument("--loss-mask", choices=["full", "foreground"], default="full",
-                        help="Use full-image loss to constrain background, or only foreground pixels.")
-    parser.add_argument("--train-ray-batch-size", type=int, default=65536,
-                        help="Native-resolution pixels sampled per view per iteration; 0 uses every pixel.")
-    parser.add_argument("--foreground-sample-fraction", type=float, default=0.5,
-                        help="Fraction of each sampled training batch drawn from foreground pixels when masks are available.")
-    parser.add_argument("--max-candidate-hits", type=int, default=0,
-                        help="Per-ray surfel hit capacity; 0 estimates it from sampled rays, usually 256+ for dense fields.")
+    parser.add_argument(
+        "--loss-mask",
+        choices=["full", "foreground"],
+        default="full",
+        help="Use full-image loss to constrain background, or only foreground pixels.",
+    )
+    parser.add_argument(
+        "--train-ray-batch-size",
+        type=int,
+        default=65536,
+        help="Native-resolution pixels sampled per view per iteration; 0 uses every pixel.",
+    )
+    parser.add_argument(
+        "--foreground-sample-fraction",
+        type=float,
+        default=0.5,
+        help="Fraction of each sampled training batch drawn from foreground pixels when masks are available.",
+    )
+    parser.add_argument(
+        "--max-candidate-hits",
+        type=int,
+        default=0,
+        help="Per-ray surfel hit capacity; 0 estimates it from sampled rays, usually 256+ for dense fields.",
+    )
     parser.add_argument("--min-candidate-hits", type=int, default=256)
     parser.add_argument("--max-candidate-hit-cap", type=int, default=512)
     parser.add_argument("--candidate-hit-sample-rays", type=int, default=2048)
     parser.add_argument("--candidate-hit-quantile", type=float, default=0.99)
     parser.add_argument("--candidate-hit-safety", type=float, default=1.1)
     parser.add_argument("--densify-from-iter", type=int, default=32)
-    parser.add_argument("--densify-until-iter", type=int, default=0,
-                        help="Last iteration that can refine surfels; 0 means 80%% of training.")
+    parser.add_argument(
+        "--densify-until-iter",
+        type=int,
+        default=0,
+        help="Last iteration that can refine surfels; 0 means 80%% of training.",
+    )
     parser.add_argument("--densify-interval", type=int, default=16)
     parser.add_argument("--densify-grad-threshold", type=float, default=1e-4)
-    parser.add_argument("--percent-dense", type=float, default=0.01,
-                        help="3DGS split/clone size threshold as a fraction of scene extent.")
-    parser.add_argument("--split-child-count", type=int, default=2,
-                        help="Number of children created when splitting a large high-gradient surfel.")
+    parser.add_argument(
+        "--percent-dense",
+        type=float,
+        default=0.01,
+        help="3DGS split/clone size threshold as a fraction of scene extent.",
+    )
+    parser.add_argument(
+        "--split-child-count",
+        type=int,
+        default=2,
+        help="Number of children created when splitting a large high-gradient surfel.",
+    )
     parser.add_argument("--prune-opacity-threshold", type=float, default=0.01)
     parser.add_argument("--min-scale", type=float, default=0.002)
     parser.add_argument("--max-scale", type=float, default=0.75)
     parser.add_argument("--max-world-scale-fraction", type=float, default=0.1)
-    parser.add_argument("--max-screen-radius", type=float, default=0.0,
-                        help="Prune surfels whose projected radius exceeds this many pixels; 0 disables screen pruning.")
-    parser.add_argument("--max-surfels", type=int, default=0,
-                        help="Maximum surfel count after densification; 0 uses 4x the initial count.")
+    parser.add_argument(
+        "--max-screen-radius",
+        type=float,
+        default=0.0,
+        help="Prune surfels whose projected radius exceeds this many pixels; 0 disables screen pruning.",
+    )
+    parser.add_argument(
+        "--max-surfels",
+        type=int,
+        default=0,
+        help="Maximum surfel count after densification; 0 uses 4x the initial count.",
+    )
     parser.add_argument("--max-new-surfels-per-refine", type=int, default=512)
     parser.add_argument("--opacity-reset-interval", type=int, default=64)
     parser.add_argument("--opacity-reset-value", type=float, default=0.05)
-    parser.add_argument("--video-every", type=int, default=25,
-                        help="Save one full-resolution convergence frame every N iterations.")
+    parser.add_argument(
+        "--video-every", type=int, default=25, help="Save one full-resolution convergence frame every N iterations."
+    )
     parser.add_argument("--video-format", choices=["none", "gif", "mp4", "both"], default="gif")
-    parser.add_argument("--final-render", action=argparse.BooleanOptionalAction, default=True,
-                        help="Render the final native montage/MSE after training; disable for capacity probes.")
+    parser.add_argument(
+        "--final-render",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Render the final native montage/MSE after training; disable for capacity probes.",
+    )
     parser.add_argument("--gif-duration-ms", type=int, default=120)
     parser.add_argument("--mp4-fps", type=int, default=12)
-    parser.add_argument("--progress-every", type=int, default=1,
-                        help="Append one interrupt-safe progress.jsonl entry every N iterations; 0 disables it.")
-    parser.add_argument("--stop-at-vram-gb", type=float, default=0.0,
-                        help="Stop after an iteration if nvidia-smi reports this much used GPU memory; 0 disables it.")
-    parser.add_argument("--stop-at-host-available-gb", type=float, default=0.0,
-                        help="Stop after an iteration if host available RAM drops below this value; 0 disables it.")
-    parser.add_argument("--max-wall-seconds", type=float, default=0.0,
-                        help="Stop after an iteration once elapsed training time reaches this value; 0 disables it.")
+    parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=1,
+        help="Append one interrupt-safe progress.jsonl entry every N iterations; 0 disables it.",
+    )
+    parser.add_argument(
+        "--stop-at-vram-gb",
+        type=float,
+        default=0.0,
+        help="Stop after an iteration if nvidia-smi reports this much used GPU memory; 0 disables it.",
+    )
+    parser.add_argument(
+        "--stop-at-host-available-gb",
+        type=float,
+        default=0.0,
+        help="Stop after an iteration if host available RAM drops below this value; 0 disables it.",
+    )
+    parser.add_argument(
+        "--max-wall-seconds",
+        type=float,
+        default=0.0,
+        help="Stop after an iteration once elapsed training time reaches this value; 0 disables it.",
+    )
     parser.add_argument("--seed", type=int, default=7)
     args = parser.parse_args()
     requested_size = int(args.size)
@@ -1554,25 +1542,27 @@ def main() -> None:
             rays_ad = None
         rays_detached = make_camera_rays(transform, fx, fy, cx, cy, args.size, ad_mode=False)
         camera_origin = transform[:3, 3].astype(np.float32)
-        views.append({
-            "image_path": str(image_path),
-            "target": target,
-            "target_ad": target_ad,
-            "target_image": target.reshape(args.size, args.size, 3),
-            "foreground_mask": foreground_mask,
-            "mask": loss_mask,
-            "mask_ad": mask_ad,
-            "denom": denom,
-            "pixel_count": pixel_count,
-            "ray_origins": ray_origins,
-            "ray_directions": ray_directions,
-            "rays_ad": rays_ad,
-            "rays_detached": rays_detached,
-            "transform": transform,
-            "fx": fx,
-            "fy": fy,
-            "camera_origin": camera_origin,
-        })
+        views.append(
+            {
+                "image_path": str(image_path),
+                "target": target,
+                "target_ad": target_ad,
+                "target_image": target.reshape(args.size, args.size, 3),
+                "foreground_mask": foreground_mask,
+                "mask": loss_mask,
+                "mask_ad": mask_ad,
+                "denom": denom,
+                "pixel_count": pixel_count,
+                "ray_origins": ray_origins,
+                "ray_directions": ray_directions,
+                "rays_ad": rays_ad,
+                "rays_detached": rays_detached,
+                "transform": transform,
+                "fx": fx,
+                "fy": fy,
+                "camera_origin": camera_origin,
+            }
+        )
 
     opts, initial_candidate_stats = make_dynamic_options(centers, tangent_u, tangent_v, opacity, views, args)
     if int(args.max_candidate_hits) > 0:
@@ -1580,33 +1570,19 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     first_view = views[0]
     frames: list[Image.Image] = []
-    state = make_fit_state(
-        centers,
-        tangent_u,
-        tangent_v,
-        opacity,
-        initial_values,
-        args,
-        opts,
-    )
+    state = make_fit_state(centers, tangent_u, tangent_v, opacity, initial_values, args, opts)
 
     frame_callback = None
     initial_loss = None
     if args.video_format != "none":
-        def append_frame(current_state: GpuSurfelFitState,
-                         iteration: int,
-                         loss: float,
-                         elapsed_seconds: float,
-                         train_pixels: int) -> None:
+
+        def append_frame(
+            current_state: GpuSurfelFitState, iteration: int, loss: float, elapsed_seconds: float, train_pixels: int
+        ) -> None:
             pred_frame = current_state.render_preview(first_view["rays_detached"], args.size)
             frames.append(
                 make_convergence_frame(
-                    first_view["target_image"],
-                    pred_frame,
-                    iteration,
-                    loss,
-                    elapsed_seconds,
-                    train_pixels,
+                    first_view["target_image"], pred_frame, iteration, loss, elapsed_seconds, train_pixels
                 )
             )
 
@@ -1615,12 +1591,7 @@ def main() -> None:
         initial_loss = float(np.mean((initial_pred - first_view["target_image"]) ** 2))
         frames.append(make_convergence_frame(first_view["target_image"], initial_pred, 0, initial_loss, 0.0, 0))
     state, log, refinement_log = fit_color_coefficients(
-        state,
-        views,
-        args,
-        opts,
-        frame_callback,
-        max(1, args.video_every),
+        state, views, args, opts, frame_callback, max(1, args.video_every)
     )
 
     final_full_image_mse = None
@@ -1635,11 +1606,7 @@ def main() -> None:
     video_outputs = {}
     if args.video_format != "none":
         video_outputs = save_convergence_videos(
-            frames,
-            args.output_dir,
-            args.video_format,
-            args.gif_duration_ms,
-            args.mp4_fps,
+            frames, args.output_dir, args.video_format, args.gif_duration_ms, args.mp4_fps
         )
     coeffs = state.coeffs_numpy()
     geometry_np = state.geometry_numpy()

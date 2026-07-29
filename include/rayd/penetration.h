@@ -16,7 +16,7 @@ enum class SegmentPenetrationPolicy : std::uint8_t {
 };
 
 struct SegmentPenetrationRequest {
-    const SceneResource &scene;
+    const SceneResource& scene;
     at::Tensor origins;
     at::Tensor targets;
     std::optional<at::Tensor> input_active;
@@ -52,14 +52,12 @@ struct SegmentPenetrationTapeResult {
     at::Tensor tape_direction_denominator_branch;
 };
 
-SegmentPenetrationResult segment_penetration_forward(
-    const SegmentPenetrationRequest &request);
-SegmentPenetrationTapeResult segment_penetration_forward_tape(
-    const SegmentPenetrationRequest &request);
+SegmentPenetrationResult segment_penetration_forward(const SegmentPenetrationRequest& request);
+SegmentPenetrationTapeResult segment_penetration_forward_tape(const SegmentPenetrationRequest& request);
 
 struct SegmentPenetrationBackwardRequest {
-    const SegmentPenetrationRequest &primal;
-    const SegmentPenetrationTapeResult &tape;
+    const SegmentPenetrationRequest& primal;
+    const SegmentPenetrationTapeResult& tape;
     std::optional<at::Tensor> grad_distance;
     std::optional<at::Tensor> grad_direction;
     std::optional<at::Tensor> grad_t;
@@ -77,12 +75,11 @@ struct SegmentPenetrationBackwardResult {
     at::Tensor grad_targets;
 };
 
-SegmentPenetrationBackwardResult segment_penetration_backward(
-    const SegmentPenetrationBackwardRequest &request);
+SegmentPenetrationBackwardResult segment_penetration_backward(const SegmentPenetrationBackwardRequest& request);
 
 struct SegmentPenetrationJvpRequest {
-    const SegmentPenetrationRequest &primal;
-    const SegmentPenetrationTapeResult &tape;
+    const SegmentPenetrationRequest& primal;
+    const SegmentPenetrationTapeResult& tape;
     std::optional<at::Tensor> tangent_vertices;
     std::optional<at::Tensor> tangent_origins;
     std::optional<at::Tensor> tangent_targets;
@@ -97,7 +94,6 @@ struct SegmentPenetrationJvpResult {
     at::Tensor tangent_geometric_normal;
 };
 
-SegmentPenetrationJvpResult segment_penetration_jvp(
-    const SegmentPenetrationJvpRequest &request);
+SegmentPenetrationJvpResult segment_penetration_jvp(const SegmentPenetrationJvpRequest& request);
 
 } // namespace rayd::torch

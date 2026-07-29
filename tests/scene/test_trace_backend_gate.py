@@ -28,9 +28,7 @@ faces = torch.tensor([[0, 1, 2]], dtype=torch.int32, device=device)
 def _run_fresh(body: str, *, disable_optix: bool | str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     python_root = str(Path(__file__).resolve().parents[2] / "python")
-    env["PYTHONPATH"] = os.pathsep.join(
-        part for part in (python_root, env.get("PYTHONPATH", "")) if part
-    )
+    env["PYTHONPATH"] = os.pathsep.join(part for part in (python_root, env.get("PYTHONPATH", "")) if part)
     if isinstance(disable_optix, str):
         env["RAYD_DISABLE_OPTIX"] = disable_optix
     elif disable_optix:

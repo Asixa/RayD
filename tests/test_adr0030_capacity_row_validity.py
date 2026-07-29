@@ -1,31 +1,15 @@
 # Copyright Xingyu Chen.
 # Tests capacity row validity.
 
-import re
 import unittest
 from pathlib import Path
+
+from tests.support.source_inspection import function_body, read_text as read, struct_body
 
 
 ROOT = Path(__file__).resolve().parents[1]
 RAYD_INCLUDE = ROOT / "include" / "rayd"
 RF_SOURCE = ROOT / "src"
-
-
-def read(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
-
-
-def struct_body(text: str, name: str) -> str:
-    match = re.search(rf"struct {name}\s*\{{(?P<body>.*?)\n\}};", text, re.S)
-    if match is None:
-        raise AssertionError(f"missing struct {name}")
-    return match.group("body")
-
-
-def kernel_body(text: str, name: str) -> str:
-    start = text.index(f"__global__ void {name}(")
-    next_kernel = text.find("__global__ void ", start + 1)
-    return text[start:] if next_kernel < 0 else text[start:next_kernel]
 
 
 class Adr0030CapacityRowValidityTests(unittest.TestCase):
@@ -37,12 +21,8 @@ class Adr0030CapacityRowValidityTests(unittest.TestCase):
 
     def test_top_level_primal_requests_require_cuda_row_validity(self):
         contracts = {
-            RAYD_INCLUDE / "diffraction.h": {
-                "DiffractionWedgeRequest": "at::Tensor valid;",
-            },
-            RAYD_INCLUDE / "transmission.h": {
-                "TransmissionSequenceRequest": "at::Tensor path_valid;",
-            },
+            RAYD_INCLUDE / "diffraction.h": {"DiffractionWedgeRequest": "at::Tensor valid;"},
+            RAYD_INCLUDE / "transmission.h": {"TransmissionSequenceRequest": "at::Tensor path_valid;"},
             RAYD_INCLUDE / "scattering.h": {
                 "ScatteringTableEvalRequest": "at::Tensor valid;",
                 "ScatteringTableSampleRequest": "at::Tensor valid;",
@@ -123,7 +103,7 @@ class Adr0030CapacityRowValidityTests(unittest.TestCase):
             text = read(RF_SOURCE / source_name)
             for kernel_name, (gate, first_payload) in kernels.items():
                 with self.subTest(source=source_name, kernel=kernel_name):
-                    body = kernel_body(text, kernel_name)
+                    body = function_body(text, kernel_name)
                     self.assertIn(gate, body)
                     self.assertIn(first_payload, body)
                     self.assertLess(body.index(gate), body.index(first_payload))

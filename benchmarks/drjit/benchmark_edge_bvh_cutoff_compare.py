@@ -15,8 +15,7 @@ from typing import Any
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Benchmark nearest_edge throughput and BVH quality for a single "
-            "treelet optimize-root cutoff value."
+            "Benchmark nearest_edge throughput and BVH quality for a single treelet optimize-root cutoff value."
         )
     )
     parser.add_argument("--mesh-resolution", type=int, default=192)
@@ -37,13 +36,9 @@ os.environ["RAYD_EDGE_BVH_TREELET_MIN_OPTIMIZE_ROOTS"] = str(ARGS.cutoff)
 THIS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = THIS_DIR.parents[1]
 THIS_DIR_NORM = os.path.normcase(os.path.abspath(THIS_DIR))
-sys.path = [
-    entry for entry in sys.path
-    if os.path.normcase(os.path.abspath(entry or ".")) != THIS_DIR_NORM
-]
+sys.path = [entry for entry in sys.path if os.path.normcase(os.path.abspath(entry or ".")) != THIS_DIR_NORM]
 if os.path.normcase(os.path.abspath(REPO_ROOT)) not in {
-    os.path.normcase(os.path.abspath(entry or "."))
-    for entry in sys.path
+    os.path.normcase(os.path.abspath(entry or ".")) for entry in sys.path
 }:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -51,9 +46,11 @@ import drjit as dr
 import drjit.cuda as cuda
 import rayd.drjit as pj
 
-from tests.benchmark_support import _cleanup_drjit
-from tests.benchmark_support import _make_grid_mesh_data
-from tests.benchmark_support import _make_ray_data
+from benchmarks.common import to_scalar as _to_scalar
+from benchmarks.drjit.benchmark_support import _cleanup_drjit
+from benchmarks.drjit.benchmark_support import _make_grid_mesh_data
+from benchmarks.drjit.benchmark_support import _make_ray_data
+from benchmarks.drjit.benchmark_support import _summarize_timings
 
 
 def _make_scene_mesh(mesh_data: dict[str, list[float] | list[int]]) -> Any:
@@ -68,12 +65,7 @@ def _make_point_queries(side: int, z: float) -> cuda.Array3f:
     return cuda.Array3f(ray_data["ox"], ray_data["oy"], ray_data["oz"])
 
 
-def _make_downward_rays(
-    side: int,
-    z_origin: float,
-    *,
-    tmax: float | None,
-) -> Any:
+def _make_downward_rays(side: int, z_origin: float, *, tmax: float | None) -> Any:
     ray_data = _make_ray_data(side, z_origin=z_origin)
     count = len(ray_data["ox"])
     ray = pj.Ray(
@@ -126,25 +118,6 @@ def _measure(fn, repeats: int, warmup: int) -> list[float]:
     return result
 
 
-def _summarize_query_timings(times_s: list[float], query_count: int) -> dict[str, float]:
-    avg_s = statistics.fmean(times_s)
-    min_s = min(times_s)
-    return {
-        "min_ms": min_s * 1000.0,
-        "avg_ms": avg_s * 1000.0,
-        "qps_m": query_count / avg_s / 1.0e6,
-    }
-
-
-def _to_scalar(value: Any) -> float:
-    if isinstance(value, (int, float)):
-        return float(value)
-    try:
-        return float(value)
-    except TypeError:
-        return float(value[0])
-
-
 def _bvh_stats_to_json(scene: Any) -> dict[str, Any]:
     stats = scene.edge_bvh_stats()
     return {
@@ -169,16 +142,8 @@ def main() -> int:
     _cleanup_drjit()
     mesh_data = _make_grid_mesh_data(ARGS.mesh_resolution)
     point_queries = _make_point_queries(ARGS.query_grid_side, ARGS.point_z)
-    finite_rays = _make_downward_rays(
-        ARGS.query_grid_side,
-        ARGS.finite_ray_origin_z,
-        tmax=ARGS.finite_ray_tmax,
-    )
-    infinite_rays = _make_downward_rays(
-        ARGS.query_grid_side,
-        ARGS.finite_ray_origin_z,
-        tmax=None,
-    )
+    finite_rays = _make_downward_rays(ARGS.query_grid_side, ARGS.finite_ray_origin_z, tmax=ARGS.finite_ray_tmax)
+    infinite_rays = _make_downward_rays(ARGS.query_grid_side, ARGS.finite_ray_origin_z, tmax=None)
     query_count = len(point_queries[0])
 
     scene = pj.Scene()
@@ -194,20 +159,10 @@ def main() -> int:
     _eval_ray_result(infinite_result)
     dr.sync_thread()
 
-    point_times = _measure(
-        lambda: _eval_point_result(scene.nearest_edge(point_queries)),
-        ARGS.repeats,
-        ARGS.warmup,
-    )
-    finite_ray_times = _measure(
-        lambda: _eval_ray_result(scene.nearest_edge(finite_rays)),
-        ARGS.repeats,
-        ARGS.warmup,
-    )
+    point_times = _measure(lambda: _eval_point_result(scene.nearest_edge(point_queries)), ARGS.repeats, ARGS.warmup)
+    finite_ray_times = _measure(lambda: _eval_ray_result(scene.nearest_edge(finite_rays)), ARGS.repeats, ARGS.warmup)
     infinite_ray_times = _measure(
-        lambda: _eval_ray_result(scene.nearest_edge(infinite_rays)),
-        ARGS.repeats,
-        ARGS.warmup,
+        lambda: _eval_ray_result(scene.nearest_edge(infinite_rays)), ARGS.repeats, ARGS.warmup
     )
 
     payload = {
@@ -228,15 +183,12 @@ def main() -> int:
             "repeats": ARGS.repeats,
             "warmup": ARGS.warmup,
         },
-        "build": {
-            "min_ms": min(build_times) * 1000.0,
-            "avg_ms": statistics.fmean(build_times) * 1000.0,
-        },
+        "build": {"min_ms": min(build_times) * 1000.0, "avg_ms": statistics.fmean(build_times) * 1000.0},
         "bvh_stats": _bvh_stats_to_json(scene),
         "throughput": {
-            "nearest_edge_point": _summarize_query_timings(point_times, query_count),
-            "nearest_edge_ray_finite": _summarize_query_timings(finite_ray_times, query_count),
-            "nearest_edge_ray_infinite": _summarize_query_timings(infinite_ray_times, query_count),
+            "nearest_edge_point": _summarize_timings(point_times, query_count),
+            "nearest_edge_ray_finite": _summarize_timings(finite_ray_times, query_count),
+            "nearest_edge_ray_infinite": _summarize_timings(infinite_ray_times, query_count),
         },
         "sanity": {
             "point_valid_count": int(_to_scalar(dr.count(point_result.is_valid()))),

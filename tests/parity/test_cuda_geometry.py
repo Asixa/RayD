@@ -9,14 +9,7 @@ import rayd.torch as rt
 
 def _scene(backend: str) -> rt.Scene:
     vertices = torch.tensor(
-        [
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [0.0, 1.0, 0.0],
-        ],
-        device="cuda",
-        dtype=torch.float32,
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]], device="cuda", dtype=torch.float32
     )
     faces = torch.tensor([[0, 1, 2], [0, 2, 3]], device="cuda", dtype=torch.int32)
     scene = rt.Scene(trace_backend=backend, edge_bvh_backend=backend)
@@ -37,10 +30,7 @@ class CudaGeometryParityTests(unittest.TestCase):
 
     def test_intersection_discrete_and_continuous_parity(self) -> None:
         ray = rt.Ray(
-            torch.tensor(
-                [[0.2, 0.1, -1.0], [0.8, 0.9, -2.0], [1.5, 0.5, -1.0]],
-                device="cuda",
-            ),
+            torch.tensor([[0.2, 0.1, -1.0], [0.8, 0.9, -2.0], [1.5, 0.5, -1.0]], device="cuda"),
             torch.tensor([[0.0, 0.0, 1.0]] * 3, device="cuda"),
         )
         cuda = self.cuda_scene.intersect(ray)
@@ -48,25 +38,16 @@ class CudaGeometryParityTests(unittest.TestCase):
         for name in ("shape_id", "local_prim_id", "global_prim_id"):
             self.assertTrue(torch.equal(getattr(cuda, name), getattr(optix, name)))
         for name in ("t", "p", "n", "geo_n", "barycentric"):
-            torch.testing.assert_close(
-                getattr(cuda, name), getattr(optix, name), atol=1e-6, rtol=1e-6
-            )
+            torch.testing.assert_close(getattr(cuda, name), getattr(optix, name), atol=1e-6, rtol=1e-6)
 
     def test_point_ray_and_topk_edge_parity(self) -> None:
-        points = torch.tensor(
-            [[0.2, -0.17, 0.03], [1.23, 0.7, -0.04], [0.6, 1.19, 0.02]],
-            device="cuda",
-        )
+        points = torch.tensor([[0.2, -0.17, 0.03], [1.23, 0.7, -0.04], [0.6, 1.19, 0.02]], device="cuda")
         cuda_point = self.cuda_scene.nearest_edge(points)
         optix_point = self.optix_scene.nearest_edge(points)
         for name in ("shape_id", "edge_id", "global_edge_id"):
-            self.assertTrue(
-                torch.equal(getattr(cuda_point, name), getattr(optix_point, name))
-            )
+            self.assertTrue(torch.equal(getattr(cuda_point, name), getattr(optix_point, name)))
         for name in ("distance", "edge_point", "edge_t"):
-            torch.testing.assert_close(
-                getattr(cuda_point, name), getattr(optix_point, name), atol=1e-6, rtol=1e-6
-            )
+            torch.testing.assert_close(getattr(cuda_point, name), getattr(optix_point, name), atol=1e-6, rtol=1e-6)
 
         ray = rt.Ray(
             torch.tensor([[-0.3, 0.2, 0.1], [0.7, -0.4, -0.1]], device="cuda"),
@@ -81,25 +62,19 @@ class CudaGeometryParityTests(unittest.TestCase):
         for name in ("shape_id", "edge_id", "global_edge_id"):
             self.assertTrue(torch.equal(getattr(cuda_ray, name), getattr(optix_ray, name)))
         for name in ("distance", "ray_t", "point", "edge_t", "edge_point"):
-            torch.testing.assert_close(
-                getattr(cuda_ray, name), getattr(optix_ray, name), atol=1e-6, rtol=1e-6
-            )
+            torch.testing.assert_close(getattr(cuda_ray, name), getattr(optix_ray, name), atol=1e-6, rtol=1e-6)
 
         cuda_topk = self.cuda_scene.nearest_edges(points, 3)
         optix_topk = self.optix_scene.nearest_edges(points, 3)
         self.assertTrue(torch.equal(cuda_topk.global_edge_ids, optix_topk.global_edge_ids))
-        torch.testing.assert_close(
-            cuda_topk.distances, optix_topk.distances, atol=1e-6, rtol=1e-6
-        )
+        torch.testing.assert_close(cuda_topk.distances, optix_topk.distances, atol=1e-6, rtol=1e-6)
 
     def test_optix_intersection_and_edge_params_are_stream_isolated(self) -> None:
         hit_ray = rt.Ray(
-            torch.tensor([[0.2, 0.1, -1.0]], device="cuda"),
-            torch.tensor([[0.0, 0.0, 1.0]], device="cuda"),
+            torch.tensor([[0.2, 0.1, -1.0]], device="cuda"), torch.tensor([[0.0, 0.0, 1.0]], device="cuda")
         )
         miss_ray = rt.Ray(
-            torch.tensor([[1.5, 1.5, -1.0]], device="cuda"),
-            torch.tensor([[0.0, 0.0, 1.0]], device="cuda"),
+            torch.tensor([[1.5, 1.5, -1.0]], device="cuda"), torch.tensor([[0.0, 0.0, 1.0]], device="cuda")
         )
         point_a = torch.tensor([[0.2, -0.17, 0.03]], device="cuda")
         point_b = torch.tensor([[1.23, 0.7, -0.04]], device="cuda")

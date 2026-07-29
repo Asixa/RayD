@@ -4,10 +4,9 @@
 import json
 import math
 import numbers
-import subprocess
-import sys
-import textwrap
 from pathlib import Path
+
+from tests.support.subprocess_cases import run_json_case, run_script
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -31,38 +30,6 @@ SECTION_FILES = {
     "gradients/vertex_gradients.json": ("gradients", "vertex_gradients"),
     "stress/repeated_run_summary.json": ("stress", "repeated_run_summary"),
 }
-
-
-def run_script(script: str, timeout: int = 180, check: bool = True):
-    result = subprocess.run(
-        [sys.executable, "-c", textwrap.dedent(script)],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        timeout=timeout,
-        check=False,
-    )
-    if check and result.returncode != 0:
-        raise AssertionError(
-            "Subprocess failed.\n"
-            f"Return code: {result.returncode}\n"
-            f"STDOUT:\n{result.stdout}\n"
-            f"STDERR:\n{result.stderr}"
-        )
-    return result
-
-
-def run_json_case(script: str, timeout: int = 180):
-    result = run_script(script, timeout=timeout, check=True)
-    lines = [line for line in result.stdout.splitlines() if line.strip()]
-    if not lines:
-        raise AssertionError(f"Subprocess produced no JSON output.\nSTDERR:\n{result.stderr}")
-    try:
-        return json.loads(lines[-1])
-    except json.JSONDecodeError as exc:
-        raise AssertionError(
-            f"Failed to parse JSON from subprocess.\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
-        ) from exc
 
 
 def bundle_to_file_map(data):

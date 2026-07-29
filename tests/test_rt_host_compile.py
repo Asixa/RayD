@@ -43,12 +43,7 @@ SMOKE_TU = ROOT / "tests" / "native" / "rt_host_compile_smoke.cpp"
 # Tokens that must not appear in a host-compilable algorithm header: the OptiX
 # device intrinsics, the six payload-register accessors, and the launch-index
 # query. Matched as plain substrings.
-FORBIDDEN_ALGO_TOKENS = (
-    "optixTrace",
-    "optixGetPayload",
-    "optixSetPayload",
-    "optixGetLaunchIndex",
-)
+FORBIDDEN_ALGO_TOKENS = ("optixTrace", "optixGetPayload", "optixSetPayload", "optixGetLaunchIndex")
 
 # The CUDA float3 vector type must not appear either (the algorithm uses
 # math::Vec3f throughout), but the diffraction algorithm headers legitimately
@@ -66,11 +61,18 @@ def _vswhere_install_path():
         return None
     result = subprocess.run(
         [
-            str(vswhere), "-latest", "-products", "*",
-            "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
-            "-property", "installationPath",
+            str(vswhere),
+            "-latest",
+            "-products",
+            "*",
+            "-requires",
+            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+            "-property",
+            "installationPath",
         ],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     path = result.stdout.strip()
     return path or None
@@ -88,7 +90,9 @@ def _msvc_environment():
     # would make subprocess re-quote the inner `call "..."` and break it.
     result = subprocess.run(
         f'cmd.exe /d /s /c call "{vsdevcmd}" -arch=x64 -host_arch=x64 >nul && set',
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if result.returncode != 0:
         return None
@@ -115,17 +119,15 @@ class RtHostCompileTests(unittest.TestCase):
                 self.assertNotIn(token, text)
         for regex in FORBIDDEN_ALGO_REGEXES:
             with self.subTest(header=header.name, regex=regex.pattern):
-                self.assertIsNone(
-                    regex.search(text),
-                    f"{header.name}: forbidden token matching {regex.pattern!r}",
-                )
+                self.assertIsNone(regex.search(text), f"{header.name}: forbidden token matching {regex.pattern!r}")
 
     def test_migrated_algo_headers_have_no_device_only_tokens(self):
         # Every concept-owned *_algo.h is covered (not just the six known
         # names), so a future migrated pipeline is grep-gated automatically.
         globbed = sorted(SHARED_ROOT.glob("*/*_algo.h"))
-        self.assertTrue(set(ALGO_HEADERS).issubset(set(globbed)),
-                        "known concept-owned algo headers missing from the shared tree")
+        self.assertTrue(
+            set(ALGO_HEADERS).issubset(set(globbed)), "known concept-owned algo headers missing from the shared tree"
+        )
         for header in globbed:
             self._assert_no_device_only_tokens(header)
 
@@ -171,18 +173,22 @@ class RtHostCompileTests(unittest.TestCase):
         # cl.exe is passed by full path: CreateProcess resolves a bare name
         # against the current process PATH, not the captured MSVC env.
         cmd = [
-            cl, "/nologo", "/std:c++17", "/EHsc", "/c", "/W3",
-            f'/I{SHARED_INCLUDE}',
-            f'/I{cuda_include}',
+            cl,
+            "/nologo",
+            "/std:c++17",
+            "/EHsc",
+            "/c",
+            "/W3",
+            f"/I{SHARED_INCLUDE}",
+            f"/I{cuda_include}",
             str(SMOKE_TU),
-            f'/Fo{out_dir / "rt_host_compile_smoke.obj"}',
+            f"/Fo{out_dir / 'rt_host_compile_smoke.obj'}",
         ]
-        result = subprocess.run(cmd, cwd=str(out_dir), env=env,
-                                capture_output=True, text=True, check=False)
+        result = subprocess.run(cmd, cwd=str(out_dir), env=env, capture_output=True, text=True, check=False)
         self.assertEqual(
-            result.returncode, 0,
-            f"host compile failed.\nCMD: {' '.join(cmd)}\n"
-            f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}",
+            result.returncode,
+            0,
+            f"host compile failed.\nCMD: {' '.join(cmd)}\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}",
         )
 
 

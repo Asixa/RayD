@@ -62,8 +62,7 @@ class PublicApiContractTests(unittest.TestCase):
         intersection_source = source[start:end]
         self.assertIn("core_ops().intersection_valid", intersection_source)
         self.assertLess(
-            intersection_source.index("core_ops().intersection_valid"),
-            intersection_source.index("torch.isfinite"),
+            intersection_source.index("core_ops().intersection_valid"), intersection_source.index("torch.isfinite")
         )
 
     def test_camera_public_path_does_not_stage_contiguous_copies(self):
@@ -97,11 +96,7 @@ class PublicApiContractTests(unittest.TestCase):
         start = source.index("def trace_dfr_paths_order1_native")
         end = source.index("class _DfrDirectAccumFunction")
         path_source = source[start:end]
-        forbidden = (
-            "_contig_states(",
-            "_contig_material(",
-            ".contiguous()",
-        )
+        forbidden = ("_contig_states(", "_contig_material(", ".contiguous()")
         for token in forbidden:
             self.assertNotIn(token, path_source)
 
@@ -110,11 +105,7 @@ class PublicApiContractTests(unittest.TestCase):
         start = source.index("def accum_dfr_coherent_direct_native")
         end = source.index("class NativeOpUnavailable")
         coherent_source = source[start:end]
-        forbidden = (
-            "_contig_states(",
-            "_contig_material(",
-            ".contiguous()",
-        )
+        forbidden = ("_contig_states(", "_contig_material(", ".contiguous()")
         for token in forbidden:
             self.assertNotIn(token, coherent_source)
 
@@ -123,11 +114,7 @@ class PublicApiContractTests(unittest.TestCase):
         start = source.index("def accum_dfr_chain_native")
         end = source.index("def accum_dfr_coherent_direct_native")
         chain_source = source[start:end]
-        forbidden = (
-            "_contig_states(",
-            "_contig_material(",
-            ".contiguous()",
-        )
+        forbidden = ("_contig_states(", "_contig_material(", ".contiguous()")
         for token in forbidden:
             self.assertNotIn(token, chain_source)
         self.assertIn("initial_states.state_count", chain_source)
@@ -141,11 +128,7 @@ class PublicApiContractTests(unittest.TestCase):
         coherent_start = source.index("py::tuple diffraction_coherent_accumulation_forward_op")
         coherent_end = source.index("} // namespace rayd::torch_backend", coherent_start)
         coherent_source = source[coherent_start:coherent_end]
-        forbidden = (
-            "split_vec3(",
-            "split_optional_vec3(",
-            ".contiguous()",
-        )
+        forbidden = ("split_vec3(", "split_optional_vec3(", ".contiguous()")
         for token in forbidden:
             self.assertNotIn(token, forward_source)
             self.assertNotIn(token, coherent_source)
@@ -158,13 +141,7 @@ class PublicApiContractTests(unittest.TestCase):
         jvp_start = backward_end
         jvp_end = source.index("py::tuple diffraction_accumulation_chain_backward_op")
         jvp_source = source[jvp_start:jvp_end]
-        forbidden = (
-            "split_vec3(",
-            "split_optional_vec3(",
-            "flatten_optional_f32(",
-            "stack_vec3(",
-            ".contiguous()",
-        )
+        forbidden = ("split_vec3(", "split_optional_vec3(", "flatten_optional_f32(", "stack_vec3(", ".contiguous()")
         for token in forbidden:
             self.assertNotIn(token, backward_source)
             self.assertNotIn(token, jvp_source)
@@ -177,13 +154,7 @@ class PublicApiContractTests(unittest.TestCase):
         jvp_start = backward_end
         jvp_end = source.index("py::tuple diffraction_coherent_accumulation_forward_op")
         jvp_source = source[jvp_start:jvp_end]
-        forbidden = (
-            "split_vec3(",
-            "split_optional_vec3(",
-            "flatten_optional_f32(",
-            "stack_vec3(",
-            ".contiguous()",
-        )
+        forbidden = ("split_vec3(", "split_optional_vec3(", "flatten_optional_f32(", "stack_vec3(", ".contiguous()")
         for token in forbidden:
             self.assertNotIn(token, backward_source)
             self.assertNotIn(token, jvp_source)
@@ -193,11 +164,7 @@ class PublicApiContractTests(unittest.TestCase):
         start = source.index("def accum_dfr_direct_native")
         end = source.index("class _DfrChainAccumFunction")
         direct_source = source[start:end]
-        forbidden = (
-            "_contig_states(",
-            "_contig_material(",
-            ".contiguous()",
-        )
+        forbidden = ("_contig_states(", "_contig_material(", ".contiguous()")
         for token in forbidden:
             self.assertNotIn(token, direct_source)
 

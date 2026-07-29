@@ -8,9 +8,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CONTRACT = json.loads(
-    (ROOT / "contracts" / "path_exchange.json").read_text(encoding="utf-8")
-)
+CONTRACT = json.loads((ROOT / "contracts" / "path_exchange.json").read_text(encoding="utf-8"))
 IMPLEMENTATIONS = {
     "drjit": ROOT / "python" / "rayd" / "_impl" / "path_exchange_jit.py",
     "torch": ROOT / "python" / "rayd" / "_impl" / "path_exchange.py",
@@ -18,9 +16,7 @@ IMPLEMENTATIONS = {
 
 
 def load_adapter(backend):
-    return runpy.run_path(
-        str(IMPLEMENTATIONS[backend])
-    )
+    return runpy.run_path(str(IMPLEMENTATIONS[backend]))
 
 
 class F4PathExchangeContractTests(unittest.TestCase):
@@ -29,10 +25,22 @@ class F4PathExchangeContractTests(unittest.TestCase):
         self.assertEqual(
             CONTRACT["layout"]["path_order"],
             [
-                "valid", "fixed_winner", "order", "source_index", "receiver_index",
-                "provenance", "available_fields", "differentiable_fields",
-                "interaction_offset", "interaction_count", "total_length", "delay",
-                "aod", "aoa", "field", "power",
+                "valid",
+                "fixed_winner",
+                "order",
+                "source_index",
+                "receiver_index",
+                "provenance",
+                "available_fields",
+                "differentiable_fields",
+                "interaction_offset",
+                "interaction_count",
+                "total_length",
+                "delay",
+                "aod",
+                "aoa",
+                "field",
+                "power",
             ],
         )
         self.assertEqual(
@@ -44,10 +52,7 @@ class F4PathExchangeContractTests(unittest.TestCase):
 
     def test_scope_explicitly_excludes_full_simulation_framework(self):
         excluded = set(CONTRACT["scope"]["excluded"])
-        self.assertTrue(
-            {"scene loader", "integrator", "channel model", "material model", "antenna model"}
-            <= excluded
-        )
+        self.assertTrue({"scene loader", "integrator", "channel model", "material model", "antenna model"} <= excluded)
 
     def test_fixed_winner_contract_separates_discrete_and_continuous_fields(self):
         ad = CONTRACT["fixed_winner_ad"]
@@ -60,8 +65,7 @@ class F4PathExchangeContractTests(unittest.TestCase):
     def test_backend_mapping_records_real_availability_gaps(self):
         mappings = CONTRACT["backend_mappings"]
         self.assertEqual(
-            mappings["torch"]["reflection"]["global_primitive_id"],
-            "ReflectionChain.prim_ids (scene-global)",
+            mappings["torch"]["reflection"]["global_primitive_id"], "ReflectionChain.prim_ids (scene-global)"
         )
         self.assertIn("position", mappings["torch"]["reflection"]["availability_gaps"])
         for backend in ("drjit", "torch"):
@@ -71,9 +75,7 @@ class F4PathExchangeContractTests(unittest.TestCase):
             self.assertIn("aoa", gaps)
 
     def test_cpp_contract_freezes_pod_layout_and_enums(self):
-        header = (
-            ROOT / "include" / "rayd" / "path_exchange.h"
-        ).read_text(encoding="utf-8")
+        header = (ROOT / "include" / "rayd" / "path_exchange.h").read_text(encoding="utf-8")
         for token in (
             "PathInteractionKind",
             "PathProvenance",
@@ -91,12 +93,8 @@ class F4PathExchangeContractTests(unittest.TestCase):
         torch_path = IMPLEMENTATIONS["torch"]
         self.assertEqual(drjit_path.read_bytes(), torch_path.read_bytes())
 
-        drjit_frontend = (
-            ROOT / "python" / "rayd" / "drjit" / "path_exchange.py"
-        ).read_text(encoding="utf-8")
-        torch_frontend = (
-            ROOT / "python" / "rayd" / "torch" / "path_exchange.py"
-        ).read_text(encoding="utf-8")
+        drjit_frontend = (ROOT / "python" / "rayd" / "drjit" / "path_exchange.py").read_text(encoding="utf-8")
+        torch_frontend = (ROOT / "python" / "rayd" / "torch" / "path_exchange.py").read_text(encoding="utf-8")
         self.assertIn("rayd._impl.path_exchange_jit", drjit_frontend)
         self.assertIn("rayd._impl.path_exchange", torch_frontend)
         modules = [load_adapter("drjit"), load_adapter("torch")]
@@ -149,18 +147,10 @@ class F4PathExchangeContractTests(unittest.TestCase):
     def test_adapter_rejects_non_fixed_or_non_available_derivatives(self):
         module = load_adapter("drjit")
         with self.assertRaises(ValueError):
-            module["PathRecord"](
-                True,
-                0,
-                0,
-                0,
-                module["PathProvenance"].IMPORTED,
-                fixed_winner=False,
-            )
+            module["PathRecord"](True, 0, 0, 0, module["PathProvenance"].IMPORTED, fixed_winner=False)
         with self.assertRaises(ValueError):
             module["reflection_path_record"](
-                [1],
-                differentiable_fields=module["PathDerivativeField"].INTERACTION_NORMAL,
+                [1], differentiable_fields=module["PathDerivativeField"].INTERACTION_NORMAL
             )
 
 

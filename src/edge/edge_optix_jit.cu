@@ -22,20 +22,17 @@ constexpr float kPointProbeTMax = shared::EdgeEpsilon;
 constexpr uint32_t kInvalidEdgeId = shared::InvalidUnsignedId;
 
 static __forceinline__ __device__ shared::optix::EdgeGeometrySoAView edge_geometry_view() {
-    return { params.edge_p0_x, params.edge_p0_y, params.edge_p0_z,
-             params.edge_e1_x, params.edge_e1_y, params.edge_e1_z,
-             params.edge_mask, params.edge_count, params.search_radius };
+    return {params.edge_p0_x, params.edge_p0_y, params.edge_p0_z,  params.edge_e1_x,    params.edge_e1_y,
+            params.edge_e1_z, params.edge_mask, params.edge_count, params.search_radius};
 }
 
 static __forceinline__ __device__ shared::optix::EdgeQuerySoAView edge_query_view() {
-    return { params.query_x, params.query_y, params.query_z,
-             params.ray_dx, params.ray_dy, params.ray_dz, params.ray_tmax,
-             params.active_mask, params.query_count, params.k };
+    return {params.query_x, params.query_y,  params.query_z,     params.ray_dx,      params.ray_dy,
+            params.ray_dz,  params.ray_tmax, params.active_mask, params.query_count, params.k};
 }
 
 static __forceinline__ __device__ shared::optix::EdgeQueryOutputView edge_output_view() {
-    return { params.out_edge_ids, params.out_distance_sq, params.out_ray_t,
-             params.out_edge_t, params.out_valid };
+    return {params.out_edge_ids, params.out_distance_sq, params.out_ray_t, params.out_edge_t, params.out_valid};
 }
 
 static __forceinline__ __device__ float3 operator*(float3 a, float s) {
@@ -74,31 +71,20 @@ static __forceinline__ __device__ shared::math::Vec3f to_shared_vec3(float3 valu
     return shared::math::make_vec3(value.x, value.y, value.z);
 }
 
-static __forceinline__ __device__ void point_segment_distance(float3 point,
-                                                              float3 p0,
-                                                              float3 e1,
-                                                              float &edge_t,
-                                                              float &distance_sq) {
+static __forceinline__ __device__ void point_segment_distance(float3 point, float3 p0, float3 e1, float& edge_t,
+                                                              float& distance_sq) {
     const shared::edge::PointSegmentDistance result =
-        shared::edge::point_segment_distance(
-            to_shared_vec3(point), to_shared_vec3(p0), to_shared_vec3(e1));
+        shared::edge::point_segment_distance(to_shared_vec3(point), to_shared_vec3(p0), to_shared_vec3(e1));
     edge_t = result.edge_parameter;
     distance_sq = result.squared_distance;
 }
 
-static __forceinline__ __device__ void segment_segment_distance(float3 query_origin,
-                                                                float3 query_edge,
-                                                                float3 edge_origin,
-                                                                float3 edge_vector,
-                                                                float &query_t,
-                                                                float &edge_t,
-                                                                float &distance_sq) {
+static __forceinline__ __device__ void segment_segment_distance(float3 query_origin, float3 query_edge,
+                                                                float3 edge_origin, float3 edge_vector, float& query_t,
+                                                                float& edge_t, float& distance_sq) {
     const shared::edge::SegmentSegmentDistance result =
-        shared::edge::segment_segment_distance(
-            to_shared_vec3(query_origin),
-            to_shared_vec3(query_edge),
-            to_shared_vec3(edge_origin),
-            to_shared_vec3(edge_vector));
+        shared::edge::segment_segment_distance(to_shared_vec3(query_origin), to_shared_vec3(query_edge),
+                                               to_shared_vec3(edge_origin), to_shared_vec3(edge_vector));
     query_t = result.query_parameter;
     edge_t = result.edge_parameter;
     distance_sq = result.squared_distance;
@@ -108,9 +94,7 @@ static __forceinline__ __device__ void write_invalid(unsigned int query) {
     shared::optix::write_invalid_edge_result(edge_output_view(), query);
 }
 
-static __forceinline__ __device__ void insert_topk_candidate(unsigned int query,
-                                                             int edge_id,
-                                                             float distance_sq,
+static __forceinline__ __device__ void insert_topk_candidate(unsigned int query, int edge_id, float distance_sq,
                                                              float edge_t) {
     const int k = params.k;
     if (k <= 0 || k > EdgeOptixTopKMax) {
@@ -152,10 +136,7 @@ extern "C" __global__ void __intersection__edge_point() {
 
     float edge_t = 0.0f;
     float distance_sq = 0.0f;
-    point_segment_distance(optixGetWorldRayOrigin(),
-                           load_edge_start(edge),
-                           load_edge_vector(edge),
-                           edge_t,
+    point_segment_distance(optixGetWorldRayOrigin(), load_edge_start(edge), load_edge_vector(edge), edge_t,
                            distance_sq);
     const float distance = sqrtf(fmaxf(distance_sq, 0.0f));
     if (distance <= optixGetRayTmax() && distance <= safe_search_radius()) {
@@ -175,23 +156,14 @@ extern "C" __global__ void __intersection__edge_ray() {
     float query_t = 0.0f;
     float edge_t = 0.0f;
     float distance_sq = 0.0f;
-    segment_segment_distance(optixGetWorldRayOrigin(),
-                             optixGetWorldRayDirection() * trace_tmax,
-                             load_edge_start(edge),
-                             load_edge_vector(edge),
-                             query_t,
-                             edge_t,
-                             distance_sq);
+    segment_segment_distance(optixGetWorldRayOrigin(), optixGetWorldRayDirection() * trace_tmax, load_edge_start(edge),
+                             load_edge_vector(edge), query_t, edge_t, distance_sq);
     const float ray_t = query_t * trace_tmax;
-    if (ray_t >= optixGetRayTmin() && ray_t <= trace_tmax &&
-        sqrtf(fmaxf(distance_sq, 0.0f)) <= safe_search_radius()) {
-        optixReportIntersection(ray_t,
-                                0u,
-                                __float_as_uint(distance_sq),
-                                __float_as_uint(ray_t),
+    if (ray_t >= optixGetRayTmin() && ray_t <= trace_tmax && sqrtf(fmaxf(distance_sq, 0.0f)) <= safe_search_radius()) {
+        optixReportIntersection(ray_t, 0u, __float_as_uint(distance_sq), __float_as_uint(ray_t),
                                 __float_as_uint(edge_t));
     }
-    (void) query;
+    (void)query;
 }
 
 /// IntersectionAD for top-k point queries: report every edge within the search radius for ranking.
@@ -203,25 +175,18 @@ extern "C" __global__ void __intersection__edge_topk_point() {
 
     float edge_t = 0.0f;
     float distance_sq = 0.0f;
-    point_segment_distance(optixGetWorldRayOrigin(),
-                           load_edge_start(edge),
-                           load_edge_vector(edge),
-                           edge_t,
+    point_segment_distance(optixGetWorldRayOrigin(), load_edge_start(edge), load_edge_vector(edge), edge_t,
                            distance_sq);
     const float distance = sqrtf(fmaxf(distance_sq, 0.0f));
     if (distance <= safe_search_radius()) {
-        optixReportIntersection(kPointProbeTMax * 0.5f,
-                                0u,
-                                __float_as_uint(distance_sq),
-                                __float_as_uint(edge_t));
+        optixReportIntersection(kPointProbeTMax * 0.5f, 0u, __float_as_uint(distance_sq), __float_as_uint(edge_t));
     }
 }
 
 /// Closest-hit for point queries: publish the winning edge id, distance, and edge parameter to payload.
 extern "C" __global__ void __closesthit__edge_point() {
     const float distance = optixGetRayTmax();
-    shared::optix::set_edge_point_payload(
-        distance, optixGetPrimitiveIndex(), optixGetAttribute_0());
+    shared::optix::set_edge_point_payload(distance, optixGetPrimitiveIndex(), optixGetAttribute_0());
 }
 
 /// Anyhit for ray queries: keep the nearest edge so far in payload, then ignore the hit to continue.
@@ -242,28 +207,23 @@ extern "C" __global__ void __anyhit__edge_ray() {
 /// global buffer otherwise), then ignore the hit to keep traversing.
 extern "C" __global__ void __anyhit__edge_topk_point() {
     if (params.k <= 8) {
-        shared::optix::insert_edge_topk_payload_candidate(
-            params.k,
-            static_cast<int>(optixGetPrimitiveIndex()),
-            __uint_as_float(optixGetAttribute_0()));
+        shared::optix::insert_edge_topk_payload_candidate(params.k, static_cast<int>(optixGetPrimitiveIndex()),
+                                                          __uint_as_float(optixGetAttribute_0()));
     } else {
-        insert_topk_candidate(optixGetLaunchIndex().x,
-                              static_cast<int>(optixGetPrimitiveIndex()),
-                              __uint_as_float(optixGetAttribute_0()),
-                              __uint_as_float(optixGetAttribute_1()));
+        insert_topk_candidate(optixGetLaunchIndex().x, static_cast<int>(optixGetPrimitiveIndex()),
+                              __uint_as_float(optixGetAttribute_0()), __uint_as_float(optixGetAttribute_1()));
     }
     optixIgnoreIntersection();
 }
 
 /// Miss program: no edge within range; outputs are left at their invalid defaults.
-extern "C" __global__ void __miss__edge_query() {
-}
+extern "C" __global__ void __miss__edge_query() {}
 
 /// Raygen for point queries: trace a degenerate ray from each query point and write the nearest edge.
 extern "C" __global__ void __raygen__edge_point() {
     const unsigned int query = optixGetLaunchIndex().x;
-    if (query >= static_cast<unsigned int>(params.query_count) || !is_active(query) ||
-        params.handle == 0ull || params.edge_count <= 0) {
+    if (query >= static_cast<unsigned int>(params.query_count) || !is_active(query) || params.handle == 0ull ||
+        params.edge_count <= 0) {
         write_invalid(query);
         return;
     }
@@ -272,21 +232,9 @@ extern "C" __global__ void __raygen__edge_point() {
     uint32_t distance_sq = __float_as_uint(3.4028234663852886e38f);
     uint32_t edge_t = __float_as_uint(0.0f);
     uint32_t valid = 0u;
-    optixTrace(static_cast<OptixTraversableHandle>(params.handle),
-               load_query_point(query),
-               make_float3(0.0f, 0.0f, -1.0f),
-               0.0f,
-               safe_search_radius(),
-               0.0f,
-               255u,
-               OPTIX_RAY_FLAG_DISABLE_ANYHIT,
-               0,
-               1,
-               0,
-               edge_id,
-               distance_sq,
-               edge_t,
-               valid);
+    optixTrace(static_cast<OptixTraversableHandle>(params.handle), load_query_point(query),
+               make_float3(0.0f, 0.0f, -1.0f), 0.0f, safe_search_radius(), 0.0f, 255u, OPTIX_RAY_FLAG_DISABLE_ANYHIT, 0,
+               1, 0, edge_id, distance_sq, edge_t, valid);
 
     if (valid == 0u || edge_id == kInvalidEdgeId) {
         write_invalid(query);
@@ -307,8 +255,8 @@ extern "C" __global__ void __raygen__edge_point() {
 /// Raygen for ray queries: trace each query ray (anyhit-enforced) and write the nearest edge.
 extern "C" __global__ void __raygen__edge_ray() {
     const unsigned int query = optixGetLaunchIndex().x;
-    if (query >= static_cast<unsigned int>(params.query_count) || !is_active(query) ||
-        params.handle == 0ull || params.edge_count <= 0) {
+    if (query >= static_cast<unsigned int>(params.query_count) || !is_active(query) || params.handle == 0ull ||
+        params.edge_count <= 0) {
         write_invalid(query);
         return;
     }
@@ -323,22 +271,9 @@ extern "C" __global__ void __raygen__edge_ray() {
     uint32_t ray_t = __float_as_uint(0.0f);
     uint32_t edge_t = __float_as_uint(0.0f);
     uint32_t valid = 0u;
-    optixTrace(static_cast<OptixTraversableHandle>(params.handle),
-               load_query_point(query),
-               load_ray_direction(query),
-               0.0f,
-               trace_tmax,
-               0.0f,
-               255u,
-               OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT | OPTIX_RAY_FLAG_ENFORCE_ANYHIT,
-               1,
-               1,
-               0,
-               edge_id,
-               distance_sq,
-               ray_t,
-               edge_t,
-               valid);
+    optixTrace(static_cast<OptixTraversableHandle>(params.handle), load_query_point(query), load_ray_direction(query),
+               0.0f, trace_tmax, 0.0f, 255u, OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT | OPTIX_RAY_FLAG_ENFORCE_ANYHIT, 1, 1, 0,
+               edge_id, distance_sq, ray_t, edge_t, valid);
 
     if (valid == 0u || edge_id == kInvalidEdgeId) {
         write_invalid(query);
@@ -394,60 +329,26 @@ extern "C" __global__ void __raygen__edge_topk_point() {
         uint32_t dist6 = dist0;
         uint32_t dist7 = dist0;
 
-        optixTrace(static_cast<OptixTraversableHandle>(params.handle),
-                   load_query_point(query),
-                   make_float3(0.0f, 0.0f, -1.0f),
-                   0.0f,
-                   kPointProbeTMax,
-                   0.0f,
-                   255u,
-                   OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT | OPTIX_RAY_FLAG_ENFORCE_ANYHIT,
-                   2,
-                   1,
-                   0,
-                   edge0,
-                   edge1,
-                   edge2,
-                   edge3,
-                   edge4,
-                   edge5,
-                   edge6,
-                   edge7,
-                   dist0,
-                   dist1,
-                   dist2,
-                   dist3,
-                   dist4,
-                   dist5,
-                   dist6,
-                   dist7);
+        optixTrace(static_cast<OptixTraversableHandle>(params.handle), load_query_point(query),
+                   make_float3(0.0f, 0.0f, -1.0f), 0.0f, kPointProbeTMax, 0.0f, 255u,
+                   OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT | OPTIX_RAY_FLAG_ENFORCE_ANYHIT, 2, 1, 0, edge0, edge1, edge2,
+                   edge3, edge4, edge5, edge6, edge7, dist0, dist1, dist2, dist3, dist4, dist5, dist6, dist7);
 
-        uint32_t edges[8] = { edge0, edge1, edge2, edge3, edge4, edge5, edge6, edge7 };
-        uint32_t distances[8] = { dist0, dist1, dist2, dist3, dist4, dist5, dist6, dist7 };
+        uint32_t edges[8] = {edge0, edge1, edge2, edge3, edge4, edge5, edge6, edge7};
+        uint32_t distances[8] = {dist0, dist1, dist2, dist3, dist4, dist5, dist6, dist7};
         for (int slot = 0; slot < k; ++slot) {
             const int out_index = base + slot;
             const bool valid = edges[slot] != kInvalidEdgeId;
             params.out_edge_ids[out_index] = valid ? static_cast<int>(edges[slot]) : -1;
-            params.out_distance_sq[out_index] = valid
-                ? __uint_as_float(distances[slot])
-                : 3.4028234663852886e38f;
+            params.out_distance_sq[out_index] = valid ? __uint_as_float(distances[slot]) : 3.4028234663852886e38f;
             params.out_edge_t[out_index] = 0.0f;
             params.out_valid[out_index] = valid ? 1u : 0u;
         }
     } else {
         uint32_t dummy = 0u;
-        optixTrace(static_cast<OptixTraversableHandle>(params.handle),
-                   load_query_point(query),
-                   make_float3(0.0f, 0.0f, -1.0f),
-                   0.0f,
-                   kPointProbeTMax,
-                   0.0f,
-                   255u,
-                   OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT | OPTIX_RAY_FLAG_ENFORCE_ANYHIT,
-                   2,
-                   1,
-                   0,
-                   dummy);
+        optixTrace(static_cast<OptixTraversableHandle>(params.handle), load_query_point(query),
+                   make_float3(0.0f, 0.0f, -1.0f), 0.0f, kPointProbeTMax, 0.0f, 255u,
+                   OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT | OPTIX_RAY_FLAG_ENFORCE_ANYHIT, 2, 1, 0, dummy);
     }
 }
 

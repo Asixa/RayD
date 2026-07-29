@@ -1,35 +1,17 @@
 # Copyright Xingyu Chen.
 # Tests torch source bundle.
 
-import hashlib
 import importlib.util
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
+from tests.support.hashing import header_set_sha256, normalized_text_sha256, sha256_file as sha256
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "torch" / "scripts" / "generate_source_bundle.py"
-
-
-def sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def normalized_text_sha256(path: Path) -> str:
-    content = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-    return hashlib.sha256(content).hexdigest()
-
-
-def header_set_sha256(headers: list[dict[str, str]]) -> str:
-    digest = hashlib.sha256()
-    for header in sorted(headers, key=lambda item: item["path"]):
-        digest.update(header["path"].encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(header["sha256"].encode("ascii"))
-        digest.update(b"\n")
-    return digest.hexdigest()
 
 
 class SourceBundleTests(unittest.TestCase):
@@ -55,25 +37,20 @@ class SourceBundleTests(unittest.TestCase):
             source_root = output / metadata["source_root"]
 
             self.assertEqual(metadata["schema_version"], 2)
-            self.assertEqual(
-                metadata["distribution"],
-                {"name": "rayd-torch", "version": "0.7.0"},
-            )
+            self.assertEqual(metadata["distribution"], {"name": "rayd-torch", "version": "0.7.0"})
             self.assertEqual(metadata["commit"], "1" * 40)
             self.assertEqual(metadata["source_manifest"]["sha256"], sha256(manifest_path))
             integration_abi = metadata["integration_abi"]
             self.assertEqual(integration_abi["kind"], "source-header-set-sha256")
             self.assertEqual(integration_abi["api_version"], 8)
             self.assertEqual(integration_abi["identity"], "rayd.torch.integration")
-            self.assertEqual(
-                integration_abi["entrypoint"], "include/rayd/integration.h"
-            )
+            self.assertEqual(integration_abi["entrypoint"], "include/rayd/integration.h")
             self.assertEqual(
                 {header["path"] for header in integration_abi["headers"]},
                 {
                     "include/rayd/integration.h",
                     "include/rayd/diffraction.h",
-                                "include/rayd/penetration.h",
+                    "include/rayd/penetration.h",
                     "include/rayd/reflection.h",
                     "include/rayd/scattering.h",
                     "include/rayd/scene.h",
@@ -83,9 +60,7 @@ class SourceBundleTests(unittest.TestCase):
             )
             self.assertEqual(integration_abi["sha256"], header_set_sha256(integration_abi["headers"]))
             for header in integration_abi["headers"]:
-                self.assertEqual(
-                    header["sha256"], normalized_text_sha256(source_root / header["path"])
-                )
+                self.assertEqual(header["sha256"], normalized_text_sha256((source_root / header["path"]).read_bytes()))
 
             described = {entry["path"]: entry["sha256"] for entry in manifest["files"]}
             actual = {

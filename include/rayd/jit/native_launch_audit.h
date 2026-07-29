@@ -28,12 +28,12 @@ enum class NativeLaunchStage {
 
 /// Aggregated launch counts for one named kernel within a stage.
 struct NativeKernelLaunchStat {
-    std::string label;             ///< Kernel name, or "unnamed".
-    uint64_t launches = 0;          ///< Number of launches.
-    uint64_t total_threads = 0;     ///< Sum of thread counts across launches.
-    uint64_t max_threads = 0;       ///< Largest single-launch thread count.
-    uint64_t total_items = 0;       ///< Sum of caller-reported item counts.
-    uint64_t max_items = 0;         ///< Largest single-launch item count.
+    std::string label;          ///< Kernel name, or "unnamed".
+    uint64_t launches = 0;      ///< Number of launches.
+    uint64_t total_threads = 0; ///< Sum of thread counts across launches.
+    uint64_t max_threads = 0;   ///< Largest single-launch thread count.
+    uint64_t total_items = 0;   ///< Sum of caller-reported item counts.
+    uint64_t max_items = 0;     ///< Largest single-launch item count.
 };
 
 /// Per-stage tallies of device launches and host/device memory operations.
@@ -74,14 +74,14 @@ struct NativeLaunchAuditSnapshot {
 
 /// RAII guard that sets the current thread's audit stage and restores the previous one on scope exit.
 class ScopedNativeLaunchStage {
-public:
+  public:
     explicit ScopedNativeLaunchStage(NativeLaunchStage stage);
     ~ScopedNativeLaunchStage();
 
-    ScopedNativeLaunchStage(const ScopedNativeLaunchStage &) = delete;
-    ScopedNativeLaunchStage &operator=(const ScopedNativeLaunchStage &) = delete;
+    ScopedNativeLaunchStage(const ScopedNativeLaunchStage&) = delete;
+    ScopedNativeLaunchStage& operator=(const ScopedNativeLaunchStage&) = delete;
 
-private:
+  private:
     NativeLaunchStage previous_;
 };
 
@@ -93,14 +93,8 @@ NativeLaunchAuditSnapshot native_launch_audit_snapshot();
 // Record-one-event hooks called from the CUDA/CUB/OptiX wrappers; each adds to
 // the counters of the current thread's stage. \p label names the kernel and
 // \p items is an optional caller-defined work count (e.g. rays processed).
-void audit_cuda_kernel_launch(const char *label,
-                              uint32_t grid_x,
-                              uint32_t grid_y,
-                              uint32_t grid_z,
-                              uint32_t block_x,
-                              uint32_t block_y,
-                              uint32_t block_z,
-                              uint64_t items = 0);
+void audit_cuda_kernel_launch(const char* label, uint32_t grid_x, uint32_t grid_y, uint32_t grid_z, uint32_t block_x,
+                              uint32_t block_y, uint32_t block_z, uint64_t items = 0);
 void audit_cuda_memcpy();
 void audit_cuda_memcpy_async();
 void audit_cuda_memset_async();

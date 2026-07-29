@@ -27,8 +27,5 @@ static_assert(std::is_trivially_copyable_v<GlobalVertexTangentZeroParams>);
 
 int main() {
     const PackedFloat4 value = {1.0f, 2.0f, 3.0f, 0.0f};
-    return value.x == 1.0f && value.y == 2.0f &&
-                   value.z == 3.0f && value.w == 0.0f
-               ? 0
-               : 1;
+    return value.x == 1.0f && value.y == 2.0f && value.z == 3.0f && value.w == 0.0f ? 0 : 1;
 }

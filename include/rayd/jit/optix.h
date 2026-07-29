@@ -15,18 +15,18 @@
 // Minimal host-side OptiX declarations used by RayD.
 // Keep this aligned with the OptiX 8.1.0 host API subset that the project targets.
 #ifndef OPTIX_VERSION
-#  define OPTIX_VERSION RAYD_OPTIX_TARGET_VERSION
+#define OPTIX_VERSION RAYD_OPTIX_TARGET_VERSION
 #endif
 
 // =====================================================
 //       Various opaque handles and enumerations
 // =====================================================
 
-using CUdeviceptr = void *;
-using CUstream = void *;
-using OptixPipeline = void *;
-using OptixModule = void *;
-using OptixProgramGroup = void *;
+using CUdeviceptr = void*;
+using CUstream = void*;
+using OptixPipeline = void*;
+using OptixModule = void*;
+using OptixProgramGroup = void*;
 using OptixResult = int;
 using OptixTraversableHandle = unsigned long long;
 using OptixBuildOperation = int;
@@ -111,7 +111,7 @@ struct OptixAccelBufferSizes {
 };
 
 struct OptixBuildInputTriangleArray {
-    const CUdeviceptr *vertexBuffers;
+    const CUdeviceptr* vertexBuffers;
     unsigned int numVertices;
     OptixVertexFormat vertexFormat;
     unsigned int vertexStrideInBytes;
@@ -120,7 +120,7 @@ struct OptixBuildInputTriangleArray {
     OptixIndicesFormat indexFormat;
     unsigned int indexStrideInBytes;
     CUdeviceptr preTransform;
-    const unsigned int *flags;
+    const unsigned int* flags;
     unsigned int numSbtRecords;
     CUdeviceptr sbtIndexOffsetBuffer;
     unsigned int sbtIndexOffsetSizeInBytes;
@@ -130,10 +130,10 @@ struct OptixBuildInputTriangleArray {
 };
 
 struct OptixBuildInputCustomPrimitiveArray {
-    const CUdeviceptr *aabbBuffers;
+    const CUdeviceptr* aabbBuffers;
     unsigned int numPrimitives;
     unsigned int strideInBytes;
-    const unsigned int *flags;
+    const unsigned int* flags;
     unsigned int numSbtRecords;
     CUdeviceptr sbtIndexOffsetBuffer;
     unsigned int sbtIndexOffsetSizeInBytes;
@@ -169,17 +169,17 @@ struct OptixBuildInput {
 
 struct OptixPayloadType {
     unsigned int numPayloadValues;
-    const unsigned int *payloadSemantics;
+    const unsigned int* payloadSemantics;
 };
 
 struct OptixModuleCompileOptions {
     int maxRegisterCount;
     int optLevel;
     int debugLevel;
-    const void *boundValues;
+    const void* boundValues;
     unsigned int numBoundValues;
     unsigned int numPayloadTypes;
-    const OptixPayloadType *payloadTypes;
+    const OptixPayloadType* payloadTypes;
 };
 
 struct OptixPipelineCompileOptions {
@@ -188,7 +188,7 @@ struct OptixPipelineCompileOptions {
     int numPayloadValues;
     int numAttributeValues;
     unsigned int exceptionFlags;
-    const char *pipelineLaunchParamsVariableName;
+    const char* pipelineLaunchParamsVariableName;
     unsigned int usesPrimitiveTypeFlags;
     int allowOpacityMicromaps;
 };
@@ -202,16 +202,16 @@ struct OptixPipelineCompileOptionsDirect {
     int numPayloadValues;
     int numAttributeValues;
     unsigned int exceptionFlags;
-    const char *pipelineLaunchParamsVariableName;
+    const char* pipelineLaunchParamsVariableName;
     size_t pipelineLaunchParamsSizeInBytes;
     unsigned int usesPrimitiveTypeFlags;
     int allowOpacityMicromaps;
     int allowClusteredGeometry;
 };
 
-inline const OptixPipelineCompileOptions *direct_optix_pipeline_compile_options(
-    const OptixPipelineCompileOptionsDirect &options) {
-    return reinterpret_cast<const OptixPipelineCompileOptions *>(&options);
+inline const OptixPipelineCompileOptions* direct_optix_pipeline_compile_options(
+    const OptixPipelineCompileOptionsDirect& options) {
+    return reinterpret_cast<const OptixPipelineCompileOptions*>(&options);
 }
 
 struct OptixAccelEmitDesc {
@@ -221,16 +221,16 @@ struct OptixAccelEmitDesc {
 
 struct OptixProgramGroupSingleModule {
     OptixModule module;
-    const char *entryFunctionName;
+    const char* entryFunctionName;
 };
 
 struct OptixProgramGroupHitgroup {
     OptixModule moduleCH;
-    const char *entryFunctionNameCH;
+    const char* entryFunctionNameCH;
     OptixModule moduleAH;
-    const char *entryFunctionNameAH;
+    const char* entryFunctionNameAH;
     OptixModule moduleIS;
-    const char *entryFunctionNameIS;
+    const char* entryFunctionNameIS;
 };
 
 struct OptixProgramGroupDesc {
@@ -246,7 +246,7 @@ struct OptixProgramGroupDesc {
 };
 
 struct OptixProgramGroupOptions {
-    const OptixPayloadType *payloadType;
+    const OptixPayloadType* payloadType;
 };
 
 struct OptixPipelineLinkOptions {
@@ -273,15 +273,14 @@ struct OptixShaderBindingTable {
 
 /// Per-mesh hit-group payload stored in the SBT and read back on a hit.
 struct OptixHitGroupData {
-    int shape_offset;  ///< Face-offset added to the local primitive index to globalize it.
-    int shape_id;      ///< Owning mesh id.
+    int shape_offset; ///< Face-offset added to the local primitive index to globalize it.
+    int shape_id;     ///< Owning mesh id.
 };
 
 static_assert(rayd::shared::optix::SbtRecordAlignment == OPTIX_SBT_RECORD_ALIGNMENT);
 static_assert(rayd::shared::optix::SbtRecordHeaderSize == OPTIX_SBT_RECORD_HEADER_SIZE);
 
-template <typename T>
-using SbtRecord = rayd::shared::optix::SbtRecord<T>;
+template <typename T> using SbtRecord = rayd::shared::optix::SbtRecord<T>;
 
 using EmptySbtRecord = rayd::shared::optix::EmptySbtRecord;
 
@@ -293,37 +292,31 @@ using HitGroupSbtRecord = SbtRecord<OptixHitGroupData>;
 // =====================================================
 
 #if defined(OPTIX_STUBS_IMPL)
-#  define D(name, ...) OptixResult (*name)(__VA_ARGS__) = nullptr;
+#define D(name, ...) OptixResult (*name)(__VA_ARGS__) = nullptr;
 #else
-#  define D(name, ...) extern OptixResult (*name)(__VA_ARGS__)
+#define D(name, ...) extern OptixResult (*name)(__VA_ARGS__)
 #endif
 
-D(optixAccelComputeMemoryUsage, OptixDeviceContext,
-  const OptixAccelBuildOptions *, const OptixBuildInput *, unsigned int,
-  OptixAccelBufferSizes *);
-D(optixAccelBuild, OptixDeviceContext, CUstream, const OptixAccelBuildOptions *,
-  const OptixBuildInput *, unsigned int, CUdeviceptr, size_t, CUdeviceptr,
-  size_t, OptixTraversableHandle *, const OptixAccelEmitDesc *, unsigned int);
-D(optixModuleCreate, OptixDeviceContext,
-  const OptixModuleCompileOptions *, const OptixPipelineCompileOptions *,
-  const char *, size_t, char *, size_t *, OptixModule *);
-D(optixDeviceContextGetProperty, OptixDeviceContext, OptixDeviceProperty, void *, size_t);
+D(optixAccelComputeMemoryUsage, OptixDeviceContext, const OptixAccelBuildOptions*, const OptixBuildInput*, unsigned int,
+  OptixAccelBufferSizes*);
+D(optixAccelBuild, OptixDeviceContext, CUstream, const OptixAccelBuildOptions*, const OptixBuildInput*, unsigned int,
+  CUdeviceptr, size_t, CUdeviceptr, size_t, OptixTraversableHandle*, const OptixAccelEmitDesc*, unsigned int);
+D(optixModuleCreate, OptixDeviceContext, const OptixModuleCompileOptions*, const OptixPipelineCompileOptions*,
+  const char*, size_t, char*, size_t*, OptixModule*);
+D(optixDeviceContextGetProperty, OptixDeviceContext, OptixDeviceProperty, void*, size_t);
 D(optixModuleDestroy, OptixModule);
-D(optixProgramGroupCreate, OptixDeviceContext, const OptixProgramGroupDesc *,
-  unsigned int, const OptixProgramGroupOptions *, char *, size_t *,
-  OptixProgramGroup *);
+D(optixProgramGroupCreate, OptixDeviceContext, const OptixProgramGroupDesc*, unsigned int,
+  const OptixProgramGroupOptions*, char*, size_t*, OptixProgramGroup*);
 D(optixProgramGroupDestroy, OptixProgramGroup);
-D(optixPipelineCreate, OptixDeviceContext,
-  const OptixPipelineCompileOptions *, const OptixPipelineLinkOptions *,
-  const OptixProgramGroup *, unsigned int, char *, size_t *, OptixPipeline *);
+D(optixPipelineCreate, OptixDeviceContext, const OptixPipelineCompileOptions*, const OptixPipelineLinkOptions*,
+  const OptixProgramGroup*, unsigned int, char*, size_t*, OptixPipeline*);
 D(optixPipelineDestroy, OptixPipeline);
-D(optixPipelineSetStackSize, OptixPipeline, unsigned int, unsigned int,
-  unsigned int, unsigned int);
-D(optixSbtRecordPackHeader, OptixProgramGroup, void *);
-D(optixLaunch, OptixPipeline, CUstream, CUdeviceptr, size_t,
-  const OptixShaderBindingTable *, unsigned int, unsigned int, unsigned int);
-D(optixAccelCompact, OptixDeviceContext, CUstream, OptixTraversableHandle,
-  CUdeviceptr, size_t, OptixTraversableHandle *);
+D(optixPipelineSetStackSize, OptixPipeline, unsigned int, unsigned int, unsigned int, unsigned int);
+D(optixSbtRecordPackHeader, OptixProgramGroup, void*);
+D(optixLaunch, OptixPipeline, CUstream, CUdeviceptr, size_t, const OptixShaderBindingTable*, unsigned int, unsigned int,
+  unsigned int);
+D(optixAccelCompact, OptixDeviceContext, CUstream, OptixTraversableHandle, CUdeviceptr, size_t,
+  OptixTraversableHandle*);
 
 #undef D
 
@@ -335,16 +328,16 @@ namespace rayd {
 /// Snapshot of the loaded OptiX runtime: which entry points resolved, the ABI/RTcore
 /// versions probed, and the on-disk driver module that backs them.
 struct OptixRuntimeInfo {
-    int target_version = RAYD_OPTIX_TARGET_VERSION; ///< OptiX version RayD was built against.
-    int target_abi = RAYD_OPTIX_TARGET_ABI;         ///< OptiX ABI RayD requests from the driver.
-    bool module_create_available = false;            ///< optixModuleCreate resolved.
+    int target_version = RAYD_OPTIX_TARGET_VERSION;     ///< OptiX version RayD was built against.
+    int target_abi = RAYD_OPTIX_TARGET_ABI;             ///< OptiX ABI RayD requests from the driver.
+    bool module_create_available = false;               ///< optixModuleCreate resolved.
     bool device_context_get_property_available = false; ///< optixDeviceContextGetProperty resolved.
-    bool query_function_table_available = false;     ///< Driver exposes optixQueryFunctionTable.
-    bool target_abi_supported = false;               ///< Driver accepts the target ABI.
-    int abi_probe_result = 0;                         ///< Raw result code from the ABI probe.
-    int rtcore_version = -1;                           ///< RT core version, or -1 if unavailable.
-    std::string module_path;                          ///< Path to the resolved OptiX driver module.
-    std::string module_version;                        ///< Version string of that module.
+    bool query_function_table_available = false;        ///< Driver exposes optixQueryFunctionTable.
+    bool target_abi_supported = false;                  ///< Driver accepts the target ABI.
+    int abi_probe_result = 0;                           ///< Raw result code from the ABI probe.
+    int rtcore_version = -1;                            ///< RT core version, or -1 if unavailable.
+    std::string module_path;                            ///< Path to the resolved OptiX driver module.
+    std::string module_version;                         ///< Version string of that module.
 };
 
 /// Probe the active OptiX driver and report what resolved; initializes the OptiX API as a side effect.
@@ -364,22 +357,15 @@ bool optix_available();
 // Shared OptiX host helpers used by the multipath and edge pipelines.
 
 /// Throw std::runtime_error tagged with \p message when \p result is not OPTIX_SUCCESS.
-void check_optix(OptixResult result, const char *message);
+void check_optix(OptixResult result, const char* message);
 /// Create a ray-generation program group for \p entry_name in \p module.
-OptixProgramGroup make_raygen_group(OptixDeviceContext context,
-                                    OptixModule module,
-                                    const char *entry_name);
+OptixProgramGroup make_raygen_group(OptixDeviceContext context, OptixModule module, const char* entry_name);
 /// Create a miss program group for \p entry_name in \p module.
-OptixProgramGroup make_miss_group(OptixDeviceContext context,
-                                  OptixModule module,
-                                  const char *entry_name);
+OptixProgramGroup make_miss_group(OptixDeviceContext context, OptixModule module, const char* entry_name);
 /// Create a hit-group program group; any of the entry-point names may be null to omit that stage.
-OptixProgramGroup make_hitgroup(OptixDeviceContext context,
-                                OptixModule module,
-                                const char *closesthit,
-                                const char *anyhit,
-                                const char *intersection);
+OptixProgramGroup make_hitgroup(OptixDeviceContext context, OptixModule module, const char* closesthit,
+                                const char* anyhit, const char* intersection);
 /// Allocate and upload a header-only SBT record for \p group; returns the owning device pointer.
-void *make_sbt_record(OptixProgramGroup group);
+void* make_sbt_record(OptixProgramGroup group);
 
 } // namespace rayd

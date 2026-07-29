@@ -20,23 +20,18 @@ constexpr float kVacuumPermeability = 1.25663706212e-6f;
 constexpr float kSpeedOfLight = 299792458.0f;
 
 struct Medium {
-    utd::Complex eps_abs;  // absolute permittivity eps0 * eps_r_complex [F/m]
-    utd::Complex mu_abs;   // absolute permeability mu0 * mu_r_complex [H/m]
-    utd::Complex k;        // wave number, passive branch [rad/m]
+    utd::Complex eps_abs; // absolute permittivity eps0 * eps_r_complex [F/m]
+    utd::Complex mu_abs;  // absolute permeability mu0 * mu_r_complex [H/m]
+    utd::Complex k;       // wave number, passive branch [rad/m]
 };
 
-__device__ __forceinline__ Medium make_medium(
-    float eps_r, float sigma_e, float mu_r, float omega) {
+__device__ __forceinline__ Medium make_medium(float eps_r, float sigma_e, float mu_r, float omega) {
     Medium medium;
     const float safe_omega = fmaxf(omega, utd::UTD_SMALL_EPS);
-    medium.eps_abs = utd::cplx(
-        kVacuumPermittivity * fmaxf(eps_r, utd::UTD_SMALL_EPS),
-        -fmaxf(sigma_e, 0.0f) / safe_omega);
-    medium.mu_abs = utd::cplx(
-        kVacuumPermeability * fmaxf(mu_r, utd::UTD_SMALL_EPS), 0.0f);
-    medium.k = utd::cplx_mul_real(
-        c_sqrt_passive(utd::cplx_mul(medium.eps_abs, medium.mu_abs)),
-        safe_omega);
+    medium.eps_abs =
+        utd::cplx(kVacuumPermittivity * fmaxf(eps_r, utd::UTD_SMALL_EPS), -fmaxf(sigma_e, 0.0f) / safe_omega);
+    medium.mu_abs = utd::cplx(kVacuumPermeability * fmaxf(mu_r, utd::UTD_SMALL_EPS), 0.0f);
+    medium.k = utd::cplx_mul_real(c_sqrt_passive(utd::cplx_mul(medium.eps_abs, medium.mu_abs)), safe_omega);
     return medium;
 }
 
@@ -48,4 +43,4 @@ __device__ __forceinline__ Medium vacuum_medium(float omega) {
     return medium;
 }
 
-}  // namespace rayd::shared::transmission
+} // namespace rayd::shared::transmission

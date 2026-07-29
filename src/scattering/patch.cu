@@ -15,7 +15,7 @@
 
 namespace {
 
-constexpr int kQuadPoints = 256;  // 16 x 16 Duffy-mapped Gauss-Legendre nodes
+constexpr int kQuadPoints = 256; // 16 x 16 Duffy-mapped Gauss-Legendre nodes
 constexpr int kReduceBlock = 256;
 constexpr float kPi = 3.14159265358979323846f;
 
@@ -29,8 +29,8 @@ __device__ __forceinline__ V3 load3(const float* __restrict__ p, int64_t i) {
 }
 
 // PhaseScreenRuntime.sample_height: bilinear with half-texel edge clamp.
-__device__ __forceinline__ float sample_height(
-    const float* __restrict__ heights, int h_rows, int w_cols, float u, float v) {
+__device__ __forceinline__ float sample_height(const float* __restrict__ heights, int h_rows, int w_cols, float u,
+                                               float v) {
     const float tx = fminf(fmaxf(u * w_cols - 0.5f, 0.0f), static_cast<float>(w_cols - 1));
     const float ty = fminf(fmaxf(v * h_rows - 0.5f, 0.0f), static_cast<float>(h_rows - 1));
     const float x0 = floorf(tx);
@@ -55,9 +55,12 @@ __device__ __forceinline__ float sample_height(
 __device__ __forceinline__ V3 stable_tangent(V3 n) {
     const float ax = fabsf(n.x), ay = fabsf(n.y), az = fabsf(n.z);
     V3 axis = {0.0f, 0.0f, 0.0f};
-    if (ax <= ay && ax <= az) axis.x = 1.0f;
-    else if (ay <= az) axis.y = 1.0f;
-    else axis.z = 1.0f;
+    if (ax <= ay && ax <= az)
+        axis.x = 1.0f;
+    else if (ay <= az)
+        axis.y = 1.0f;
+    else
+        axis.z = 1.0f;
     const float proj = rayd::shared::math::dot(axis, n);
     V3 t = {axis.x - proj * n.x, axis.y - proj * n.y, axis.z - proj * n.z};
     const float norm = fmaxf(sqrtf(rayd::shared::math::dot(t, t)), 1.0e-12f);
@@ -66,8 +69,7 @@ __device__ __forceinline__ V3 stable_tangent(V3 n) {
 
 // _sp_basis: s = normalize(n x d) with the deterministic backup axis at
 // normal incidence; p = s x d.
-__device__ __forceinline__ void sp_basis(
-    V3 n, V3 d, V3 backup, V3& s, V3& p) {
+__device__ __forceinline__ void sp_basis(V3 n, V3 d, V3 backup, V3& s, V3& p) {
     const V3 raw = rayd::shared::math::cross(n, d);
     const float norm = sqrtf(rayd::shared::math::dot(raw, raw));
     if (norm < 1.0e-6f) {
@@ -78,34 +80,22 @@ __device__ __forceinline__ void sp_basis(
     p = rayd::shared::math::cross(s, d);
 }
 
-__global__ void patch_integral_rows_kernel(
-    int64_t row_count,
-    const bool* __restrict__ valid,
-    const float* __restrict__ patch_tris,
-    const float* __restrict__ patch_uvs,
-    const int64_t* __restrict__ rows,
-    const float* __restrict__ d_i,
-    const float* __restrict__ d_o,
-    const float* __restrict__ n_rows,
-    const cfloat* __restrict__ r_te,
-    const cfloat* __restrict__ r_tm,
-    const float* __restrict__ pol_t,
-    const float* __restrict__ pol_r,
-    const float* __restrict__ r1_rows,
-    const float* __restrict__ r2_rows,
-    const float* __restrict__ centroids,
-    const float* __restrict__ heights,
-    int h_rows_dim, int w_cols_dim,
-    const float* __restrict__ quad_a,
-    const float* __restrict__ quad_b,
-    const float* __restrict__ quad_w,
-    float k0,
-    cfloat* __restrict__ out_integral,
-    cfloat* __restrict__ out_row_value) {
+__global__ void patch_integral_rows_kernel(int64_t row_count, const bool* __restrict__ valid,
+                                           const float* __restrict__ patch_tris, const float* __restrict__ patch_uvs,
+                                           const int64_t* __restrict__ rows, const float* __restrict__ d_i,
+                                           const float* __restrict__ d_o, const float* __restrict__ n_rows,
+                                           const cfloat* __restrict__ r_te, const cfloat* __restrict__ r_tm,
+                                           const float* __restrict__ pol_t, const float* __restrict__ pol_r,
+                                           const float* __restrict__ r1_rows, const float* __restrict__ r2_rows,
+                                           const float* __restrict__ centroids, const float* __restrict__ heights,
+                                           int h_rows_dim, int w_cols_dim, const float* __restrict__ quad_a,
+                                           const float* __restrict__ quad_b, const float* __restrict__ quad_w, float k0,
+                                           cfloat* __restrict__ out_integral, cfloat* __restrict__ out_row_value) {
     __shared__ float sh_re[kQuadPoints];
     __shared__ float sh_im[kQuadPoints];
     const int row = blockIdx.x;
-    if (row >= row_count) return;
+    if (row >= row_count)
+        return;
     if (!valid[row]) {
         if (threadIdx.x == 0) {
             out_integral[row] = {0.0f, 0.0f};
@@ -172,7 +162,8 @@ __global__ void patch_integral_rows_kernel(
         }
         __syncthreads();
     }
-    if (t != 0) return;
+    if (t != 0)
+        return;
 
     const C2 integral = {sh_re[0] * double_area, sh_im[0] * double_area};
     out_integral[row] = cfloat(integral.re, integral.im);
@@ -220,15 +211,12 @@ __global__ void patch_integral_rows_kernel(
     const float inv_rr = 1.0f / (r1v * r2v);
     value = {value.re * inv_rr, value.im * inv_rr};
     // * integral
-    out_row_value[row] = cfloat(
-        value.re * integral.re - value.im * integral.im,
-        value.re * integral.im + value.im * integral.re);
+    out_row_value[row] =
+        cfloat(value.re * integral.re - value.im * integral.im, value.re * integral.im + value.im * integral.re);
 }
 
-__global__ void patch_integral_total_kernel(
-    int64_t row_count,
-    const cfloat* __restrict__ row_values,
-    cfloat* __restrict__ out_total) {
+__global__ void patch_integral_total_kernel(int64_t row_count, const cfloat* __restrict__ row_values,
+                                            cfloat* __restrict__ out_total) {
     __shared__ float sh_re[kReduceBlock];
     __shared__ float sh_im[kReduceBlock];
     const int t = threadIdx.x;
@@ -251,40 +239,24 @@ __global__ void patch_integral_total_kernel(
         }
         __syncthreads();
     }
-    if (t == 0) out_total[0] = cfloat(sh_re[0], sh_im[0]);
+    if (t == 0)
+        out_total[0] = cfloat(sh_re[0], sh_im[0]);
 }
 
-}  // namespace
+} // namespace
 
 rayd::torch::ScatteringPatchIntegralEvalResult scattering_patch_integral_eval_impl(
-    at::Tensor valid,
-    at::Tensor patch_tris,
-    at::Tensor patch_uvs,
-    at::Tensor rows,
-    at::Tensor d_i,
-    at::Tensor d_o,
-    at::Tensor n_rows,
-    at::Tensor r_te,
-    at::Tensor r_tm,
-    at::Tensor pol_t,
-    at::Tensor pol_r,
-    at::Tensor r1_rows,
-    at::Tensor r2_rows,
-    at::Tensor centroids,
-    at::Tensor heights,
-    at::Tensor quad_a,
-    at::Tensor quad_b,
-    at::Tensor quad_w,
-    double k0) {
-    using rayd::torch::detail::check_tensor;
+    at::Tensor valid, at::Tensor patch_tris, at::Tensor patch_uvs, at::Tensor rows, at::Tensor d_i, at::Tensor d_o,
+    at::Tensor n_rows, at::Tensor r_te, at::Tensor r_tm, at::Tensor pol_t, at::Tensor pol_r, at::Tensor r1_rows,
+    at::Tensor r2_rows, at::Tensor centroids, at::Tensor heights, at::Tensor quad_a, at::Tensor quad_b,
+    at::Tensor quad_w, double k0) {
     using rayd::torch::detail::check_flat_tensor;
+    using rayd::torch::detail::check_tensor;
     using rayd::torch::detail::check_vec3_table;
     check_tensor(patch_tris, "patch_tris", at::kFloat, 3);
-    TORCH_CHECK(patch_tris.size(1) == 3 && patch_tris.size(2) == 3,
-                "patch_tris must have shape (P, 3, 3)");
+    TORCH_CHECK(patch_tris.size(1) == 3 && patch_tris.size(2) == 3, "patch_tris must have shape (P, 3, 3)");
     check_tensor(patch_uvs, "patch_uvs", at::kFloat, 3);
-    TORCH_CHECK(patch_uvs.size(0) == patch_tris.size(0) && patch_uvs.size(1) == 3 &&
-                    patch_uvs.size(2) == 2,
+    TORCH_CHECK(patch_uvs.size(0) == patch_tris.size(0) && patch_uvs.size(1) == 3 && patch_uvs.size(2) == 2,
                 "patch_uvs must have shape (P, 3, 2)");
     check_flat_tensor(rows, "rows", at::kLong);
     const int64_t row_count = rows.size(0);
@@ -297,8 +269,7 @@ rayd::torch::ScatteringPatchIntegralEvalResult scattering_patch_integral_eval_im
     check_tensor(r_tm, "r_tm", at::kComplexFloat, 1);
     check_flat_tensor(pol_t, "pol_t", at::kFloat);
     check_flat_tensor(pol_r, "pol_r", at::kFloat);
-    TORCH_CHECK(pol_t.size(0) == 3 && pol_r.size(0) == 3,
-                "pol_t and pol_r must have shape (3,)");
+    TORCH_CHECK(pol_t.size(0) == 3 && pol_r.size(0) == 3, "pol_t and pol_r must have shape (3,)");
     check_flat_tensor(r1_rows, "r1_rows", at::kFloat);
     check_flat_tensor(r2_rows, "r2_rows", at::kFloat);
     check_vec3_table(centroids, "centroids");
@@ -306,67 +277,48 @@ rayd::torch::ScatteringPatchIntegralEvalResult scattering_patch_integral_eval_im
     check_flat_tensor(quad_a, "quad_a", at::kFloat);
     check_flat_tensor(quad_b, "quad_b", at::kFloat);
     check_flat_tensor(quad_w, "quad_w", at::kFloat);
-    TORCH_CHECK(quad_a.size(0) == kQuadPoints && quad_b.size(0) == kQuadPoints &&
-                    quad_w.size(0) == kQuadPoints,
+    TORCH_CHECK(quad_a.size(0) == kQuadPoints && quad_b.size(0) == kQuadPoints && quad_w.size(0) == kQuadPoints,
                 "quadrature arrays must hold 16x16 Duffy-mapped nodes");
-    TORCH_CHECK(d_i.size(0) == row_count && d_o.size(0) == row_count &&
-                    n_rows.size(0) == row_count && r_te.size(0) == row_count &&
-                    r_tm.size(0) == row_count && r1_rows.size(0) == row_count &&
+    TORCH_CHECK(d_i.size(0) == row_count && d_o.size(0) == row_count && n_rows.size(0) == row_count &&
+                    r_te.size(0) == row_count && r_tm.size(0) == row_count && r1_rows.size(0) == row_count &&
                     r2_rows.size(0) == row_count && centroids.size(0) == row_count,
                 "per-row arrays must match rows");
-    for (const auto& t : {valid, patch_uvs, rows, d_i, d_o, n_rows, r_te, r_tm, pol_t,
-                          pol_r, r1_rows, r2_rows, centroids, heights, quad_a,
-                          quad_b, quad_w}) {
-        TORCH_CHECK(t.get_device() == patch_tris.get_device(),
-                    "patch-integral tensors must share device");
+    for (const auto& t : {valid, patch_uvs, rows, d_i, d_o, n_rows, r_te, r_tm, pol_t, pol_r, r1_rows, r2_rows,
+                          centroids, heights, quad_a, quad_b, quad_w}) {
+        TORCH_CHECK(t.get_device() == patch_tris.get_device(), "patch-integral tensors must share device");
     }
     const c10::cuda::CUDAGuard guard(static_cast<int>(patch_tris.get_device()));
-    auto integral = at::empty(
-        {row_count}, patch_tris.options().dtype(at::kComplexFloat));
+    auto integral = at::empty({row_count}, patch_tris.options().dtype(at::kComplexFloat));
     auto row_value = at::empty_like(integral);
     auto total = at::empty({}, patch_tris.options().dtype(at::kComplexFloat));
-    cudaStream_t stream =
-        at::cuda::getCurrentCUDAStream(patch_tris.get_device()).stream();
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream(patch_tris.get_device()).stream();
     if (row_count > 0) {
         patch_integral_rows_kernel<<<static_cast<int>(row_count), kQuadPoints, 0, stream>>>(
-            row_count,
-            valid.data_ptr<bool>(),
-            patch_tris.data_ptr<float>(), patch_uvs.data_ptr<float>(),
-            rows.data_ptr<int64_t>(), d_i.data_ptr<float>(), d_o.data_ptr<float>(),
-            n_rows.data_ptr<float>(), r_te.data_ptr<cfloat>(), r_tm.data_ptr<cfloat>(),
-            pol_t.data_ptr<float>(), pol_r.data_ptr<float>(),
-            r1_rows.data_ptr<float>(), r2_rows.data_ptr<float>(),
-            centroids.data_ptr<float>(), heights.data_ptr<float>(),
-            static_cast<int>(heights.size(0)), static_cast<int>(heights.size(1)),
-            quad_a.data_ptr<float>(), quad_b.data_ptr<float>(), quad_w.data_ptr<float>(),
-            static_cast<float>(k0),
+            row_count, valid.data_ptr<bool>(), patch_tris.data_ptr<float>(), patch_uvs.data_ptr<float>(),
+            rows.data_ptr<int64_t>(), d_i.data_ptr<float>(), d_o.data_ptr<float>(), n_rows.data_ptr<float>(),
+            r_te.data_ptr<cfloat>(), r_tm.data_ptr<cfloat>(), pol_t.data_ptr<float>(), pol_r.data_ptr<float>(),
+            r1_rows.data_ptr<float>(), r2_rows.data_ptr<float>(), centroids.data_ptr<float>(),
+            heights.data_ptr<float>(), static_cast<int>(heights.size(0)), static_cast<int>(heights.size(1)),
+            quad_a.data_ptr<float>(), quad_b.data_ptr<float>(), quad_w.data_ptr<float>(), static_cast<float>(k0),
             integral.data_ptr<cfloat>(), row_value.data_ptr<cfloat>());
         C10_CUDA_KERNEL_LAUNCH_CHECK();
-        patch_integral_total_kernel<<<1, kReduceBlock, 0, stream>>>(
-            row_count, row_value.data_ptr<cfloat>(), total.data_ptr<cfloat>());
+        patch_integral_total_kernel<<<1, kReduceBlock, 0, stream>>>(row_count, row_value.data_ptr<cfloat>(),
+                                                                    total.data_ptr<cfloat>());
         C10_CUDA_KERNEL_LAUNCH_CHECK();
     } else {
-        C10_CUDA_CHECK(cudaMemsetAsync(
-            total.data_ptr(), 0, total.element_size(), stream));
+        C10_CUDA_CHECK(cudaMemsetAsync(total.data_ptr(), 0, total.element_size(), stream));
     }
     return {total, integral, row_value};
 }
 
-rayd::torch::ScatteringPatchIntegralEvalResult
-rayd::torch::scattering_patch_integral_eval(
+rayd::torch::ScatteringPatchIntegralEvalResult rayd::torch::scattering_patch_integral_eval(
     const ScatteringPatchIntegralEvalRequest& p) {
-    return scattering_patch_integral_eval_impl(
-        p.valid, p.patch_tris, p.patch_uvs, p.rows, p.d_i, p.d_o, p.n_rows,
-        p.r_te, p.r_tm, p.pol_t, p.pol_r, p.r1_rows, p.r2_rows,
-        p.centroids, p.heights, p.quad_a, p.quad_b, p.quad_w, p.k0);
+    return scattering_patch_integral_eval_impl(p.valid, p.patch_tris, p.patch_uvs, p.rows, p.d_i, p.d_o, p.n_rows,
+                                               p.r_te, p.r_tm, p.pol_t, p.pol_r, p.r1_rows, p.r2_rows, p.centroids,
+                                               p.heights, p.quad_a, p.quad_b, p.quad_w, p.k0);
 }
 
-
 // ---- merged from src/scattering/patch_ad_part.cu ----
-
-
-
-
 
 // ADR-014 op 2 companions: VJP/JVP of the realization-coherent phase-screen
 // patch integral (forward in scattering_patch_integral.cu).
@@ -411,14 +363,15 @@ rayd::torch::scattering_patch_integral_eval(
 
 namespace {
 
-
 using cfloat = c10::complex<float>;
 
-struct Texel4 { int idx[4]; float wgt[4]; };
+struct Texel4 {
+    int idx[4];
+    float wgt[4];
+};
 
 __device__ __forceinline__ cfloat cmul(cfloat a, cfloat b) {
-    return cfloat(a.real() * b.real() - a.imag() * b.imag(),
-                  a.real() * b.imag() + a.imag() * b.real());
+    return cfloat(a.real() * b.real() - a.imag() * b.imag(), a.real() * b.imag() + a.imag() * b.real());
 }
 __device__ __forceinline__ cfloat cadd(cfloat a, cfloat b) {
     return cfloat(a.real() + b.real(), a.imag() + b.imag());
@@ -429,18 +382,17 @@ __device__ __forceinline__ cfloat cscalef(cfloat a, float s) {
 __device__ __forceinline__ cfloat cconj(cfloat a) {
     return cfloat(a.real(), -a.imag());
 }
-__device__ __forceinline__ cfloat cmulj(cfloat a) {  // a * j
+__device__ __forceinline__ cfloat cmulj(cfloat a) { // a * j
     return cfloat(-a.imag(), a.real());
 }
-__device__ __forceinline__ float reconjmul(cfloat g, cfloat x) {  // Re(conj(g)*x)
+__device__ __forceinline__ float reconjmul(cfloat g, cfloat x) { // Re(conj(g)*x)
     return g.real() * x.real() + g.imag() * x.imag();
 }
 
 // PhaseScreenRuntime.sample_height: bilinear with half-texel edge clamp. Also
 // returns the 4 texel flat indices and bilinear weights for the heights VJP.
-__device__ __forceinline__ float sample_height_tex(
-    const float* __restrict__ heights, int h_rows, int w_cols, float u, float v,
-    Texel4& tex) {
+__device__ __forceinline__ float sample_height_tex(const float* __restrict__ heights, int h_rows, int w_cols, float u,
+                                                   float v, Texel4& tex) {
     const float tx = fminf(fmaxf(u * w_cols - 0.5f, 0.0f), static_cast<float>(w_cols - 1));
     const float ty = fminf(fmaxf(v * h_rows - 0.5f, 0.0f), static_cast<float>(h_rows - 1));
     const float x0 = floorf(tx);
@@ -461,10 +413,14 @@ __device__ __forceinline__ float sample_height_tex(
     const float t11 = heights[i11];
     const float top = t00 * (1.0f - wx) + t01 * wx;
     const float bot = t10 * (1.0f - wx) + t11 * wx;
-    tex.idx[0] = i00; tex.wgt[0] = (1.0f - wx) * (1.0f - wy);
-    tex.idx[1] = i01; tex.wgt[1] = wx * (1.0f - wy);
-    tex.idx[2] = i10; tex.wgt[2] = (1.0f - wx) * wy;
-    tex.idx[3] = i11; tex.wgt[3] = wx * wy;
+    tex.idx[0] = i00;
+    tex.wgt[0] = (1.0f - wx) * (1.0f - wy);
+    tex.idx[1] = i01;
+    tex.wgt[1] = wx * (1.0f - wy);
+    tex.idx[2] = i10;
+    tex.wgt[2] = (1.0f - wx) * wy;
+    tex.idx[3] = i11;
+    tex.wgt[3] = wx * wy;
     return top * (1.0f - wy) + bot * wy;
 }
 
@@ -478,14 +434,15 @@ __device__ __forceinline__ float sample_height_tex(
 //   grad(val_te) = -(d.s) pol - (pol.d) s + [unclamped ? (w_vec x n) : 0]
 //   grad(val_tm) = -(d.p) pol - (pol.d) p + (perp x s) + [unclamped ? (r_vec x n) : 0]
 // with w_vec = (perp - (perp.s) s)/|u|, r_vec = ((d x perp) - ((d x perp).s) s)/|u|.
-__device__ __forceinline__ void basis_and_grads(
-    V3 n, V3 d, V3 backup, V3 pol,
-    V3& s, V3& p, float& val_te, float& val_tm, V3& grad_te, V3& grad_tm) {
+__device__ __forceinline__ void basis_and_grads(V3 n, V3 d, V3 backup, V3 pol, V3& s, V3& p, float& val_te,
+                                                float& val_tm, V3& grad_te, V3& grad_tm) {
     const V3 raw = rayd::shared::math::cross(n, d);
     const float norm = sqrtf(rayd::shared::math::dot(raw, raw));
     const bool unclamped = norm >= 1.0e-6f;
-    if (unclamped) s = rayd::shared::math::scale(raw, 1.0f / fmaxf(norm, 1.0e-12f));
-    else s = backup;
+    if (unclamped)
+        s = rayd::shared::math::scale(raw, 1.0f / fmaxf(norm, 1.0e-12f));
+    else
+        s = backup;
     p = rayd::shared::math::cross(s, d);
     const float pol_d = rayd::shared::math::dot(pol, d);
     const V3 perp = {pol.x - pol_d * d.x, pol.y - pol_d * d.y, pol.z - pol_d * d.z};
@@ -493,28 +450,26 @@ __device__ __forceinline__ void basis_and_grads(
     val_tm = rayd::shared::math::dot(perp, p);
     const float d_s = rayd::shared::math::dot(d, s);
     const float d_p = rayd::shared::math::dot(d, p);
-    grad_te = {-d_s * pol.x - pol_d * s.x,
-               -d_s * pol.y - pol_d * s.y,
-               -d_s * pol.z - pol_d * s.z};
+    grad_te = {-d_s * pol.x - pol_d * s.x, -d_s * pol.y - pol_d * s.y, -d_s * pol.z - pol_d * s.z};
     const V3 perp_x_s = rayd::shared::math::cross(perp, s);
-    grad_tm = {-d_p * pol.x - pol_d * p.x + perp_x_s.x,
-               -d_p * pol.y - pol_d * p.y + perp_x_s.y,
+    grad_tm = {-d_p * pol.x - pol_d * p.x + perp_x_s.x, -d_p * pol.y - pol_d * p.y + perp_x_s.y,
                -d_p * pol.z - pol_d * p.z + perp_x_s.z};
     if (unclamped) {
         const float inv = 1.0f / norm;
         const float perp_s = rayd::shared::math::dot(perp, s);
-        const V3 w_vec = {(perp.x - perp_s * s.x) * inv,
-                          (perp.y - perp_s * s.y) * inv,
-                          (perp.z - perp_s * s.z) * inv};
+        const V3 w_vec = {(perp.x - perp_s * s.x) * inv, (perp.y - perp_s * s.y) * inv, (perp.z - perp_s * s.z) * inv};
         const V3 wxn = rayd::shared::math::cross(w_vec, n);
-        grad_te.x += wxn.x; grad_te.y += wxn.y; grad_te.z += wxn.z;
+        grad_te.x += wxn.x;
+        grad_te.y += wxn.y;
+        grad_te.z += wxn.z;
         const V3 dxperp = rayd::shared::math::cross(d, perp);
         const float dxperp_s = rayd::shared::math::dot(dxperp, s);
-        const V3 r_vec = {(dxperp.x - dxperp_s * s.x) * inv,
-                          (dxperp.y - dxperp_s * s.y) * inv,
+        const V3 r_vec = {(dxperp.x - dxperp_s * s.x) * inv, (dxperp.y - dxperp_s * s.y) * inv,
                           (dxperp.z - dxperp_s * s.z) * inv};
         const V3 rxn = rayd::shared::math::cross(r_vec, n);
-        grad_tm.x += rxn.x; grad_tm.y += rxn.y; grad_tm.z += rxn.z;
+        grad_tm.x += rxn.x;
+        grad_tm.y += rxn.y;
+        grad_tm.z += rxn.z;
     }
 }
 
@@ -525,10 +480,9 @@ struct RowFrame {
     V3 q, q_int;
     float q_int_n;
 };
-__device__ __forceinline__ RowFrame load_frame(
-    const float* __restrict__ patch_tris, int64_t patch,
-    const float* __restrict__ d_i, const float* __restrict__ d_o,
-    int row, float k0) {
+__device__ __forceinline__ RowFrame load_frame(const float* __restrict__ patch_tris, int64_t patch,
+                                               const float* __restrict__ d_i, const float* __restrict__ d_o, int row,
+                                               float k0) {
     RowFrame f;
     f.p0 = load3(patch_tris, patch * 3 + 0);
     const V3 p1 = load3(patch_tris, patch * 3 + 1);
@@ -549,9 +503,8 @@ __device__ __forceinline__ RowFrame load_frame(
 }
 
 // Interpolated (u, v) of a Duffy node inside the patch triangle.
-__device__ __forceinline__ void node_uv(
-    const float* __restrict__ patch_uvs, int64_t patch, float a, float b,
-    float& uu, float& vv) {
+__device__ __forceinline__ void node_uv(const float* __restrict__ patch_uvs, int64_t patch, float a, float b, float& uu,
+                                        float& vv) {
     const float u0 = patch_uvs[(patch * 3 + 0) * 2 + 0];
     const float v0 = patch_uvs[(patch * 3 + 0) * 2 + 1];
     const float u1 = patch_uvs[(patch * 3 + 1) * 2 + 0];
@@ -568,8 +521,7 @@ __device__ __forceinline__ V3 pref_grad_q(V3 q, V3 n, float q_norm2) {
     const float qn_c = fmaxf(qn, 1.0e-9f);
     const float flag = qn > 1.0e-9f ? 1.0f : 0.0f;
     const float inv = 1.0f / (4.0f * kPi * qn_c * qn_c);
-    return {(2.0f * q.x * qn_c - q_norm2 * flag * n.x) * inv,
-            (2.0f * q.y * qn_c - q_norm2 * flag * n.y) * inv,
+    return {(2.0f * q.x * qn_c - q_norm2 * flag * n.x) * inv, (2.0f * q.y * qn_c - q_norm2 * flag * n.y) * inv,
             (2.0f * q.z * qn_c - q_norm2 * flag * n.z) * inv};
 }
 
@@ -584,24 +536,21 @@ struct RowCoef {
     V3 grad_ate, grad_atm, grad_gte, grad_gtm;
     cfloat te, tm;
 };
-__device__ __forceinline__ RowCoef assemble_coef(
-    const RowFrame& f, V3 n, V3 di, V3 dov, cfloat te, cfloat tm,
-    V3 pt, V3 pr, V3 c_row, float r1v, float r2v, float k0) {
+__device__ __forceinline__ RowCoef assemble_coef(const RowFrame& f, V3 n, V3 di, V3 dov, cfloat te, cfloat tm, V3 pt,
+                                                 V3 pr, V3 c_row, float r1v, float r2v, float k0) {
     RowCoef rc;
-    rc.te = te; rc.tm = tm;
+    rc.te = te;
+    rc.tm = tm;
     const float q_norm2 = rayd::shared::math::dot(f.q, f.q);
     const float q_n = fmaxf(rayd::shared::math::dot(f.q, n), 1.0e-9f);
     // Forward-order prefactor (purely imaginary weight 1j*pref).
     rc.pref = k0 * (q_norm2 / (k0 * q_n)) / (4.0f * kPi);
 
     const V3 backup = stable_tangent(n);
-    basis_and_grads(n, di, backup, pt, rc.s_i, rc.p_i, rc.a_te, rc.a_tm,
-                    rc.grad_ate, rc.grad_atm);
-    basis_and_grads(n, dov, backup, pr, rc.s_o, rc.p_o, rc.g_te, rc.g_tm,
-                    rc.grad_gte, rc.grad_gtm);
-    rc.jones = cfloat(
-        te.real() * (rc.a_te * rc.g_te) + tm.real() * (rc.a_tm * rc.g_tm),
-        te.imag() * (rc.a_te * rc.g_te) + tm.imag() * (rc.a_tm * rc.g_tm));
+    basis_and_grads(n, di, backup, pt, rc.s_i, rc.p_i, rc.a_te, rc.a_tm, rc.grad_ate, rc.grad_atm);
+    basis_and_grads(n, dov, backup, pr, rc.s_o, rc.p_o, rc.g_te, rc.g_tm, rc.grad_gte, rc.grad_gtm);
+    rc.jones = cfloat(te.real() * (rc.a_te * rc.g_te) + tm.real() * (rc.a_tm * rc.g_tm),
+                      te.imag() * (rc.a_te * rc.g_te) + tm.imag() * (rc.a_tm * rc.g_tm));
 
     const float carrier_phase = -(k0 * (r1v + r2v) + rayd::shared::math::dot(f.q, c_row));
     sincosf(carrier_phase, &rc.cs, &rc.cc);
@@ -626,38 +575,17 @@ __device__ __forceinline__ RowCoef assemble_coef(
 // ----------------------------- backward -----------------------------------
 
 __global__ void patch_integral_backward_kernel(
-    int64_t row_count,
-    const bool* __restrict__ valid,
-    const float* __restrict__ patch_tris,
-    const float* __restrict__ patch_uvs,
-    const int64_t* __restrict__ rows,
-    const float* __restrict__ d_i,
-    const float* __restrict__ d_o,
-    const float* __restrict__ n_rows,
-    const cfloat* __restrict__ r_te,
-    const cfloat* __restrict__ r_tm,
-    const float* __restrict__ pol_t,
-    const float* __restrict__ pol_r,
-    const float* __restrict__ r1_rows,
-    const float* __restrict__ r2_rows,
-    const float* __restrict__ centroids,
-    const float* __restrict__ heights,
-    int h_rows_dim, int w_cols_dim,
-    const float* __restrict__ quad_a,
-    const float* __restrict__ quad_b,
-    const float* __restrict__ quad_w,
-    float k0,
-    const cfloat* __restrict__ grad_total,
-    float* __restrict__ grad_heights,
-    cfloat* __restrict__ grad_r_te,
-    cfloat* __restrict__ grad_r_tm,
-    float* __restrict__ grad_d_i,
-    float* __restrict__ grad_d_o,
-    float* __restrict__ grad_r1,
-    float* __restrict__ grad_r2,
-    float* __restrict__ grad_centroids,
-    float* __restrict__ grad_k0,
-    bool need_heights, bool need_jones, bool need_geometry, bool need_k0) {
+    int64_t row_count, const bool* __restrict__ valid, const float* __restrict__ patch_tris,
+    const float* __restrict__ patch_uvs, const int64_t* __restrict__ rows, const float* __restrict__ d_i,
+    const float* __restrict__ d_o, const float* __restrict__ n_rows, const cfloat* __restrict__ r_te,
+    const cfloat* __restrict__ r_tm, const float* __restrict__ pol_t, const float* __restrict__ pol_r,
+    const float* __restrict__ r1_rows, const float* __restrict__ r2_rows, const float* __restrict__ centroids,
+    const float* __restrict__ heights, int h_rows_dim, int w_cols_dim, const float* __restrict__ quad_a,
+    const float* __restrict__ quad_b, const float* __restrict__ quad_w, float k0, const cfloat* __restrict__ grad_total,
+    float* __restrict__ grad_heights, cfloat* __restrict__ grad_r_te, cfloat* __restrict__ grad_r_tm,
+    float* __restrict__ grad_d_i, float* __restrict__ grad_d_o, float* __restrict__ grad_r1,
+    float* __restrict__ grad_r2, float* __restrict__ grad_centroids, float* __restrict__ grad_k0, bool need_heights,
+    bool need_jones, bool need_geometry, bool need_k0) {
     __shared__ float sh_I_re[kQuadPoints];
     __shared__ float sh_I_im[kQuadPoints];
     __shared__ float sh_Sp_re[3][kQuadPoints];
@@ -666,7 +594,8 @@ __global__ void patch_integral_backward_kernel(
     __shared__ float sh_value_im;
 
     const int row = blockIdx.x;
-    if (row >= row_count) return;
+    if (row >= row_count)
+        return;
     if (!valid[row]) {
         if (threadIdx.x == 0) {
             if (need_jones) {
@@ -695,15 +624,14 @@ __global__ void patch_integral_backward_kernel(
     const float a = quad_a[t];
     const float b = quad_b[t];
     const float w = quad_w[t];
-    const V3 pos = {f.p0.x + a * f.e1.x + b * f.e2.x,
-                    f.p0.y + a * f.e1.y + b * f.e2.y,
+    const V3 pos = {f.p0.x + a * f.e1.x + b * f.e2.x, f.p0.y + a * f.e1.y + b * f.e2.y,
                     f.p0.z + a * f.e1.z + b * f.e2.z};
     float uu, vv;
     node_uv(patch_uvs, patch, a, b, uu, vv);
     Texel4 tex;
     const float h = sample_height_tex(heights, h_rows_dim, w_cols_dim, uu, vv, tex);
     const float phase = rayd::shared::math::dot(pos, f.q_int) + f.q_int_n * h;
-    float e_im, e_re;  // exp(-j phase) = (cos phase, -sin phase)
+    float e_im, e_re; // exp(-j phase) = (cos phase, -sin phase)
     sincosf(-phase, &e_im, &e_re);
     sh_I_re[t] = e_re * w;
     sh_I_im[t] = e_im * w;
@@ -750,16 +678,15 @@ __global__ void patch_integral_backward_kernel(
         const V3 c_row = load3(centroids, row);
         const float r1v = r1_rows[row];
         const float r2v = r2_rows[row];
-        const RowCoef rc = assemble_coef(
-            f, n, di, dov, r_te[row], r_tm[row], pt, pr, c_row, r1v, r2v, k0);
+        const RowCoef rc = assemble_coef(f, n, di, dov, r_te[row], r_tm[row], pt, pr, c_row, r1v, r2v, k0);
 
         sh_value_re = rc.value.real();
         sh_value_im = rc.value.imag();
 
-        const cfloat Iv = cmul(I, rc.value);            // I * value
-        const cfloat jIv = cmulj(Iv);                   // j * (I*value)
-        const cfloat Ibase = cmul(I, rc.base_c);        // I * base_c
-        const cfloat coeff2I = cmul(rc.coeff2, I);      // coeff2 * I
+        const cfloat Iv = cmul(I, rc.value);       // I * value
+        const cfloat jIv = cmulj(Iv);              // j * (I*value)
+        const cfloat Ibase = cmul(I, rc.base_c);   // I * base_c
+        const cfloat coeff2I = cmul(rc.coeff2, I); // coeff2 * I
 
         if (need_jones) {
             // grad_z = g * conj(K), K = coeff2*(proj)*I.
@@ -796,10 +723,8 @@ __global__ void patch_integral_backward_kernel(
                 const float atm = (c == 0) ? rc.grad_atm.x : (c == 1) ? rc.grad_atm.y : rc.grad_atm.z;
                 const float gte = (c == 0) ? rc.grad_gte.x : (c == 1) ? rc.grad_gte.y : rc.grad_gte.z;
                 const float gtm = (c == 0) ? rc.grad_gtm.x : (c == 1) ? rc.grad_gtm.y : rc.grad_gtm.z;
-                grad_d_i[row * 3 + c] =
-                    k0 * gVS - k0 * dpq * gIbase + k0 * cc * gjIv + w_ate * ate + w_atm * atm;
-                grad_d_o[row * 3 + c] =
-                    -k0 * gVS + k0 * dpq * gIbase - k0 * cc * gjIv + w_gte * gte + w_gtm * gtm;
+                grad_d_i[row * 3 + c] = k0 * gVS - k0 * dpq * gIbase + k0 * cc * gjIv + w_ate * ate + w_atm * atm;
+                grad_d_o[row * 3 + c] = -k0 * gVS + k0 * dpq * gIbase - k0 * cc * gjIv + w_gte * gte + w_gtm * gtm;
             }
         }
 
@@ -816,8 +741,7 @@ __global__ void patch_integral_backward_kernel(
             const float dpref_dk0 = dprefdq.x * Delta.x + dprefdq.y * Delta.y + dprefdq.z * Delta.z;
             const float dcphase_dk0 = -(r1v + r2v) - (Delta.x * c_row.x + Delta.y * c_row.y + Delta.z * c_row.z);
             // d value/d k0 = base_c*dpref/dk0 + value*(j*dcphase/dk0).
-            const cfloat dvalue = cadd(cscalef(rc.base_c, dpref_dk0),
-                                       cscalef(cmulj(rc.value), dcphase_dk0));
+            const cfloat dvalue = cadd(cscalef(rc.base_c, dpref_dk0), cscalef(cmulj(rc.value), dcphase_dk0));
             const cfloat drow = cadd(cmul(rc.value, S_k0), cmul(I, dvalue));
             atomicAdd(grad_k0, reconjmul(g, drow));
         }
@@ -840,46 +764,27 @@ __global__ void patch_integral_backward_kernel(
 // ------------------------------- jvp --------------------------------------
 
 __global__ void patch_integral_jvp_kernel(
-    int64_t row_count,
-    const bool* __restrict__ valid,
-    const float* __restrict__ patch_tris,
-    const float* __restrict__ patch_uvs,
-    const int64_t* __restrict__ rows,
-    const float* __restrict__ d_i,
-    const float* __restrict__ d_o,
-    const float* __restrict__ n_rows,
-    const cfloat* __restrict__ r_te,
-    const cfloat* __restrict__ r_tm,
-    const float* __restrict__ pol_t,
-    const float* __restrict__ pol_r,
-    const float* __restrict__ r1_rows,
-    const float* __restrict__ r2_rows,
-    const float* __restrict__ centroids,
-    const float* __restrict__ heights,
-    int h_rows_dim, int w_cols_dim,
-    const float* __restrict__ quad_a,
-    const float* __restrict__ quad_b,
-    const float* __restrict__ quad_w,
-    float k0,
-    const float* __restrict__ t_heights,
-    const cfloat* __restrict__ t_r_te,
-    const cfloat* __restrict__ t_r_tm,
-    const float* __restrict__ t_d_i,
-    const float* __restrict__ t_d_o,
-    const float* __restrict__ t_r1,
-    const float* __restrict__ t_r2,
-    const float* __restrict__ t_centroids,
-    float t_k0,
-    cfloat* __restrict__ out_t_row_value) {
+    int64_t row_count, const bool* __restrict__ valid, const float* __restrict__ patch_tris,
+    const float* __restrict__ patch_uvs, const int64_t* __restrict__ rows, const float* __restrict__ d_i,
+    const float* __restrict__ d_o, const float* __restrict__ n_rows, const cfloat* __restrict__ r_te,
+    const cfloat* __restrict__ r_tm, const float* __restrict__ pol_t, const float* __restrict__ pol_r,
+    const float* __restrict__ r1_rows, const float* __restrict__ r2_rows, const float* __restrict__ centroids,
+    const float* __restrict__ heights, int h_rows_dim, int w_cols_dim, const float* __restrict__ quad_a,
+    const float* __restrict__ quad_b, const float* __restrict__ quad_w, float k0, const float* __restrict__ t_heights,
+    const cfloat* __restrict__ t_r_te, const cfloat* __restrict__ t_r_tm, const float* __restrict__ t_d_i,
+    const float* __restrict__ t_d_o, const float* __restrict__ t_r1, const float* __restrict__ t_r2,
+    const float* __restrict__ t_centroids, float t_k0, cfloat* __restrict__ out_t_row_value) {
     __shared__ float sh_I_re[kQuadPoints];
     __shared__ float sh_I_im[kQuadPoints];
     __shared__ float sh_tI_re[kQuadPoints];
     __shared__ float sh_tI_im[kQuadPoints];
 
     const int row = blockIdx.x;
-    if (row >= row_count) return;
+    if (row >= row_count)
+        return;
     if (!valid[row]) {
-        if (threadIdx.x == 0) out_t_row_value[row] = {0.0f, 0.0f};
+        if (threadIdx.x == 0)
+            out_t_row_value[row] = {0.0f, 0.0f};
         return;
     }
     const int64_t patch = rows[row];
@@ -891,25 +796,25 @@ __global__ void patch_integral_jvp_kernel(
     const V3 Delta = rayd::shared::math::subtract(dov, di);
     // t_q = t_k0*Delta + k0*(t_dov - t_di); t_q_int = -t_q.
     V3 t_di = {0.0f, 0.0f, 0.0f}, t_dov = {0.0f, 0.0f, 0.0f};
-    if (t_d_i != nullptr) t_di = load3(t_d_i, row);
-    if (t_d_o != nullptr) t_dov = load3(t_d_o, row);
-    const V3 t_q = {t_k0 * Delta.x + k0 * (t_dov.x - t_di.x),
-                    t_k0 * Delta.y + k0 * (t_dov.y - t_di.y),
+    if (t_d_i != nullptr)
+        t_di = load3(t_d_i, row);
+    if (t_d_o != nullptr)
+        t_dov = load3(t_d_o, row);
+    const V3 t_q = {t_k0 * Delta.x + k0 * (t_dov.x - t_di.x), t_k0 * Delta.y + k0 * (t_dov.y - t_di.y),
                     t_k0 * Delta.z + k0 * (t_dov.z - t_di.z)};
     const V3 t_q_int = {-t_q.x, -t_q.y, -t_q.z};
 
     const float a = quad_a[t];
     const float b = quad_b[t];
     const float w = quad_w[t];
-    const V3 pos = {f.p0.x + a * f.e1.x + b * f.e2.x,
-                    f.p0.y + a * f.e1.y + b * f.e2.y,
+    const V3 pos = {f.p0.x + a * f.e1.x + b * f.e2.x, f.p0.y + a * f.e1.y + b * f.e2.y,
                     f.p0.z + a * f.e1.z + b * f.e2.z};
     float uu, vv;
     node_uv(patch_uvs, patch, a, b, uu, vv);
     Texel4 tex;
     const float h = sample_height_tex(heights, h_rows_dim, w_cols_dim, uu, vv, tex);
     const float phase = rayd::shared::math::dot(pos, f.q_int) + f.q_int_n * h;
-    float e_im, e_re;  // exp(-j phase) = (cos phase, -sin phase)
+    float e_im, e_re; // exp(-j phase) = (cos phase, -sin phase)
     sincosf(-phase, &e_im, &e_re);
     sh_I_re[t] = e_re * w;
     sh_I_im[t] = e_im * w;
@@ -918,7 +823,8 @@ __global__ void patch_integral_jvp_kernel(
     float t_h = 0.0f;
     if (t_heights != nullptr) {
 #pragma unroll
-        for (int k = 0; k < 4; ++k) t_h += tex.wgt[k] * t_heights[tex.idx[k]];
+        for (int k = 0; k < 4; ++k)
+            t_h += tex.wgt[k] * t_heights[tex.idx[k]];
     }
     const V3 pvec = {pos.x + h * f.n_hat.x, pos.y + h * f.n_hat.y, pos.z + h * f.n_hat.z};
     const float t_phase = rayd::shared::math::dot(t_q_int, pvec) + f.q_int_n * t_h;
@@ -937,7 +843,8 @@ __global__ void patch_integral_jvp_kernel(
         }
         __syncthreads();
     }
-    if (t != 0) return;
+    if (t != 0)
+        return;
 
     const float A2 = f.double_area;
     const cfloat I = cfloat(sh_I_re[0] * A2, sh_I_im[0] * A2);
@@ -963,8 +870,10 @@ __global__ void patch_integral_jvp_kernel(
     const float t_g_te = rayd::shared::math::dot(rc.grad_gte, t_dov);
     const float t_g_tm = rayd::shared::math::dot(rc.grad_gtm, t_dov);
     cfloat t_r_te_v = cfloat(0.0f, 0.0f), t_r_tm_v = cfloat(0.0f, 0.0f);
-    if (t_r_te != nullptr) t_r_te_v = t_r_te[row];
-    if (t_r_tm != nullptr) t_r_tm_v = t_r_tm[row];
+    if (t_r_te != nullptr)
+        t_r_te_v = t_r_te[row];
+    if (t_r_tm != nullptr)
+        t_r_tm_v = t_r_tm[row];
     // t_jones = t_r_te*(a_te g_te) + te*(t_a_te g_te + a_te t_g_te) + (tm terms).
     const float d_pte = t_a_te * rc.g_te + rc.a_te * t_g_te;
     const float d_ptm = t_a_tm * rc.g_tm + rc.a_tm * t_g_tm;
@@ -973,10 +882,13 @@ __global__ void patch_integral_jvp_kernel(
 
     // t_cphase = -(t_k0*(r1+r2) + k0*(t_r1+t_r2) + t_q.c + q.t_c).
     float t_r1_v = 0.0f, t_r2_v = 0.0f;
-    if (t_r1 != nullptr) t_r1_v = t_r1[row];
-    if (t_r2 != nullptr) t_r2_v = t_r2[row];
+    if (t_r1 != nullptr)
+        t_r1_v = t_r1[row];
+    if (t_r2 != nullptr)
+        t_r2_v = t_r2[row];
     V3 t_c = {0.0f, 0.0f, 0.0f};
-    if (t_centroids != nullptr) t_c = load3(t_centroids, row);
+    if (t_centroids != nullptr)
+        t_c = load3(t_centroids, row);
     const float t_q_dot_c = t_q.x * c_row.x + t_q.y * c_row.y + t_q.z * c_row.z;
     const float q_dot_tc = f.q.x * t_c.x + f.q.y * t_c.y + f.q.z * t_c.z;
     const float t_cphase = -(t_k0 * (r1v + r2v) + k0 * (t_r1_v + t_r2_v) + t_q_dot_c + q_dot_tc);
@@ -987,7 +899,7 @@ __global__ void patch_integral_jvp_kernel(
     const cfloat t_A = cfloat(0.0f, t_pref);
     const cfloat B = rc.jones;
     const cfloat C = rc.carrier;
-    const cfloat t_C = cscalef(cmulj(rc.carrier), t_cphase);  // j*carrier*t_cphase
+    const cfloat t_C = cscalef(cmulj(rc.carrier), t_cphase); // j*carrier*t_cphase
     const float D = rc.inv_rr;
     const cfloat AB = cmul(A, B);
     const cfloat ABC = cmul(AB, C);
@@ -1000,10 +912,8 @@ __global__ void patch_integral_jvp_kernel(
     out_t_row_value[row] = cadd(cmul(t_value, I), cmul(rc.value, t_I));
 }
 
-__global__ void patch_integral_jvp_total_kernel(
-    int64_t row_count,
-    const cfloat* __restrict__ row_values,
-    cfloat* __restrict__ out_total) {
+__global__ void patch_integral_jvp_total_kernel(int64_t row_count, const cfloat* __restrict__ row_values,
+                                                cfloat* __restrict__ out_total) {
     __shared__ float sh_re[kReduceBlock];
     __shared__ float sh_im[kReduceBlock];
     const int t = threadIdx.x;
@@ -1025,28 +935,25 @@ __global__ void patch_integral_jvp_total_kernel(
         }
         __syncthreads();
     }
-    if (t == 0) out_total[0] = cfloat(sh_re[0], sh_im[0]);
+    if (t == 0)
+        out_total[0] = cfloat(sh_re[0], sh_im[0]);
 }
 
 // --------------------------- validation -----------------------------------
 
-int64_t check_patch_inputs(
-    const at::Tensor& valid, const at::Tensor& patch_tris, const at::Tensor& patch_uvs,
-    const at::Tensor& rows, const at::Tensor& d_i, const at::Tensor& d_o,
-    const at::Tensor& n_rows, const at::Tensor& r_te, const at::Tensor& r_tm,
-    const at::Tensor& pol_t, const at::Tensor& pol_r, const at::Tensor& r1_rows,
-    const at::Tensor& r2_rows, const at::Tensor& centroids,
-    const at::Tensor& heights, const at::Tensor& quad_a, const at::Tensor& quad_b,
-    const at::Tensor& quad_w) {
-    using rayd::torch::detail::check_tensor;
+int64_t check_patch_inputs(const at::Tensor& valid, const at::Tensor& patch_tris, const at::Tensor& patch_uvs,
+                           const at::Tensor& rows, const at::Tensor& d_i, const at::Tensor& d_o,
+                           const at::Tensor& n_rows, const at::Tensor& r_te, const at::Tensor& r_tm,
+                           const at::Tensor& pol_t, const at::Tensor& pol_r, const at::Tensor& r1_rows,
+                           const at::Tensor& r2_rows, const at::Tensor& centroids, const at::Tensor& heights,
+                           const at::Tensor& quad_a, const at::Tensor& quad_b, const at::Tensor& quad_w) {
     using rayd::torch::detail::check_flat_tensor;
+    using rayd::torch::detail::check_tensor;
     using rayd::torch::detail::check_vec3_table;
     check_tensor(patch_tris, "patch_tris", at::kFloat, 3);
-    TORCH_CHECK(patch_tris.size(1) == 3 && patch_tris.size(2) == 3,
-                "patch_tris must have shape (P, 3, 3)");
+    TORCH_CHECK(patch_tris.size(1) == 3 && patch_tris.size(2) == 3, "patch_tris must have shape (P, 3, 3)");
     check_tensor(patch_uvs, "patch_uvs", at::kFloat, 3);
-    TORCH_CHECK(patch_uvs.size(0) == patch_tris.size(0) && patch_uvs.size(1) == 3 &&
-                    patch_uvs.size(2) == 2,
+    TORCH_CHECK(patch_uvs.size(0) == patch_tris.size(0) && patch_uvs.size(1) == 3 && patch_uvs.size(2) == 2,
                 "patch_uvs must have shape (P, 3, 2)");
     check_flat_tensor(rows, "rows", at::kLong);
     const int64_t row_count = rows.size(0);
@@ -1059,8 +966,7 @@ int64_t check_patch_inputs(
     check_tensor(r_tm, "r_tm", at::kComplexFloat, 1);
     check_flat_tensor(pol_t, "pol_t", at::kFloat);
     check_flat_tensor(pol_r, "pol_r", at::kFloat);
-    TORCH_CHECK(pol_t.size(0) == 3 && pol_r.size(0) == 3,
-                "pol_t and pol_r must have shape (3,)");
+    TORCH_CHECK(pol_t.size(0) == 3 && pol_r.size(0) == 3, "pol_t and pol_r must have shape (3,)");
     check_flat_tensor(r1_rows, "r1_rows", at::kFloat);
     check_flat_tensor(r2_rows, "r2_rows", at::kFloat);
     check_vec3_table(centroids, "centroids");
@@ -1068,94 +974,64 @@ int64_t check_patch_inputs(
     check_flat_tensor(quad_a, "quad_a", at::kFloat);
     check_flat_tensor(quad_b, "quad_b", at::kFloat);
     check_flat_tensor(quad_w, "quad_w", at::kFloat);
-    TORCH_CHECK(quad_a.size(0) == kQuadPoints && quad_b.size(0) == kQuadPoints &&
-                    quad_w.size(0) == kQuadPoints,
+    TORCH_CHECK(quad_a.size(0) == kQuadPoints && quad_b.size(0) == kQuadPoints && quad_w.size(0) == kQuadPoints,
                 "quadrature arrays must hold 16x16 Duffy-mapped nodes");
-    TORCH_CHECK(d_i.size(0) == row_count && d_o.size(0) == row_count &&
-                    n_rows.size(0) == row_count && r_te.size(0) == row_count &&
-                    r_tm.size(0) == row_count && r1_rows.size(0) == row_count &&
+    TORCH_CHECK(d_i.size(0) == row_count && d_o.size(0) == row_count && n_rows.size(0) == row_count &&
+                    r_te.size(0) == row_count && r_tm.size(0) == row_count && r1_rows.size(0) == row_count &&
                     r2_rows.size(0) == row_count && centroids.size(0) == row_count,
                 "per-row arrays must match rows");
-    for (const auto& tref : {valid, patch_uvs, rows, d_i, d_o, n_rows, r_te, r_tm, pol_t,
-                             pol_r, r1_rows, r2_rows, centroids, heights, quad_a,
-                             quad_b, quad_w}) {
-        TORCH_CHECK(tref.get_device() == patch_tris.get_device(),
-                    "patch-integral tensors must share device");
+    for (const auto& tref : {valid, patch_uvs, rows, d_i, d_o, n_rows, r_te, r_tm, pol_t, pol_r, r1_rows, r2_rows,
+                             centroids, heights, quad_a, quad_b, quad_w}) {
+        TORCH_CHECK(tref.get_device() == patch_tris.get_device(), "patch-integral tensors must share device");
     }
     return row_count;
 }
 
-const at::Tensor* optional_arg(
-    std::optional<at::Tensor> value, at::Tensor& storage, const char* name,
-    c10::ScalarType dtype, at::IntArrayRef sizes, const at::Tensor& reference) {
-    if (!value.has_value()) return nullptr;
+const at::Tensor* optional_arg(std::optional<at::Tensor> value, at::Tensor& storage, const char* name,
+                               c10::ScalarType dtype, at::IntArrayRef sizes, const at::Tensor& reference) {
+    if (!value.has_value())
+        return nullptr;
     storage = value.value().contiguous();
     TORCH_CHECK(storage.is_cuda(), name, " must be a CUDA tensor");
     TORCH_CHECK(storage.scalar_type() == dtype, name, " has the wrong dtype");
     TORCH_CHECK(storage.sizes() == sizes, name, " has the wrong shape");
-    TORCH_CHECK(storage.get_device() == reference.get_device(),
-                name, " must share the primal device");
+    TORCH_CHECK(storage.get_device() == reference.get_device(), name, " must share the primal device");
     return &storage;
 }
 
-template <typename T>
-const T* opt_ptr(const at::Tensor* tensor) {
+template <typename T> const T* opt_ptr(const at::Tensor* tensor) {
     return tensor == nullptr ? nullptr : tensor->data_ptr<T>();
 }
 
 at::Tensor zero_filled(at::IntArrayRef sizes, const at::TensorOptions& options) {
     auto tensor = at::empty(sizes, options);
     if (tensor.numel() > 0) {
-        cudaStream_t stream =
-            at::cuda::getCurrentCUDAStream(tensor.get_device()).stream();
-        C10_CUDA_CHECK(cudaMemsetAsync(
-            tensor.data_ptr(), 0,
-            static_cast<size_t>(tensor.numel()) * tensor.element_size(), stream));
+        cudaStream_t stream = at::cuda::getCurrentCUDAStream(tensor.get_device()).stream();
+        C10_CUDA_CHECK(
+            cudaMemsetAsync(tensor.data_ptr(), 0, static_cast<size_t>(tensor.numel()) * tensor.element_size(), stream));
     }
     return tensor;
 }
 
-}  // namespace
+} // namespace
 
 rayd::torch::ScatteringPatchIntegralEvalBackwardResult scattering_patch_integral_eval_backward_impl(
-    at::Tensor valid,
-    at::Tensor patch_tris,
-    at::Tensor patch_uvs,
-    at::Tensor rows,
-    at::Tensor d_i,
-    at::Tensor d_o,
-    at::Tensor n_rows,
-    at::Tensor r_te,
-    at::Tensor r_tm,
-    at::Tensor pol_t,
-    at::Tensor pol_r,
-    at::Tensor r1_rows,
-    at::Tensor r2_rows,
-    at::Tensor centroids,
-    at::Tensor heights,
-    at::Tensor quad_a,
-    at::Tensor quad_b,
-    at::Tensor quad_w,
-    double k0,
-    at::Tensor grad_total,
-    bool need_grad_heights,
-    bool need_grad_jones,
-    bool need_grad_geometry,
-    bool need_grad_k0) {
-    const int64_t row_count = check_patch_inputs(
-        valid, patch_tris, patch_uvs, rows, d_i, d_o, n_rows, r_te, r_tm, pol_t, pol_r,
-        r1_rows, r2_rows, centroids, heights, quad_a, quad_b, quad_w);
+    at::Tensor valid, at::Tensor patch_tris, at::Tensor patch_uvs, at::Tensor rows, at::Tensor d_i, at::Tensor d_o,
+    at::Tensor n_rows, at::Tensor r_te, at::Tensor r_tm, at::Tensor pol_t, at::Tensor pol_r, at::Tensor r1_rows,
+    at::Tensor r2_rows, at::Tensor centroids, at::Tensor heights, at::Tensor quad_a, at::Tensor quad_b,
+    at::Tensor quad_w, double k0, at::Tensor grad_total, bool need_grad_heights, bool need_grad_jones,
+    bool need_grad_geometry, bool need_grad_k0) {
+    const int64_t row_count =
+        check_patch_inputs(valid, patch_tris, patch_uvs, rows, d_i, d_o, n_rows, r_te, r_tm, pol_t, pol_r, r1_rows,
+                           r2_rows, centroids, heights, quad_a, quad_b, quad_w);
     using rayd::torch::detail::check_tensor;
     check_tensor(grad_total, "grad_total", at::kComplexFloat, 0);
-    TORCH_CHECK(grad_total.get_device() == patch_tris.get_device(),
-                "grad_total must share the primal device");
+    TORCH_CHECK(grad_total.get_device() == patch_tris.get_device(), "grad_total must share the primal device");
     const c10::cuda::CUDAGuard guard(static_cast<int>(patch_tris.get_device()));
 
-    at::Tensor grad_heights, grad_r_te, grad_r_tm, grad_d_i, grad_d_o, grad_r1,
-        grad_r2, grad_centroids, grad_k0;
+    at::Tensor grad_heights, grad_r_te, grad_r_tm, grad_d_i, grad_d_o, grad_r1, grad_r2, grad_centroids, grad_k0;
     if (need_grad_heights)
-        grad_heights = zero_filled(
-            {heights.size(0), heights.size(1)}, heights.options());
+        grad_heights = zero_filled({heights.size(0), heights.size(1)}, heights.options());
     if (need_grad_jones) {
         grad_r_te = at::empty_like(r_te);
         grad_r_tm = at::empty_like(r_tm);
@@ -1170,24 +1046,17 @@ rayd::torch::ScatteringPatchIntegralEvalBackwardResult scattering_patch_integral
     if (need_grad_k0)
         grad_k0 = zero_filled({1}, r1_rows.options());
 
-    const bool any_need = need_grad_heights || need_grad_jones ||
-                          need_grad_geometry || need_grad_k0;
+    const bool any_need = need_grad_heights || need_grad_jones || need_grad_geometry || need_grad_k0;
     if (row_count > 0 && any_need) {
-        cudaStream_t stream =
-            at::cuda::getCurrentCUDAStream(patch_tris.get_device()).stream();
+        cudaStream_t stream = at::cuda::getCurrentCUDAStream(patch_tris.get_device()).stream();
         patch_integral_backward_kernel<<<static_cast<int>(row_count), kQuadPoints, 0, stream>>>(
-            row_count,
-            valid.data_ptr<bool>(),
-            patch_tris.data_ptr<float>(), patch_uvs.data_ptr<float>(),
-            rows.data_ptr<int64_t>(), d_i.data_ptr<float>(), d_o.data_ptr<float>(),
-            n_rows.data_ptr<float>(), r_te.data_ptr<cfloat>(), r_tm.data_ptr<cfloat>(),
-            pol_t.data_ptr<float>(), pol_r.data_ptr<float>(),
-            r1_rows.data_ptr<float>(), r2_rows.data_ptr<float>(),
-            centroids.data_ptr<float>(), heights.data_ptr<float>(),
-            static_cast<int>(heights.size(0)), static_cast<int>(heights.size(1)),
-            quad_a.data_ptr<float>(), quad_b.data_ptr<float>(), quad_w.data_ptr<float>(),
-            static_cast<float>(k0), grad_total.data_ptr<cfloat>(),
-            need_grad_heights ? grad_heights.data_ptr<float>() : nullptr,
+            row_count, valid.data_ptr<bool>(), patch_tris.data_ptr<float>(), patch_uvs.data_ptr<float>(),
+            rows.data_ptr<int64_t>(), d_i.data_ptr<float>(), d_o.data_ptr<float>(), n_rows.data_ptr<float>(),
+            r_te.data_ptr<cfloat>(), r_tm.data_ptr<cfloat>(), pol_t.data_ptr<float>(), pol_r.data_ptr<float>(),
+            r1_rows.data_ptr<float>(), r2_rows.data_ptr<float>(), centroids.data_ptr<float>(),
+            heights.data_ptr<float>(), static_cast<int>(heights.size(0)), static_cast<int>(heights.size(1)),
+            quad_a.data_ptr<float>(), quad_b.data_ptr<float>(), quad_w.data_ptr<float>(), static_cast<float>(k0),
+            grad_total.data_ptr<cfloat>(), need_grad_heights ? grad_heights.data_ptr<float>() : nullptr,
             need_grad_jones ? grad_r_te.data_ptr<cfloat>() : nullptr,
             need_grad_jones ? grad_r_tm.data_ptr<cfloat>() : nullptr,
             need_grad_geometry ? grad_d_i.data_ptr<float>() : nullptr,
@@ -1195,136 +1064,94 @@ rayd::torch::ScatteringPatchIntegralEvalBackwardResult scattering_patch_integral
             need_grad_geometry ? grad_r1.data_ptr<float>() : nullptr,
             need_grad_geometry ? grad_r2.data_ptr<float>() : nullptr,
             need_grad_geometry ? grad_centroids.data_ptr<float>() : nullptr,
-            need_grad_k0 ? grad_k0.data_ptr<float>() : nullptr,
-            need_grad_heights, need_grad_jones, need_grad_geometry, need_grad_k0);
+            need_grad_k0 ? grad_k0.data_ptr<float>() : nullptr, need_grad_heights, need_grad_jones, need_grad_geometry,
+            need_grad_k0);
         C10_CUDA_KERNEL_LAUNCH_CHECK();
     }
 
-    return {
-        need_grad_heights ? std::optional<at::Tensor>(grad_heights) : std::nullopt,
-        need_grad_jones ? std::optional<at::Tensor>(grad_r_te) : std::nullopt,
-        need_grad_jones ? std::optional<at::Tensor>(grad_r_tm) : std::nullopt,
-        need_grad_geometry ? std::optional<at::Tensor>(grad_d_i) : std::nullopt,
-        need_grad_geometry ? std::optional<at::Tensor>(grad_d_o) : std::nullopt,
-        need_grad_geometry ? std::optional<at::Tensor>(grad_r1) : std::nullopt,
-        need_grad_geometry ? std::optional<at::Tensor>(grad_r2) : std::nullopt,
-        need_grad_geometry ? std::optional<at::Tensor>(grad_centroids) : std::nullopt,
-        need_grad_k0 ? std::optional<at::Tensor>(grad_k0) : std::nullopt};
+    return {need_grad_heights ? std::optional<at::Tensor>(grad_heights) : std::nullopt,
+            need_grad_jones ? std::optional<at::Tensor>(grad_r_te) : std::nullopt,
+            need_grad_jones ? std::optional<at::Tensor>(grad_r_tm) : std::nullopt,
+            need_grad_geometry ? std::optional<at::Tensor>(grad_d_i) : std::nullopt,
+            need_grad_geometry ? std::optional<at::Tensor>(grad_d_o) : std::nullopt,
+            need_grad_geometry ? std::optional<at::Tensor>(grad_r1) : std::nullopt,
+            need_grad_geometry ? std::optional<at::Tensor>(grad_r2) : std::nullopt,
+            need_grad_geometry ? std::optional<at::Tensor>(grad_centroids) : std::nullopt,
+            need_grad_k0 ? std::optional<at::Tensor>(grad_k0) : std::nullopt};
 }
 
 rayd::torch::ScatteringPatchIntegralEvalJvpResult scattering_patch_integral_eval_jvp_impl(
-    at::Tensor valid,
-    at::Tensor patch_tris,
-    at::Tensor patch_uvs,
-    at::Tensor rows,
-    at::Tensor d_i,
-    at::Tensor d_o,
-    at::Tensor n_rows,
-    at::Tensor r_te,
-    at::Tensor r_tm,
-    at::Tensor pol_t,
-    at::Tensor pol_r,
-    at::Tensor r1_rows,
-    at::Tensor r2_rows,
-    at::Tensor centroids,
-    at::Tensor heights,
-    at::Tensor quad_a,
-    at::Tensor quad_b,
-    at::Tensor quad_w,
-    double k0,
-    std::optional<at::Tensor> t_heights,
-    std::optional<at::Tensor> t_r_te,
-    std::optional<at::Tensor> t_r_tm,
-    std::optional<at::Tensor> t_d_i,
-    std::optional<at::Tensor> t_d_o,
-    std::optional<at::Tensor> t_r1_rows,
-    std::optional<at::Tensor> t_r2_rows,
-    std::optional<at::Tensor> t_centroids,
+    at::Tensor valid, at::Tensor patch_tris, at::Tensor patch_uvs, at::Tensor rows, at::Tensor d_i, at::Tensor d_o,
+    at::Tensor n_rows, at::Tensor r_te, at::Tensor r_tm, at::Tensor pol_t, at::Tensor pol_r, at::Tensor r1_rows,
+    at::Tensor r2_rows, at::Tensor centroids, at::Tensor heights, at::Tensor quad_a, at::Tensor quad_b,
+    at::Tensor quad_w, double k0, std::optional<at::Tensor> t_heights, std::optional<at::Tensor> t_r_te,
+    std::optional<at::Tensor> t_r_tm, std::optional<at::Tensor> t_d_i, std::optional<at::Tensor> t_d_o,
+    std::optional<at::Tensor> t_r1_rows, std::optional<at::Tensor> t_r2_rows, std::optional<at::Tensor> t_centroids,
     double tangent_k0) {
-    const int64_t row_count = check_patch_inputs(
-        valid, patch_tris, patch_uvs, rows, d_i, d_o, n_rows, r_te, r_tm, pol_t, pol_r,
-        r1_rows, r2_rows, centroids, heights, quad_a, quad_b, quad_w);
+    const int64_t row_count =
+        check_patch_inputs(valid, patch_tris, patch_uvs, rows, d_i, d_o, n_rows, r_te, r_tm, pol_t, pol_r, r1_rows,
+                           r2_rows, centroids, heights, quad_a, quad_b, quad_w);
     const c10::cuda::CUDAGuard guard(static_cast<int>(patch_tris.get_device()));
 
     at::Tensor storage[8];
-    const at::Tensor* th = optional_arg(
-        std::move(t_heights), storage[0], "t_heights", at::kFloat,
-        {heights.size(0), heights.size(1)}, patch_tris);
-    const at::Tensor* tte = optional_arg(
-        std::move(t_r_te), storage[1], "t_r_te", at::kComplexFloat,
-        {row_count}, patch_tris);
-    const at::Tensor* ttm = optional_arg(
-        std::move(t_r_tm), storage[2], "t_r_tm", at::kComplexFloat,
-        {row_count}, patch_tris);
-    const at::Tensor* tdi = optional_arg(
-        std::move(t_d_i), storage[3], "t_d_i", at::kFloat, {row_count, 3}, patch_tris);
-    const at::Tensor* tdo = optional_arg(
-        std::move(t_d_o), storage[4], "t_d_o", at::kFloat, {row_count, 3}, patch_tris);
-    const at::Tensor* tr1 = optional_arg(
-        std::move(t_r1_rows), storage[5], "t_r1_rows", at::kFloat, {row_count}, patch_tris);
-    const at::Tensor* tr2 = optional_arg(
-        std::move(t_r2_rows), storage[6], "t_r2_rows", at::kFloat, {row_count}, patch_tris);
-    const at::Tensor* tc = optional_arg(
-        std::move(t_centroids), storage[7], "t_centroids", at::kFloat,
-        {row_count, 3}, patch_tris);
+    const at::Tensor* th = optional_arg(std::move(t_heights), storage[0], "t_heights", at::kFloat,
+                                        {heights.size(0), heights.size(1)}, patch_tris);
+    const at::Tensor* tte =
+        optional_arg(std::move(t_r_te), storage[1], "t_r_te", at::kComplexFloat, {row_count}, patch_tris);
+    const at::Tensor* ttm =
+        optional_arg(std::move(t_r_tm), storage[2], "t_r_tm", at::kComplexFloat, {row_count}, patch_tris);
+    const at::Tensor* tdi = optional_arg(std::move(t_d_i), storage[3], "t_d_i", at::kFloat, {row_count, 3}, patch_tris);
+    const at::Tensor* tdo = optional_arg(std::move(t_d_o), storage[4], "t_d_o", at::kFloat, {row_count, 3}, patch_tris);
+    const at::Tensor* tr1 =
+        optional_arg(std::move(t_r1_rows), storage[5], "t_r1_rows", at::kFloat, {row_count}, patch_tris);
+    const at::Tensor* tr2 =
+        optional_arg(std::move(t_r2_rows), storage[6], "t_r2_rows", at::kFloat, {row_count}, patch_tris);
+    const at::Tensor* tc =
+        optional_arg(std::move(t_centroids), storage[7], "t_centroids", at::kFloat, {row_count, 3}, patch_tris);
 
-    auto tangent_total = at::empty(
-        {}, patch_tris.options().dtype(at::kComplexFloat));
-    cudaStream_t stream =
-        at::cuda::getCurrentCUDAStream(patch_tris.get_device()).stream();
+    auto tangent_total = at::empty({}, patch_tris.options().dtype(at::kComplexFloat));
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream(patch_tris.get_device()).stream();
     if (row_count > 0) {
-        auto t_row_value = at::empty(
-            {row_count}, patch_tris.options().dtype(at::kComplexFloat));
+        auto t_row_value = at::empty({row_count}, patch_tris.options().dtype(at::kComplexFloat));
         patch_integral_jvp_kernel<<<static_cast<int>(row_count), kQuadPoints, 0, stream>>>(
-            row_count,
-            valid.data_ptr<bool>(),
-            patch_tris.data_ptr<float>(), patch_uvs.data_ptr<float>(),
-            rows.data_ptr<int64_t>(), d_i.data_ptr<float>(), d_o.data_ptr<float>(),
-            n_rows.data_ptr<float>(), r_te.data_ptr<cfloat>(), r_tm.data_ptr<cfloat>(),
-            pol_t.data_ptr<float>(), pol_r.data_ptr<float>(),
-            r1_rows.data_ptr<float>(), r2_rows.data_ptr<float>(),
-            centroids.data_ptr<float>(), heights.data_ptr<float>(),
-            static_cast<int>(heights.size(0)), static_cast<int>(heights.size(1)),
-            quad_a.data_ptr<float>(), quad_b.data_ptr<float>(), quad_w.data_ptr<float>(),
-            static_cast<float>(k0),
-            opt_ptr<float>(th), opt_ptr<cfloat>(tte), opt_ptr<cfloat>(ttm),
-            opt_ptr<float>(tdi), opt_ptr<float>(tdo), opt_ptr<float>(tr1),
-            opt_ptr<float>(tr2), opt_ptr<float>(tc),
-            static_cast<float>(tangent_k0),
+            row_count, valid.data_ptr<bool>(), patch_tris.data_ptr<float>(), patch_uvs.data_ptr<float>(),
+            rows.data_ptr<int64_t>(), d_i.data_ptr<float>(), d_o.data_ptr<float>(), n_rows.data_ptr<float>(),
+            r_te.data_ptr<cfloat>(), r_tm.data_ptr<cfloat>(), pol_t.data_ptr<float>(), pol_r.data_ptr<float>(),
+            r1_rows.data_ptr<float>(), r2_rows.data_ptr<float>(), centroids.data_ptr<float>(),
+            heights.data_ptr<float>(), static_cast<int>(heights.size(0)), static_cast<int>(heights.size(1)),
+            quad_a.data_ptr<float>(), quad_b.data_ptr<float>(), quad_w.data_ptr<float>(), static_cast<float>(k0),
+            opt_ptr<float>(th), opt_ptr<cfloat>(tte), opt_ptr<cfloat>(ttm), opt_ptr<float>(tdi), opt_ptr<float>(tdo),
+            opt_ptr<float>(tr1), opt_ptr<float>(tr2), opt_ptr<float>(tc), static_cast<float>(tangent_k0),
             t_row_value.data_ptr<cfloat>());
         C10_CUDA_KERNEL_LAUNCH_CHECK();
-        patch_integral_jvp_total_kernel<<<1, kReduceBlock, 0, stream>>>(
-            row_count, t_row_value.data_ptr<cfloat>(), tangent_total.data_ptr<cfloat>());
+        patch_integral_jvp_total_kernel<<<1, kReduceBlock, 0, stream>>>(row_count, t_row_value.data_ptr<cfloat>(),
+                                                                        tangent_total.data_ptr<cfloat>());
         C10_CUDA_KERNEL_LAUNCH_CHECK();
     } else {
-        C10_CUDA_CHECK(cudaMemsetAsync(
-            tangent_total.data_ptr(), 0, tangent_total.element_size(), stream));
+        C10_CUDA_CHECK(cudaMemsetAsync(tangent_total.data_ptr(), 0, tangent_total.element_size(), stream));
     }
     return {tangent_total};
 }
 
-rayd::torch::ScatteringPatchIntegralEvalBackwardResult
-rayd::torch::scattering_patch_integral_eval_backward(
+rayd::torch::ScatteringPatchIntegralEvalBackwardResult rayd::torch::scattering_patch_integral_eval_backward(
     const ScatteringPatchIntegralEvalBackwardRequest& request) {
     const auto& p = request.primal;
-    return scattering_patch_integral_eval_backward_impl(
-        p.valid, p.patch_tris, p.patch_uvs, p.rows, p.d_i, p.d_o, p.n_rows,
-        p.r_te, p.r_tm, p.pol_t, p.pol_r, p.r1_rows, p.r2_rows,
-        p.centroids, p.heights, p.quad_a, p.quad_b, p.quad_w, p.k0,
-        request.grad_total, request.need_grad_heights, request.need_grad_jones,
-        request.need_grad_geometry, request.need_grad_k0);
+    return scattering_patch_integral_eval_backward_impl(p.valid, p.patch_tris, p.patch_uvs, p.rows, p.d_i, p.d_o,
+                                                        p.n_rows, p.r_te, p.r_tm, p.pol_t, p.pol_r, p.r1_rows,
+                                                        p.r2_rows, p.centroids, p.heights, p.quad_a, p.quad_b, p.quad_w,
+                                                        p.k0, request.grad_total, request.need_grad_heights,
+                                                        request.need_grad_jones, request.need_grad_geometry,
+                                                        request.need_grad_k0);
 }
 
-rayd::torch::ScatteringPatchIntegralEvalJvpResult
-rayd::torch::scattering_patch_integral_eval_jvp(
+rayd::torch::ScatteringPatchIntegralEvalJvpResult rayd::torch::scattering_patch_integral_eval_jvp(
     const ScatteringPatchIntegralEvalJvpRequest& request) {
     const auto& p = request.primal;
-    return scattering_patch_integral_eval_jvp_impl(
-        p.valid, p.patch_tris, p.patch_uvs, p.rows, p.d_i, p.d_o, p.n_rows,
-        p.r_te, p.r_tm, p.pol_t, p.pol_r, p.r1_rows, p.r2_rows,
-        p.centroids, p.heights, p.quad_a, p.quad_b, p.quad_w, p.k0,
-        request.tangent_heights, request.tangent_r_te, request.tangent_r_tm,
-        request.tangent_d_i, request.tangent_d_o, request.tangent_r1_rows,
-        request.tangent_r2_rows, request.tangent_centroids,
-        request.tangent_k0);
+    return scattering_patch_integral_eval_jvp_impl(p.valid, p.patch_tris, p.patch_uvs, p.rows, p.d_i, p.d_o, p.n_rows,
+                                                   p.r_te, p.r_tm, p.pol_t, p.pol_r, p.r1_rows, p.r2_rows, p.centroids,
+                                                   p.heights, p.quad_a, p.quad_b, p.quad_w, p.k0,
+                                                   request.tangent_heights, request.tangent_r_te, request.tangent_r_tm,
+                                                   request.tangent_d_i, request.tangent_d_o, request.tangent_r1_rows,
+                                                   request.tangent_r2_rows, request.tangent_centroids,
+                                                   request.tangent_k0);
 }

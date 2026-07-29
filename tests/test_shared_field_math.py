@@ -23,9 +23,7 @@ class SharedFieldMathTests(unittest.TestCase):
     def test_accumulation_backends_delegate_diffraction_parameter(self):
         # Since P4c the algorithm body (and its UTD delegation) lives in the
         # host-compilable algo header; the device header keeps the OptiX layer.
-        shared_algo = (
-            SHARED / "diffraction" / "accumulation_algo.h"
-        ).read_text(encoding="utf-8")
+        shared_algo = (SHARED / "diffraction" / "accumulation_algo.h").read_text(encoding="utf-8")
         self.assertIn("<rayd/diffraction/utd.h>", shared_algo)
         self.assertIn("::rayd::shared::diffraction::first_order_diffraction_parameter(", shared_algo)
 
@@ -35,10 +33,7 @@ class SharedFieldMathTests(unittest.TestCase):
         )
         for path in paths:
             source = path.read_text(encoding="utf-8")
-            self.assertIn(
-                "<rayd/diffraction/accumulation_optix_device.cuh>",
-                source,
-            )
+            self.assertIn("<rayd/diffraction/accumulation_optix_device.cuh>", source)
             self.assertNotIn("first_order_diffraction_parameter", source)
             self.assertNotIn("rotate_around_axis", source)
 
@@ -50,10 +45,7 @@ class SharedFieldMathTests(unittest.TestCase):
         self.assertIn("propagation_phase", header)
         self.assertIn("is_standard_layout_v<Complexf>", header)
 
-
-        shared_reflection_algo = (
-            SHARED / "reflection" / "accumulation_algo.h"
-        ).read_text(encoding="utf-8")
+        shared_reflection_algo = (SHARED / "reflection" / "accumulation_algo.h").read_text(encoding="utf-8")
         self.assertIn("field::fresnel_reflection_coefficients(", shared_reflection_algo)
 
         accumulation_adapters = (
@@ -62,10 +54,7 @@ class SharedFieldMathTests(unittest.TestCase):
         )
         for path in accumulation_adapters:
             source = path.read_text(encoding="utf-8")
-            self.assertIn(
-                "<rayd/reflection/accumulation_optix_device.cuh>",
-                source,
-            )
+            self.assertIn("<rayd/reflection/accumulation_optix_device.cuh>", source)
             self.assertNotIn("fresnel_reflection_coefficients", source)
             self.assertNotIn("kEpsilon0", source)
             self.assertNotIn("struct Complex {", source)
@@ -83,11 +72,7 @@ class SharedFieldMathTests(unittest.TestCase):
     def test_scalar_formula_reference_values(self):
         wavelength = 0.125
         distance = 3.75
-        self.assertAlmostEqual(
-            wavelength / (4.0 * math.pi * distance),
-            0.0026525823848649224,
-            places=15,
-        )
+        self.assertAlmostEqual(wavelength / (4.0 * math.pi * distance), 0.0026525823848649224, places=15)
 
         wave_number = 2.0 * math.pi / wavelength
         phase = cmath.exp(-1j * math.fmod(wave_number * distance, 2.0 * math.pi))

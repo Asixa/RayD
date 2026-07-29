@@ -18,6 +18,8 @@ two-device gather runs on a single GPU.
 import unittest
 
 import torch
+
+from tests.support.geometry import build_scene as _build_scene, grid_mesh as _grid_mesh, tensor_bits as _bits
 import rayd.torch as rt
 
 from rayd._impl.multi import (
@@ -34,23 +36,6 @@ from rayd._impl.multi import (
 # 33 rows is ragged under every chunk size used here (1, 7, 11, 64) and under
 # the 17/16 two-device split, so no case degenerates into an even division.
 _BATCH = 33
-
-
-def _grid_mesh(device: torch.device, cells: int = 8, span: float = 2.0):
-    """Deterministic z=0 triangle grid; identical bits on every CUDA device."""
-    axis = torch.linspace(-0.5 * span, 0.5 * span, cells + 1, dtype=torch.float32)
-    y, x = torch.meshgrid(axis, axis, indexing="ij")
-    flat_x = x.reshape(-1)
-    vertices = torch.stack((flat_x, y.reshape(-1), torch.zeros_like(flat_x)), dim=1)
-    index = torch.arange((cells + 1) * (cells + 1), dtype=torch.int32).reshape(
-        cells + 1, cells + 1
-    )
-    a = index[:-1, :-1].reshape(-1)
-    b = index[:-1, 1:].reshape(-1)
-    c = index[1:, :-1].reshape(-1)
-    d = index[1:, 1:].reshape(-1)
-    faces = torch.cat((torch.stack((a, b, c), dim=1), torch.stack((b, d, c), dim=1)))
-    return vertices.contiguous().to(device), faces.contiguous().to(device)
 
 
 def _query_inputs(device: torch.device, count: int = _BATCH) -> dict:
@@ -77,24 +62,6 @@ def _query_inputs(device: torch.device, count: int = _BATCH) -> dict:
     }
 
 
-def _bits(tensor: torch.Tensor) -> torch.Tensor:
-    """Host copy compared bit-for-bit, so NaN, -0.0, and inf all compare exactly."""
-    host = tensor.detach().contiguous().cpu()
-    if host.dtype == torch.float32:
-        return host.view(torch.int32)
-    if host.dtype == torch.float64:
-        return host.view(torch.int64)
-    return host
-
-
-def _build_scene(device: torch.device, **kwargs) -> rt.Scene:
-    vertices, faces = _grid_mesh(device)
-    scene = rt.Scene(**kwargs)
-    scene.add_mesh(rt.Mesh(vertices, faces))
-    scene.build()
-    return scene
-
-
 def _chunked_ops(scene: rt.Scene, inputs: dict) -> dict[str, torch.Tensor]:
     """The three operations the plan names for chunked coverage, field by field."""
     ray = inputs["ray"]
@@ -111,18 +78,7 @@ def _chunked_ops(scene: rt.Scene, inputs: dict) -> dict[str, torch.Tensor]:
         "trace_reflections.image_sources": chain.image_sources,
         "visible": visible,
     }
-    for name in (
-        "t",
-        "p",
-        "n",
-        "geo_n",
-        "uv",
-        "barycentric",
-        "shape_id",
-        "prim_id",
-        "local_prim_id",
-        "global_prim_id",
-    ):
+    for name in ("t", "p", "n", "geo_n", "uv", "barycentric", "shape_id", "prim_id", "local_prim_id", "global_prim_id"):
         results[f"intersect_full.{name}"] = getattr(full, name)
     return results
 
@@ -136,23 +92,17 @@ class ChunkSizeCalibrationTests(unittest.TestCase):
         clamped = calibrate_chunk_size("intersect", 33, row_bytes=76, chunk_rays=64)
         self.assertEqual(clamped.chunk_rays, 33)
         # A request also beats a budget that would have chosen something else.
-        both = calibrate_chunk_size(
-            "intersect", 33, row_bytes=76, chunk_rays=7, budget_bytes=1 << 30
-        )
+        both = calibrate_chunk_size("intersect", 33, row_bytes=76, chunk_rays=7, budget_bytes=1 << 30)
         self.assertEqual((both.chunk_rays, both.source), (7, "requested"))
 
     def test_a_budget_picks_the_largest_chunk_that_fits(self):
-        plan = calibrate_chunk_size(
-            "trace_reflections", 1_000_000, row_bytes=142, budget_bytes=142 * 1000
-        )
+        plan = calibrate_chunk_size("trace_reflections", 1_000_000, row_bytes=142, budget_bytes=142 * 1000)
         self.assertEqual((plan.chunk_rays, plan.source), (1000, "budget"))
         self.assertEqual(plan.budget_bytes, 142 * 1000)
 
     def test_a_budget_below_one_resident_row_fails_loudly(self):
         with self.assertRaisesRegex(RuntimeError, "at least 142 bytes"):
-            calibrate_chunk_size(
-                "trace_reflections", 64, row_bytes=142, budget_bytes=1
-            )
+            calibrate_chunk_size("trace_reflections", 64, row_bytes=142, budget_bytes=1)
 
     def test_without_a_request_or_a_budget_a_chunk_is_the_whole_shard(self):
         plan = calibrate_chunk_size("visible", 33, row_bytes=1)
@@ -205,9 +155,7 @@ class ChunkedEngagementTests(unittest.TestCase):
     def test_a_scene_that_asks_for_nothing_keeps_the_single_device_path(self):
         self.assertIsNone(rt.Scene()._multi)
         self.assertIsNone(rt.Scene(devices=[0])._multi)
-        self.assertIsNone(
-            rt.Scene(devices=[0], options=rt.MultiDeviceOptions(warm_up=False))._multi
-        )
+        self.assertIsNone(rt.Scene(devices=[0], options=rt.MultiDeviceOptions(warm_up=False))._multi)
 
     def test_any_chunking_knob_engages_the_layer_on_one_device(self):
         for options in (
@@ -231,11 +179,7 @@ class ChunkedSingleDeviceTests(unittest.TestCase):
         self.reference = _chunked_ops(_build_scene(self.device), self.inputs)
 
     def _scene(self, **options) -> rt.Scene:
-        return _build_scene(
-            self.device,
-            devices=[0],
-            options=rt.MultiDeviceOptions(warm_up=False, **options),
-        )
+        return _build_scene(self.device, devices=[0], options=rt.MultiDeviceOptions(warm_up=False, **options))
 
     def test_chunked_results_are_bitwise_the_unchunked_results(self):
         # 1 and 7 are ragged, 11 divides the batch exactly, 64 exceeds it.
@@ -255,9 +199,7 @@ class ChunkedSingleDeviceTests(unittest.TestCase):
                     )
                 plan = scene._multi.last_chunk_plan
                 self.assertEqual(plan.chunk_rays, min(chunk_rays, _BATCH))
-                self.assertEqual(
-                    plan.chunk_count, -(-_BATCH // min(chunk_rays, _BATCH))
-                )
+                self.assertEqual(plan.chunk_count, -(-_BATCH // min(chunk_rays, _BATCH)))
 
     def test_every_wrapped_operation_survives_a_ragged_chunking(self):
         """The executor is generic; the ops the plan does not name work too."""
@@ -266,18 +208,9 @@ class ChunkedSingleDeviceTests(unittest.TestCase):
         points = self.inputs["points"]
         active = self.inputs["active"]
         cases = {
-            "nearest_edge_point": (
-                lambda target: target.nearest_edge(points),
-                _NEAREST_POINT_EDGE_FIELDS,
-            ),
-            "nearest_edge_ray": (
-                lambda target: target.nearest_edge(self.inputs["ray"]),
-                _NEAREST_RAY_EDGE_FIELDS,
-            ),
-            "nearest_edges": (
-                lambda target: target.nearest_edges(points, 3, active),
-                _NEAREST_EDGES_TOPK_FIELDS,
-            ),
+            "nearest_edge_point": (lambda target: target.nearest_edge(points), _NEAREST_POINT_EDGE_FIELDS),
+            "nearest_edge_ray": (lambda target: target.nearest_edge(self.inputs["ray"]), _NEAREST_RAY_EDGE_FIELDS),
+            "nearest_edges": (lambda target: target.nearest_edges(points, 3, active), _NEAREST_EDGES_TOPK_FIELDS),
             "visible_pair": (
                 lambda target: target.visible_pair(
                     self.inputs["origins"], self.inputs["end"], self.inputs["end"] + 4.0
@@ -285,9 +218,7 @@ class ChunkedSingleDeviceTests(unittest.TestCase):
                 _SEGMENT_PAIR_FIELDS,
             ),
             "trace_refl_epc_field": (
-                lambda target: target.trace_refl_epc_field(
-                    self.inputs["origins"], self.inputs["end"], 2
-                ),
+                lambda target: target.trace_refl_epc_field(self.inputs["origins"], self.inputs["end"], 2),
                 _REFL_EPC_FIELD_FIELDS,
             ),
         }
@@ -297,10 +228,7 @@ class ChunkedSingleDeviceTests(unittest.TestCase):
                 actual = call(scene)
                 for field in fields:
                     self.assertTrue(
-                        torch.equal(
-                            _bits(getattr(expected, field)),
-                            _bits(getattr(actual, field)),
-                        ),
+                        torch.equal(_bits(getattr(expected, field)), _bits(getattr(actual, field))),
                         f"{name}.{field} is not bitwise equal",
                     )
 
@@ -310,9 +238,7 @@ class ChunkedSingleDeviceTests(unittest.TestCase):
         ray = rt.Ray(empty, empty)
         self.assertEqual(tuple(scene.intersect(ray).t.shape), (0,))
         self.assertEqual(tuple(scene.visible(empty, empty).shape), (0,))
-        self.assertEqual(
-            tuple(scene.trace_reflections(ray, max_bounces=2).valid.shape), (0, 2)
-        )
+        self.assertEqual(tuple(scene.trace_reflections(ray, max_bounces=2).valid.shape), (0, 2))
         self.assertEqual(scene._multi.last_chunk_plan.chunk_count, 0)
 
     def test_a_tiny_tape_budget_picks_a_small_chunk_and_still_completes(self):
@@ -322,17 +248,13 @@ class ChunkedSingleDeviceTests(unittest.TestCase):
         # first, then three resident chunks of four rows fit.
         budget = _BATCH * 42 + 3 * 170 * 4
         scene = self._scene(tape_memory_budget_bytes=budget)
-        chain = scene.trace_reflections(
-            self.inputs["ray"], max_bounces=2, active=self.inputs["active"]
-        )
+        chain = scene.trace_reflections(self.inputs["ray"], max_bounces=2, active=self.inputs["active"])
         plan = scene._multi.last_chunk_plan
         self.assertEqual(plan.source, "budget")
         self.assertEqual(plan.chunk_rays, 4)
         self.assertEqual(plan.chunk_count, 9)
         self.assertLess(plan.chunk_rays, _BATCH)
-        self.assertTrue(
-            torch.equal(_bits(chain.t), _bits(self.reference["trace_reflections.t"]))
-        )
+        self.assertTrue(torch.equal(_bits(chain.t), _bits(self.reference["trace_reflections.t"])))
         # The estimate covers the tape as well, so the measured output row is
         # smaller; what matters is that a real chunk was measured at all.
         self.assertIsNotNone(plan.measured_row_bytes)
@@ -341,11 +263,7 @@ class ChunkedSingleDeviceTests(unittest.TestCase):
 
         # The same budget on a cheap per-row operation buys a bigger chunk.
         cheap = _build_scene(
-            self.device,
-            devices=[0],
-            options=rt.MultiDeviceOptions(
-                warm_up=False, tape_memory_budget_bytes=budget
-            ),
+            self.device, devices=[0], options=rt.MultiDeviceOptions(warm_up=False, tape_memory_budget_bytes=budget)
         )
         cheap.visible(self.inputs["origins"], self.inputs["end"])
         self.assertEqual(cheap._multi.last_chunk_plan.chunk_rays, _BATCH)
@@ -361,9 +279,7 @@ class ChunkedSingleDeviceTests(unittest.TestCase):
         self.assertEqual([start for start, _t in seen], [0, 7, 14, 21, 28])
         self.assertEqual([int(t.shape[0]) for _start, t in seen], [7, 7, 7, 7, 5])
         streamed = torch.cat([t for _start, t in seen])
-        self.assertTrue(
-            torch.equal(_bits(streamed), _bits(self.reference["intersect_full.t"]))
-        )
+        self.assertTrue(torch.equal(_bits(streamed), _bits(self.reference["intersect_full.t"])))
         for _start, t in seen:
             self.assertEqual(t.device, self.device)
 
@@ -383,9 +299,7 @@ class ChunkedSingleDeviceTests(unittest.TestCase):
     def test_a_streamed_chunk_carries_the_whole_result_type(self):
         chains = []
         scene = self._scene(chunk_rays=11, offload=lambda start, result: chains.append(result))
-        scene.trace_reflections(
-            self.inputs["ray"], max_bounces=2, active=self.inputs["active"]
-        )
+        scene.trace_reflections(self.inputs["ray"], max_bounces=2, active=self.inputs["active"])
         self.assertEqual(len(chains), 3)
         for name in ("valid", "t", "prim_ids", "image_sources"):
             streamed = torch.cat([getattr(chain, name) for chain in chains])
@@ -397,9 +311,7 @@ class ChunkedSingleDeviceTests(unittest.TestCase):
     def test_a_chunked_forward_with_a_per_chunk_backward_accumulates_the_gradient(self):
         """D4/D7: chunked training is gradient accumulation, chunk by chunk."""
         vertices, faces = _grid_mesh(self.device)
-        weight = (
-            torch.arange(_BATCH, device=self.device, dtype=torch.float32) + 1.0
-        ) / _BATCH
+        weight = (torch.arange(_BATCH, device=self.device, dtype=torch.float32) + 1.0) / _BATCH
         ray = self.inputs["ray"]
 
         def loss(t, start):
@@ -425,10 +337,7 @@ class ChunkedSingleDeviceTests(unittest.TestCase):
                 chunks["n"] += 1
 
             scene = rt.Scene(
-                devices=[0],
-                options=rt.MultiDeviceOptions(
-                    warm_up=False, chunk_rays=chunk_rays, offload=consume
-                ),
+                devices=[0], options=rt.MultiDeviceOptions(warm_up=False, chunk_rays=chunk_rays, offload=consume)
             )
             scene.add_mesh(rt.Mesh(leaf, faces))
             scene.build()
@@ -445,15 +354,10 @@ class ChunkedSingleDeviceTests(unittest.TestCase):
                 # Per-chunk backward sums the same per-ray contributions in a
                 # different order through the same vertex atomics, so only
                 # float32 rounding may differ.
-                torch.testing.assert_close(
-                    accumulated, expected, rtol=1e-5, atol=1e-6
-                )
+                torch.testing.assert_close(accumulated, expected, rtol=1e-5, atol=1e-6)
 
 
-@unittest.skipUnless(
-    torch.cuda.is_available() and torch.cuda.device_count() >= 2,
-    "two CUDA devices are required",
-)
+@unittest.skipUnless(torch.cuda.is_available() and torch.cuda.device_count() >= 2, "two CUDA devices are required")
 class ChunkedTwoDeviceTests(unittest.TestCase):
     """The overlap smoke test: chunks on two devices still gather one result."""
 
@@ -468,11 +372,7 @@ class ChunkedTwoDeviceTests(unittest.TestCase):
         torch.cuda.set_device(self._entry_device)
 
     def _scene(self, **options) -> rt.Scene:
-        return _build_scene(
-            self.device,
-            devices=[0, 1],
-            options=rt.MultiDeviceOptions(warm_up=False, **options),
-        )
+        return _build_scene(self.device, devices=[0, 1], options=rt.MultiDeviceOptions(warm_up=False, **options))
 
     def test_chunked_two_device_results_match_the_single_device_results(self):
         if torch.cuda.get_device_name(0) != torch.cuda.get_device_name(1):
@@ -491,9 +391,7 @@ class ChunkedTwoDeviceTests(unittest.TestCase):
                 # ceil(17/c) + ceil(16/c) launches, never one.
                 plan = scene._multi.last_chunk_plan
                 size = min(chunk_rays, _BATCH)
-                self.assertEqual(
-                    plan.chunk_count, -(-16 // size) + -(-17 // size)
-                )
+                self.assertEqual(plan.chunk_count, -(-16 // size) + -(-17 // size))
 
     def test_the_offload_hook_streams_each_device_in_row_order(self):
         seen = []
@@ -510,9 +408,7 @@ class ChunkedTwoDeviceTests(unittest.TestCase):
         self.assertEqual(first, sorted(first))
         self.assertEqual(second, sorted(second))
 
-        streamed = torch.cat(
-            [result for _start, result in sorted(seen, key=lambda piece: piece[0])]
-        )
+        streamed = torch.cat([result for _start, result in sorted(seen, key=lambda piece: piece[0])])
         self.assertTrue(torch.equal(_bits(streamed), _bits(self.reference["visible"])))
 
     def test_the_two_gather_modes_agree(self):
@@ -531,9 +427,7 @@ class ChunkedTwoDeviceTests(unittest.TestCase):
             leaf = vertices.clone().requires_grad_(requires_grad)
             scene = rt.Scene(
                 devices=[0, 1],
-                options=rt.MultiDeviceOptions(
-                    warm_up=False, min_rays_per_device=1, pipeline_chunks_per_device=3
-                ),
+                options=rt.MultiDeviceOptions(warm_up=False, min_rays_per_device=1, pipeline_chunks_per_device=3),
             )
             scene.add_mesh(rt.Mesh(leaf, faces))
             scene.build()
@@ -561,28 +455,20 @@ class ChunkedTwoDeviceTests(unittest.TestCase):
             if devices is None:
                 scene = rt.Scene()
             else:
-                scene = rt.Scene(
-                    devices=devices,
-                    options=rt.MultiDeviceOptions(warm_up=False, **options),
-                )
+                scene = rt.Scene(devices=devices, options=rt.MultiDeviceOptions(warm_up=False, **options))
             scene.add_mesh(rt.Mesh(leaf, faces))
             scene.build()
             hit = scene.intersect(ray)
             chain = scene.trace_reflections(ray, max_bounces=2)
             reduced = torch.where(chain.valid, chain.t, torch.zeros_like(chain.t)).sum()
-            (
-                torch.where(torch.isfinite(hit.t), hit.t, torch.zeros_like(hit.t)).sum()
-                + reduced
-            ).backward()
+            (torch.where(torch.isfinite(hit.t), hit.t, torch.zeros_like(hit.t)).sum() + reduced).backward()
             return leaf.grad, getattr(scene._multi, "last_dispatch", None)
 
         expected, _ = gradient(None)
         self.assertGreater(float(expected.abs().max()), 0.0)
         for chunks in (2, 5):
             with self.subTest(chunks=chunks):
-                piped, dispatch = gradient(
-                    [0, 1], min_rays_per_device=1, pipeline_chunks_per_device=chunks
-                )
+                piped, dispatch = gradient([0, 1], min_rays_per_device=1, pipeline_chunks_per_device=chunks)
                 self.assertEqual(dispatch, "pipelined")
                 torch.testing.assert_close(piped, expected, rtol=1e-5, atol=1e-6)
 
@@ -618,10 +504,7 @@ class ChunkedTwoDeviceTests(unittest.TestCase):
             if devices is None:
                 scene = rt.Scene()
             else:
-                scene = rt.Scene(
-                    devices=devices,
-                    options=rt.MultiDeviceOptions(warm_up=False, **options),
-                )
+                scene = rt.Scene(devices=devices, options=rt.MultiDeviceOptions(warm_up=False, **options))
             scene.add_mesh(rt.Mesh(leaf, faces))
             scene.build()
             hit = scene.intersect(ray)

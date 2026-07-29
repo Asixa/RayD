@@ -10,8 +10,7 @@ extern "C" {
 __constant__ SegmentVisibilityParams params;
 }
 
-using SegmentVisibilityPolicy =
-    shared::optix::SegmentVisibilityDevicePolicy<true, true>;
+using SegmentVisibilityPolicy = shared::optix::SegmentVisibilityDevicePolicy<true, true>;
 
 extern "C" __global__ void __anyhit__segment_visibility() {
     shared::optix::segment_visibility::anyhit(params);

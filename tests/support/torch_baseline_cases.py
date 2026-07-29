@@ -19,11 +19,7 @@ def _as_list(tensor: torch.Tensor):
 
 
 def _scene():
-    verts = torch.tensor(
-        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-        device="cuda",
-        dtype=torch.float32,
-    )
+    verts = torch.tensor([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device="cuda", dtype=torch.float32)
     faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
     scene = rt.Scene()
     scene.add_mesh(rt.Mesh(verts, faces))

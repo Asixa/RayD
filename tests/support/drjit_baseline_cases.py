@@ -19,12 +19,7 @@ def _git_output(*args):
 
 def _optional_git_output(*args):
     try:
-        return subprocess.check_output(
-            args,
-            cwd=ROOT,
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
+        return subprocess.check_output(args, cwd=ROOT, text=True, stderr=subprocess.DEVNULL).strip()
     except Exception:
         return None
 
@@ -86,11 +81,7 @@ def _int_array_to_list(array):
 
 
 def _ray_to_dict(ray):
-    return {
-        "o": _vector_to_list(ray.o, 3),
-        "d": _vector_to_list(ray.d, 3),
-        "tmax": _float_lane(ray.tmax),
-    }
+    return {"o": _vector_to_list(ray.o, 3), "d": _vector_to_list(ray.d, 3), "tmax": _float_lane(ray.tmax)}
 
 
 def _load_rayd():
@@ -138,10 +129,7 @@ def collect_baseline_data():
 
     geometry = {}
 
-    mesh = pj.Mesh(
-        cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]),
-        cuda.Array3i([0], [1], [2]),
-    )
+    mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]), cuda.Array3i([0], [1], [2]))
     scene = pj.Scene()
     scene.add_mesh(mesh)
     scene.build()
@@ -168,22 +156,14 @@ def collect_baseline_data():
         "t_is_inf": abs(_float_lane(its.t)) == float("inf"),
     }
 
-    mesh_a = pj.Mesh(
-        cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]),
-        cuda.Array3i([0], [1], [2]),
-    )
-    mesh_b = pj.Mesh(
-        cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]),
-        cuda.Array3i([0], [1], [2]),
-    )
+    mesh_a = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]), cuda.Array3i([0], [1], [2]))
+    mesh_b = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]), cuda.Array3i([0], [1], [2]))
     mesh_b.vertex_positions = ad.Array3f([2.0, 3.0, 2.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0])
     multi_scene = pj.Scene()
     multi_scene.add_mesh(mesh_a)
     multi_scene.add_mesh(mesh_b)
     multi_scene.build()
-    its = multi_scene.intersect(
-        pj.Ray(cuda.Array3f([2.25], [0.25], [-1.0]), cuda.Array3f([0.0], [0.0], [1.0]))
-    )
+    its = multi_scene.intersect(pj.Ray(cuda.Array3f([2.25], [0.25], [-1.0]), cuda.Array3f([0.0], [0.0], [1.0])))
     geometry["multi_mesh"] = {
         "valid": _bool_lane(its.is_valid()),
         "shape_id": _int_lane(its.shape_id),
@@ -193,10 +173,7 @@ def collect_baseline_data():
     }
 
     uv_ray = pj.Ray(cuda.Array3f([0.25], [0.25], [-1.0]), cuda.Array3f([0.0], [0.0], [1.0]))
-    mesh_no_uv = pj.Mesh(
-        cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]),
-        cuda.Array3i([0], [1], [2]),
-    )
+    mesh_no_uv = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]), cuda.Array3i([0], [1], [2]))
     scene_no_uv = pj.Scene()
     scene_no_uv.add_mesh(mesh_no_uv)
     scene_no_uv.build()
@@ -210,10 +187,7 @@ def collect_baseline_data():
     scene_with_uv.add_mesh(mesh_with_uv)
     scene_with_uv.build()
     its_with_uv = scene_with_uv.intersect(uv_ray)
-    geometry["uv"] = {
-        "missing": _vector_to_list(its_no_uv.uv, 2),
-        "present": _vector_to_list(its_with_uv.uv, 2),
-    }
+    geometry["uv"] = {"missing": _vector_to_list(its_no_uv.uv, 2), "present": _vector_to_list(its_with_uv.uv, 2)}
 
     xs, ys, zs = [], [], []
     for iy in range(12):
@@ -242,10 +216,7 @@ def collect_baseline_data():
 
     gradients = {}
 
-    grad_mesh = pj.Mesh(
-        cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]),
-        cuda.Array3i([0], [1], [2]),
-    )
+    grad_mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]), cuda.Array3i([0], [1], [2]))
     verts = ad.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0])
     dr.enable_grad(verts)
     grad_mesh.vertex_positions = verts
@@ -263,18 +234,12 @@ def collect_baseline_data():
     }
 
     transform_mesh = pj.Mesh(
-        cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]),
-        cuda.Array3i([0], [1], [2]),
+        cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]), cuda.Array3i([0], [1], [2])
     )
     tz = ad.Float([0.0])
     dr.enable_grad(tz)
     transform_mesh.to_world_left = ad.Matrix4f(
-        [
-            [1.0, 0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, tz],
-            [0.0, 0.0, 0.0, 1.0],
-        ]
+        [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, tz], [0.0, 0.0, 0.0, 1.0]]
     )
     transform_scene = pj.Scene()
     transform_scene.add_mesh(transform_mesh)
@@ -301,48 +266,28 @@ def collect_baseline_data():
 
         xs = [0.1 + 0.02 * (i % 8) for i in range(64)]
         ys = [0.1 + 0.02 * (i // 8) for i in range(64)]
-        rays = pj.Ray(
-            cuda.Array3f(xs, ys, [-1.0] * 64),
-            cuda.Array3f([0.0] * 64, [0.0] * 64, [1.0] * 64),
-        )
+        rays = pj.Ray(cuda.Array3f(xs, ys, [-1.0] * 64), cuda.Array3f([0.0] * 64, [0.0] * 64, [1.0] * 64))
         its = loop_scene.intersect(rays)
         total_hits += sum(_bool_array_to_list(its.is_valid()))
 
         grad_mesh = pj.Mesh(
-            cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]),
-            cuda.Array3i([0], [1], [2]),
+            cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]), cuda.Array3i([0], [1], [2])
         )
         tz = ad.Float([0.0])
         dr.enable_grad(tz)
         grad_mesh.to_world_left = ad.Matrix4f(
-            [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, tz],
-                [0.0, 0.0, 0.0, 1.0],
-            ]
+            [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, tz], [0.0, 0.0, 0.0, 1.0]]
         )
         grad_scene = pj.Scene()
         grad_scene.add_mesh(grad_mesh)
         grad_scene.build()
-        hit = grad_scene.intersect(
-            pj.RayAD(ad.Array3f([0.25], [0.25], [-1.0]), ad.Array3f([0.0], [0.0], [1.0]))
-        )
+        hit = grad_scene.intersect(pj.RayAD(ad.Array3f([0.25], [0.25], [-1.0]), ad.Array3f([0.0], [0.0], [1.0])))
         dr.backward(hit.t)
         max_abs_grad = max(max_abs_grad, abs(_float_lane(dr.grad(tz))))
 
-    stress = {
-        "repeated_run_summary": {
-            "total_hits": total_hits,
-            "max_abs_grad": max_abs_grad,
-        }
-    }
+    stress = {"repeated_run_summary": {"total_hits": total_hits, "max_abs_grad": max_abs_grad}}
 
-    return {
-        "geometry": geometry,
-        "gradients": gradients,
-        "stress": stress,
-    }
+    return {"geometry": geometry, "gradients": gradients, "stress": stress}
 
 
 def collect_manifest():
@@ -353,11 +298,7 @@ def collect_manifest():
         "drjit_version": getattr(drjit, "__version__", None),
         "rayd_commit": _git_output("git", "rev-parse", "HEAD"),
         "drjit_commit": _optional_git_output(
-            "git",
-            "-C",
-            str(Path(drjit.__file__).resolve().parent),
-            "rev-parse",
-            "HEAD",
+            "git", "-C", str(Path(drjit.__file__).resolve().parent), "rev-parse", "HEAD"
         ),
         "python_version": sys.version,
         "platform": platform.platform(),
@@ -384,6 +325,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-

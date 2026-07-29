@@ -3,25 +3,15 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
+
+from tests.support.source_inspection import read_text as read, struct_body
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
 RAYD_INCLUDE = ROOT / "include" / "rayd"
 TORCH_SOURCE = ROOT / "src"
-
-
-def read(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
-
-
-def struct_body(text: str, name: str) -> str:
-    match = re.search(rf"struct {name}\s*\{{(?P<body>.*?)\n\}};", text, re.S)
-    if match is None:
-        raise AssertionError(f"missing struct {name}")
-    return match.group("body")
 
 
 class Adr0032SourceLaneDiffractionPathTests(unittest.TestCase):
@@ -35,12 +25,8 @@ class Adr0032SourceLaneDiffractionPathTests(unittest.TestCase):
         self.assertIn("Compact = 0", enum)
         self.assertIn("SourceLane = 1", enum)
         config = struct_body(diffraction, "DiffractionPathConfig")
-        self.assertIn(
-            "DiffractionPathLayout layout = DiffractionPathLayout::Compact;", config
-        )
-        self.assertFalse(
-            (RAYD_INCLUDE / "integration" / "torch_v2.h").exists()
-        )
+        self.assertIn("DiffractionPathLayout layout = DiffractionPathLayout::Compact;", config)
+        self.assertFalse((RAYD_INCLUDE / "integration" / "torch_v2.h").exists())
 
     def test_typed_impl_validates_and_threads_layout(self):
         params = read(ROOT / "src" / "diffraction" / "paths_params.h")
@@ -60,13 +46,7 @@ class Adr0032SourceLaneDiffractionPathTests(unittest.TestCase):
         self.assertIn("static_cast<int>(config.layout)", typed)
 
     def test_shared_exporter_uses_lane_only_for_source_lane(self):
-        shared = read(
-            ROOT
-            / "include"
-            / "rayd"
-            / "diffraction"
-            / "paths_algo.h"
-        )
+        shared = read(ROOT / "include" / "rayd" / "diffraction" / "paths_algo.h")
         reserve = shared.split("RAYD_DEVICE int reserve_path_output", 1)[1]
         reserve = reserve.split("/// Combined first-order", 1)[0]
         self.assertIn("path_output_layout(params, 0) == kOutputLayoutSourceLane", reserve)
@@ -76,16 +56,14 @@ class Adr0032SourceLaneDiffractionPathTests(unittest.TestCase):
         self.assertEqual(shared.count("reserve_path_output(params, lane)"), 2)
 
     def test_live_torch_raygen_uses_source_lane_reservation(self):
-        params = read(
-            ROOT / "src" / "diffraction" / "paths_params.h"
-        )
+        params = read(ROOT / "src" / "diffraction" / "paths_params.h")
         self.assertIn("kDiffractionPathLayoutCompact = 0", params)
         self.assertIn("kDiffractionPathLayoutSourceLane = 1", params)
 
         optix = read(TORCH_SOURCE / "diffraction" / "paths_optix.cu")
-        reserve = optix.split(
-            "static __forceinline__ __device__ int reserve_path_slot", 1
-        )[1].split("} // namespace", 1)[0]
+        reserve = optix.split("static __forceinline__ __device__ int reserve_path_slot", 1)[1].split(
+            "} // namespace", 1
+        )[0]
         self.assertIn("params.output_layout == kDiffractionPathLayoutSourceLane", reserve)
         self.assertIn("base = atomicAdd(params.out_count, count);", reserve)
         self.assertIn("return static_cast<int>(logical_lane);", reserve)

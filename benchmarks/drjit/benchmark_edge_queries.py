@@ -16,13 +16,9 @@ from typing import Any
 THIS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = THIS_DIR.parents[1]
 THIS_DIR_NORM = os.path.normcase(os.path.abspath(THIS_DIR))
-sys.path = [
-    entry for entry in sys.path
-    if os.path.normcase(os.path.abspath(entry or ".")) != THIS_DIR_NORM
-]
+sys.path = [entry for entry in sys.path if os.path.normcase(os.path.abspath(entry or ".")) != THIS_DIR_NORM]
 if os.path.normcase(os.path.abspath(REPO_ROOT)) not in {
-    os.path.normcase(os.path.abspath(entry or "."))
-    for entry in sys.path
+    os.path.normcase(os.path.abspath(entry or ".")) for entry in sys.path
 }:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -31,11 +27,13 @@ import drjit.cuda as cuda
 import drjit.cuda.ad as ad
 import rayd.drjit as pj
 
-from tests.benchmark_support import _cleanup_drjit
-from tests.benchmark_support import _make_grid_mesh_data
-from tests.benchmark_support import _make_ray_data
-from tests.benchmark_support import _measure
-from tests.benchmark_support import _summarize_timings
+from benchmarks.common import to_scalar as _to_scalar
+from benchmarks.drjit.benchmark_support import _cleanup_drjit
+from benchmarks.drjit.benchmark_support import _make_grid_mesh_data
+from benchmarks.drjit.benchmark_support import _make_ray_data
+from benchmarks.drjit.benchmark_support import _measure
+from benchmarks.drjit.benchmark_support import _summarize_timings
+from benchmarks.drjit.benchmark_support import _write_json
 
 
 ALLOW_NO_GRAD_FLAGS = dr.ADFlag.Default | dr.ADFlag.AllowNoGrad
@@ -58,11 +56,7 @@ def _make_point_queries(side: int, z: float, x_offset: float = 0.0) -> cuda.Arra
 
 
 def _make_downward_rays(
-    side: int,
-    z_origin: float,
-    x_offset: float = 0.0,
-    tmax: float | None = None,
-    ad_mode: bool = False,
+    side: int, z_origin: float, x_offset: float = 0.0, tmax: float | None = None, ad_mode: bool = False
 ) -> Any:
     ray_data = _make_ray_data(side, x_offset=x_offset, z_origin=z_origin)
     count = len(ray_data["ox"])
@@ -106,29 +100,12 @@ def _eval_ray_result(result: Any) -> None:
     )
 
 
-def _to_scalar(value: Any) -> float:
-    if isinstance(value, (int, float)):
-        return float(value)
-    try:
-        return float(value)
-    except TypeError:
-        return float(value[0])
-
-
 def _summarize_latency(times_s: list[float]) -> dict[str, float]:
-    return {
-        "min_ms": min(times_s) * 1000.0,
-        "avg_ms": statistics.fmean(times_s) * 1000.0,
-    }
+    return {"min_ms": min(times_s) * 1000.0, "avg_ms": statistics.fmean(times_s) * 1000.0}
 
 
 def _measure_sync(
-    scene: Any,
-    mesh_id: int,
-    base_positions: cuda.Array3f,
-    updated_positions: cuda.Array3f,
-    repeats: int,
-    warmup: int,
+    scene: Any, mesh_id: int, base_positions: cuda.Array3f, updated_positions: cuda.Array3f, repeats: int, warmup: int
 ) -> list[float]:
     def measure_once(use_updated: bool) -> float:
         positions = updated_positions if use_updated else base_positions
@@ -151,11 +128,7 @@ def _measure_sync(
     return times_s
 
 
-def _measure_build(
-    mesh_data: dict[str, list[float] | list[int]],
-    repeats: int,
-    warmup: int,
-) -> dict[str, float]:
+def _measure_build(mesh_data: dict[str, list[float] | list[int]], repeats: int, warmup: int) -> dict[str, float]:
     def run() -> None:
         scene = pj.Scene()
         scene.add_mesh(_make_scene_mesh(mesh_data))
@@ -179,24 +152,8 @@ def _build_dynamic_scene(mesh_data: dict[str, list[float] | list[int]]) -> tuple
 
 
 def _benchmark_forward_queries(
-    scene: Any,
-    point_queries: cuda.Array3f,
-    finite_rays: Any,
-    infinite_rays: Any,
-    repeats: int,
-    warmup: int,
+    scene: Any, point_queries: cuda.Array3f, finite_rays: Any, infinite_rays: Any, repeats: int, warmup: int
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    def run_point() -> None:
-        result = scene.nearest_edge(point_queries)
-        _eval_point_result(result)
-
-    def run_finite_ray() -> None:
-        result = scene.nearest_edge(finite_rays)
-        _eval_ray_result(result)
-
-    def run_infinite_ray() -> None:
-        result = scene.nearest_edge(infinite_rays)
-        _eval_ray_result(result)
 
     point_result = scene.nearest_edge(point_queries)
     _eval_point_result(point_result)
@@ -219,9 +176,15 @@ def _benchmark_forward_queries(
     }
 
     timings = {
-        "point_query": _summarize_timings(_measure(run_point, repeats, warmup), query_count),
-        "finite_ray_query": _summarize_timings(_measure(run_finite_ray, repeats, warmup), query_count),
-        "infinite_ray_query": _summarize_timings(_measure(run_infinite_ray, repeats, warmup), query_count),
+        "point_query": _summarize_timings(
+            _measure(lambda: _eval_point_result(scene.nearest_edge(point_queries)), repeats, warmup), query_count
+        ),
+        "finite_ray_query": _summarize_timings(
+            _measure(lambda: _eval_ray_result(scene.nearest_edge(finite_rays)), repeats, warmup), query_count
+        ),
+        "infinite_ray_query": _summarize_timings(
+            _measure(lambda: _eval_ray_result(scene.nearest_edge(infinite_rays)), repeats, warmup), query_count
+        ),
     }
     return timings, sanity
 
@@ -234,22 +197,12 @@ def _benchmark_sync(
 ) -> dict[str, float]:
     scene, mesh_id = _build_dynamic_scene(mesh_data)
     base_positions = cuda.Array3f(mesh_data["x"], mesh_data["y"], mesh_data["z"])
-    updated_positions = cuda.Array3f(
-        updated_mesh_data["x"],
-        updated_mesh_data["y"],
-        updated_mesh_data["z"],
-    )
-    return _summarize_latency(
-        _measure_sync(scene, mesh_id, base_positions, updated_positions, repeats, warmup)
-    )
+    updated_positions = cuda.Array3f(updated_mesh_data["x"], updated_mesh_data["y"], updated_mesh_data["z"])
+    return _summarize_latency(_measure_sync(scene, mesh_id, base_positions, updated_positions, repeats, warmup))
 
 
 def _benchmark_point_gradient(
-    mesh_data: dict[str, list[float] | list[int]],
-    point_side: int,
-    point_z: float,
-    repeats: int,
-    warmup: int,
+    mesh_data: dict[str, list[float] | list[int]], point_side: int, point_z: float, repeats: int, warmup: int
 ) -> dict[str, float]:
     mesh = pj.Mesh(
         cuda.Array3f(mesh_data["x"], mesh_data["y"], mesh_data["z"]),
@@ -257,11 +210,7 @@ def _benchmark_point_gradient(
     )
     verts = ad.Array3f(mesh_data["x"], mesh_data["y"], mesh_data["z"])
     point_data = _make_ray_data(point_side, z_origin=point_z)
-    points = ad.Array3f(
-        point_data["ox"],
-        point_data["oy"],
-        point_data["oz"],
-    )
+    points = ad.Array3f(point_data["ox"], point_data["oy"], point_data["oz"])
     dr.enable_grad(verts)
     dr.enable_grad(points)
     mesh.vertex_positions = verts
@@ -315,12 +264,7 @@ class EdgeBenchmarkScenario:
     mesh_resolution: int
     query_grid_side: int
 
-    def config(
-        self,
-        point_z: float,
-        finite_ray_tmax: float,
-        dynamic_x_offset: float,
-    ) -> dict[str, Any]:
+    def config(self, point_z: float, finite_ray_tmax: float, dynamic_x_offset: float) -> dict[str, Any]:
         return {
             "label": self.label,
             "mesh_resolution": self.mesh_resolution,
@@ -352,8 +296,7 @@ def _parse_scenario_spec(spec: str) -> EdgeBenchmarkScenario:
         query_grid_side = int(parts[2])
     else:
         raise ValueError(
-            "Invalid --scenario spec. Use 'mesh_resolution:query_grid_side' "
-            "or 'label:mesh_resolution:query_grid_side'."
+            "Invalid --scenario spec. Use 'mesh_resolution:query_grid_side' or 'label:mesh_resolution:query_grid_side'."
         )
 
     if mesh_resolution <= 0 or query_grid_side <= 0:
@@ -374,16 +317,8 @@ def run_edge_benchmark_case(
     base_mesh = _make_grid_mesh_data(scenario.mesh_resolution)
     updated_mesh = _make_grid_mesh_data(scenario.mesh_resolution, x_offset=dynamic_x_offset)
     point_queries = _make_point_queries(scenario.query_grid_side, z=point_z)
-    finite_rays = _make_downward_rays(
-        scenario.query_grid_side,
-        z_origin=1.0,
-        tmax=finite_ray_tmax,
-    )
-    infinite_rays = _make_downward_rays(
-        scenario.query_grid_side,
-        z_origin=1.0,
-        tmax=None,
-    )
+    finite_rays = _make_downward_rays(scenario.query_grid_side, z_origin=1.0, tmax=finite_ray_tmax)
+    infinite_rays = _make_downward_rays(scenario.query_grid_side, z_origin=1.0, tmax=None)
 
     results: dict[str, Any] = {
         "config": scenario.config(point_z, finite_ray_tmax, dynamic_x_offset),
@@ -396,59 +331,31 @@ def run_edge_benchmark_case(
 
     static_scene = _build_static_scene(base_mesh)
     forward_timings, sanity = _benchmark_forward_queries(
-        static_scene,
-        point_queries,
-        finite_rays,
-        infinite_rays,
-        repeats,
-        warmup,
+        static_scene, point_queries, finite_rays, infinite_rays, repeats, warmup
     )
     results["sanity"] = sanity
     results["performance"].update(forward_timings)
     _cleanup_drjit()
 
-    results["performance"]["sync"] = _benchmark_sync(
-        base_mesh,
-        updated_mesh,
-        repeats,
-        warmup,
-    )
+    results["performance"]["sync"] = _benchmark_sync(base_mesh, updated_mesh, repeats, warmup)
     _cleanup_drjit()
 
     if include_gradients:
         results["performance"]["point_gradient"] = _benchmark_point_gradient(
-            base_mesh,
-            scenario.query_grid_side,
-            point_z,
-            repeats,
-            warmup,
+            base_mesh, scenario.query_grid_side, point_z, repeats, warmup
         )
         _cleanup_drjit()
         results["performance"]["finite_ray_gradient"] = _benchmark_finite_ray_gradient(
-            base_mesh,
-            scenario.query_grid_side,
-            1.0,
-            finite_ray_tmax,
-            repeats,
-            warmup,
+            base_mesh, scenario.query_grid_side, 1.0, finite_ray_tmax, repeats, warmup
         )
         _cleanup_drjit()
 
     return results
 
 
-def _write_json(path: str | os.PathLike[str], payload: dict[str, Any]) -> None:
-    output_path = Path(path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description=(
-            "Benchmark RayDi edge-query performance for build(), "
-            "point/ray nearest-edge queries, and sync()."
-        )
+        description=("Benchmark RayDi edge-query performance for build(), point/ray nearest-edge queries, and sync().")
     )
     parser.add_argument("--mesh-resolution", type=int, default=192)
     parser.add_argument("--query-grid-side", type=int, default=256)
@@ -458,9 +365,7 @@ def main() -> int:
     parser.add_argument("--point-z", type=float, default=0.25)
     parser.add_argument("--finite-ray-tmax", type=float, default=2.0)
     parser.add_argument(
-        "--include-gradients",
-        action="store_true",
-        help="Also benchmark point-distance and finite-ray gradient paths.",
+        "--include-gradients", action="store_true", help="Also benchmark point-distance and finite-ray gradient paths."
     )
     parser.add_argument(
         "--scenario",

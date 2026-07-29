@@ -54,42 +54,42 @@ enum class EdgeIntersectionAttributeSlot : std::uint8_t {
 
 /// Backend-neutral view of the common edge-geometry portion of launch params.
 struct EdgeGeometrySoAView {
-    const float *p0_x;
-    const float *p0_y;
-    const float *p0_z;
-    const float *e1_x;
-    const float *e1_y;
-    const float *e1_z;
-    const std::uint8_t *active;
+    const float* p0_x;
+    const float* p0_y;
+    const float* p0_z;
+    const float* e1_x;
+    const float* e1_y;
+    const float* e1_z;
+    const std::uint8_t* active;
     std::int32_t count;
     float search_radius;
 };
 
 /// Backend-neutral view of the common edge-query portion of launch params.
 struct EdgeQuerySoAView {
-    const float *origin_x;
-    const float *origin_y;
-    const float *origin_z;
-    const float *direction_x;
-    const float *direction_y;
-    const float *direction_z;
-    const float *ray_tmax;
-    const std::uint8_t *active;
+    const float* origin_x;
+    const float* origin_y;
+    const float* origin_z;
+    const float* direction_x;
+    const float* direction_y;
+    const float* direction_z;
+    const float* ray_tmax;
+    const std::uint8_t* active;
     std::int32_t count;
     std::int32_t k;
 };
 
 /// Backend-neutral view of the common intermediate edge-query outputs.
 struct EdgeQueryOutputView {
-    std::int32_t *edge_ids;
-    float *squared_distance;
-    float *ray_parameter;
-    float *edge_parameter;
-    std::uint8_t *valid;
+    std::int32_t* edge_ids;
+    float* squared_distance;
+    float* ray_parameter;
+    float* edge_parameter;
+    std::uint8_t* valid;
 };
 
-#define RAYD_SHARED_EDGE_OPTIX_ASSERT_POD(Type) \
-    static_assert(std::is_standard_layout_v<Type>); \
+#define RAYD_SHARED_EDGE_OPTIX_ASSERT_POD(Type)                                                                        \
+    static_assert(std::is_standard_layout_v<Type>);                                                                    \
     static_assert(std::is_trivially_copyable_v<Type>)
 
 RAYD_SHARED_EDGE_OPTIX_ASSERT_POD(EdgeGeometrySoAView);
@@ -105,9 +105,7 @@ static_assert(static_cast<std::uint8_t>(TorchEdgeRayPayloadSlot::TierRadius) == 
 static_assert(static_cast<std::uint8_t>(DrJitEdgeRayPayloadSlot::Count) == 5u);
 static_assert(static_cast<std::uint8_t>(TorchEdgeRayPayloadSlot::Count) == 5u);
 static_assert(static_cast<std::uint8_t>(EdgeIntersectionAttributeSlot::Count) == 3u);
-static_assert(static_cast<std::uint8_t>(DrJitEdgeRayPayloadSlot::Count) ==
-              EdgePointRayPayloadCount);
-static_assert(static_cast<std::uint8_t>(EdgeIntersectionAttributeSlot::Count) ==
-              EdgeAttributeCount);
+static_assert(static_cast<std::uint8_t>(DrJitEdgeRayPayloadSlot::Count) == EdgePointRayPayloadCount);
+static_assert(static_cast<std::uint8_t>(EdgeIntersectionAttributeSlot::Count) == EdgeAttributeCount);
 
 } // namespace rayd::shared::optix

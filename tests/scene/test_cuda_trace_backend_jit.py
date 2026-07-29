@@ -52,10 +52,7 @@ def _run_json(script, timeout=360):
     )
     if result.returncode != 0:
         raise AssertionError(
-            "Subprocess failed.\n"
-            f"Return code: {result.returncode}\n"
-            f"STDOUT:\n{result.stdout}\n"
-            f"STDERR:\n{result.stderr}"
+            f"Subprocess failed.\nReturn code: {result.returncode}\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
         )
     lines = [line for line in result.stdout.splitlines() if line.strip()]
     if not lines:
@@ -86,12 +83,14 @@ class CudaGoldenParityTests(unittest.TestCase):
                 baseline_record = baseline[query_name]
                 path = f"{name}.{query_name}"
                 self.assertEqual(actual_record["kind"], baseline_record["kind"], f"{path}: kind")
-                self.assertEqual(
-                    actual_record["discrete"], baseline_record["discrete"], f"{path}: discrete"
-                )
+                self.assertEqual(actual_record["discrete"], baseline_record["discrete"], f"{path}: discrete")
                 compare._assert_continuous(
-                    self, actual_record["continuous"], baseline_record["continuous"],
-                    f"{path}.continuous", abs_tol, rel_tol,
+                    self,
+                    actual_record["continuous"],
+                    baseline_record["continuous"],
+                    f"{path}.continuous",
+                    abs_tol,
+                    rel_tol,
                 )
                 compared_queries += 1
         # Guard against the runner silently skipping everything.
@@ -100,8 +99,14 @@ class CudaGoldenParityTests(unittest.TestCase):
     def test_core_intersect_scenes_are_covered(self):
         # These must all run under the CUDA backend (intersect / shadow only).
         for name in (
-            "single_tri", "shared_edge_quad", "degenerate_tri", "large_coordinates",
-            "self_intersection", "multi_mesh_ids", "dynamic_refit", "inactive_lanes",
+            "single_tri",
+            "shared_edge_quad",
+            "degenerate_tri",
+            "large_coordinates",
+            "self_intersection",
+            "multi_mesh_ids",
+            "dynamic_refit",
+            "inactive_lanes",
             "batch_sizes",
         ):
             self.assertIn(name, self.golden, f"{name} missing from CUDA golden run")
@@ -292,11 +297,16 @@ class CudaAdParityTests(unittest.TestCase):
         self.assertTrue(math.isclose(cuda_data["vertex"]["t"], optix_data["vertex"]["t"], abs_tol=1e-6))
         for cuda_row, optix_row in zip(cuda_data["vertex"]["grad"], optix_data["vertex"]["grad"]):
             for cuda_v, optix_v in zip(cuda_row, optix_row):
-                self.assertTrue(math.isclose(cuda_v, optix_v, rel_tol=1e-5, abs_tol=1e-6),
-                                f"vertex gradient drift: {cuda_v} vs {optix_v}")
-        self.assertTrue(math.isclose(cuda_data["transform"]["grad_tz"],
-                                     optix_data["transform"]["grad_tz"], rel_tol=1e-5, abs_tol=1e-6),
-                        "transform gradient drift")
+                self.assertTrue(
+                    math.isclose(cuda_v, optix_v, rel_tol=1e-5, abs_tol=1e-6),
+                    f"vertex gradient drift: {cuda_v} vs {optix_v}",
+                )
+        self.assertTrue(
+            math.isclose(
+                cuda_data["transform"]["grad_tz"], optix_data["transform"]["grad_tz"], rel_tol=1e-5, abs_tol=1e-6
+            ),
+            "transform gradient drift",
+        )
 
 
 class CudaRefitTests(unittest.TestCase):

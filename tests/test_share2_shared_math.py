@@ -7,24 +7,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 EDGE_HEADER = ROOT / "include" / "rayd" / "edge" / "edge_distance.h"
-REFLECTION_HEADER = (
-    ROOT / "include" / "rayd" / "reflection" / "reflection_geometry.h"
-)
+REFLECTION_HEADER = ROOT / "include" / "rayd" / "reflection" / "reflection_geometry.h"
 
 
 class Share2SharedMathTests(unittest.TestCase):
     def test_headers_are_backend_neutral(self):
         for path in (EDGE_HEADER, REFLECTION_HEADER):
             source = path.read_text(encoding="utf-8")
-            for forbidden in (
-                "at::Tensor",
-                "torch/",
-                "drjit",
-                "nanobind",
-                "optix",
-                "cudaMalloc",
-                "cudaFree",
-            ):
+            for forbidden in ("at::Tensor", "torch/", "drjit", "nanobind", "optix", "cudaMalloc", "cudaFree"):
                 self.assertNotIn(forbidden, source, f"{forbidden} remains in {path.relative_to(ROOT)}")
 
     def test_edge_formula_surface_is_complete(self):
@@ -63,10 +53,7 @@ class Share2SharedMathTests(unittest.TestCase):
             self.assertIn("<rayd/edge/edge_distance.h>", source)
             for symbol in symbols:
                 self.assertIn(symbol, source)
-        for relative in (
-            "src/edge/edge_optix_jit.cu",
-            "src/edge/edge_optix.cu",
-        ):
+        for relative in ("src/edge/edge_optix_jit.cu", "src/edge/edge_optix.cu"):
             source = (ROOT / relative).read_text(encoding="utf-8")
             self.assertNotIn("update_segment_best", source)
             self.assertNotIn("const float query_t_line", source)
@@ -81,36 +68,25 @@ class Share2SharedMathTests(unittest.TestCase):
         # device header into the host-compilable shared/reflection algorithm; the
         # shared reflect primitives now live there, and the OptiX entry header
         # funnels through it.
-        algo = (
-            ROOT / "include/rayd/reflection/trace_algo.h"
-        ).read_text(encoding="utf-8")
+        algo = (ROOT / "include/rayd/reflection/trace_algo.h").read_text(encoding="utf-8")
         self.assertIn("<rayd/reflection/reflection_geometry.h>", algo)
         for symbol in required:
             self.assertIn(symbol, algo)
-        shared_device = (
-            ROOT / "include/rayd/reflection/trace_optix_device.cuh"
-        ).read_text(encoding="utf-8")
+        shared_device = (ROOT / "include/rayd/reflection/trace_optix_device.cuh").read_text(encoding="utf-8")
         self.assertIn("<rayd/reflection/trace_algo.h>", shared_device)
 
         # P4 Stage B did the same for the reflection-EPC pipeline: the discovery
         # body (and with it the shared reflect / segment-plane primitives) moved to
         # the host-compilable algorithm header, and the OptiX entry header funnels
         # through it.
-        epc_algo = (
-            ROOT / "include/rayd/reflection/epc_algo.h"
-        ).read_text(encoding="utf-8")
+        epc_algo = (ROOT / "include/rayd/reflection/epc_algo.h").read_text(encoding="utf-8")
         self.assertIn("<rayd/reflection/reflection_geometry.h>", epc_algo)
         self.assertIn("reflection::intersect_segment_plane", epc_algo)
         self.assertIn("reflection::reflect_point_across_plane", epc_algo)
-        epc_device = (
-            ROOT / "include/rayd/reflection/epc_optix_device.cuh"
-        ).read_text(encoding="utf-8")
+        epc_device = (ROOT / "include/rayd/reflection/epc_optix_device.cuh").read_text(encoding="utf-8")
         self.assertIn("<rayd/reflection/epc_algo.h>", epc_device)
 
-        for relative in (
-            "src/reflection/trace_optix_jit.cu",
-            "src/reflection/trace_optix.cu",
-        ):
+        for relative in ("src/reflection/trace_optix_jit.cu", "src/reflection/trace_optix.cu"):
             source = (ROOT / relative).read_text(encoding="utf-8")
             self.assertIn("<rayd/reflection/trace_optix_device.cuh>", source)
 

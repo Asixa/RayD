@@ -25,22 +25,14 @@ namespace rayd {
 namespace multipath_detail {
 
 /// Backend for segment-visibility traces (env RAYD_TRACE_VISIBILITY_BACKEND): Dr.Jit HitObject vs. native optixLaunch.
-enum class TraceVisibilityBackend {
-    Auto,
-    Jit,
-    Native
-};
+enum class TraceVisibilityBackend { Auto, Jit, Native };
 
 /// How EPC visibility decides which primitives to ignore: exact primitive ids vs. surface groups.
-enum class ReflEpcVisibilityIgnoreMode {
-    Primitive,
-    SurfaceGroup
-};
+enum class ReflEpcVisibilityIgnoreMode { Primitive, SurfaceGroup };
 
 TraceVisibilityBackend active_trace_visibility_backend();
 
-ReflEpcVisibilityIgnoreMode parse_refl_epc_vis_ignore(
-    const std::string &value);
+ReflEpcVisibilityIgnoreMode parse_refl_epc_vis_ignore(const std::string& value);
 
 bool use_jit_trace_visibility_path(int ignore_k);
 
@@ -48,18 +40,14 @@ bool recording_reflections();
 
 bool uses_symbolic_optix_query_path();
 
-void ensure_pipeline(std::shared_ptr<OptixLaunchPipeline> &pipeline,
-                     OptixDeviceContext context,
-                     int hitgroup_record_count,
-                     const OptixPipelineConfig &config);
+void ensure_pipeline(std::shared_ptr<OptixLaunchPipeline>& pipeline, OptixDeviceContext context,
+                     int hitgroup_record_count, const OptixPipelineConfig& config);
 
 template <bool Detached>
-ReflectionChainT<Detached> initialize_reflection_chain_result(
-    int ray_count,
-    int max_bounces,
-    int export_mode = RAYD_REFLECTION_EXPORT_FULL,
-    bool return_trailing = true,
-    bool include_shape_ids = true) {
+ReflectionChainT<Detached> initialize_reflection_chain_result(int ray_count, int max_bounces,
+                                                              int export_mode = RAYD_REFLECTION_EXPORT_FULL,
+                                                              bool return_trailing = true,
+                                                              bool include_shape_ids = true) {
     ReflectionChainT<Detached> result;
     result.max_bounces = max_bounces;
     result.ray_count = ray_count;
@@ -98,31 +86,21 @@ ReflectionChainT<Detached> initialize_reflection_chain_result(
     return result;
 }
 
-template <bool Detached>
-Mask sanitize_reflection_active(const RayT<Detached> &ray,
-                                        MaskT<Detached> active) {
+template <bool Detached> Mask sanitize_reflection_active(const RayT<Detached>& ray, MaskT<Detached> active) {
     Mask active_detached;
     if constexpr (!Detached) {
         active_detached = detach<false>(active);
-        active_detached &= drjit::isfinite(detach<false>(ray.o.x())) &&
-                           drjit::isfinite(detach<false>(ray.o.y())) &&
+        active_detached &= drjit::isfinite(detach<false>(ray.o.x())) && drjit::isfinite(detach<false>(ray.o.y())) &&
                            drjit::isfinite(detach<false>(ray.o.z()));
-        active_detached &= drjit::isfinite(detach<false>(ray.d.x())) &&
-                           drjit::isfinite(detach<false>(ray.d.y())) &&
+        active_detached &= drjit::isfinite(detach<false>(ray.d.x())) && drjit::isfinite(detach<false>(ray.d.y())) &&
                            drjit::isfinite(detach<false>(ray.d.z()));
-        active_detached &= squared_norm(Vector3f(detach<false>(ray.d.x()),
-                                                        detach<false>(ray.d.y()),
-                                                        detach<false>(ray.d.z()))) > 0.f;
-        active_detached &= ~drjit::isfinite(detach<false>(ray.tmax)) ||
-                           (detach<false>(ray.tmax) > 0.f);
+        active_detached &=
+            squared_norm(Vector3f(detach<false>(ray.d.x()), detach<false>(ray.d.y()), detach<false>(ray.d.z()))) > 0.f;
+        active_detached &= ~drjit::isfinite(detach<false>(ray.tmax)) || (detach<false>(ray.tmax) > 0.f);
     } else {
         active_detached = active;
-        active_detached &= drjit::isfinite(ray.o.x()) &&
-                           drjit::isfinite(ray.o.y()) &&
-                           drjit::isfinite(ray.o.z());
-        active_detached &= drjit::isfinite(ray.d.x()) &&
-                           drjit::isfinite(ray.d.y()) &&
-                           drjit::isfinite(ray.d.z());
+        active_detached &= drjit::isfinite(ray.o.x()) && drjit::isfinite(ray.o.y()) && drjit::isfinite(ray.o.z());
+        active_detached &= drjit::isfinite(ray.d.x()) && drjit::isfinite(ray.d.y()) && drjit::isfinite(ray.d.z());
         active_detached &= squared_norm(ray.d) > 0.f;
         active_detached &= ~drjit::isfinite(ray.tmax) || (ray.tmax > 0.f);
     }
@@ -130,35 +108,24 @@ Mask sanitize_reflection_active(const RayT<Detached> &ray,
 }
 
 template <bool Detached>
-Mask sanitize_segment_active(const Vector3fT<Detached> &start,
-                                     const Vector3fT<Detached> &end,
-                                     MaskT<Detached> active) {
+Mask sanitize_segment_active(const Vector3fT<Detached>& start, const Vector3fT<Detached>& end, MaskT<Detached> active) {
     Mask active_detached;
     if constexpr (!Detached) {
         active_detached = detach<false>(active);
-        active_detached &= drjit::isfinite(detach<false>(start.x())) &&
-                           drjit::isfinite(detach<false>(start.y())) &&
+        active_detached &= drjit::isfinite(detach<false>(start.x())) && drjit::isfinite(detach<false>(start.y())) &&
                            drjit::isfinite(detach<false>(start.z()));
-        active_detached &= drjit::isfinite(detach<false>(end.x())) &&
-                           drjit::isfinite(detach<false>(end.y())) &&
+        active_detached &= drjit::isfinite(detach<false>(end.x())) && drjit::isfinite(detach<false>(end.y())) &&
                            drjit::isfinite(detach<false>(end.z()));
     } else {
         active_detached = active;
-        active_detached &= drjit::isfinite(start.x()) &&
-                           drjit::isfinite(start.y()) &&
-                           drjit::isfinite(start.z());
-        active_detached &= drjit::isfinite(end.x()) &&
-                           drjit::isfinite(end.y()) &&
-                           drjit::isfinite(end.z());
+        active_detached &= drjit::isfinite(start.x()) && drjit::isfinite(start.y()) && drjit::isfinite(start.z());
+        active_detached &= drjit::isfinite(end.x()) && drjit::isfinite(end.y()) && drjit::isfinite(end.z());
     }
     return active_detached;
 }
 
-inline void eval_segment_visibility_common(const Vector3f &start,
-                                    const Int &face_offsets,
-                                    const Int &ignore_prim_ids,
-                                    int ignore_k,
-                                    const Mask &active_detached) {
+inline void eval_segment_visibility_common(const Vector3f& start, const Int& face_offsets, const Int& ignore_prim_ids,
+                                           int ignore_k, const Mask& active_detached) {
     if (ignore_k > 0) {
         drjit::eval(start, face_offsets, ignore_prim_ids, active_detached);
     } else {
@@ -166,15 +133,10 @@ inline void eval_segment_visibility_common(const Vector3f &start,
     }
 }
 
-inline SegmentVisibilityParams make_segment_visibility_params(
-    const OptixScene &optix_scene,
-    const Int &face_offsets,
-    int mesh_count,
-    const Vector3f &start,
-    const Int &ignore_prim_ids,
-    int ignore_k,
-    const Mask &active_detached,
-    int ray_count) {
+inline SegmentVisibilityParams make_segment_visibility_params(const OptixScene& optix_scene, const Int& face_offsets,
+                                                              int mesh_count, const Vector3f& start,
+                                                              const Int& ignore_prim_ids, int ignore_k,
+                                                              const Mask& active_detached, int ray_count) {
     SegmentVisibilityParams params = {};
     params.handle = optix_scene.ias_handle();
     params.face_offsets = face_offsets.data();
@@ -184,7 +146,7 @@ inline SegmentVisibilityParams make_segment_visibility_params(
     params.start_z = start.z().data();
     params.ignore_prim_ids = ignore_k > 0 ? ignore_prim_ids.data() : nullptr;
     params.ignore_k = ignore_k;
-    params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
+    params.active_mask = reinterpret_cast<const uint8_t*>(active_detached.data());
     params.n_rays = ray_count;
     return params;
 }
@@ -195,15 +157,8 @@ struct SegmentVisibilityLaunchResult {
 };
 
 inline SegmentVisibilityLaunchResult launch_segment_visibility_detached(
-    const OptixScene &optix_scene,
-    const OptixLaunchPipeline &pipeline,
-    const Int &face_offsets,
-    int mesh_count,
-    const Vector3f &start,
-    const Vector3f &end,
-    const Int &ignore_prim_ids,
-    int ignore_k,
-    const Mask &active_detached,
+    const OptixScene& optix_scene, const OptixLaunchPipeline& pipeline, const Int& face_offsets, int mesh_count,
+    const Vector3f& start, const Vector3f& end, const Int& ignore_prim_ids, int ignore_k, const Mask& active_detached,
     bool collect_blocker_prim = false) {
     const int ray_count = static_cast<int>(slices(start));
     if (ray_count == 0) {
@@ -211,56 +166,33 @@ inline SegmentVisibilityLaunchResult launch_segment_visibility_detached(
     }
 
     Mask visible = empty<Mask>(ray_count);
-    Int blocker_prim = collect_blocker_prim
-        ? full<Int>(-1, ray_count)
-        : Int();
+    Int blocker_prim = collect_blocker_prim ? full<Int>(-1, ray_count) : Int();
     eval_segment_visibility_common(start, face_offsets, ignore_prim_ids, ignore_k, active_detached);
     drjit::eval(end);
 
     SegmentVisibilityParams params =
-        make_segment_visibility_params(optix_scene,
-                                       face_offsets,
-                                       mesh_count,
-                                       start,
-                                       ignore_prim_ids,
-                                       ignore_k,
-                                       active_detached,
-                                       ray_count);
+        make_segment_visibility_params(optix_scene, face_offsets, mesh_count, start, ignore_prim_ids, ignore_k,
+                                       active_detached, ray_count);
     params.end_x = end.x().data();
     params.end_y = end.y().data();
     params.end_z = end.z().data();
-    params.out_visible = reinterpret_cast<uint8_t *>(visible.data());
-    params.out_first_blocked_prim =
-        collect_blocker_prim ? blocker_prim.data() : nullptr;
+    params.out_visible = reinterpret_cast<uint8_t*>(visible.data());
+    params.out_first_blocked_prim = collect_blocker_prim ? blocker_prim.data() : nullptr;
     pipeline.launch(0, params);
     return {visible, blocker_prim};
 }
 
 template <bool Detached>
 SegmentVisibilityT<Detached> trace_segment_visibility_native(
-    const OptixScene &optix_scene,
-    const OptixLaunchPipeline &pipeline,
-    const Int &face_offsets,
-    int mesh_count,
-    const Vector3f &start,
-    const Vector3f &end,
-    const Int &ignore_prim_ids,
-    int ignore_k,
-    const Mask &active_detached) {
+    const OptixScene& optix_scene, const OptixLaunchPipeline& pipeline, const Int& face_offsets, int mesh_count,
+    const Vector3f& start, const Vector3f& end, const Int& ignore_prim_ids, int ignore_k, const Mask& active_detached) {
     const int ray_count = static_cast<int>(slices(start));
     SegmentVisibilityT<Detached> result;
     result.ray_count = ray_count;
 
     const SegmentVisibilityLaunchResult launched =
-        launch_segment_visibility_detached(optix_scene,
-                                           pipeline,
-                                           face_offsets,
-                                           mesh_count,
-                                           start,
-                                           end,
-                                           ignore_prim_ids,
-                                           ignore_k,
-                                           active_detached);
+        launch_segment_visibility_detached(optix_scene, pipeline, face_offsets, mesh_count, start, end, ignore_prim_ids,
+                                           ignore_k, active_detached);
     if constexpr (!Detached) {
         result.visible = MaskAD(launched.visible);
     } else {

@@ -45,23 +45,17 @@ struct SegmentPenetrationJvpOutputs {
 
 OptixPipelineConfig segment_penetration_pipeline_config();
 
-void segment_penetration_initialize_cuda(
-    SegmentPenetrationNativeOutputs &outputs,
-    const at::Tensor *input_active,
-    const at::Tensor &capacity_failure_state,
-    std::int32_t failure_bit,
-    bool input_active_any);
+void segment_penetration_initialize_cuda(SegmentPenetrationNativeOutputs& outputs, const at::Tensor* input_active,
+                                         const at::Tensor& capacity_failure_state, std::int32_t failure_bit,
+                                         bool input_active_any);
 
-void segment_penetration_sanitize_cuda(
-    SegmentPenetrationNativeOutputs &outputs,
-    const at::Tensor &capacity_failure_state);
+void segment_penetration_sanitize_cuda(SegmentPenetrationNativeOutputs& outputs,
+                                       const at::Tensor& capacity_failure_state);
 
 SegmentPenetrationBackwardOutputs segment_penetration_backward_cuda(
-    const SceneCache &scene,
-    const rayd::torch::SegmentPenetrationBackwardRequest &request);
+    const SceneCache& scene, const rayd::torch::SegmentPenetrationBackwardRequest& request);
 
-SegmentPenetrationJvpOutputs segment_penetration_jvp_cuda(
-    const SceneCache &scene,
-    const rayd::torch::SegmentPenetrationJvpRequest &request);
+SegmentPenetrationJvpOutputs segment_penetration_jvp_cuda(const SceneCache& scene,
+                                                          const rayd::torch::SegmentPenetrationJvpRequest& request);
 
 } // namespace rayd::torch_backend

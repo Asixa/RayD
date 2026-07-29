@@ -35,10 +35,8 @@ struct NumericPolicy {
 // Dr.Jit: scene intersect/shadow use RayEpsilon (1e-3); Torch intersect uses
 // SmallEpsilon (1e-6) and routes shadow through shared segment-visibility
 // TraceTMin (1e-5). Both divergences are frozen legacy values, not bugs.
-inline constexpr NumericPolicy kDrJitLegacyProfile{
-    RayEpsilon, ShadowEpsilon, 1.0e-5f, 1.0e-7f, false};
-inline constexpr NumericPolicy kTorchLegacyProfile{
-    SmallEpsilon, 1.0e-5f, 1.0e-5f, 1.0e-7f, false};
+inline constexpr NumericPolicy kDrJitLegacyProfile{RayEpsilon, ShadowEpsilon, 1.0e-5f, 1.0e-7f, false};
+inline constexpr NumericPolicy kTorchLegacyProfile{SmallEpsilon, 1.0e-5f, 1.0e-5f, 1.0e-7f, false};
 
 // Multipath trace family constants shared by both backends' device programs.
 inline constexpr float kMultipathTraceTMin = 1.0e-5f;

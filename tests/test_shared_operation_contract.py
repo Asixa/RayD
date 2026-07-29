@@ -48,16 +48,13 @@ class SharedOperationContractTests(unittest.TestCase):
         constants = CONTRACT["constants"]
         self.assertEqual(constants["invalid_signed_id"], -1)
         self.assertEqual(constants["invalid_unsigned_id"], 0xFFFFFFFF)
-        self.assertEqual(
-            constants["ray_flags"],
-            {"None": 0, "Geometric": 1, "ShadingN": 2, "UV": 4, "All": 7},
-        )
+        self.assertEqual(constants["ray_flags"], {"None": 0, "Geometric": 1, "ShadingN": 2, "UV": 4, "All": 7})
 
     def test_intersection_field_order_matches_torch_public_result(self):
-        source = (ROOT / "python" / "rayd" / "_impl" / "geometry.py").read_text(
-            encoding="utf-8"
-        )
-        block = source[source.index("class Intersection:") : source.index("    def is_valid", source.index("class Intersection:"))]
+        source = (ROOT / "python" / "rayd" / "_impl" / "geometry.py").read_text(encoding="utf-8")
+        block = source[
+            source.index("class Intersection:") : source.index("    def is_valid", source.index("class Intersection:"))
+        ]
         fields = re.findall(r"^    ([a-z][a-z0-9_]*): torch\.Tensor$", block, re.MULTILINE)
         self.assertEqual(fields, CONTRACT["result_contracts"]["intersection"]["canonical_fields"])
 
@@ -191,10 +188,7 @@ class SharedOperationContractTests(unittest.TestCase):
 
     def test_raw_hit_result_contract(self):
         raw_hit = CONTRACT["result_contracts"]["raw_hit"]
-        self.assertEqual(
-            raw_hit["fields"],
-            ["t", "bary_u", "bary_v", "global_prim_id", "shape_id", "local_prim_id"],
-        )
+        self.assertEqual(raw_hit["fields"], ["t", "bary_u", "bary_v", "global_prim_id", "shape_id", "local_prim_id"])
         self.assertEqual(raw_hit["sizeof_bytes"], 24)
         self.assertEqual(raw_hit["miss"]["t"], "inf")
         self.assertEqual(raw_hit["miss"]["global_prim_id"], -1)

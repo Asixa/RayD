@@ -108,80 +108,80 @@ struct DiffractionGridParams {
 
 /// Common path-result prefix. Torch-specific AoS output starts after p0_z.
 struct DiffractionPathOutputPrefix {
-    std::int32_t *count;
-    std::uint8_t *valid;
-    std::int32_t *tx_id;
-    std::int32_t *rx_id;
-    std::int32_t *order;
-    std::int32_t *edge0;
-    std::int32_t *edge1;
-    std::int32_t *edge2;
-    float *delay;
-    float *field_x_re;
-    float *field_x_im;
-    float *field_y_re;
-    float *field_y_im;
-    float *field_z_re;
-    float *field_z_im;
-    float *p0_x;
-    float *p0_y;
-    float *p0_z;
+    std::int32_t* count;
+    std::uint8_t* valid;
+    std::int32_t* tx_id;
+    std::int32_t* rx_id;
+    std::int32_t* order;
+    std::int32_t* edge0;
+    std::int32_t* edge1;
+    std::int32_t* edge2;
+    float* delay;
+    float* field_x_re;
+    float* field_x_im;
+    float* field_y_re;
+    float* field_y_im;
+    float* field_z_re;
+    float* field_z_im;
+    float* p0_x;
+    float* p0_y;
+    float* p0_z;
 };
 
 /// Common path geometry tail following any backend-specific p0 staging field.
 struct DiffractionPathGeometryTail {
-    float *p1_x;
-    float *p1_y;
-    float *p1_z;
-    float *p2_x;
-    float *p2_y;
-    float *p2_z;
+    float* p1_x;
+    float* p1_y;
+    float* p1_z;
+    float* p2_x;
+    float* p2_y;
+    float* p2_z;
 };
 
 /// Common public accumulation result pointers in their ABI order.
 struct DiffractionAccumOutputPointers {
-    float *power;
-    float *field_x_re;
-    float *field_x_im;
-    float *field_y_re;
-    float *field_y_im;
-    float *field_z_re;
-    float *field_z_im;
-    std::int32_t *direct_count;
-    std::int32_t *keller_count;
-    std::int32_t *suffix_count;
-    std::int32_t *visibility_rejects;
-    std::int32_t *edge_visibility_rejects;
-    std::int32_t *utd_rejects;
-    std::int32_t *edge_uses;
-    float *direct_field_x_re;
-    float *direct_field_x_im;
-    float *direct_field_y_re;
-    float *direct_field_y_im;
-    float *direct_field_z_re;
-    float *direct_field_z_im;
-    float *multi_field_x_re;
-    float *multi_field_x_im;
-    float *multi_field_y_re;
-    float *multi_field_y_im;
-    float *multi_field_z_re;
-    float *multi_field_z_im;
-    std::int32_t *multi_count;
-    std::int32_t *visibility_reject_count;
-    std::int32_t *utd_reject_count;
+    float* power;
+    float* field_x_re;
+    float* field_x_im;
+    float* field_y_re;
+    float* field_y_im;
+    float* field_z_re;
+    float* field_z_im;
+    std::int32_t* direct_count;
+    std::int32_t* keller_count;
+    std::int32_t* suffix_count;
+    std::int32_t* visibility_rejects;
+    std::int32_t* edge_visibility_rejects;
+    std::int32_t* utd_rejects;
+    std::int32_t* edge_uses;
+    float* direct_field_x_re;
+    float* direct_field_x_im;
+    float* direct_field_y_re;
+    float* direct_field_y_im;
+    float* direct_field_z_re;
+    float* direct_field_z_im;
+    float* multi_field_x_re;
+    float* multi_field_x_im;
+    float* multi_field_y_re;
+    float* multi_field_y_im;
+    float* multi_field_z_re;
+    float* multi_field_z_im;
+    std::int32_t* multi_count;
+    std::int32_t* visibility_reject_count;
+    std::int32_t* utd_reject_count;
 };
 
 /// Fixed-winner AD tape exported by both accumulation launch layouts.
 struct DiffractionAccumTapePointers {
-    std::uint8_t *active;
-    std::int32_t *state_index;
-    std::int32_t *cell;
-    std::int32_t *material_index;
-    float *edge_u;
+    std::uint8_t* active;
+    std::int32_t* state_index;
+    std::int32_t* cell;
+    std::int32_t* material_index;
+    float* edge_u;
 };
 
-#define RAYD_SHARED_DIFFRACTION_ASSERT_POD(Type)                            \
-    static_assert(std::is_standard_layout_v<Type>);                         \
+#define RAYD_SHARED_DIFFRACTION_ASSERT_POD(Type)                                                                       \
+    static_assert(std::is_standard_layout_v<Type>);                                                                    \
     static_assert(std::is_trivially_copyable_v<Type>)
 
 RAYD_SHARED_DIFFRACTION_ASSERT_POD(DiffractionGridParams);

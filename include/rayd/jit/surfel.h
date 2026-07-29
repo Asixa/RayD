@@ -64,8 +64,7 @@ struct SurfelRenderOptions {
     ScalarVector3f background_rgb = ScalarVector3f(0.f, 0.f, 0.f);
 };
 
-template <typename Float_>
-struct SurfelIntersectionData {
+template <typename Float_> struct SurfelIntersectionData {
     static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
 
     using Mask_ = std::conditional_t<IsDetached, Mask, MaskAD>;
@@ -86,21 +85,11 @@ struct SurfelIntersectionData {
     Int_ surfel_id = full<Int_>(-1, 1);
     Int_ triangle_id = full<Int_>(-1, 1);
 
-    DRJIT_STRUCT(SurfelIntersectionData,
-                 t,
-                 p,
-                 n,
-                 local_uv,
-                 gaussian_weight,
-                 opacity,
-                 alpha,
-                 value,
-                 surfel_id,
+    DRJIT_STRUCT(SurfelIntersectionData, t, p, n, local_uv, gaussian_weight, opacity, alpha, value, surfel_id,
                  triangle_id)
 };
 
-template <typename Float_>
-struct SurfelCompositeData {
+template <typename Float_> struct SurfelCompositeData {
     static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
 
     using Mask_ = std::conditional_t<IsDetached, Mask, MaskAD>;
@@ -108,24 +97,17 @@ struct SurfelCompositeData {
 
     Mask_ is_valid() const { return alpha > Float_(0.f); }
 
-    Float_ intensity = zeros<Float_>(1);      ///< Alpha-composited scalar surfel value.
-    Float_ alpha = zeros<Float_>(1);          ///< Accumulated alpha, 1 - final transmittance.
+    Float_ intensity = zeros<Float_>(1); ///< Alpha-composited scalar surfel value.
+    Float_ alpha = zeros<Float_>(1);     ///< Accumulated alpha, 1 - final transmittance.
     Float_ transmittance = full<Float_>(1.f, 1);
     Float_ depth = full<Float_>(Infinity, 1); ///< Alpha-weighted depth, Infinity when empty.
     Int_ candidate_count = zeros<Int_>(1);
     Mask_ candidate_buffer_full = full<Mask_>(false, 1);
 
-    DRJIT_STRUCT(SurfelCompositeData,
-                 intensity,
-                 alpha,
-                 transmittance,
-                 depth,
-                 candidate_count,
-                 candidate_buffer_full)
+    DRJIT_STRUCT(SurfelCompositeData, intensity, alpha, transmittance, depth, candidate_count, candidate_buffer_full)
 };
 
-template <typename Float_>
-struct SurfelRenderData {
+template <typename Float_> struct SurfelRenderData {
     static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
 
     using Mask_ = std::conditional_t<IsDetached, Mask, MaskAD>;
@@ -134,9 +116,9 @@ struct SurfelRenderData {
 
     Mask_ is_valid() const { return alpha > Float_(0.f); }
 
-    Float_ channels = Float();           ///< Flat [ray_count, channel_count] output buffer.
-    Vec3f rgb = zeros<Vec3f>(1);         ///< Convenience RGB view for RGB/RGBDepth modes.
-    Vec3f normal = zeros<Vec3f>(1);      ///< Alpha-weighted surfel normal; zero when empty or disabled.
+    Float_ channels = Float();      ///< Flat [ray_count, channel_count] output buffer.
+    Vec3f rgb = zeros<Vec3f>(1);    ///< Convenience RGB view for RGB/RGBDepth modes.
+    Vec3f normal = zeros<Vec3f>(1); ///< Alpha-weighted surfel normal; zero when empty or disabled.
     Float_ alpha = zeros<Float_>(1);
     Float_ transmittance = full<Float_>(1.f, 1);
     Float_ depth = full<Float_>(Infinity, 1);
@@ -146,25 +128,19 @@ struct SurfelRenderData {
 };
 
 class SurfelGeometry {
-public:
+  public:
     SurfelGeometry() = default;
-    SurfelGeometry(const Vector3f &center,
-                   const Vector3f &tangent_u,
-                   const Vector3f &tangent_v);
-    SurfelGeometry(const Vector3fAD &center,
-                   const Vector3fAD &tangent_u,
-                   const Vector3fAD &tangent_v);
+    SurfelGeometry(const Vector3f& center, const Vector3f& tangent_u, const Vector3f& tangent_v);
+    SurfelGeometry(const Vector3fAD& center, const Vector3fAD& tangent_u, const Vector3fAD& tangent_v);
 
     int surfel_count() const { return surfel_count_; }
 
-    const Vector3fAD &center() const { return center_; }
-    const Vector3fAD &tangent_u() const { return tangent_u_; }
-    const Vector3fAD &tangent_v() const { return tangent_v_; }
+    const Vector3fAD& center() const { return center_; }
+    const Vector3fAD& tangent_u() const { return tangent_u_; }
+    const Vector3fAD& tangent_v() const { return tangent_v_; }
 
-private:
-    void initialize(const Vector3fAD &center,
-                    const Vector3fAD &tangent_u,
-                    const Vector3fAD &tangent_v);
+  private:
+    void initialize(const Vector3fAD& center, const Vector3fAD& tangent_u, const Vector3fAD& tangent_v);
 
     Vector3fAD center_;
     Vector3fAD tangent_u_;
@@ -173,24 +149,18 @@ private:
 };
 
 class SurfelAppearance {
-public:
+  public:
     SurfelAppearance() = default;
-    static SurfelAppearance rgb(const Float &opacity, const Vector3f &rgb);
-    static SurfelAppearance rgb(const FloatAD &opacity, const Vector3fAD &rgb);
-    static SurfelAppearance features(const Float &opacity, const Float &values, int channel_count);
-    static SurfelAppearance features(const FloatAD &opacity, const FloatAD &values, int channel_count);
-    static SurfelAppearance sh(const Float &opacity, const Float &coeffs, int sh_degree);
-    static SurfelAppearance sh(const FloatAD &opacity, const FloatAD &coeffs, int sh_degree);
+    static SurfelAppearance rgb(const Float& opacity, const Vector3f& rgb);
+    static SurfelAppearance rgb(const FloatAD& opacity, const Vector3fAD& rgb);
+    static SurfelAppearance features(const Float& opacity, const Float& values, int channel_count);
+    static SurfelAppearance features(const FloatAD& opacity, const FloatAD& values, int channel_count);
+    static SurfelAppearance sh(const Float& opacity, const Float& coeffs, int sh_degree);
+    static SurfelAppearance sh(const FloatAD& opacity, const FloatAD& coeffs, int sh_degree);
 
-    SurfelAppearance(const Float &opacity,
-                     const Float &values,
-                     SurfelColorModel color_model,
-                     int channel_count,
+    SurfelAppearance(const Float& opacity, const Float& values, SurfelColorModel color_model, int channel_count,
                      int sh_degree = 0);
-    SurfelAppearance(const FloatAD &opacity,
-                     const FloatAD &values,
-                     SurfelColorModel color_model,
-                     int channel_count,
+    SurfelAppearance(const FloatAD& opacity, const FloatAD& values, SurfelColorModel color_model, int channel_count,
                      int sh_degree = 0);
 
     int surfel_count() const { return surfel_count_; }
@@ -199,14 +169,11 @@ public:
     int sh_basis_count() const { return (sh_degree_ + 1) * (sh_degree_ + 1); }
     SurfelColorModel color_model() const { return color_model_; }
 
-    const FloatAD &opacity() const { return opacity_; }
-    const FloatAD &values() const { return values_; }
+    const FloatAD& opacity() const { return opacity_; }
+    const FloatAD& values() const { return values_; }
 
-private:
-    void initialize(const FloatAD &opacity,
-                    const FloatAD &values,
-                    SurfelColorModel color_model,
-                    int channel_count,
+  private:
+    void initialize(const FloatAD& opacity, const FloatAD& values, SurfelColorModel color_model, int channel_count,
                     int sh_degree);
 
     FloatAD opacity_;
@@ -218,33 +185,24 @@ private:
 };
 
 class SurfelCloud {
-public:
+  public:
     SurfelCloud() = default;
-    SurfelCloud(const Vector3f &center,
-                const Vector3f &tangent_u,
-                const Vector3f &tangent_v,
-                const Float &opacity = Float(),
-                const Float &value = Float());
-    SurfelCloud(const Vector3fAD &center,
-                const Vector3fAD &tangent_u,
-                const Vector3fAD &tangent_v,
-                const FloatAD &opacity = FloatAD(),
-                const FloatAD &value = FloatAD());
+    SurfelCloud(const Vector3f& center, const Vector3f& tangent_u, const Vector3f& tangent_v,
+                const Float& opacity = Float(), const Float& value = Float());
+    SurfelCloud(const Vector3fAD& center, const Vector3fAD& tangent_u, const Vector3fAD& tangent_v,
+                const FloatAD& opacity = FloatAD(), const FloatAD& value = FloatAD());
 
     int surfel_count() const { return surfel_count_; }
 
-    const Vector3fAD &center() const { return center_; }
-    const Vector3fAD &tangent_u() const { return tangent_u_; }
-    const Vector3fAD &tangent_v() const { return tangent_v_; }
-    const FloatAD &opacity() const { return opacity_; }
-    const FloatAD &value() const { return value_; }
+    const Vector3fAD& center() const { return center_; }
+    const Vector3fAD& tangent_u() const { return tangent_u_; }
+    const Vector3fAD& tangent_v() const { return tangent_v_; }
+    const FloatAD& opacity() const { return opacity_; }
+    const FloatAD& value() const { return value_; }
 
-private:
-    void initialize(const Vector3fAD &center,
-                    const Vector3fAD &tangent_u,
-                    const Vector3fAD &tangent_v,
-                    const FloatAD &opacity,
-                    const FloatAD &value);
+  private:
+    void initialize(const Vector3fAD& center, const Vector3fAD& tangent_u, const Vector3fAD& tangent_v,
+                    const FloatAD& opacity, const FloatAD& value);
 
     Vector3fAD center_;
     Vector3fAD tangent_u_;
@@ -255,15 +213,13 @@ private:
 };
 
 class SurfelScene {
-public:
+  public:
     SurfelScene() = default;
-    explicit SurfelScene(const SurfelCloud &cloud,
-                         const SurfelTraceOptions &options = SurfelTraceOptions());
-    explicit SurfelScene(const SurfelGeometry &geometry,
-                         const SurfelTraceOptions &options = SurfelTraceOptions());
+    explicit SurfelScene(const SurfelCloud& cloud, const SurfelTraceOptions& options = SurfelTraceOptions());
+    explicit SurfelScene(const SurfelGeometry& geometry, const SurfelTraceOptions& options = SurfelTraceOptions());
 
-    SurfelScene(const SurfelScene &) = delete;
-    SurfelScene &operator=(const SurfelScene &) = delete;
+    SurfelScene(const SurfelScene&) = delete;
+    SurfelScene& operator=(const SurfelScene&) = delete;
 
     void build();
     bool is_ready() const { return ready_; }
@@ -271,40 +227,33 @@ public:
     int triangle_count() const { return triangle_count_; }
     int build_count() const { return build_count_; }
 
-    void update_geometry(const SurfelGeometry &geometry);
-    void update_appearance(const SurfelAppearance &appearance);
+    void update_geometry(const SurfelGeometry& geometry);
+    void update_appearance(const SurfelAppearance& appearance);
 
     template <bool Detached>
-    SurfelIntersectionT<Detached> intersect(const RayT<Detached> &ray,
-                                            MaskT<Detached> active) const;
+    SurfelIntersectionT<Detached> intersect(const RayT<Detached>& ray, MaskT<Detached> active) const;
 
     template <bool Detached>
-    SurfelCompositeT<Detached> composite_alpha(const RayT<Detached> &ray,
-                                               MaskT<Detached> active) const;
+    SurfelCompositeT<Detached> composite_alpha(const RayT<Detached>& ray, MaskT<Detached> active) const;
 
     template <bool Detached>
-    SurfelCompositeT<Detached> composite_alpha_reference(const RayT<Detached> &ray,
-                                                         MaskT<Detached> active) const;
+    SurfelCompositeT<Detached> composite_alpha_reference(const RayT<Detached>& ray, MaskT<Detached> active) const;
 
     template <bool Detached>
-    SurfelRenderT<Detached> render(const RayT<Detached> &ray,
-                                   const SurfelRenderOptions &render_options,
+    SurfelRenderT<Detached> render(const RayT<Detached>& ray, const SurfelRenderOptions& render_options,
                                    MaskT<Detached> active) const;
 
-    template <bool Detached>
-    MaskT<Detached> shadow_test(const RayT<Detached> &ray,
-                                MaskT<Detached> active) const;
+    template <bool Detached> MaskT<Detached> shadow_test(const RayT<Detached>& ray, MaskT<Detached> active) const;
 
     template <bool Detached>
-    MaskT<Detached> visible(const Vector3fT<Detached> &start,
-                            const Vector3fT<Detached> &end,
+    MaskT<Detached> visible(const Vector3fT<Detached>& start, const Vector3fT<Detached>& end,
                             MaskT<Detached> active) const;
 
-private:
+  private:
     void build_triangle_buffers();
-    void validate_trace_options(const char *context) const;
+    void validate_trace_options(const char* context) const;
     void refresh_detached_appearance();
-    int render_channel_count(const SurfelRenderOptions &render_options) const;
+    int render_channel_count(const SurfelRenderOptions& render_options) const;
 
     SurfelCloud cloud_;
     SurfelGeometry geometry_;

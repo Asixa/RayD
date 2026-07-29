@@ -16,26 +16,17 @@ class DistributionMetadataTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.meta = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-        cls.drjit = tomllib.loads(
-            (ROOT / "drjit" / "pyproject.toml").read_text(encoding="utf-8")
-        )
-        cls.torch = tomllib.loads(
-            (ROOT / "torch" / "pyproject.toml").read_text(encoding="utf-8")
-        )
+        cls.drjit = tomllib.loads((ROOT / "drjit" / "pyproject.toml").read_text(encoding="utf-8"))
+        cls.torch = tomllib.loads((ROOT / "torch" / "pyproject.toml").read_text(encoding="utf-8"))
 
     def test_all_distributions_share_one_version(self):
-        versions = {
-            self.meta["project"]["version"],
-            self.drjit["project"]["version"],
-            self.torch["project"]["version"],
-        }
+        versions = {self.meta["project"]["version"], self.drjit["project"]["version"], self.torch["project"]["version"]}
         self.assertEqual(versions, {"0.7.0"})
 
     def test_meta_distribution_pins_both_backends(self):
         version = self.meta["project"]["version"]
         self.assertEqual(
-            set(self.meta["project"]["dependencies"]),
-            {f"rayd-drjit=={version}", f"rayd-torch=={version}"},
+            set(self.meta["project"]["dependencies"]), {f"rayd-drjit=={version}", f"rayd-torch=={version}"}
         )
 
     def test_meta_distribution_owns_no_python_package(self):
@@ -43,13 +34,12 @@ class DistributionMetadataTests(unittest.TestCase):
 
     def test_backend_wheels_map_only_their_public_namespace_portion(self):
         self.assertEqual(
-            self.drjit["tool"]["scikit-build"]["wheel"]["packages"],
-            {"rayd/drjit": "../python/rayd/drjit"},
+            self.drjit["tool"]["scikit-build"]["wheel"]["packages"], {"rayd/drjit": "../python/rayd/drjit"}
         )
         self.assertEqual(
-            self.torch["tool"]["scikit-build"]["wheel"]["packages"],
-            {"rayd/torch": "../python/rayd/torch"},
+            self.torch["tool"]["scikit-build"]["wheel"]["packages"], {"rayd/torch": "../python/rayd/torch"}
         )
+
     def test_release_publishes_meta_after_backend_distributions(self):
         workflow = (ROOT / ".github" / "workflows" / "pypi.yml").read_text(encoding="utf-8")
         self.assertIn("publish-drjit:", workflow)
@@ -88,10 +78,7 @@ class DistributionMetadataTests(unittest.TestCase):
         self.assertIn("\n  release:\n    types: [published]", release)
         self.assertIn("\n  workflow_dispatch:", release)
 
-        label_guard = (
-            "github.event_name == 'workflow_dispatch' "
-            "|| github.event.label.name == 'run-ci'"
-        )
+        label_guard = "github.event_name == 'workflow_dispatch' || github.event.label.name == 'run-ci'"
         for name in ("ci.yml", "stable-abi-ci.yml"):
             workflow = (workflows / name).read_text(encoding="utf-8")
             self.assertNotIn("\n  push:", workflow)

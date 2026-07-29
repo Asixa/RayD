@@ -1,0 +1,19 @@
+# Copyright Xingyu Chen.
+# Defines editor defaults for maintained project files.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{c,cc,cpp,cxx,h,hpp,cuh,cu,py,pyi}]
+indent_style = space
+indent_size = 4
+max_line_length = 120
+
+[*.{json,jsonl,yaml,yml}]
+indent_style = space
+indent_size = 2

@@ -1,13 +1,14 @@
 # Copyright Xingyu Chen.
 # Tests visibility topk Dr.Jit.
 
-import json
 import os
 import subprocess
 import sys
 import textwrap
 import unittest
 from pathlib import Path
+
+from tests.support.subprocess_cases import decode_json_result
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,25 +31,13 @@ def run_script(script: str, timeout: int = 180, check: bool = True):
     )
     if check and result.returncode != 0:
         raise AssertionError(
-            "Subprocess failed.\n"
-            f"Return code: {result.returncode}\n"
-            f"STDOUT:\n{result.stdout}\n"
-            f"STDERR:\n{result.stderr}"
+            f"Subprocess failed.\nReturn code: {result.returncode}\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
         )
     return result
 
 
 def run_json_case(script: str, timeout: int = 180):
-    result = run_script(script, timeout=timeout, check=True)
-    lines = [line for line in result.stdout.splitlines() if line.strip()]
-    if not lines:
-        raise AssertionError(f"Subprocess produced no JSON output.\nSTDERR:\n{result.stderr}")
-    try:
-        return json.loads(lines[-1])
-    except json.JSONDecodeError as exc:
-        raise AssertionError(
-            f"Failed to parse JSON from subprocess.\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
-        ) from exc
+    return decode_json_result(run_script(script, timeout=timeout, check=True))
 
 
 class VisibilityAndTopKTests(unittest.TestCase):

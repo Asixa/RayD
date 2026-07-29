@@ -17,23 +17,9 @@ BACKEND_ROOT = WORKSPACE_ROOT / "drjit"
 ARTIFACT_ROOT = WORKSPACE_ROOT / "artifacts" / "benchmarks" / "edge_bvh_stages"
 LOG_PATH = WORKSPACE_ROOT / "docs" / "edge_bvh_optimization_log.md"
 
-MICRO_ARGS = (
-    "--scenario",
-    "48:128",
-    "--repeats",
-    "8",
-    "--warmup",
-    "3",
-)
+MICRO_ARGS = ("--scenario", "48:128", "--repeats", "8", "--warmup", "3")
 
-SINGLE_MESH_ARGS = (
-    "--scenario",
-    "192:256",
-    "--repeats",
-    "5",
-    "--warmup",
-    "2",
-)
+SINGLE_MESH_ARGS = ("--scenario", "192:256", "--repeats", "5", "--warmup", "2")
 
 PRESSURE_ARGS = (
     "--mesh-resolution",
@@ -67,23 +53,13 @@ MODE_ENV_VARS = {
     "build_stream_mode": "RAYD_EDGE_BVH_BUILD_STREAM_MODE",
 }
 
-DEFAULT_EDGE_BVH_MODES = {
-    "post_build_strategy": "gpu_treelet",
-    "build_stream_mode": "overlap",
-}
+DEFAULT_EDGE_BVH_MODES = {"post_build_strategy": "gpu_treelet", "build_stream_mode": "overlap"}
 
 
 def _run_json_command(command: list[str], cwd: Path, mode_env: dict[str, str]) -> None:
     env = os.environ.copy()
     env.update(mode_env)
-    result = subprocess.run(
-        command,
-        cwd=cwd,
-        text=True,
-        capture_output=True,
-        check=False,
-        env=env,
-    )
+    result = subprocess.run(command, cwd=cwd, text=True, capture_output=True, check=False, env=env)
     if result.returncode != 0:
         raise RuntimeError(
             "Benchmark command failed.\n"
@@ -99,13 +75,7 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 
 def _git_head(source_root: Path) -> str | None:
-    result = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=source_root,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=source_root, text=True, capture_output=True, check=False)
     if result.returncode != 0:
         return None
     return result.stdout.strip() or None
@@ -113,11 +83,7 @@ def _git_head(source_root: Path) -> str | None:
 
 def _gpu_name() -> str | None:
     result = subprocess.run(
-        [
-            "nvidia-smi",
-            "--query-gpu=name",
-            "--format=csv,noheader",
-        ],
+        ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
         cwd=WORKSPACE_ROOT,
         text=True,
         capture_output=True,
@@ -136,10 +102,7 @@ def _relative(path: Path) -> str:
 
 
 def _extract_pressure_summary(pressure_payload: dict[str, Any]) -> dict[str, Any]:
-    scenarios = {
-        scenario["name"]: scenario
-        for scenario in pressure_payload["mask_scenarios"]
-    }
+    scenarios = {scenario["name"]: scenario for scenario in pressure_payload["mask_scenarios"]}
     full = scenarios["full"]
     stride_sparse = scenarios["stride_sparse"]
     return {
@@ -249,10 +212,7 @@ def _format_metric(value: float | None, baseline: float | None) -> str:
 
 def _render_log(summaries: list[dict[str, Any]]) -> str:
     if not summaries:
-        return (
-            "# Edge BVH Optimization Log\n\n"
-            "No stage benchmark data has been recorded yet.\n"
-        )
+        return "# Edge BVH Optimization Log\n\nNo stage benchmark data has been recorded yet.\n"
 
     baseline = summaries[0]
     lines = [
@@ -331,11 +291,21 @@ def _render_log(summaries: list[dict[str, Any]]) -> str:
             "| {stage} | {build} | {full_finite} | {full_infinite} | {stride_finite} | {stride_sync} | {stride_restore} |".format(
                 stage=summary["stage"],
                 build=_format_metric(_metric(summary, "pressure_build"), _metric(baseline, "pressure_build")),
-                full_finite=_format_metric(_metric(summary, "pressure_full_finite"), _metric(baseline, "pressure_full_finite")),
-                full_infinite=_format_metric(_metric(summary, "pressure_full_infinite"), _metric(baseline, "pressure_full_infinite")),
-                stride_finite=_format_metric(_metric(summary, "pressure_stride_finite"), _metric(baseline, "pressure_stride_finite")),
-                stride_sync=_format_metric(_metric(summary, "pressure_stride_sync"), _metric(baseline, "pressure_stride_sync")),
-                stride_restore=_format_metric(_metric(summary, "pressure_stride_restore"), _metric(baseline, "pressure_stride_restore")),
+                full_finite=_format_metric(
+                    _metric(summary, "pressure_full_finite"), _metric(baseline, "pressure_full_finite")
+                ),
+                full_infinite=_format_metric(
+                    _metric(summary, "pressure_full_infinite"), _metric(baseline, "pressure_full_infinite")
+                ),
+                stride_finite=_format_metric(
+                    _metric(summary, "pressure_stride_finite"), _metric(baseline, "pressure_stride_finite")
+                ),
+                stride_sync=_format_metric(
+                    _metric(summary, "pressure_stride_sync"), _metric(baseline, "pressure_stride_sync")
+                ),
+                stride_restore=_format_metric(
+                    _metric(summary, "pressure_stride_restore"), _metric(baseline, "pressure_stride_restore")
+                ),
             )
         )
 
@@ -361,10 +331,7 @@ def _render_log(summaries: list[dict[str, Any]]) -> str:
 
 
 def _update_log() -> None:
-    summary_paths = sorted(
-        ARTIFACT_ROOT.glob("*/summary.json"),
-        key=lambda path: _load_json(path)["recorded_at"],
-    )
+    summary_paths = sorted(ARTIFACT_ROOT.glob("*/summary.json"), key=lambda path: _load_json(path)["recorded_at"])
     summaries = [_load_json(path) for path in summary_paths]
     LOG_PATH.write_text(_render_log(summaries), encoding="utf-8")
 
@@ -379,18 +346,10 @@ def _effective_edge_bvh_modes(args: argparse.Namespace) -> dict[str, str]:
 
 
 def _mode_env_from_effective_modes(effective_modes: dict[str, str]) -> dict[str, str]:
-    return {
-        env_name: effective_modes[arg_name]
-        for arg_name, env_name in MODE_ENV_VARS.items()
-    }
+    return {env_name: effective_modes[arg_name] for arg_name, env_name in MODE_ENV_VARS.items()}
 
 
-def run_stage(
-    stage: str,
-    include_gradients: bool,
-    source_root: Path,
-    effective_modes: dict[str, str],
-) -> Path:
+def run_stage(stage: str, include_gradients: bool, source_root: Path, effective_modes: dict[str, str]) -> Path:
     stage_dir = ARTIFACT_ROOT / stage
     stage_dir.mkdir(parents=True, exist_ok=True)
     micro_raw = stage_dir / "micro.json"
@@ -480,10 +439,7 @@ def main() -> int:
     args = parser.parse_args()
 
     summary_path = run_stage(
-        args.stage,
-        args.include_gradients,
-        Path(args.source_root).resolve(),
-        _effective_edge_bvh_modes(args),
+        args.stage, args.include_gradients, Path(args.source_root).resolve(), _effective_edge_bvh_modes(args)
     )
     print(json.dumps(_load_json(summary_path), indent=2))
     return 0

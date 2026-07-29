@@ -22,7 +22,7 @@ using shared::rt::TraceCapabilities;
 /// hot loop. Concrete backends (today only OptixTraceBackend) expose their own
 /// typed build/sync/trace entry points.
 class TraceBackend {
-public:
+  public:
     virtual ~TraceBackend() = default;
 
     /// Concrete backend kind (never Auto or None for a live backend).

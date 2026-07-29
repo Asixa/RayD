@@ -64,10 +64,7 @@ PROFILE_BY_FLAGS = {
     ("--ftz=false", "--prec-div=true", "--prec-sqrt=true"): "precise_no_ftz",
 }
 
-INCLUDE_DIRS = {
-    "drjit": (ROOT, ROOT / "include", DRJIT),
-    "torch": (ROOT, ROOT / "include", TORCH),
-}
+INCLUDE_DIRS = {"drjit": (ROOT, ROOT / "include", DRJIT), "torch": (ROOT, ROOT / "include", TORCH)}
 
 
 def strip_comments(text: str) -> str:
@@ -101,8 +98,7 @@ def call_bodies(text: str, opener: str):
 
 
 def tokens(body: str) -> list[str]:
-    return [quoted if quoted else bare
-            for quoted, bare in TOKEN_RE.findall(strip_comments(body))]
+    return [quoted if quoted else bare for quoted, bare in TOKEN_RE.findall(strip_comments(body))]
 
 
 def numeric_flags(items) -> set[str]:
@@ -129,9 +125,7 @@ def cmake_options(text: str) -> dict[str, bool]:
     """
     return {
         name: value == "ON"
-        for name, value in re.findall(
-            r"option\(\s*(\w+)\s+\"[^\"]*\"\s+(ON|OFF)\s*\)",
-            strip_comments(text), re.DOTALL)
+        for name, value in re.findall(r"option\(\s*(\w+)\s+\"[^\"]*\"\s+(ON|OFF)\s*\)", strip_comments(text), re.DOTALL)
     }
 
 
@@ -162,10 +156,7 @@ def relative(path: Path) -> str:
 DRJIT_SINGLE = {"NAME", "SOURCE", "OUT_SOURCES", "HEADER", "OPTION"}
 DRJIT_MULTI = {"EXTRA_FLAGS", "DEPENDS"}
 DRJIT_FLAG = {"POSIX_NO_EXTENDED_LAMBDA"}
-DRJIT_PATH_VARS = {
-    "RAYD_SOURCE_DIR": str(ROOT / "src"),
-    "RAYD_INCLUDE_DIR": str(ROOT / "include" / "rayd"),
-}
+DRJIT_PATH_VARS = {"RAYD_SOURCE_DIR": str(ROOT / "src"), "RAYD_INCLUDE_DIR": str(ROOT / "include" / "rayd")}
 
 
 def _split_win32_branch(body: str) -> dict[str, str]:
@@ -186,18 +177,19 @@ def _split_win32_branch(body: str) -> dict[str, str]:
         assert "WIN32" not in body, (
             "helper body mentions WIN32 but the if(WIN32)/else()/endif() "
             "anchor regex did not match; update _split_win32_branch for the "
-            "new formatting instead of letting the branches merge")
+            "new formatting instead of letting the branches merge"
+        )
         return {"win32": body, "posix": body}
     indent = match.group(1)
-    rest = body[match.end():]
+    rest = body[match.end() :]
     else_match = re.search(rf"^{re.escape(indent)}else\(\)$", rest, re.MULTILINE)
     endif_match = re.search(rf"^{re.escape(indent)}endif\(\)$", rest, re.MULTILINE)
     assert else_match and endif_match, "if(WIN32)/else()/endif() not matched"
     # Text outside the branch applies to both platforms.
-    common = body[:match.start()] + rest[endif_match.end():]
+    common = body[: match.start()] + rest[endif_match.end() :]
     return {
-        "win32": common + rest[:else_match.start()],
-        "posix": common + rest[else_match.end():endif_match.start()],
+        "win32": common + rest[: else_match.start()],
+        "posix": common + rest[else_match.end() : endif_match.start()],
     }
 
 
@@ -214,16 +206,14 @@ def drjit_helper_flags() -> dict[str, object]:
     }
     for name, helper_path in helpers.items():
         text = helper_path.read_text(encoding="utf-8")
-        match = re.search(
-            rf"function\({name}\)(.*?)^endfunction\(\)", text, re.DOTALL | re.MULTILINE)
+        match = re.search(rf"function\({name}\)(.*?)^endfunction\(\)", text, re.DOTALL | re.MULTILINE)
         assert match, f"{name}() not found in {helper_path.relative_to(ROOT)}"
         branches = _split_win32_branch(strip_comments(match.group(1)))
         per_branch = {}
         per_branch_arch = {}
         for platform_name, branch in branches.items():
             per_branch[platform_name] = numeric_flags(branch.split())
-            per_branch_arch[platform_name] = {
-                ARCH_RE.match(t).group(1) for t in branch.split() if ARCH_RE.match(t)}
+            per_branch_arch[platform_name] = {ARCH_RE.match(t).group(1) for t in branch.split() if ARCH_RE.match(t)}
         # Branch agreement is asserted by
         # test_helper_command_shapes_agree_across_platform_branches, not here:
         # this helper runs at import time, and failing here would abort
@@ -257,8 +247,7 @@ def drjit_units() -> dict[tuple[str, str], dict]:
                     index += 2
                 elif token in DRJIT_MULTI:
                     values, cursor = [], index + 1
-                    while cursor < len(items) and items[cursor] not in (
-                            DRJIT_SINGLE | DRJIT_MULTI | DRJIT_FLAG):
+                    while cursor < len(items) and items[cursor] not in (DRJIT_SINGLE | DRJIT_MULTI | DRJIT_FLAG):
                         values.append(items[cursor])
                         cursor += 1
                     call[token] = values
@@ -315,8 +304,7 @@ def torch_units() -> dict[tuple[str, str], dict]:
     for body in call_bodies(text, "set_source_files_properties"):
         items = tokens(body)
         split = items.index("PROPERTIES")
-        assert items[split + 1] == "COMPILE_OPTIONS", (
-            "only COMPILE_OPTIONS overrides are contracted")
+        assert items[split + 1] == "COMPILE_OPTIONS", "only COMPILE_OPTIONS overrides are contracted"
         match = COMPILE_OPTION_RE.match(items[split + 2])
         assert match, f"unrecognized COMPILE_OPTIONS shape: {items[split + 2]!r}"
         for source in items[:split]:
@@ -328,7 +316,7 @@ def torch_units() -> dict[tuple[str, str], dict]:
         items = tokens(body)
         if "--ptx" not in items:
             continue
-        command = items[items.index("COMMAND"):items.index("DEPENDS")]
+        command = items[items.index("COMMAND") : items.index("DEPENDS")]
         expanded: list[str] = []
         for token in command:
             if token == "${RAYD_TORCH_OPTIX_NVCC_FLAGS}":
@@ -337,11 +325,7 @@ def torch_units() -> dict[tuple[str, str], dict]:
                 expanded.append(token)
         variable = re.match(r"^\$\{(\w+)\}$", items[items.index("OUTPUT") + 1])
         assert variable, "PTX custom command output is not a plain CMake variable"
-        source = resolve(
-            command[command.index("--ptx") + 1],
-            TORCH,
-            {"RAYD_ROOT_DIR": ".."},
-        )
+        source = resolve(command[command.index("--ptx") + 1], TORCH, {"RAYD_ROOT_DIR": ".."})
         arches = {ARCH_RE.match(t).group(1) for t in expanded if ARCH_RE.match(t)}
         assert len(arches) == 1, f"{variable.group(1)} declares arches {arches}"
         units[("torch", variable.group(1).lower())] = {
@@ -438,8 +422,7 @@ def computed_header_exposure(units) -> dict[str, list[str]]:
 
 CONTRACT = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
 DERIVED = {**drjit_units(), **torch_units()}
-DECLARED = {(entry["backend"], entry["unit"]): entry
-            for entry in CONTRACT["translation_units"]}
+DECLARED = {(entry["backend"], entry["unit"]): entry for entry in CONTRACT["translation_units"]}
 
 
 def derived_for(declared: dict) -> dict:
@@ -448,13 +431,14 @@ def derived_for(declared: dict) -> dict:
     if exact is not None and exact["source"] == declared["source"]:
         return exact
     matches = [
-        entry for entry in DERIVED.values()
-        if entry["backend"] == declared["backend"]
-        and entry["source"] == declared["source"]
+        entry
+        for entry in DERIVED.values()
+        if entry["backend"] == declared["backend"] and entry["source"] == declared["source"]
     ]
     assert len(matches) == 1, (
         f"{declared['backend']}/{declared['unit']} maps to "
-        f"{declared['source']!r}, which has {len(matches)} physical builds")
+        f"{declared['source']!r}, which has {len(matches)} physical builds"
+    )
     return matches[0]
 
 
@@ -467,19 +451,20 @@ class CompileFlagPolicyContractTests(unittest.TestCase):
         # compatible identities to share one physical compile. Compare both
         # directions at the physical-source layer, then separately pin the
         # logical key count.
-        derived_sources = {
-            (entry["backend"], entry["source"]) for entry in DERIVED.values()}
-        declared_sources = {
-            (entry["backend"], entry["source"]) for entry in DECLARED.values()}
+        derived_sources = {(entry["backend"], entry["source"]) for entry in DERIVED.values()}
+        declared_sources = {(entry["backend"], entry["source"]) for entry in DECLARED.values()}
         undeclared = sorted(f"{b}/{s}" for b, s in derived_sources - declared_sources)
         stale = sorted(f"{b}/{s}" for b, s in declared_sources - derived_sources)
         self.assertEqual(
-            (undeclared, stale), ([], []),
+            (undeclared, stale),
+            ([], []),
             f"compile_policy.json is out of sync with CMake. "
             f"Physical sources undeclared in the contract: {undeclared}. "
-            f"Declared physical sources not built: {stale}.")
-        self.assertEqual(len(DECLARED), len(CONTRACT["translation_units"]),
-                         "duplicate (backend, unit) key in the contract")
+            f"Declared physical sources not built: {stale}.",
+        )
+        self.assertEqual(
+            len(DECLARED), len(CONTRACT["translation_units"]), "duplicate (backend, unit) key in the contract"
+        )
         self.assertEqual(len(DECLARED), 80, "ADR-0039 preserves 80 logical TU roles")
         self.assertFalse(
             [unit for _, unit in DECLARED if "/" in unit],
@@ -491,12 +476,12 @@ class CompileFlagPolicyContractTests(unittest.TestCase):
             declared = DECLARED[key]
             derived = derived_for(declared)
             with self.subTest(unit="/".join(key), source=declared["source"]):
-                for field in ("source", "kind", "target", "profile",
-                              "default_enabled"):
+                for field in ("source", "kind", "target", "profile", "default_enabled"):
                     self.assertEqual(
-                        declared[field], derived[field],
-                        f"{key}: {field} declared {declared[field]!r} but CMake "
-                        f"says {derived[field]!r}")
+                        declared[field],
+                        derived[field],
+                        f"{key}: {field} declared {declared[field]!r} but CMake says {derived[field]!r}",
+                    )
                 self.assertEqual(declared.get("arch"), derived.get("arch"))
                 self.assertEqual(declared.get("option"), derived.get("option"))
 
@@ -508,8 +493,7 @@ class CompileFlagPolicyContractTests(unittest.TestCase):
     def test_profile_flag_sets_are_the_ones_the_parser_recognizes(self):
         # The contract names the flags; the parser maps flags back to a name.
         # If they disagree, every derived profile above is meaningless.
-        declared = {tuple(sorted(profile["flags"])): name
-                    for name, profile in CONTRACT["profiles"].items()}
+        declared = {tuple(sorted(profile["flags"])): name for name, profile in CONTRACT["profiles"].items()}
         self.assertEqual(declared, PROFILE_BY_FLAGS)
 
     def test_helper_command_shapes_agree_across_platform_branches(self):
@@ -522,22 +506,21 @@ class CompileFlagPolicyContractTests(unittest.TestCase):
         }
         for name, helper_path in helpers.items():
             text = helper_path.read_text(encoding="utf-8")
-            match = re.search(
-                rf"function\({name}\)(.*?)^endfunction\(\)", text, re.DOTALL | re.MULTILINE)
+            match = re.search(rf"function\({name}\)(.*?)^endfunction\(\)", text, re.DOTALL | re.MULTILINE)
             self.assertIsNotNone(match, name)
             branches = _split_win32_branch(strip_comments(match.group(1)))
             with self.subTest(helper=name, aspect="numeric_flags"):
                 self.assertEqual(
                     numeric_flags(branches["win32"].split()),
                     numeric_flags(branches["posix"].split()),
-                    f"{name}() numeric flags differ between the WIN32 and POSIX branches")
+                    f"{name}() numeric flags differ between the WIN32 and POSIX branches",
+                )
             with self.subTest(helper=name, aspect="ptx_arch"):
                 self.assertEqual(
-                    {ARCH_RE.match(t).group(1)
-                     for t in branches["win32"].split() if ARCH_RE.match(t)},
-                    {ARCH_RE.match(t).group(1)
-                     for t in branches["posix"].split() if ARCH_RE.match(t)},
-                    f"{name}() PTX arch differs between the WIN32 and POSIX branches")
+                    {ARCH_RE.match(t).group(1) for t in branches["win32"].split() if ARCH_RE.match(t)},
+                    {ARCH_RE.match(t).group(1) for t in branches["posix"].split() if ARCH_RE.match(t)},
+                    f"{name}() PTX arch differs between the WIN32 and POSIX branches",
+                )
 
     def test_numeric_flags_live_only_at_the_declared_places(self):
         # Dr.Jit: the shared object command shape carries no numeric flag at all,
@@ -558,8 +541,7 @@ class CompileFlagPolicyContractTests(unittest.TestCase):
         # require each to stay free of numeric flags. ADR-0035 governs numeric
         # flags, not code-generation targets.
         torch_text = strip_comments((TORCH / "CMakeLists.txt").read_text(encoding="utf-8"))
-        cuda_flag_writes = [body for body in call_bodies(torch_text, "string")
-                            if "CMAKE_CUDA_FLAGS" in body]
+        cuda_flag_writes = [body for body in call_bodies(torch_text, "string") if "CMAKE_CUDA_FLAGS" in body]
         self.assertEqual(len(cuda_flag_writes), 4, cuda_flag_writes)
         for body in cuda_flag_writes:
             with self.subTest(write=" ".join(tokens(body))[:80]):
@@ -596,15 +578,14 @@ class CompileFlagPolicyContractTests(unittest.TestCase):
         # while bare mentions in option names (RAYD_TORCH_OPTIX_FAST_MATH) do
         # not. Doc strings that legitimately quote a flag live in option()
         # bodies, which are excised below.
-        embedded_flag = re.compile(
-            r"--?(use_fast_math|fmad=|ftz=|prec-div=|prec-sqrt=)", re.IGNORECASE)
+        embedded_flag = re.compile(r"--?(use_fast_math|fmad=|ftz=|prec-div=|prec-sqrt=)", re.IGNORECASE)
 
         def flag_shaped(items) -> set[str]:
             return {t for t in items if embedded_flag.search(t)}
 
         def excise(text: str, opener: str, prefix: tuple[str, ...] = ()) -> str:
             for body in call_bodies(text, opener):
-                if prefix and tuple(tokens(body)[:len(prefix)]) != prefix:
+                if prefix and tuple(tokens(body)[: len(prefix)]) != prefix:
                     continue
                 text = text.replace(body, "", 1)
             return text
@@ -615,17 +596,18 @@ class CompileFlagPolicyContractTests(unittest.TestCase):
         # excised ONLY for the contracted variable, so a numeric flag smuggled
         # into any other variable stays visible to this test.
         remainder = strip_comments((TORCH / "CMakeLists.txt").read_text(encoding="utf-8"))
-        for opener in ("add_custom_command", "set_source_files_properties",
-                       "target_compile_options", "option"):
+        for opener in ("add_custom_command", "set_source_files_properties", "target_compile_options", "option"):
             remainder = excise(remainder, opener)
         remainder = excise(remainder, "set", prefix=("RAYD_TORCH_OPTIX_NVCC_FLAGS",))
         remainder = excise(remainder, "list", prefix=("APPEND", "RAYD_TORCH_OPTIX_NVCC_FLAGS"))
         with self.subTest(file="torch/CMakeLists.txt"):
             self.assertEqual(
-                flag_shaped(tokens(remainder)), set(),
+                flag_shaped(tokens(remainder)),
+                set(),
                 "numeric flag outside the contracted constructs; either move it "
                 "into a contracted construct or extend the contract, never leave "
-                "it unmodeled")
+                "it unmodeled",
+            )
 
         # Dr.Jit: every flag lives in a helper call site.
         remainder = strip_comments((DRJIT / "CMakeLists.txt").read_text(encoding="utf-8"))
@@ -641,25 +623,23 @@ class CompileFlagPolicyContractTests(unittest.TestCase):
         }
         for name, helper_path in helper_sources.items():
             helper_remainder = strip_comments(helper_path.read_text(encoding="utf-8"))
-            match = re.search(
-                rf"function\({name}\)(.*?)^endfunction\(\)",
-                helper_remainder, re.DOTALL | re.MULTILINE)
+            match = re.search(rf"function\({name}\)(.*?)^endfunction\(\)", helper_remainder, re.DOTALL | re.MULTILINE)
             self.assertIsNotNone(match, name)
             helper_remainder = helper_remainder.replace(match.group(1), "", 1)
-            self.assertEqual(
-                flag_shaped(tokens(helper_remainder)), set(), helper_path.name)
+            self.assertEqual(flag_shaped(tokens(helper_remainder)), set(), helper_path.name)
 
     def test_shared_header_exposure_is_recomputed_from_the_include_graph(self):
         computed = computed_header_exposure(DERIVED)
-        multi = {name: profiles for name, profiles in computed.items()
-                 if len(profiles) > 1}
+        multi = {name: profiles for name, profiles in computed.items() if len(profiles) > 1}
         declared = CONTRACT["shared_header_exposure"]
         self.assertEqual(
-            sorted(multi), sorted(declared),
+            sorted(multi),
+            sorted(declared),
             "a shared header changed how many numeric profiles it is compiled "
             "under. Undeclared: "
             f"{sorted(set(multi) - set(declared))}. No longer multi-profile: "
-            f"{sorted(set(declared) - set(multi))}.")
+            f"{sorted(set(declared) - set(multi))}.",
+        )
         for name in sorted(multi):
             with self.subTest(header=name):
                 self.assertEqual(declared[name], multi[name])
@@ -678,17 +658,18 @@ class CompileFlagPolicyContractTests(unittest.TestCase):
                 values = []
                 for side in divergence["sides"]:
                     key = (side["backend"], side["unit"])
-                    self.assertIn(key, DECLARED, f"{divergence['id']} names an "
-                                                 f"unknown unit {key}")
+                    self.assertIn(key, DECLARED, f"{divergence['id']} names an unknown unit {key}")
                     self.assertEqual(
-                        DECLARED[key].get(field), side["value"],
-                        f"{divergence['id']} claims {key} is {side['value']!r}")
+                        DECLARED[key].get(field), side["value"], f"{divergence['id']} claims {key} is {side['value']!r}"
+                    )
                     values.append(side["value"])
                 if divergence["aspect"] in ("numeric_profile", "ptx_arch"):
                     self.assertGreater(
-                        len(set(values)), 1,
+                        len(set(values)),
+                        1,
                         f"{divergence['id']} is no longer a divergence; if it was "
-                        f"deliberately aligned, remove it from the record")
+                        f"deliberately aligned, remove it from the record",
+                    )
                 for header in divergence["shared_headers"]:
                     self.assertTrue((ROOT / header).is_file(), header)
 
@@ -703,8 +684,9 @@ class CompileFlagPolicyContractTests(unittest.TestCase):
 
         # D9: every Dr.Jit PTX regeneration option is OFF by default, so the
         # shipped device code is the committed header, not a fresh compile.
-        regenerate = {name: default for name, default in cmake_options(drjit_text).items()
-                      if name.startswith("RAYD_REGENERATE_")}
+        regenerate = {
+            name: default for name, default in cmake_options(drjit_text).items() if name.startswith("RAYD_REGENERATE_")
+        }
         self.assertEqual(len(regenerate), 8)
         self.assertEqual(set(regenerate.values()), {False})
         record = json.loads((DRJIT / "ptx_sources.json").read_text(encoding="utf-8"))
@@ -712,15 +694,11 @@ class CompileFlagPolicyContractTests(unittest.TestCase):
         # genuinely regenerated and byte-compared before the canonical closure
         # record was written. D9 remains the build-time policy distinction:
         # regeneration is opt-in and the verified committed headers ship by default.
-        self.assertEqual(
-            {m["regeneration_verified"] for m in record["modules"].values()},
-            {True},
-        )
+        self.assertEqual({m["regeneration_verified"] for m in record["modules"].values()}, {True})
 
         # D7: equal profile, unequal device code. The cited parity test is the
         # evidence, so it must still exist under that name.
-        parity = (ROOT / "tests" / "parity" / "test_cuda_multipath.py").read_text(
-            encoding="utf-8")
+        parity = (ROOT / "tests" / "parity" / "test_cuda_multipath.py").read_text(encoding="utf-8")
         self.assertIn("def test_diffraction_direct_and_unreachable_suffix_match_optix", parity)
 
     def test_adr_mandated_profiles_hold(self):
@@ -729,24 +707,26 @@ class CompileFlagPolicyContractTests(unittest.TestCase):
             by_source.setdefault(entry["source"], set()).add(entry["profile"])
         for adr, mandate in sorted(CONTRACT["adr_mandates"].items()):
             with self.subTest(adr=adr):
-                self.assertTrue((ROOT / mandate["record"]).is_file(),
-                                mandate["record"])
+                self.assertTrue((ROOT / mandate["record"]).is_file(), mandate["record"])
                 for source in mandate["sources"]:
                     self.assertEqual(
-                        by_source.get(source), {mandate["profile"]},
-                        f"ADR-{adr} requires {source} to be {mandate['profile']}")
+                        by_source.get(source),
+                        {mandate["profile"]},
+                        f"ADR-{adr} requires {source} to be {mandate['profile']}",
+                    )
                 for source in mandate["excluded_sources"]:
                     self.assertNotIn(
-                        mandate["profile"], by_source.get(source, set()),
-                        f"ADR-{adr} forbids {source} from taking "
-                        f"{mandate['profile']}")
+                        mandate["profile"],
+                        by_source.get(source, set()),
+                        f"ADR-{adr} forbids {source} from taking {mandate['profile']}",
+                    )
                 if mandate["exhaustive"]:
-                    carriers = {source for source, profiles in by_source.items()
-                                if mandate["profile"] in profiles}
+                    carriers = {source for source, profiles in by_source.items() if mandate["profile"] in profiles}
                     self.assertEqual(
-                        carriers, set(mandate["sources"]),
-                        f"the {mandate['profile']} profile spread beyond the "
-                        f"ADR-{adr} family")
+                        carriers,
+                        set(mandate["sources"]),
+                        f"the {mandate['profile']} profile spread beyond the ADR-{adr} family",
+                    )
 
     def test_record_and_pointer_are_wired(self):
         self.assertTrue(ADR_PATH.is_file())

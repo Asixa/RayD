@@ -9,11 +9,7 @@ from dataclasses import dataclass
 
 import torch
 
-from .multipath import (
-    _SdfIntersectFunction,
-    _needs_reverse_or_forward_ad,
-    _require_native_dispatcher,
-)
+from .multipath import _SdfIntersectFunction, _needs_reverse_or_forward_ad, _require_native_dispatcher
 from .geometry import SdfIntersection
 
 
@@ -58,13 +54,10 @@ class SdfGrid:
     def __post_init__(self) -> None:
         _require_resident_float32(self.values, "SdfGrid.values")
         if self.values.ndim != 3:
-            raise ValueError(
-                f"SdfGrid.values must have shape (Nx, Ny, Nz) (got {tuple(self.values.shape)})."
-            )
+            raise ValueError(f"SdfGrid.values must have shape (Nx, Ny, Nz) (got {tuple(self.values.shape)}).")
         if min(self.values.shape) < 2:
             raise ValueError(
-                "SdfGrid.values must have at least 2 samples on every axis "
-                f"(got {tuple(self.values.shape)})."
+                f"SdfGrid.values must have at least 2 samples on every axis (got {tuple(self.values.shape)})."
             )
         _require_vec(self.position, 3, "SdfGrid.position")
         _require_vec(self.rotation, 4, "SdfGrid.rotation")
@@ -93,13 +86,11 @@ def sdf_intersect(
     _require_ray_batch(directions, "directions")
     if origins.shape[0] != directions.shape[0]:
         raise ValueError(
-            "origins and directions must have the same ray count "
-            f"({origins.shape[0]} != {directions.shape[0]})."
+            f"origins and directions must have the same ray count ({origins.shape[0]} != {directions.shape[0]})."
         )
     if origins.device != grid.values.device:
         raise ValueError(
-            f"origins and directions must be on the grid's device "
-            f"({origins.device} != {grid.values.device})."
+            f"origins and directions must be on the grid's device ({origins.device} != {grid.values.device})."
         )
     if not tmax > 0.0:
         raise ValueError(f"tmax must be positive (got {tmax}).")
@@ -108,9 +99,7 @@ def sdf_intersect(
     if not 0.0 < relaxation <= 1.0:
         raise ValueError(f"relaxation must lie in (0, 1] (got {relaxation}).")
     if eps_hit is not None and not eps_hit > 0.0:
-        raise ValueError(
-            f"eps_hit must be positive, or None to derive it on the device (got {eps_hit})."
-        )
+        raise ValueError(f"eps_hit must be positive, or None to derive it on the device (got {eps_hit}).")
 
     request = (
         grid.values,

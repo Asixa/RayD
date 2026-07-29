@@ -14,17 +14,19 @@ from pathlib import Path
 from typing import Any, Callable
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 if sys.path and Path(sys.path[0]).resolve() == SCRIPT_DIR:
     sys.path.pop(0)
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import drjit as dr
 import numpy as np
 
+from benchmarks.common import diffraction_path_output_bytes as dfr_path_output_bytes, materialize_reflection_slots
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_SIONNA_ROOT = Path(
-    r"E:\Code\witwin-platform\channel\reference\sionna-rt-reference-2.0.1"
-)
+
+DEFAULT_SIONNA_ROOT = Path(r"E:\Code\witwin-platform\channel\reference\sionna-rt-reference-2.0.1")
 SPEED_OF_LIGHT = 299_792_458.0
 
 
@@ -48,11 +50,7 @@ def summarize_history(history: list[dict[str, Any]]) -> dict[str, Any]:
         "jit_kernel_count": len(history),
         "jit_optix_kernel_count": sum(int(k.get("uses_optix", 0)) for k in history),
         "jit_exec_ms": sum(float(k.get("execution_time", 0.0)) for k in history),
-        "jit_optix_exec_ms": sum(
-            float(k.get("execution_time", 0.0))
-            for k in history
-            if int(k.get("uses_optix", 0))
-        ),
+        "jit_optix_exec_ms": sum(float(k.get("execution_time", 0.0)) for k in history if int(k.get("uses_optix", 0))),
         "jit_codegen_ms": sum(float(k.get("codegen_time", 0.0)) for k in history),
         "jit_backend_ms": sum(float(k.get("backend_time", 0.0)) for k in history),
     }
@@ -98,17 +96,18 @@ def measure(
         if after_sample is not None:
             after_sample(last_value)
 
-    kernel_timing = {
-        key: summarize_numeric_samples([h[key] for h in histories])
-        for key in ("jit_exec_ms", "jit_optix_exec_ms", "jit_codegen_ms", "jit_backend_ms")
-    } if histories else {}
+    kernel_timing = (
+        {
+            key: summarize_numeric_samples([h[key] for h in histories])
+            for key in ("jit_exec_ms", "jit_optix_exec_ms", "jit_codegen_ms", "jit_backend_ms")
+        }
+        if histories
+        else {}
+    )
 
     return {
         **summarize_numeric_samples(samples),
-        "kernel_history_avg": {
-            key: statistics.fmean(h[key] for h in histories)
-            for key in histories[0]
-        }
+        "kernel_history_avg": {key: statistics.fmean(h[key] for h in histories) for key in histories[0]}
         if histories
         else {},
         "kernel_history_timing": kernel_timing,
@@ -116,18 +115,9 @@ def measure(
     }
 
 
-def summarize_native_optix_launch_timing(
-    audit_samples: list[dict[str, Any]],
-    stage: str,
-) -> dict[str, Any]:
-    launch_counts = [
-        int(sample.get(stage, {}).get("optix_launch", 0))
-        for sample in audit_samples
-    ]
-    durations = [
-        float(sample.get(stage, {}).get("optix_launch_time_ms", 0.0))
-        for sample in audit_samples
-    ]
+def summarize_native_optix_launch_timing(audit_samples: list[dict[str, Any]], stage: str) -> dict[str, Any]:
+    launch_counts = [int(sample.get(stage, {}).get("optix_launch", 0)) for sample in audit_samples]
+    durations = [float(sample.get(stage, {}).get("optix_launch_time_ms", 0.0)) for sample in audit_samples]
     result = {
         "stage": stage,
         "samples_ms": durations,
@@ -136,19 +126,16 @@ def summarize_native_optix_launch_timing(
     }
     timed = [duration for duration in durations if duration > 0.0]
     if timed:
-        result.update({
-            "min_ms": min(timed),
-            "avg_ms": statistics.fmean(timed),
-            "p50_ms": statistics.median(timed),
-            "p95_ms": sorted(timed)[max(0, math.ceil(0.95 * len(timed)) - 1)],
-        })
+        result.update(
+            {
+                "min_ms": min(timed),
+                "avg_ms": statistics.fmean(timed),
+                "p50_ms": statistics.median(timed),
+                "p95_ms": sorted(timed)[max(0, math.ceil(0.95 * len(timed)) - 1)],
+            }
+        )
     else:
-        result.update({
-            "min_ms": 0.0,
-            "avg_ms": 0.0,
-            "p50_ms": 0.0,
-            "p95_ms": 0.0,
-        })
+        result.update({"min_ms": 0.0, "avg_ms": 0.0, "p50_ms": 0.0, "p95_ms": 0.0})
     return result
 
 
@@ -233,20 +220,10 @@ def make_sionna_scene(workload: str, sionna_root: Path, rx_side: int):
         scene.add(Receiver(f"rx-{i}", list(pos), orientation=mi.Point3f(0.0, 0.0, 0.0)))
 
     scene.tx_array = PlanarArray(
-        num_rows=1,
-        num_cols=1,
-        vertical_spacing=0.5,
-        horizontal_spacing=0.5,
-        pattern="iso",
-        polarization="V",
+        num_rows=1, num_cols=1, vertical_spacing=0.5, horizontal_spacing=0.5, pattern="iso", polarization="V"
     )
     scene.rx_array = PlanarArray(
-        num_rows=1,
-        num_cols=1,
-        vertical_spacing=0.5,
-        horizontal_spacing=0.5,
-        pattern="iso",
-        polarization="VH",
+        num_rows=1, num_cols=1, vertical_spacing=0.5, horizontal_spacing=0.5, pattern="iso", polarization="VH"
     )
     return scene
 
@@ -335,12 +312,7 @@ def run_mitsuba_minimal_reflection(args: argparse.Namespace) -> dict[str, Any]:
         dist0 = dr.norm(to_point)
         ray = mi.Ray3f(tx, to_point / dist0)
         ray.maxt = dist0 + 1e-4
-        si = mi_scene.ray_intersect(
-            ray,
-            ray_flags=mi.RayFlags.Minimal,
-            coherent=True,
-            active=in_bounds,
-        )
+        si = mi_scene.ray_intersect(ray, ray_flags=mi.RayFlags.Minimal, coherent=True, active=in_bounds)
         hit_reflector = si.is_valid() & (dr.abs(si.t - dist0) < 1e-3)
         visible1 = hit_reflector
         visible2 = mi_segment_visible(mi_scene, point, rx)
@@ -415,11 +387,7 @@ def run_mitsuba_minimal(args: argparse.Namespace, workload: str) -> dict[str, An
 
 
 def metric_with_throughput(
-    result: dict[str, Any],
-    input_count: int,
-    valid_count: int,
-    output_bytes: int,
-    optix_launch_count: float,
+    result: dict[str, Any], input_count: int, valid_count: int, output_bytes: int, optix_launch_count: float
 ) -> dict[str, Any]:
     timing = result["timing"]
     p50_s = max(timing["p50_ms"] / 1000.0, 1e-12)
@@ -447,11 +415,6 @@ def reflection_trace_output_bytes(ray_count: int, max_bounces: int, export_mode:
     return ray_count * per_ray + slot_count * per_slot
 
 
-def dfr_path_output_bytes(capacity: int) -> int:
-    per_path = 1 + 6 * 4 + 4 + 3 * 2 * 4 + 3 * 3 * 4
-    return 4 + capacity * per_path
-
-
 def make_reflection_trace_rays_mi(ray_count: int):
     import mitsuba as mi
 
@@ -464,9 +427,7 @@ def make_reflection_trace_rays_mi(ray_count: int):
     y = -0.9 + 1.8 * mi.Float(iy) / denom
     origin = mi.Point3f(x, y, dr.full(mi.Float, 0.5, ray_count))
     direction = mi.Vector3f(
-        dr.zeros(mi.Float, ray_count),
-        dr.zeros(mi.Float, ray_count),
-        dr.full(mi.Float, 1.0, ray_count),
+        dr.zeros(mi.Float, ray_count), dr.zeros(mi.Float, ray_count), dr.full(mi.Float, 1.0, ray_count)
     )
     return mi.Ray3f(origin, direction)
 
@@ -484,9 +445,7 @@ def make_reflection_trace_rays_cuda(ray_count: int):
     y = -0.9 + 1.8 * cuda.Float(iy) / denom
     origin = cuda.Array3f(x, y, dr.full(cuda.Float, 0.5, ray_count))
     direction = cuda.Array3f(
-        dr.zeros(cuda.Float, ray_count),
-        dr.zeros(cuda.Float, ray_count),
-        dr.full(cuda.Float, 1.0, ray_count),
+        dr.zeros(cuda.Float, ray_count), dr.zeros(cuda.Float, ray_count), dr.full(cuda.Float, 1.0, ray_count)
     )
     return rd.Ray(origin, direction)
 
@@ -511,17 +470,13 @@ def make_mitsuba_parallel_reflector_scene():
     import mitsuba as mi
 
     transform = mi.ScalarTransform4f
-    return mi.load_dict({
-        "type": "scene",
-        "lower": {
-            "type": "rectangle",
-            "to_world": transform.translate([0.0, 0.0, 0.0]),
-        },
-        "upper": {
-            "type": "rectangle",
-            "to_world": transform.translate([0.0, 0.0, 1.0]),
-        },
-    })
+    return mi.load_dict(
+        {
+            "type": "scene",
+            "lower": {"type": "rectangle", "to_world": transform.translate([0.0, 0.0, 0.0])},
+            "upper": {"type": "rectangle", "to_world": transform.translate([0.0, 0.0, 1.0])},
+        }
+    )
 
 
 def run_mitsuba_path_reflection_trace(args: argparse.Namespace) -> dict[str, Any]:
@@ -539,28 +494,15 @@ def run_mitsuba_path_reflection_trace(args: argparse.Namespace) -> dict[str, Any
         for _ in range(args.max_bounces):
             bounce_ray = mi.Ray3f(origin, direction)
             if args.mitsuba_ray_api == "preliminary":
-                pi = mi_scene.ray_intersect_preliminary(
-                    bounce_ray,
-                    coherent=True,
-                    active=active,
-                )
+                pi = mi_scene.ray_intersect_preliminary(bounce_ray, coherent=True, active=active)
                 hit = active & pi.is_valid()
-                si = pi.compute_surface_interaction(
-                    bounce_ray,
-                    mi.RayFlags.Minimal,
-                    hit,
-                )
+                si = pi.compute_surface_interaction(bounce_ray, mi.RayFlags.Minimal, hit)
                 hit_t = pi.t
                 prim_index = pi.prim_index
                 hit_point = origin + direction * pi.t
                 normal = si.n
             else:
-                si = mi_scene.ray_intersect(
-                    bounce_ray,
-                    ray_flags=mi.RayFlags.Minimal,
-                    coherent=True,
-                    active=active,
-                )
+                si = mi_scene.ray_intersect(bounce_ray, ray_flags=mi.RayFlags.Minimal, coherent=True, active=active)
                 hit = active & si.is_valid()
                 hit_t = si.t
                 prim_index = si.prim_index
@@ -576,11 +518,8 @@ def run_mitsuba_path_reflection_trace(args: argparse.Namespace) -> dict[str, Any
         checksum = dr.sum(dr.concat(ts))
         return ts, prim_ids, valid_count, slot_count, checksum
 
-    def materialize(value):
-        ts, prim_ids, valid_count, slot_count, checksum = value
-        dr.eval(*ts, *prim_ids, valid_count, slot_count, checksum)
+    measured = measure(call_kernel, lambda value: materialize_reflection_slots(dr, value), args.repeats, args.warmup)
 
-    measured = measure(call_kernel, materialize, args.repeats, args.warmup)
     _ts, _prim_ids, valid_count, slot_count, checksum = measured.pop("last_value")
     result = {
         "backend": "mitsuba_path",
@@ -618,12 +557,7 @@ def run_rayd_path_reflection_trace(args: argparse.Namespace) -> dict[str, Any]:
         return scene.trace_reflections(ray, args.max_bounces, options, True, False)
 
     def materialize(result):
-        dr.eval(
-            result.bounce_count,
-            result.t,
-            result.prim_ids,
-            result.global_prim_ids,
-        )
+        dr.eval(result.bounce_count, result.t, result.prim_ids, result.global_prim_ids)
 
     audit_samples: list[dict[str, Any]] = []
     measured = measure(
@@ -650,10 +584,7 @@ def run_rayd_path_reflection_trace(args: argparse.Namespace) -> dict[str, Any]:
         "path_length_checksum": checksum,
         "native_audit": audit,
         "native_audit_samples": audit_samples,
-        "native_optix_launch_timing": summarize_native_optix_launch_timing(
-            audit_samples,
-            "trace_reflections",
-        ),
+        "native_optix_launch_timing": summarize_native_optix_launch_timing(audit_samples, "trace_reflections"),
         "timing": measured,
     }
     return metric_with_throughput(
@@ -784,10 +715,7 @@ def run_rayd_path_diffraction_export(args: argparse.Namespace) -> dict[str, Any]
         "path_length_checksum": checksum,
         "native_audit": audit,
         "native_audit_samples": audit_samples,
-        "native_optix_launch_timing": summarize_native_optix_launch_timing(
-            audit_samples,
-            "accum_dfr",
-        ),
+        "native_optix_launch_timing": summarize_native_optix_launch_timing(audit_samples, "accum_dfr"),
         "timing": measured,
     }
     return metric_with_throughput(
@@ -875,12 +803,7 @@ def rayd_reflector_scene(sionna_root: Path):
     xs, ys, zs = zip(*vertices)
     i0, i1, i2 = zip(*faces)
     scene = rd.Scene()
-    scene.add_mesh(
-        rd.Mesh(
-            cuda.Array3f(list(xs), list(ys), list(zs)),
-            cuda.Array3i(list(i0), list(i1), list(i2)),
-        )
-    )
+    scene.add_mesh(rd.Mesh(cuda.Array3f(list(xs), list(ys), list(zs)), cuda.Array3i(list(i0), list(i1), list(i2))))
     scene.build()
     return scene, len(faces)
 
@@ -893,12 +816,7 @@ def rayd_scene_from_ply(path: Path):
     xs, ys, zs = zip(*vertices)
     i0, i1, i2 = zip(*faces)
     scene = rd.Scene()
-    scene.add_mesh(
-        rd.Mesh(
-            cuda.Array3f(list(xs), list(ys), list(zs)),
-            cuda.Array3i(list(i0), list(i1), list(i2)),
-        )
-    )
+    scene.add_mesh(rd.Mesh(cuda.Array3f(list(xs), list(ys), list(zs)), cuda.Array3i(list(i0), list(i1), list(i2))))
     scene.build()
     return scene, len(faces)
 
@@ -1066,8 +984,7 @@ def run_rayd_reflection(args: argparse.Namespace) -> dict[str, Any]:
     n = args.ray_count
     zero = dr.full(cuda.Float, 0.0, n)
     ray = rd.Ray(
-        cuda.Array3f(zero, zero, dr.full(cuda.Float, -1.0, n)),
-        cuda.Array3f(zero, zero, dr.full(cuda.Float, 1.0, n)),
+        cuda.Array3f(zero, zero, dr.full(cuda.Float, -1.0, n)), cuda.Array3f(zero, zero, dr.full(cuda.Float, 1.0, n))
     )
     tx = cuda.Array3f([0.0], [0.0], [-1.0])
 
@@ -1131,45 +1048,31 @@ def make_rayd_dfr_states(state_count: int):
     states.count = state_count
     states.edge_index = dr.arange(cuda.Int, state_count)
     states.edge_pos = cuda.Array3f(
-        dr.zeros(cuda.Float, state_count),
-        dr.zeros(cuda.Float, state_count),
-        dr.zeros(cuda.Float, state_count),
+        dr.zeros(cuda.Float, state_count), dr.zeros(cuda.Float, state_count), dr.zeros(cuda.Float, state_count)
     )
     states.edge_dir = cuda.Array3f(
-        dr.full(cuda.Float, 1.0, state_count),
-        dr.zeros(cuda.Float, state_count),
-        dr.zeros(cuda.Float, state_count),
+        dr.full(cuda.Float, 1.0, state_count), dr.zeros(cuda.Float, state_count), dr.zeros(cuda.Float, state_count)
     )
     states.edge_t_min = dr.full(cuda.Float, -0.5, state_count)
     states.edge_t_max = dr.full(cuda.Float, 0.5, state_count)
     states.n0 = cuda.Array3f(
-        dr.zeros(cuda.Float, state_count),
-        dr.full(cuda.Float, 1.0, state_count),
-        dr.zeros(cuda.Float, state_count),
+        dr.zeros(cuda.Float, state_count), dr.full(cuda.Float, 1.0, state_count), dr.zeros(cuda.Float, state_count)
     )
     states.n1 = cuda.Array3f(
-        dr.zeros(cuda.Float, state_count),
-        dr.full(cuda.Float, -1.0, state_count),
-        dr.zeros(cuda.Float, state_count),
+        dr.zeros(cuda.Float, state_count), dr.full(cuda.Float, -1.0, state_count), dr.zeros(cuda.Float, state_count)
     )
     states.prim0 = dr.full(cuda.Int, -1, state_count)
     states.prim1 = dr.full(cuda.Int, -1, state_count)
     states.exterior_angle = dr.full(cuda.Float, 1.5 * math.pi, state_count)
     states.src = cuda.Array3f(
-        dr.zeros(cuda.Float, state_count),
-        dr.zeros(cuda.Float, state_count),
-        dr.full(cuda.Float, 1.0, state_count),
+        dr.zeros(cuda.Float, state_count), dr.zeros(cuda.Float, state_count), dr.full(cuda.Float, 1.0, state_count)
     )
     states.src_power = dr.full(cuda.Float, 2.0, state_count)
     states.wi = cuda.Array3f(
-        dr.zeros(cuda.Float, state_count),
-        dr.zeros(cuda.Float, state_count),
-        dr.full(cuda.Float, -1.0, state_count),
+        dr.zeros(cuda.Float, state_count), dr.zeros(cuda.Float, state_count), dr.full(cuda.Float, -1.0, state_count)
     )
     states.d0 = cuda.Array3f(
-        dr.zeros(cuda.Float, state_count),
-        dr.zeros(cuda.Float, state_count),
-        dr.full(cuda.Float, -1.0, state_count),
+        dr.zeros(cuda.Float, state_count), dr.zeros(cuda.Float, state_count), dr.full(cuda.Float, -1.0, state_count)
     )
     states.prefix_depth = dr.full(cuda.Int, 0, state_count)
     return states
@@ -1310,9 +1213,16 @@ def main() -> None:
         mi.set_variant("cuda_ad_mono_polarized")
 
     results: list[dict[str, Any]] = []
-    workloads = ["reflection", "diffraction"] if args.workload == "both" else (
-        ["reflection_trace", "diffraction_export"] if args.workload == "path_scaling" else
-        ["los", "reflection", "diffraction"] if args.workload == "all" else [args.workload]
+    workloads = (
+        ["reflection", "diffraction"]
+        if args.workload == "both"
+        else (
+            ["reflection_trace", "diffraction_export"]
+            if args.workload == "path_scaling"
+            else ["los", "reflection", "diffraction"]
+            if args.workload == "all"
+            else [args.workload]
+        )
     )
     backends = {
         "both": ["sionna", "rayd"],

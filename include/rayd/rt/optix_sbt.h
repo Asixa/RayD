@@ -15,8 +15,7 @@ namespace rayd::shared::optix {
 inline constexpr std::size_t SbtRecordAlignment = 16u;
 inline constexpr std::size_t SbtRecordHeaderSize = 32u;
 
-template <typename T>
-struct alignas(SbtRecordAlignment) SbtRecord {
+template <typename T> struct alignas(SbtRecordAlignment) SbtRecord {
     std::byte header[SbtRecordHeaderSize];
     T data;
 };

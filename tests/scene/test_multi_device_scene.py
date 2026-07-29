@@ -25,6 +25,8 @@ import sys
 import unittest
 
 import torch
+
+from tests.support.geometry import build_scene as _build_scene, grid_mesh as _grid_mesh, tensor_bits as _bits
 import rayd.torch as rt
 
 
@@ -33,23 +35,6 @@ _REPO_ROOT = str(pathlib.Path(__file__).resolve().parents[2])
 # 33 queries split ragged under every weighting used here (17/16 at 50/50,
 # 29/4 at 90/10), so no test accidentally exercises only an even split.
 _BATCH = 33
-
-
-def _grid_mesh(device: torch.device, cells: int = 8, span: float = 2.0):
-    """Deterministic z=0 triangle grid; identical bits on every CUDA device."""
-    axis = torch.linspace(-0.5 * span, 0.5 * span, cells + 1, dtype=torch.float32)
-    y, x = torch.meshgrid(axis, axis, indexing="ij")
-    flat_x = x.reshape(-1)
-    vertices = torch.stack((flat_x, y.reshape(-1), torch.zeros_like(flat_x)), dim=1)
-    index = torch.arange((cells + 1) * (cells + 1), dtype=torch.int32).reshape(
-        cells + 1, cells + 1
-    )
-    a = index[:-1, :-1].reshape(-1)
-    b = index[:-1, 1:].reshape(-1)
-    c = index[1:, :-1].reshape(-1)
-    d = index[1:, 1:].reshape(-1)
-    faces = torch.cat((torch.stack((a, b, c), dim=1), torch.stack((b, d, c), dim=1)))
-    return vertices.contiguous().to(device), faces.contiguous().to(device)
 
 
 def _query_inputs(device: torch.device, count: int = _BATCH) -> dict:
@@ -105,17 +90,11 @@ def _covered_op_results(scene: rt.Scene, inputs: dict) -> dict[str, torch.Tensor
     visible = scene.visible(inputs["origins"], inputs["end"], active)
     pair = scene.visible_pair(inputs["origins"], inputs["end"], inputs["end_b"])
     axial = scene.visible_edge(
-        inputs["origins"],
-        points,
-        inputs["directions"],
-        inputs["edge_t_min"],
-        inputs["edge_t_max"],
+        inputs["origins"], points, inputs["directions"], inputs["edge_t_min"], inputs["edge_t_max"]
     )
     chain = scene.visible_chain(inputs["chain_points"], inputs["chain_length"])
     reflections = scene.trace_reflections(ray, max_bounces=2, active=active)
-    epc = scene.trace_refl_epc_field(
-        inputs["origins"], inputs["receiver"], max_bounces=2
-    )
+    epc = scene.trace_refl_epc_field(inputs["origins"], inputs["receiver"], max_bounces=2)
 
     results = {
         "intersect_reduced.t": reduced.t,
@@ -161,18 +140,7 @@ def _covered_op_results(scene: rt.Scene, inputs: dict) -> dict[str, torch.Tensor
         "trace_refl_epc_field.valid": epc.valid,
         "trace_refl_epc_field.resolved_prim_ids": epc.resolved_prim_ids,
     }
-    for name in (
-        "t",
-        "p",
-        "n",
-        "geo_n",
-        "uv",
-        "barycentric",
-        "shape_id",
-        "prim_id",
-        "local_prim_id",
-        "global_prim_id",
-    ):
+    for name in ("t", "p", "n", "geo_n", "uv", "barycentric", "shape_id", "prim_id", "local_prim_id", "global_prim_id"):
         results[f"intersect_full.{name}"] = getattr(full, name)
     return results
 
@@ -182,11 +150,7 @@ def _covered_op_headers(scene: rt.Scene, inputs: dict) -> dict[str, int]:
     topk = scene.nearest_edges(inputs["points"], 3)
     pair = scene.visible_pair(inputs["origins"], inputs["end"], inputs["end_b"])
     axial = scene.visible_edge(
-        inputs["origins"],
-        inputs["points"],
-        inputs["directions"],
-        inputs["edge_t_min"],
-        inputs["edge_t_max"],
+        inputs["origins"], inputs["points"], inputs["directions"], inputs["edge_t_min"], inputs["edge_t_max"]
     )
     chain = scene.visible_chain(inputs["chain_points"], inputs["chain_length"])
     return {
@@ -197,14 +161,6 @@ def _covered_op_headers(scene: rt.Scene, inputs: dict) -> dict[str, int]:
         "visible_chain.chain_count": chain.chain_count,
         "visible_chain.max_segments": chain.max_segments,
     }
-
-
-def _build_scene(device: torch.device, **kwargs) -> rt.Scene:
-    vertices, faces = _grid_mesh(device)
-    scene = rt.Scene(**kwargs)
-    scene.add_mesh(rt.Mesh(vertices, faces))
-    scene.build()
-    return scene
 
 
 def run_single_device_probe() -> None:
@@ -251,16 +207,6 @@ print("MULTI-LAYER-UNTOUCHED")
 """
 
 
-def _bits(tensor: torch.Tensor) -> torch.Tensor:
-    """Host copy compared bit-for-bit, so NaN, -0.0, and inf all compare exactly."""
-    host = tensor.detach().contiguous().cpu()
-    if host.dtype == torch.float32:
-        return host.view(torch.int32)
-    if host.dtype == torch.float64:
-        return host.view(torch.int64)
-    return host
-
-
 class MultiDeviceResultMixin:
     def assert_same_results(self, left, right, context: str) -> None:
         self.assertEqual(sorted(left), sorted(right))
@@ -268,13 +214,8 @@ class MultiDeviceResultMixin:
             other = right[name]
             self.assertEqual(value.dtype, other.dtype, f"{context}: {name} dtype")
             self.assertEqual(value.shape, other.shape, f"{context}: {name} shape")
-            self.assertEqual(
-                value.device, other.device, f"{context}: {name} device"
-            )
-            self.assertTrue(
-                torch.equal(_bits(value), _bits(other)),
-                f"{context}: {name} is not bitwise equal",
-            )
+            self.assertEqual(value.device, other.device, f"{context}: {name} device")
+            self.assertTrue(torch.equal(_bits(value), _bits(other)), f"{context}: {name} is not bitwise equal")
 
 
 class MultiDeviceOptionsExportTests(unittest.TestCase):
@@ -294,30 +235,20 @@ class MultiDeviceOptionsExportTests(unittest.TestCase):
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA torch is required")
-class SingleDeviceStaysOnThePreExistingPathTests(
-    MultiDeviceResultMixin, unittest.TestCase
-):
+class SingleDeviceStaysOnThePreExistingPathTests(MultiDeviceResultMixin, unittest.TestCase):
     def test_default_scene_never_imports_the_multi_device_layer(self):
         """D9: the multi layer is dead code for a caller who never asks for it."""
         environment = dict(os.environ)
         existing = environment.get("PYTHONPATH")
-        package_root = str(
-            pathlib.Path(__file__).resolve().parents[2] / "torch" / "python"
-        )
-        environment["PYTHONPATH"] = (
-            package_root if not existing else os.pathsep.join([package_root, existing])
-        )
+        package_root = str(pathlib.Path(__file__).resolve().parents[2] / "torch" / "python")
+        environment["PYTHONPATH"] = package_root if not existing else os.pathsep.join([package_root, existing])
         completed = subprocess.run(
             [sys.executable, "-c", _ENGAGE_PROBE.format(repo_root=_REPO_ROOT)],
             capture_output=True,
             text=True,
             env=environment,
         )
-        self.assertEqual(
-            completed.returncode,
-            0,
-            f"probe failed:\n{completed.stdout}\n{completed.stderr}",
-        )
+        self.assertEqual(completed.returncode, 0, f"probe failed:\n{completed.stdout}\n{completed.stderr}")
         self.assertIn("MULTI-LAYER-UNTOUCHED", completed.stdout)
 
     def test_one_device_scene_matches_the_default_scene_bitwise(self):
@@ -329,14 +260,9 @@ class SingleDeviceStaysOnThePreExistingPathTests(
 
         self.assertIsNone(explicit._multi)
         self.assert_same_results(
-            _covered_op_results(default, inputs),
-            _covered_op_results(explicit, inputs),
-            "Scene(devices=[0])",
+            _covered_op_results(default, inputs), _covered_op_results(explicit, inputs), "Scene(devices=[0])"
         )
-        self.assertEqual(
-            _covered_op_headers(default, inputs),
-            _covered_op_headers(explicit, inputs),
-        )
+        self.assertEqual(_covered_op_headers(default, inputs), _covered_op_headers(explicit, inputs))
 
     def test_device_and_option_arguments_are_validated(self):
         with self.assertRaises(TypeError):
@@ -414,9 +340,7 @@ class SingleDeviceStaysOnThePreExistingPathTests(
         already had and look like a measurement.
         """
         scene = _build_scene(
-            torch.device("cuda", 0),
-            devices=[0],
-            options=rt.MultiDeviceOptions(warm_up=False, chunk_rays=8),
+            torch.device("cuda", 0), devices=[0], options=rt.MultiDeviceOptions(warm_up=False, chunk_rays=8)
         )
         self.assertIsNotNone(scene._multi)
         with self.assertRaises(RuntimeError) as raised:
@@ -437,11 +361,7 @@ class SingleDeviceStaysOnThePreExistingPathTests(
             direct_samples=_ACCUM_SAMPLES,
             seed=17,
         )
-        scene = _accum_scene(
-            device,
-            devices=[0],
-            options=rt.MultiDeviceOptions(warm_up=False, chunk_rays=2048),
-        )
+        scene = _accum_scene(device, devices=[0], options=rt.MultiDeviceOptions(warm_up=False, chunk_rays=2048))
         self.assertIsNotNone(scene._multi)
         merged = scene.accum_dfr_direct(
             states=_dfr_states(device),
@@ -457,10 +377,7 @@ class SingleDeviceStaysOnThePreExistingPathTests(
         self.assertTrue(torch.equal(merged.direct_count, reference.direct_count))
 
 
-@unittest.skipUnless(
-    torch.cuda.is_available() and torch.cuda.device_count() >= 2,
-    "two CUDA devices are required",
-)
+@unittest.skipUnless(torch.cuda.is_available() and torch.cuda.device_count() >= 2, "two CUDA devices are required")
 class MultiDeviceSceneTests(MultiDeviceResultMixin, unittest.TestCase):
     def setUp(self) -> None:
         self._entry_device = torch.cuda.current_device()
@@ -480,9 +397,7 @@ class MultiDeviceSceneTests(MultiDeviceResultMixin, unittest.TestCase):
         # equality here would hold vacuously.
         options.setdefault("min_rays_per_device", 1)
         return _build_scene(
-            self.device,
-            devices=[0, 1],
-            options=rt.MultiDeviceOptions(weights=weights, warm_up=warm_up, **options),
+            self.device, devices=[0, 1], options=rt.MultiDeviceOptions(weights=weights, warm_up=warm_up, **options)
         )
 
     def test_every_covered_op_matches_single_device_at_several_weightings(self):
@@ -506,22 +421,15 @@ class MultiDeviceSceneTests(MultiDeviceResultMixin, unittest.TestCase):
                     [(start, stop) for _replica, _device, start, stop in scene._multi._shards(_BATCH)],
                     expected_split[None if weights is None else tuple(weights)],
                 )
-                self.assert_same_results(
-                    self.reference,
-                    _covered_op_results(scene, self.inputs),
-                    f"weights={weights}",
-                )
+                self.assert_same_results(self.reference, _covered_op_results(scene, self.inputs), f"weights={weights}")
 
     def test_result_headers_and_types_survive_the_gather(self):
         scene = self._multi_scene([9.0, 1.0])
-        self.assertEqual(
-            _covered_op_headers(self.single, self.inputs),
-            _covered_op_headers(scene, self.inputs),
-        )
+        self.assertEqual(_covered_op_headers(self.single, self.inputs), _covered_op_headers(scene, self.inputs))
         reduced = scene.intersect(self.inputs["ray"], flags=getattr(rt.RayFlags, "None"))
-        self.assertEqual(type(reduced), type(self.single.intersect(
-            self.inputs["ray"], flags=getattr(rt.RayFlags, "None")
-        )))
+        self.assertEqual(
+            type(reduced), type(self.single.intersect(self.inputs["ray"], flags=getattr(rt.RayFlags, "None")))
+        )
         self.assertEqual(tuple(reduced.p.shape), (0, 3))
         self.assertEqual(
             type(scene.trace_reflections(self.inputs["ray"], max_bounces=2)),
@@ -534,16 +442,8 @@ class MultiDeviceSceneTests(MultiDeviceResultMixin, unittest.TestCase):
         """The default path (`Scene(devices=[...])`, warm-up on) is covered too."""
         if torch.cuda.get_device_name(0) != torch.cuda.get_device_name(1):
             self.skipTest("bitwise cross-device equality needs identical devices")
-        scene = _build_scene(
-            self.device,
-            devices=[0, 1],
-            options=rt.MultiDeviceOptions(min_rays_per_device=1),
-        )
-        self.assert_same_results(
-            self.reference,
-            _covered_op_results(scene, self.inputs),
-            "default options",
-        )
+        scene = _build_scene(self.device, devices=[0, 1], options=rt.MultiDeviceOptions(min_rays_per_device=1))
+        self.assert_same_results(self.reference, _covered_op_results(scene, self.inputs), "default options")
         self.assertEqual(scene._multi.last_dispatch, "pipelined")
 
     def test_master_vertex_gradient_matches_single_device(self):
@@ -556,12 +456,7 @@ class MultiDeviceSceneTests(MultiDeviceResultMixin, unittest.TestCase):
             if devices is None:
                 scene = rt.Scene()
             else:
-                scene = rt.Scene(
-                    devices=devices,
-                    options=rt.MultiDeviceOptions(
-                        warm_up=False, min_rays_per_device=1
-                    ),
-                )
+                scene = rt.Scene(devices=devices, options=rt.MultiDeviceOptions(warm_up=False, min_rays_per_device=1))
             scene.add_mesh(rt.Mesh(leaf, faces))
             scene.build()
             hit = scene.intersect(self.inputs["ray"])
@@ -585,10 +480,7 @@ class MultiDeviceSceneTests(MultiDeviceResultMixin, unittest.TestCase):
         vertices, faces = _grid_mesh(self.device)
         moved = (vertices + torch.tensor([[0.05, -0.02, 0.15]], device=self.device)).contiguous()
 
-        scene = rt.Scene(
-            devices=[0, 1],
-            options=rt.MultiDeviceOptions(warm_up=False, min_rays_per_device=1),
-        )
+        scene = rt.Scene(devices=[0, 1], options=rt.MultiDeviceOptions(warm_up=False, min_rays_per_device=1))
         scene.add_mesh(rt.Mesh(vertices.clone(), faces), dynamic=True)
         scene.build()
         scene.update_mesh_vertices(0, moved)
@@ -628,10 +520,7 @@ class MultiDeviceSceneTests(MultiDeviceResultMixin, unittest.TestCase):
             "after set_edge_mask",
         )
         for replica, device in zip(scene._multi._replicas, scene._multi.devices):
-            self.assertTrue(
-                torch.equal(_bits(replica.edge_mask()), _bits(mask)),
-                f"edge mask did not reach {device}",
-            )
+            self.assertTrue(torch.equal(_bits(replica.edge_mask()), _bits(mask)), f"edge mask did not reach {device}")
 
     def test_operations_without_multi_device_semantics_raise(self):
         """What is left after Phase 2c wired the lane-windowed accumulation ops.
@@ -647,14 +536,9 @@ class MultiDeviceSceneTests(MultiDeviceResultMixin, unittest.TestCase):
 
         cases = {
             "trace_dfr_paths": lambda: scene.trace_dfr_paths(
-                tx_positions=self.inputs["origins"],
-                rx_positions=self.inputs["receiver"],
-                states=states,
-                active=active,
+                tx_positions=self.inputs["origins"], rx_positions=self.inputs["receiver"], states=states, active=active
             ),
-            "accum_dfr_coherent_direct": lambda: scene.accum_dfr_coherent_direct(
-                states=states, grid=grid
-            ),
+            "accum_dfr_coherent_direct": lambda: scene.accum_dfr_coherent_direct(states=states, grid=grid),
         }
         for name, call in cases.items():
             with self.subTest(operation=name):
@@ -684,15 +568,10 @@ class MultiDeviceSceneTests(MultiDeviceResultMixin, unittest.TestCase):
         ray = rt.Ray(empty, empty)
         self.assertEqual(tuple(scene.intersect(ray).t.shape), (0,))
         self.assertEqual(tuple(scene.visible(empty, empty).shape), (0,))
-        self.assertEqual(
-            tuple(scene.trace_reflections(ray, max_bounces=2).valid.shape), (0, 2)
-        )
+        self.assertEqual(tuple(scene.trace_reflections(ray, max_bounces=2).valid.shape), (0, 2))
 
 
-@unittest.skipUnless(
-    torch.cuda.is_available() and torch.cuda.device_count() >= 2,
-    "two CUDA devices are required",
-)
+@unittest.skipUnless(torch.cuda.is_available() and torch.cuda.device_count() >= 2, "two CUDA devices are required")
 class PipelinedDispatchTests(MultiDeviceResultMixin, unittest.TestCase):
     """Phase 2d: the pipelined path is the plain path, only overlapped.
 
@@ -717,9 +596,7 @@ class PipelinedDispatchTests(MultiDeviceResultMixin, unittest.TestCase):
     def _scene(self, **options) -> rt.Scene:
         options.setdefault("warm_up", False)
         options.setdefault("min_rays_per_device", 1)
-        return _build_scene(
-            self.device, devices=[0, 1], options=rt.MultiDeviceOptions(**options)
-        )
+        return _build_scene(self.device, devices=[0, 1], options=rt.MultiDeviceOptions(**options))
 
     def test_the_pipelined_result_is_the_unpipelined_result_bitwise(self):
         """The pipeline is an execution shape, not a numerical one."""
@@ -729,22 +606,16 @@ class PipelinedDispatchTests(MultiDeviceResultMixin, unittest.TestCase):
             for chunks in (2, 4, 32):
                 with self.subTest(weights=weights, chunks=chunks):
                     plain = self._scene(weights=weights, pipeline=False)
-                    piped = self._scene(
-                        weights=weights, pipeline_chunks_per_device=chunks
-                    )
+                    piped = self._scene(weights=weights, pipeline_chunks_per_device=chunks)
                     plain_results = _covered_op_results(plain, self.inputs)
                     self.assertEqual(plain._multi.last_dispatch, "sharded")
                     self.assert_same_results(
-                        plain_results,
-                        _covered_op_results(piped, self.inputs),
-                        f"weights={weights} chunks={chunks}",
+                        plain_results, _covered_op_results(piped, self.inputs), f"weights={weights} chunks={chunks}"
                     )
                     self.assertEqual(piped._multi.last_dispatch, "pipelined")
                     # ... and the unpipelined path is still the single-device
                     # result, so this is not two wrongs agreeing.
-                    self.assert_same_results(
-                        self.reference, plain_results, "unpipelined vs single"
-                    )
+                    self.assert_same_results(self.reference, plain_results, "unpipelined vs single")
 
     def test_the_auto_chunking_gives_every_shard_at_least_two_chunks(self):
         """The overlap the pipeline needs: the remote shard is never one launch."""
@@ -762,19 +633,13 @@ class PipelinedDispatchTests(MultiDeviceResultMixin, unittest.TestCase):
     def test_a_degenerate_split_is_dispatched_as_a_single_device_call(self):
         """`weights=[1, 0]` is the master alone, and is run as the master alone."""
         scene = self._scene(weights=[1.0, 0.0])
-        self.assert_same_results(
-            self.reference,
-            _covered_op_results(scene, self.inputs),
-            "weights=[1, 0]",
-        )
+        self.assert_same_results(self.reference, _covered_op_results(scene, self.inputs), "weights=[1, 0]")
         self.assertEqual(scene._multi.last_dispatch, "master")
 
     def test_the_pipelined_gradient_matches_the_single_device_gradient(self):
         """D4 through the pipeline: backward runs on the executor's own streams."""
         vertices, faces = _grid_mesh(self.device)
-        weight = (
-            torch.arange(_BATCH, device=self.device, dtype=torch.float32) + 1.0
-        ) / _BATCH
+        weight = (torch.arange(_BATCH, device=self.device, dtype=torch.float32) + 1.0) / _BATCH
 
         def gradient(options):
             leaf = vertices.clone().requires_grad_(True)
@@ -790,9 +655,7 @@ class PipelinedDispatchTests(MultiDeviceResultMixin, unittest.TestCase):
 
         single, _ = gradient(None)
         self.assertGreater(float(single.abs().max()), 0.0)
-        piped, dispatch = gradient(
-            rt.MultiDeviceOptions(warm_up=False, min_rays_per_device=1)
-        )
+        piped, dispatch = gradient(rt.MultiDeviceOptions(warm_up=False, min_rays_per_device=1))
         self.assertEqual(dispatch, "pipelined")
         # Per-shard atomics reduced onto the master leaf: float32 order only.
         torch.testing.assert_close(piped, single, rtol=1e-5, atol=1e-6)
@@ -821,10 +684,7 @@ class PipelinedDispatchTests(MultiDeviceResultMixin, unittest.TestCase):
         self.assert_same_results(self.reference, results, "busy master stream")
 
 
-@unittest.skipUnless(
-    torch.cuda.is_available() and torch.cuda.device_count() >= 2,
-    "two CUDA devices are required",
-)
+@unittest.skipUnless(torch.cuda.is_available() and torch.cuda.device_count() >= 2, "two CUDA devices are required")
 class PipelinedStreamOrderingTests(MultiDeviceResultMixin, unittest.TestCase):
     """The executor's private streams are ordered against every device's own.
 
@@ -865,23 +725,14 @@ class PipelinedStreamOrderingTests(MultiDeviceResultMixin, unittest.TestCase):
         directions = torch.randn((self._RAYS, 3), generator=generator)
         directions[:, 2] = directions[:, 2].abs() + 0.25
         directions = directions / directions.norm(dim=1, keepdim=True)
-        self.ray = rt.Ray(
-            origins.contiguous().to(self.device),
-            directions.contiguous().to(self.device),
-        )
+        self.ray = rt.Ray(origins.contiguous().to(self.device), directions.contiguous().to(self.device))
 
     def tearDown(self) -> None:
         torch.cuda.set_device(self._entry_device)
 
     def _scene(self) -> rt.Scene:
-        scene = rt.Scene(
-            devices=[0, 1],
-            options=rt.MultiDeviceOptions(warm_up=False, min_rays_per_device=1),
-        )
-        scene.add_mesh(
-            rt.Mesh(self.vertices.clone(), self.faces, edges_enabled=False),
-            dynamic=True,
-        )
+        scene = rt.Scene(devices=[0, 1], options=rt.MultiDeviceOptions(warm_up=False, min_rays_per_device=1))
+        scene.add_mesh(rt.Mesh(self.vertices.clone(), self.faces, edges_enabled=False), dynamic=True)
         scene.build()
         return scene
 
@@ -926,10 +777,7 @@ class PipelinedStreamOrderingTests(MultiDeviceResultMixin, unittest.TestCase):
             torch.cuda.synchronize(0)
             torch.cuda.synchronize(1)
             self.assertGreater(int(torch.isfinite(ref_t).sum()), self._RAYS // 8)
-            if not (
-                torch.equal(_bits(fast_t), _bits(ref_t))
-                and torch.equal(_bits(fast_p), _bits(ref_p))
-            ):
+            if not (torch.equal(_bits(fast_t), _bits(ref_t)) and torch.equal(_bits(fast_p), _bits(ref_p))):
                 stale += 1
         self.assertEqual(
             stale,
@@ -964,8 +812,7 @@ class PipelinedStreamOrderingTests(MultiDeviceResultMixin, unittest.TestCase):
             torch.cuda.synchronize(0)
             torch.cuda.synchronize(1)
             self.assertTrue(
-                torch.equal(_bits(live_t), _bits(ref_t))
-                and torch.equal(_bits(live_p), _bits(ref_p)),
+                torch.equal(_bits(live_t), _bits(ref_t)) and torch.equal(_bits(live_p), _bits(ref_p)),
                 f"round {round_index}: a later sync() disturbed a query in flight",
             )
             scene.update_mesh_vertices(0, moved)
@@ -984,10 +831,7 @@ class PipelinedStreamOrderingTests(MultiDeviceResultMixin, unittest.TestCase):
         directions = torch.randn((count, 3), generator=generator)
         directions[:, 2] = directions[:, 2].abs() + 0.25
         directions = directions / directions.norm(dim=1, keepdim=True)
-        ray = rt.Ray(
-            origins.contiguous().to(self.device),
-            directions.contiguous().to(self.device),
-        )
+        ray = rt.Ray(origins.contiguous().to(self.device), directions.contiguous().to(self.device))
 
         single = rt.Scene()
         single.add_mesh(rt.Mesh(self.vertices.clone(), self.faces, edges_enabled=False))
@@ -996,9 +840,7 @@ class PipelinedStreamOrderingTests(MultiDeviceResultMixin, unittest.TestCase):
         expected = {"t": reference.t.clone(), "p": reference.p.clone()}
         expected["prim"] = reference.global_prim_id.clone()
 
-        scene = rt.Scene(
-            devices=[0, 1], options=rt.MultiDeviceOptions(warm_up=False)
-        )
+        scene = rt.Scene(devices=[0, 1], options=rt.MultiDeviceOptions(warm_up=False))
         scene.add_mesh(rt.Mesh(self.vertices.clone(), self.faces, edges_enabled=False))
         scene.build()
         hit = scene.intersect(ray, flags=rt.RayFlags.All)
@@ -1011,20 +853,11 @@ class PipelinedStreamOrderingTests(MultiDeviceResultMixin, unittest.TestCase):
         self.assertEqual(plan.chunk_count, 1 + 4)
         self.assertGreater(int(torch.isfinite(expected["t"]).sum()), count // 8)
         self.assert_same_results(
-            expected,
-            {
-                "t": hit.t,
-                "p": hit.p,
-                "prim": hit.global_prim_id,
-            },
-            "1M-row pipelined batch",
+            expected, {"t": hit.t, "p": hit.p, "prim": hit.global_prim_id}, "1M-row pipelined batch"
         )
 
 
-@unittest.skipUnless(
-    torch.cuda.is_available() and torch.cuda.device_count() >= 2,
-    "two CUDA devices are required",
-)
+@unittest.skipUnless(torch.cuda.is_available() and torch.cuda.device_count() >= 2, "two CUDA devices are required")
 class SmallBatchFallbackTests(MultiDeviceResultMixin, unittest.TestCase):
     """A batch too small to pay for its own copies runs on the master alone.
 
@@ -1058,33 +891,22 @@ class SmallBatchFallbackTests(MultiDeviceResultMixin, unittest.TestCase):
 
     def test_the_floor_is_applied_to_the_actual_remote_shard(self):
         scene = _build_scene(
-            self.device,
-            devices=[0, 1],
-            options=rt.MultiDeviceOptions(warm_up=False, min_rays_per_device=17),
+            self.device, devices=[0, 1], options=rt.MultiDeviceOptions(warm_up=False, min_rays_per_device=17)
         )
         layer = scene._multi
         self.assertEqual(layer._dispatch_mode("intersect_full", 32, 100), "master")
-        self.assertEqual(
-            layer._dispatch_mode("intersect_full", 33, 100), "pipelined"
-        )
+        self.assertEqual(layer._dispatch_mode("intersect_full", 33, 100), "pipelined")
         self.assertEqual(layer._dispatch_mode("intersect_full", 0, 100), "master")
 
     def test_an_explicit_chunking_contract_outranks_the_floor(self):
         """`chunk_rays` is a memory bound; it is honoured at every batch size."""
-        scene = _build_scene(
-            self.device,
-            devices=[0, 1],
-            options=rt.MultiDeviceOptions(warm_up=False, chunk_rays=8),
-        )
+        scene = _build_scene(self.device, devices=[0, 1], options=rt.MultiDeviceOptions(warm_up=False, chunk_rays=8))
         scene.intersect(self.inputs["ray"])
         self.assertEqual(scene._multi.last_dispatch, "chunked")
         self.assertEqual(scene._multi.last_chunk_plan.source, "requested")
 
 
-@unittest.skipUnless(
-    torch.cuda.is_available() and torch.cuda.device_count() >= 2,
-    "two CUDA devices are required",
-)
+@unittest.skipUnless(torch.cuda.is_available() and torch.cuda.device_count() >= 2, "two CUDA devices are required")
 class CalibrationTests(unittest.TestCase):
     """`calibrate_devices()` picks weights; it never changes what a weight means."""
 
@@ -1100,9 +922,7 @@ class CalibrationTests(unittest.TestCase):
     def _scene(self, **options) -> rt.Scene:
         options.setdefault("warm_up", False)
         options.setdefault("min_rays_per_device", 1)
-        return _build_scene(
-            self.device, devices=[0, 1], options=rt.MultiDeviceOptions(**options)
-        )
+        return _build_scene(self.device, devices=[0, 1], options=rt.MultiDeviceOptions(**options))
 
     def test_the_throughput_stage_measures_every_device_and_sets_the_weights(self):
         scene = self._scene()
@@ -1117,9 +937,7 @@ class CalibrationTests(unittest.TestCase):
         self.assertAlmostEqual(sum(record.weights), 2.0, places=6)
         for weight, seconds in zip(record.weights, record.seconds):
             self.assertAlmostEqual(
-                weight,
-                2.0 * (1.0 / seconds) / sum(1.0 / value for value in record.seconds),
-                places=6,
+                weight, 2.0 * (1.0 / seconds) / sum(1.0 / value for value in record.seconds), places=6
             )
         self.assertEqual(scene.device_weights, record.weights)
         self.assertEqual(scene.device_weights_for("intersect_full"), record.weights)
@@ -1143,9 +961,7 @@ class CalibrationTests(unittest.TestCase):
 
         best = min(record.candidate_seconds)
         chosen = record.candidates.index(record.weights)
-        self.assertLessEqual(
-            record.candidate_seconds[chosen], best * (1.0 + _REFINE_TOLERANCE)
-        )
+        self.assertLessEqual(record.candidate_seconds[chosen], best * (1.0 + _REFINE_TOLERANCE))
         for seconds in record.candidate_seconds[:chosen]:
             self.assertGreater(seconds, best * (1.0 + _REFINE_TOLERANCE))
         self.assertEqual(scene.device_weights, record.weights)
@@ -1160,28 +976,16 @@ class CalibrationTests(unittest.TestCase):
             points = self.inputs["points"].to(device)
             target.nearest_edge(points)
 
-        record = scene.calibrate_devices(
-            operation="nearest_edge",
-            probe=probe,
-            repeats=1,
-            warm_up=0,
-        )
+        record = scene.calibrate_devices(operation="nearest_edge", probe=probe, repeats=1, warm_up=0)
         self.assertGreater(len(seen), 0)
         self.assertEqual({name for name, _index in seen}, {"Scene", "_ReplicatedScene"})
-        self.assertEqual(
-            {index for name, index in seen if name == "_ReplicatedScene"}, {0}
-        )
+        self.assertEqual({index for name, index in seen if name == "_ReplicatedScene"}, {0})
         self.assertEqual(record.rows, 1 << 20)
 
     def test_a_named_nondefault_operation_requires_its_own_probe(self):
         scene = self._scene()
         with self.assertRaisesRegex(ValueError, "custom probe"):
-            scene.calibrate_devices(
-                operation="visible",
-                rays=4096,
-                repeats=1,
-                warm_up=0,
-            )
+            scene.calibrate_devices(operation="visible", rays=4096, repeats=1, warm_up=0)
 
     def test_calibration_only_chooses_weights_and_leaves_results_alone(self):
         if torch.cuda.get_device_name(0) != torch.cuda.get_device_name(1):
@@ -1190,10 +994,7 @@ class CalibrationTests(unittest.TestCase):
         reference = _covered_op_results(single, self.inputs)
         scene = self._scene()
         scene.calibrate_devices(rays=4096, repeats=2, warm_up=1)
-        first = {
-            name: value.clone()
-            for name, value in _covered_op_results(scene, self.inputs).items()
-        }
+        first = {name: value.clone() for name, value in _covered_op_results(scene, self.inputs).items()}
         second = _covered_op_results(scene, self.inputs)
         mixin = MultiDeviceResultMixin()
         mixin.assertEqual = self.assertEqual
@@ -1212,9 +1013,7 @@ def _dfr_states(device: torch.device, requires_grad: bool = False) -> rt.DfrStat
     """Caller-owned order-1 diffraction states over the accumulation fixture."""
 
     def leaf(values):
-        return torch.tensor(
-            values, dtype=torch.float32, device=device, requires_grad=requires_grad
-        )
+        return torch.tensor(values, dtype=torch.float32, device=device, requires_grad=requires_grad)
 
     def f32(values):
         return torch.tensor(values, dtype=torch.float32, device=device)
@@ -1260,11 +1059,7 @@ def _accum_scene(device: torch.device, **kwargs) -> rt.Scene:
     accumulation below lands real power in real cells; each test asserts that
     explicitly rather than trusting the fixture.
     """
-    vertices = torch.tensor(
-        [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
-        dtype=torch.float32,
-        device=device,
-    )
+    vertices = torch.tensor([[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]], dtype=torch.float32, device=device)
     faces = torch.tensor([[0, 1, 2]], dtype=torch.int32, device=device)
     scene = rt.Scene(**kwargs)
     scene.add_mesh(rt.Mesh(vertices, faces))
@@ -1275,9 +1070,7 @@ def _accum_scene(device: torch.device, **kwargs) -> rt.Scene:
 def _chain_fixture(device: torch.device, **kwargs):
     """Order-2 chain fixture: one initial and one recursive diffraction state."""
     vertices = torch.tensor(
-        [[-1.0, -1.0, 10.0], [1.0, -1.0, 10.0], [-1.0, 1.0, 10.0]],
-        dtype=torch.float32,
-        device=device,
+        [[-1.0, -1.0, 10.0], [1.0, -1.0, 10.0], [-1.0, 1.0, 10.0]], dtype=torch.float32, device=device
     )
     faces = torch.tensor([[0, 1, 2]], dtype=torch.int32, device=device)
     scene = rt.Scene(**kwargs)
@@ -1323,18 +1116,12 @@ _ACCUM_SAMPLES = 8192
 class AccumulationMixin:
     def assert_accum_close(self, merged, reference, context: str) -> None:
         """A merged grid is the single-launch grid up to float32 summation order."""
-        self.assertGreater(
-            float(reference.power.sum().item()), 0.0, f"{context}: vacuous fixture"
-        )
+        self.assertGreater(float(reference.power.sum().item()), 0.0, f"{context}: vacuous fixture")
         self.assertEqual(merged.grid_cell_count, reference.grid_cell_count)
         self.assertEqual(merged.power.device, reference.power.device)
         for name in ("power", "field_x_re", "field_x_im", "field_y_re", "field_z_re"):
             torch.testing.assert_close(
-                getattr(merged, name),
-                getattr(reference, name),
-                rtol=1e-4,
-                atol=1e-9,
-                msg=f"{context}: {name} mismatch",
+                getattr(merged, name), getattr(reference, name), rtol=1e-4, atol=1e-9, msg=f"{context}: {name} mismatch"
             )
         # The counters are integers, so the split has to be exact, not close:
         # every sample the single launch drew is drawn once by some shard.
@@ -1357,10 +1144,7 @@ class AccumulationMixin:
             )
 
 
-@unittest.skipUnless(
-    torch.cuda.is_available() and torch.cuda.device_count() >= 2,
-    "two CUDA devices are required",
-)
+@unittest.skipUnless(torch.cuda.is_available() and torch.cuda.device_count() >= 2, "two CUDA devices are required")
 class MultiDeviceAccumulationTests(AccumulationMixin, unittest.TestCase):
     """Phase 2c: `grid_reduce` accumulation sharded over the lane space."""
 
@@ -1379,20 +1163,10 @@ class MultiDeviceAccumulationTests(AccumulationMixin, unittest.TestCase):
         # the small-window master fallback has its own policy coverage.
         options.setdefault("min_lanes_per_device", 1)
         return _accum_scene(
-            self.device,
-            devices=[0, 1],
-            options=rt.MultiDeviceOptions(weights=weights, warm_up=False, **options),
+            self.device, devices=[0, 1], options=rt.MultiDeviceOptions(weights=weights, warm_up=False, **options)
         )
 
-    def _accum(
-        self,
-        scene,
-        *,
-        samples: int = _ACCUM_SAMPLES,
-        states=None,
-        material=None,
-        **kwargs,
-    ):
+    def _accum(self, scene, *, samples: int = _ACCUM_SAMPLES, states=None, material=None, **kwargs):
         return scene.accum_dfr_direct(
             states=_dfr_states(self.device) if states is None else states,
             grid=self.grid,
@@ -1408,9 +1182,7 @@ class MultiDeviceAccumulationTests(AccumulationMixin, unittest.TestCase):
         for weights in (None, [3.0, 1.0], [1.0, 0.0], [0.0, 1.0]):
             with self.subTest(weights=weights):
                 scene = self._scene(weights)
-                self.assert_accum_close(
-                    self._accum(scene), reference, f"weights={weights}"
-                )
+                self.assert_accum_close(self._accum(scene), reference, f"weights={weights}")
 
     def test_the_lane_windows_partition_the_caller_s_window(self):
         """D5: the shards are a partition of the lane space, warp by warp.
@@ -1426,12 +1198,7 @@ class MultiDeviceAccumulationTests(AccumulationMixin, unittest.TestCase):
         for weights in (None, [3.0, 1.0], [1.0, 1.0, 0.0][:2]):
             with self.subTest(weights=weights):
                 layer = self._scene(weights)._multi
-                windows = [
-                    (begin, count)
-                    for _replica, _device, begin, count in layer._lane_shards(
-                        0, _ACCUM_SAMPLES
-                    )
-                ]
+                windows = [(begin, count) for _replica, _device, begin, count in layer._lane_shards(0, _ACCUM_SAMPLES)]
                 self.assertTrue(windows)
                 covered = 0
                 for begin, count in windows:
@@ -1453,8 +1220,7 @@ class MultiDeviceAccumulationTests(AccumulationMixin, unittest.TestCase):
         merged = halves[0].power + halves[1].power
         torch.testing.assert_close(merged, whole.power, rtol=1e-4, atol=1e-9)
         self.assertEqual(
-            int(halves[0].direct_count.item()) + int(halves[1].direct_count.item()),
-            int(whole.direct_count.item()),
+            int(halves[0].direct_count.item()) + int(halves[1].direct_count.item()), int(whole.direct_count.item())
         )
         with self.assertRaises(RuntimeError):
             self._accum(scene, lane_offset=_ACCUM_SAMPLES + 1)
@@ -1495,11 +1261,7 @@ class MultiDeviceAccumulationTests(AccumulationMixin, unittest.TestCase):
         scene = self._scene()
         windows = scene._multi._lane_shards(0, 16)
         self.assertEqual([(begin, count) for _r, _d, begin, count in windows], [(0, 16)])
-        self.assert_accum_close(
-            self._accum(scene, samples=16),
-            self._accum(self.single, samples=16),
-            "samples=16",
-        )
+        self.assert_accum_close(self._accum(scene, samples=16), self._accum(self.single, samples=16), "samples=16")
 
     def test_an_empty_lane_space_runs_once_on_the_master(self):
         scene = self._scene()
@@ -1532,8 +1294,7 @@ class MultiDeviceAccumulationTests(AccumulationMixin, unittest.TestCase):
         reference = accum(single)
         merged = accum(multi)
         self.assertEqual(
-            [(begin, count) for _r, _d, begin, count in multi._multi._lane_shards(0, 4096)],
-            [(0, 2048), (2048, 2048)],
+            [(begin, count) for _r, _d, begin, count in multi._multi._lane_shards(0, 4096)], [(0, 2048), (2048, 2048)]
         )
         # The chain path reduces through plain atomics on one device as much as
         # on two, so this is the tolerance comparison of D3, never a bitwise one.
@@ -1547,9 +1308,7 @@ class MultiDeviceAccumulationTests(AccumulationMixin, unittest.TestCase):
             material = _dfr_material(self.device, requires_grad=True)
             # The AD route writes a tape and reduces through atomics, so this
             # runs at the smaller sample count the tape budget likes.
-            merged = self._accum(
-                scene, samples=1024, states=states, material=material
-            )
+            merged = self._accum(scene, samples=1024, states=states, material=material)
             merged.power.sum().backward()
             return {
                 "edge_pos": states.edge_pos.grad,
@@ -1566,12 +1325,8 @@ class MultiDeviceAccumulationTests(AccumulationMixin, unittest.TestCase):
             with self.subTest(gradient=name):
                 self.assertIsNotNone(actual[name], "the shard gradients never arrived")
                 self.assertEqual(actual[name].device, self.device)
-                self.assertGreater(
-                    float(value.abs().sum().item()), 0.0, "vacuous gradient"
-                )
-                torch.testing.assert_close(
-                    actual[name], value, rtol=1e-4, atol=1e-9, msg=f"{name} mismatch"
-                )
+                self.assertGreater(float(value.abs().sum().item()), 0.0, "vacuous gradient")
+                torch.testing.assert_close(actual[name], value, rtol=1e-4, atol=1e-9, msg=f"{name} mismatch")
 
 
 if __name__ == "__main__":

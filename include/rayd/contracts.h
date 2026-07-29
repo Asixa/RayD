@@ -82,8 +82,8 @@ enum class NearestEdgesTopKField : std::uint8_t {
     Count,
 };
 
-#define RAYD_SHARED_ASSERT_ENUM_POD(Type)                                    \
-    static_assert(std::is_standard_layout_v<Type>);                          \
+#define RAYD_SHARED_ASSERT_ENUM_POD(Type)                                                                              \
+    static_assert(std::is_standard_layout_v<Type>);                                                                    \
     static_assert(std::is_trivially_copyable_v<Type>)
 
 RAYD_SHARED_ASSERT_ENUM_POD(RayFlagBits);
@@ -96,8 +96,7 @@ RAYD_SHARED_ASSERT_ENUM_POD(NearestEdgesTopKField);
 
 static_assert(static_cast<std::uint32_t>(InvalidSignedId) == InvalidUnsignedId);
 static_assert(static_cast<std::uint32_t>(RayFlagBits::All) ==
-              (static_cast<std::uint32_t>(RayFlagBits::Geometric) |
-               static_cast<std::uint32_t>(RayFlagBits::ShadingN) |
+              (static_cast<std::uint32_t>(RayFlagBits::Geometric) | static_cast<std::uint32_t>(RayFlagBits::ShadingN) |
                static_cast<std::uint32_t>(RayFlagBits::UV)));
 static_assert(static_cast<std::uint8_t>(IntersectionField::Count) == 10u);
 static_assert(static_cast<std::uint8_t>(NearestPointEdgeField::Count) == 8u);

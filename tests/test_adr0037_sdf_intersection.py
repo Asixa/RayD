@@ -19,9 +19,7 @@ PLAN_PATH = ROOT / "docs" / "dev" / "sdf_intersection_plan.md"
 OPERATIONS_PATH = ROOT / "contracts" / "operations.json"
 PUBLIC_API_PATH = ROOT / "contracts" / "public_api.json"
 COMPILE_POLICY_PATH = ROOT / "contracts" / "compile_policy.json"
-SPHERE_TRACE_PATH = (
-    ROOT / "include" / "rayd" / "sdf" / "sphere_trace.h"
-)
+SPHERE_TRACE_PATH = ROOT / "include" / "rayd" / "sdf" / "sphere_trace.h"
 DEVICE_MATH_PATH = ROOT / "src" / "sdf" / "derivatives.cuh"
 TORCH_PACKAGE = ROOT / "python" / "rayd" / "_impl"
 CAPABILITY_MODULES = {
@@ -200,9 +198,7 @@ class Adr0037RepresentationTests(AdrTestCase):
 
 class Adr0037AlgorithmTests(AdrTestCase):
     def setUp(self) -> None:
-        self.march = sections(read(ADR_PATH), 3)[
-            "4. Sphere trace with relaxation and sign-flip bisection"
-        ]
+        self.march = sections(read(ADR_PATH), 3)["4. Sphere trace with relaxation and sign-flip bisection"]
 
     def test_relaxed_step_freezes_the_entry_sign(self) -> None:
         self.assertPhrase("t_raw_k = t_k + lambda * sigma * d_k", self.march)
@@ -230,9 +226,7 @@ class Adr0037AlgorithmTests(AdrTestCase):
     def test_the_interpolant_is_never_evaluated_outside_its_domain(self) -> None:
         body = sections(read(ADR_PATH), 3)["1. Field representation"]
         self.assertPhrase("u_i := clamp(u_i, 0, N_i - 1)", body)
-        self.assertPhrase(
-            "`D` is never evaluated at a `u` outside `[0, N_i - 1]`", body
-        )
+        self.assertPhrase("`D` is never evaluated at a `u` outside `[0, N_i - 1]`", body)
 
     def test_bisection_fallback_is_bounded_and_always_reports_a_hit(self) -> None:
         for pinned in (
@@ -248,9 +242,7 @@ class Adr0037OutputAndAdTests(AdrTestCase):
     def setUp(self) -> None:
         decision = sections(read(ADR_PATH), 3)
         self.outputs = decision["5. Outputs and miss semantics"]
-        self.ad = decision[
-            "6. Differentiability: frozen-winner implicit function theorem"
-        ]
+        self.ad = decision["6. Differentiability: frozen-winner implicit function theorem"]
 
     def test_result_fields_and_miss_inertness_are_pinned(self) -> None:
         for pinned in (
@@ -283,18 +275,9 @@ class Adr0037OutputAndAdTests(AdrTestCase):
 
     def test_all_six_gradient_inputs_have_a_partial_derivative_row(self) -> None:
         rows = {
-            line.split("|")[1].strip()
-            for line in self.ad.splitlines()
-            if line.startswith("|") and line.count("|") >= 3
+            line.split("|")[1].strip() for line in self.ad.splitlines() if line.startswith("|") and line.count("|") >= 3
         }
-        for name in (
-            "`values[b + m]`",
-            "`origins`",
-            "`position`",
-            "`directions`",
-            "`scale_i`",
-            "`rotation_a`",
-        ):
+        for name in ("`values[b + m]`", "`origins`", "`position`", "`directions`", "`scale_i`", "`rotation_a`"):
             self.assertIn(name, rows)
         # The two internal normalizations must be differentiated through, not
         # asserted away as a caller precondition.
@@ -338,12 +321,8 @@ class Adr0037NumericConstantTests(AdrTestCase):
     def test_reused_epsilons_match_the_shared_operation_contract(self) -> None:
         expected = {
             "`eps_graze`": self.operations["constants"]["epsilon"]["small"],
-            "`eps_norm`": self.operations["numeric_policy"]["shared_multipath"][
-                "normalize_floor"
-            ],
-            "`eps_parallel`": self.operations["numeric_policy"]["backend_profiles"][
-                "torch"
-            ]["parallel_epsilon"],
+            "`eps_norm`": self.operations["numeric_policy"]["shared_multipath"]["normalize_floor"],
+            "`eps_parallel`": self.operations["numeric_policy"]["backend_profiles"]["torch"]["parallel_epsilon"],
         }
         for name, value in expected.items():
             self.assertEqual(float(self.cell(name).strip("`")), value, msg=name)
@@ -358,8 +337,7 @@ class Adr0037NumericConstantTests(AdrTestCase):
         self.assertEqual(self.cell("`max_steps` default"), "`64`")
         self.assertEqual(self.cell("`kSdfBisectionSteps`"), "`32`")
         self.assertEqual(
-            self.cell("`eps_hit` default"),
-            "`kSdfEpsHitVoxelFraction * h_min`, `kSdfEpsHitVoxelFraction = 1e-3`",
+            self.cell("`eps_hit` default"), "`kSdfEpsHitVoxelFraction * h_min`, `kSdfEpsHitVoxelFraction = 1e-3`"
         )
 
     def test_eps_hit_default_is_derived_on_device_without_a_sync(self) -> None:
@@ -374,8 +352,7 @@ class Adr0037NumericConstantTests(AdrTestCase):
 
     def test_caller_parameters_and_contract_constants_are_separated(self) -> None:
         self.assertPhrase(
-            "`eps_graze`, `eps_norm`, and `eps_parallel` are contract constants "
-            "and are not caller parameters",
+            "`eps_graze`, `eps_norm`, and `eps_parallel` are contract constants and are not caller parameters",
             self.constants,
         )
         self.assertPhrase("none of them is differentiable", self.constants)
@@ -482,10 +459,7 @@ class Adr0037PlanConsistencyTests(AdrTestCase):
         self.assertPhrase("docs/dev/sdf_intersection_plan.md", self.adr)
 
     def test_shared_scope_decisions_agree_verbatim(self) -> None:
-        for shared in (
-            "negative inside, positive outside",
-            "u_i = (x_l_i / scale_i + 0.5) * (N_i - 1)",
-        ):
+        for shared in ("negative inside, positive outside", "u_i = (x_l_i / scale_i + 0.5) * (N_i - 1)"):
             self.assertPhrase(shared, self.plan)
             self.assertPhrase(shared, self.adr)
 
@@ -509,11 +483,7 @@ class Adr0037ContractStateTests(AdrTestCase):
         self.assertIn(CAPABILITY, self.operations["required_capability_keys"])
         self.assertIn(CAPABILITY, self.operations["operations"])
         for backend in ("drjit", "torch"):
-            self.assertIn(
-                CAPABILITY,
-                self.public_api["backends"][backend]["capabilities"],
-                msg=backend,
-            )
+            self.assertIn(CAPABILITY, self.public_api["backends"][backend]["capabilities"], msg=backend)
 
     def test_declared_capability_carries_the_adr_values(self) -> None:
         metadata = self.public_api["apis"][CAPABILITY]
@@ -526,11 +496,7 @@ class Adr0037ContractStateTests(AdrTestCase):
         self.assertTrue(backends["torch"]["capabilities"][CAPABILITY])
 
     def test_no_sdf_translation_unit_may_leave_the_nvcc_default_profile(self) -> None:
-        units = [
-            unit
-            for unit in self.compile_policy["translation_units"]
-            if "/sdf/" in unit["source"]
-        ]
+        units = [unit for unit in self.compile_policy["translation_units"] if "/sdf/" in unit["source"]]
         self.assertTrue(units, "the SDF translation units are not declared at all")
         for unit in units:
             with self.subTest(unit=f"{unit['backend']}:{unit['unit']}"):
@@ -554,9 +520,7 @@ class Adr0037OperationContractTests(AdrTestCase):
         raise AssertionError(f"ADR-0037 numeric table has no row {name!r}")
 
     def test_operation_is_torch_only_and_names_its_record(self) -> None:
-        self.assertEqual(
-            self.operation["integration"], {"drjit": [], "torch": ["eager_native"]}
-        )
+        self.assertEqual(self.operation["integration"], {"drjit": [], "torch": ["eager_native"]})
         self.assertEqual(self.operation["record"], "docs/adr/0037-differentiable-sdf-intersection.md")
         self.assertTrue((ROOT / self.operation["record"]).is_file())
 
@@ -564,13 +528,9 @@ class Adr0037OperationContractTests(AdrTestCase):
         # Section 6 lists six gradient inputs; the contract's input list must
         # contain all of them plus the four non-differentiable host scalars.
         self.assertLessEqual(
-            {"values", "position", "rotation", "scale", "origins", "directions"},
-            set(self.operation["inputs"]),
+            {"values", "position", "rotation", "scale", "origins", "directions"}, set(self.operation["inputs"])
         )
-        self.assertLessEqual(
-            {"tmax", "max_steps", "relaxation", "eps_hit"},
-            set(self.operation["inputs"]),
-        )
+        self.assertLessEqual({"tmax", "max_steps", "relaxation", "eps_hit"}, set(self.operation["inputs"]))
         self.assertPhrase("fixed-winner", self.operation["ad"])
         for name in ("values", "position", "rotation", "scale", "origins", "directions"):
             self.assertPhrase(name, self.operation["ad"])
@@ -586,21 +546,14 @@ class Adr0037OperationContractTests(AdrTestCase):
         # The reused epsilons are the shared contract's own values, not copies
         # that happen to agree today.
         self.assertEqual(policy["eps_graze"], self.operations["constants"]["epsilon"]["small"])
+        self.assertEqual(policy["eps_norm"], self.operations["numeric_policy"]["shared_multipath"]["normalize_floor"])
         self.assertEqual(
-            policy["eps_norm"],
-            self.operations["numeric_policy"]["shared_multipath"]["normalize_floor"],
-        )
-        self.assertEqual(
-            policy["eps_parallel"],
-            self.operations["numeric_policy"]["backend_profiles"]["torch"]["parallel_epsilon"],
+            policy["eps_parallel"], self.operations["numeric_policy"]["backend_profiles"]["torch"]["parallel_epsilon"]
         )
 
     def test_grazing_clamp_and_miss_sentinel_are_declared_not_implied(self) -> None:
         policy = self.operation["numeric_policy"]
-        self.assertPhrase(
-            "g_clamped = sign(g) * max(|g|, eps_graze) with sign(0) := +1",
-            policy["grazing_clamp"],
-        )
+        self.assertPhrase("g_clamped = sign(g) * max(|g|, eps_graze) with sign(0) := +1", policy["grazing_clamp"])
         self.assertEqual(policy["miss_sentinel"], self.operations["miss_sentinels"]["distance"])
         self.assertEqual(self.result["miss"]["t"], self.operations["miss_sentinels"]["distance"])
         self.assertIs(self.result["miss"]["hit_mask"], False)
@@ -653,20 +606,13 @@ class Adr0037CodeConstantTests(AdrTestCase):
 
     def test_grazing_epsilon_is_the_shared_small_epsilon(self) -> None:
         self.assertEqual(
-            cpp_constant(self.device_math, "kSdfEpsGraze"),
-            self.operations["constants"]["epsilon"]["small"],
+            cpp_constant(self.device_math, "kSdfEpsGraze"), self.operations["constants"]["epsilon"]["small"]
         )
 
     def test_python_defaults_equal_the_device_defaults(self) -> None:
         source = read(TORCH_PACKAGE / "sdf.py")
-        self.assertEqual(
-            py_constant(source, "DEFAULT_MAX_STEPS"),
-            cpp_constant(self.shared, "kSdfDefaultMaxSteps"),
-        )
-        self.assertEqual(
-            py_constant(source, "DEFAULT_RELAXATION"),
-            cpp_constant(self.shared, "kSdfDefaultRelaxation"),
-        )
+        self.assertEqual(py_constant(source, "DEFAULT_MAX_STEPS"), cpp_constant(self.shared, "kSdfDefaultMaxSteps"))
+        self.assertEqual(py_constant(source, "DEFAULT_RELAXATION"), cpp_constant(self.shared, "kSdfDefaultRelaxation"))
         # Section 7: the host scalar is a non-positive sentinel meaning "derive
         # eps_hit from the resident scale", which is what keeps the operation
         # free of a device-to-host read.
@@ -677,9 +623,7 @@ class Adr0037CapabilityModuleTests(AdrTestCase):
     """Checks the SDF intersection contract against the implementation."""
 
     def setUp(self) -> None:
-        self.sources = {
-            backend: read(path) for backend, path in CAPABILITY_MODULES.items()
-        }
+        self.sources = {backend: read(path) for backend, path in CAPABILITY_MODULES.items()}
 
     def test_each_backend_declares_the_capability_with_its_own_value(self) -> None:
         self.assertIn(f'"{CAPABILITY}": False,', self.sources["drjit"])
@@ -695,15 +639,8 @@ class Adr0037CapabilityModuleTests(AdrTestCase):
         drjit = self.sources["drjit"].splitlines()
         torch = self.sources["torch"].splitlines()
         self.assertEqual(len(drjit), len(torch))
-        divergent = [
-            left.strip().split(":")[0].strip()
-            for left, right in zip(drjit, torch)
-            if left != right
-        ]
-        self.assertEqual(
-            divergent[:4],
-            ["_BACKEND = \"drjit\"", '"surfel"', f'"{CAPABILITY}"', '"torch_compile"'],
-        )
+        divergent = [left.strip().split(":")[0].strip() for left, right in zip(drjit, torch) if left != right]
+        self.assertEqual(divergent[:4], ['_BACKEND = "drjit"', '"surfel"', f'"{CAPABILITY}"', '"torch_compile"'])
 
     def test_adr0036_was_amended_rather_than_left_false(self) -> None:
         adr0036 = read(ADR0036_PATH)

@@ -41,11 +41,7 @@ class BaselineRegressionTests(unittest.TestCase):
         for section, expected_section in sorted(self.expected_data.items()):
             with self.subTest(section=section):
                 assert_close(
-                    self,
-                    self.actual_data[section],
-                    expected_section,
-                    path=section,
-                    policy=self.tolerance_policy,
+                    self, self.actual_data[section], expected_section, path=section, policy=self.tolerance_policy
                 )
 
 

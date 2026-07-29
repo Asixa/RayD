@@ -38,15 +38,7 @@ class VerifyCudaBinaryArchesTests(TestCase):
         self.assertEqual([call[0] for call in calls], ["cuobjdump", "objcopy", "cuobjdump"])
 
     def test_failure_reports_cuobjdump_stderr(self):
-        failed = CompletedProcess(
-            ["cuobjdump"],
-            255,
-            "",
-            "unsupported input",
-        )
-        with patch(
-            "_verify_cuda_binary_arches.subprocess.run",
-            return_value=failed,
-        ):
+        failed = CompletedProcess(["cuobjdump"], 255, "", "unsupported input")
+        with patch("_verify_cuda_binary_arches.subprocess.run", return_value=failed):
             with self.assertRaisesRegex(SystemExit, "unsupported input"):
                 _cuobjdump("--list-elf", Path("_C.pyd"))

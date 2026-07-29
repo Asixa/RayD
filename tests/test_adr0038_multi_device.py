@@ -26,12 +26,8 @@ MULTI_PATH = TORCH_PACKAGE / "multi.py"
 SCENE_PATH = TORCH_PACKAGE / "scene.py"
 AUTOGRAD_PATH = TORCH_PACKAGE / "multipath.py"
 LIBRARY_PATH = ROOT / "src" / "bindings" / "library.cpp"
-DIFFRACTION_OPS_PATH = (
-    ROOT / "src" / "diffraction" / "diffraction.cpp"
-)
-DRJIT_PARITY_TEST_PATH = (
-    ROOT / "tests" / "native" / "test_cuda_multipath_jit.py"
-)
+DIFFRACTION_OPS_PATH = ROOT / "src" / "diffraction" / "diffraction.cpp"
+DRJIT_PARITY_TEST_PATH = ROOT / "tests" / "native" / "test_cuda_multipath_jit.py"
 CAPABILITY_MODULES = {
     "drjit": ROOT / "python" / "rayd" / "_impl" / "capabilities_jit.py",
     "torch": ROOT / "python" / "rayd" / "_impl" / "capabilities.py",
@@ -175,10 +171,7 @@ class Adr0038RecordTests(AdrTestCase):
         for tag in ("D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9"):
             with self.subTest(decision=tag):
                 self.assertIn(f"({tag})", titles)
-        for subject in (
-            "Small-batch fallback and calibration",
-            "Shardability classification",
-        ):
+        for subject in ("Small-batch fallback and calibration", "Shardability classification"):
             self.assertIn(subject, titles)
 
     def test_the_record_points_at_its_plan_and_its_operational_note(self) -> None:
@@ -256,11 +249,7 @@ class Adr0038ContractStateTests(AdrTestCase):
         self.assertIn(CAPABILITY, self.public_api["apis"])
         self.assertIn(CAPABILITY, self.operations["required_capability_keys"])
         for backend in ("drjit", "torch"):
-            self.assertIn(
-                CAPABILITY,
-                self.public_api["backends"][backend]["capabilities"],
-                msg=backend,
-            )
+            self.assertIn(CAPABILITY, self.public_api["backends"][backend]["capabilities"], msg=backend)
 
     def test_declared_capability_carries_the_adr_values(self) -> None:
         metadata = self.public_api["apis"][CAPABILITY]
@@ -272,12 +261,8 @@ class Adr0038ContractStateTests(AdrTestCase):
         self.assertFalse(backends["drjit"]["capabilities"][CAPABILITY])
         self.assertTrue(backends["torch"]["capabilities"][CAPABILITY])
         impact = sections(read(ADR_PATH), 2)["Contract impact"]
-        self.assertPhrase(
-            'backends.drjit.capabilities.multi_device_replicated` is `false`', impact
-        )
-        self.assertPhrase(
-            'backends.torch.capabilities.multi_device_replicated` is `true`', impact
-        )
+        self.assertPhrase("backends.drjit.capabilities.multi_device_replicated` is `false`", impact)
+        self.assertPhrase("backends.torch.capabilities.multi_device_replicated` is `true`", impact)
 
     def test_the_capability_is_not_an_operation(self) -> None:
         # Section 11: multi-device execution is a property of the existing
@@ -313,10 +298,7 @@ class Adr0038ClassificationTableTests(AdrTestCase):
         self.body = sections(read(ADR_PATH), 3)["11. Shardability classification"]
 
     def test_the_record_table_is_the_contract_table(self) -> None:
-        rows = {
-            operation: (cls, disposition)
-            for operation, cls, disposition in table_rows(self.body, 3)
-        }
+        rows = {operation: (cls, disposition) for operation, cls, disposition in table_rows(self.body, 3)}
         declared = {
             name: (entry["shardability"]["class"], entry["shardability"]["torch_multi_device"])
             for name, entry in self.operations.items()
@@ -373,17 +355,12 @@ class Adr0038LaneWindowTests(AdrTestCase):
     def test_the_dispatcher_schema_carries_the_same_defaults(self) -> None:
         library = read(LIBRARY_PATH)
         # One windowed forward, four AD ops that inherit their width from the tape.
-        self.assertEqual(
-            library.count("int lane_offset=0, int lane_count=-1) -> Tensor?[]"), 1
-        )
+        self.assertEqual(library.count("int lane_offset=0, int lane_count=-1) -> Tensor?[]"), 1)
         self.assertEqual(library.count("int lane_offset=0) -> Tensor?[]"), 4)
 
     def test_the_zero_offset_launch_is_declared_and_implemented_as_a_no_op(self) -> None:
         self.assertPhrase("bitwise the unwindowed single launch", self.window["invariance"])
-        self.assertPhrase(
-            "`lane_offset = 0` with the default `lane_count` is bitwise the pre-ADR launch",
-            self.body,
-        )
+        self.assertPhrase("`lane_offset = 0` with the default `lane_count` is bitwise the pre-ADR launch", self.body)
         # `rebase_lane_buffer` is what makes that true, and it returns early.
         self.assertIn("if (ptr == nullptr || lane_offset == 0)", self.ops_cpp)
 
@@ -396,10 +373,7 @@ class Adr0038LaneWindowTests(AdrTestCase):
 
     def test_a_windowed_launch_requires_the_optix_backend(self) -> None:
         self.assertPhrase("requires the OptiX trace backend", self.window["trace_backend"])
-        self.assertIn(
-            '"diffraction accumulation lane_offset requires the OptiX trace backend."',
-            self.ops_cpp,
-        )
+        self.assertIn('"diffraction accumulation lane_offset requires the OptiX trace backend."', self.ops_cpp)
         self.assertPhrase("requires the OptiX trace backend", self.body)
 
     def test_the_host_twin_rejects_exactly_what_the_native_window_rejects(self) -> None:
@@ -413,16 +387,9 @@ class Adr0038LaneWindowTests(AdrTestCase):
                 self.assertIn(message, self.multi)
 
     def test_the_global_lane_space_is_the_sum_of_the_three_sample_counts(self) -> None:
-        self.assertPhrase(
-            "direct_samples + keller_samples + suffix_samples", self.window["semantics"]
-        )
-        self.assertPhrase(
-            "direct_samples + keller_samples + suffix_samples", self.body
-        )
-        self.assertIn(
-            "checked_i32(direct_samples + keller_samples + suffix_samples, \"total_samples\")",
-            self.ops_cpp,
-        )
+        self.assertPhrase("direct_samples + keller_samples + suffix_samples", self.window["semantics"])
+        self.assertPhrase("direct_samples + keller_samples + suffix_samples", self.body)
+        self.assertIn('checked_i32(direct_samples + keller_samples + suffix_samples, "total_samples")', self.ops_cpp)
 
 
 class Adr0038PythonDefaultTests(AdrTestCase):
@@ -470,17 +437,9 @@ class Adr0038PythonDefaultTests(AdrTestCase):
 
     def test_the_module_constants_and_the_dataclass_agree(self) -> None:
         defaults = dataclass_defaults(MULTI_PATH, "MultiDeviceOptions")
-        self.assertEqual(
-            py_constant(self.multi, "_MIN_RAYS_PER_DEVICE"), defaults["min_rays_per_device"]
-        )
-        self.assertEqual(
-            py_constant(self.multi, "_PIPELINE_CHUNKS_PER_DEVICE"),
-            defaults["pipeline_chunks_per_device"],
-        )
-        self.assertEqual(
-            py_constant(self.multi, "_MIN_LANES_PER_DEVICE"),
-            defaults["min_lanes_per_device"],
-        )
+        self.assertEqual(py_constant(self.multi, "_MIN_RAYS_PER_DEVICE"), defaults["min_rays_per_device"])
+        self.assertEqual(py_constant(self.multi, "_PIPELINE_CHUNKS_PER_DEVICE"), defaults["pipeline_chunks_per_device"])
+        self.assertEqual(py_constant(self.multi, "_MIN_LANES_PER_DEVICE"), defaults["min_lanes_per_device"])
 
     def test_the_work_floor_in_the_record_is_the_shipped_policy(self) -> None:
         body = self.decision["10. Small-batch fallback and calibration semantics"]
@@ -503,9 +462,7 @@ class Adr0038PythonDefaultTests(AdrTestCase):
             "than the refinement tolerance (3%) slower than the master alone",
             body,
         )
-        self.assertPhrase(
-            'It is **not** "calibration cannot leave you slower than one GPU"', body
-        )
+        self.assertPhrase('It is **not** "calibration cannot leave you slower than one GPU"', body)
 
 
 class Adr0038SingleDeviceInvarianceTests(AdrTestCase):
@@ -520,14 +477,11 @@ class Adr0038SingleDeviceInvarianceTests(AdrTestCase):
         # only runs when the caller asked for devices or options.
         self.assertEqual(self.scene.count("from .multi import"), 1)
         self.assertIn(
-            "if devices is not None or options is not None:\n"
-            "            from .multi import plan as _plan_multi_device",
+            "if devices is not None or options is not None:\n            from .multi import plan as _plan_multi_device",
             self.scene,
         )
         module_level = [
-            node
-            for node in ast.parse(self.scene).body
-            if isinstance(node, ast.ImportFrom) and node.module == "_multi"
+            node for node in ast.parse(self.scene).body if isinstance(node, ast.ImportFrom) and node.module == "_multi"
         ]
         self.assertEqual(module_level, [])
         self.assertPhrase("imported **only** when `devices=` is passed", self.body)
@@ -535,9 +489,7 @@ class Adr0038SingleDeviceInvarianceTests(AdrTestCase):
     def test_a_one_device_scene_without_chunking_gets_no_orchestrator(self) -> None:
         multi = read(MULTI_PATH)
         self.assertIn("if len(indices) == 1 and not chunking:\n        return None", multi)
-        self.assertPhrase(
-            "`plan()` returns `None` for a one-device `Scene(devices=[d])`", self.body
-        )
+        self.assertPhrase("`plan()` returns `None` for a one-device `Scene(devices=[d])`", self.body)
 
     def test_every_dispatch_site_is_one_comparison(self) -> None:
         # The branch the record promises: `if self._multi is not None`, nothing else.
@@ -556,9 +508,7 @@ class Adr0038RefusalTests(AdrTestCase):
     def setUp(self) -> None:
         self.scene = read(SCENE_PATH)
         self.multi = read(MULTI_PATH)
-        self.body = sections(read(ADR_PATH), 3)[
-            "6. Batch-coupled operations get explicit semantics or they fail (D6)"
-        ]
+        self.body = sections(read(ADR_PATH), 3)["6. Batch-coupled operations get explicit semantics or they fail (D6)"]
 
     def test_the_two_refused_operations_are_the_ones_the_record_names(self) -> None:
         refused = set(re.findall(r'_multi\.unsupported\("([a-z_]+)"\)', self.scene))
@@ -602,9 +552,7 @@ class Adr0038CapabilityModuleTests(AdrTestCase):
     """Checks the replicated multi-device contract against the implementation."""
 
     def setUp(self) -> None:
-        self.sources = {
-            backend: read(path) for backend, path in CAPABILITY_MODULES.items()
-        }
+        self.sources = {backend: read(path) for backend, path in CAPABILITY_MODULES.items()}
 
     def test_each_backend_declares_the_capability_with_its_own_value(self) -> None:
         self.assertIn(f'"{CAPABILITY}": False,', self.sources["drjit"])
@@ -617,26 +565,13 @@ class Adr0038CapabilityModuleTests(AdrTestCase):
         drjit = self.sources["drjit"].splitlines()
         torch = self.sources["torch"].splitlines()
         self.assertEqual(len(drjit), len(torch))
-        divergent = [
-            left.strip().split(":")[0].strip()
-            for left, right in zip(drjit, torch)
-            if left != right
-        ]
+        divergent = [left.strip().split(":")[0].strip() for left, right in zip(drjit, torch) if left != right]
         self.assertEqual(
-            divergent,
-            [
-                '_BACKEND = "drjit"',
-                '"surfel"',
-                '"sdf_intersect"',
-                '"torch_compile"',
-                f'"{CAPABILITY}"',
-            ],
+            divergent, ['_BACKEND = "drjit"', '"surfel"', '"sdf_intersect"', '"torch_compile"', f'"{CAPABILITY}"']
         )
 
     def test_both_copies_repinned_the_manifest_hash(self) -> None:
-        expected = hashlib.sha256(
-            PUBLIC_API_PATH.read_bytes().replace(b"\r\n", b"\n")
-        ).hexdigest()
+        expected = hashlib.sha256(PUBLIC_API_PATH.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
         for backend, source in self.sources.items():
             with self.subTest(backend=backend):
                 self.assertIn(f'_SCHEMA_SHA256 = "{expected}"', source)
@@ -644,9 +579,7 @@ class Adr0038CapabilityModuleTests(AdrTestCase):
     def test_adr0036_was_amended_rather_than_left_false(self) -> None:
         adr0036 = read(ADR0036_PATH)
         self.assertPhrase("diverges on exactly five lines", adr0036)
-        self.assertPhrase(
-            f'`"{CAPABILITY}"` (`False` versus `True`, per ADR-0038)', adr0036
-        )
+        self.assertPhrase(f'`"{CAPABILITY}"` (`False` versus `True`, per ADR-0038)', adr0036)
         self.assertNoPhrase("diverges on exactly four lines", adr0036)
         self.assertNoPhrase("diverges on exactly three lines", adr0036)
 
@@ -660,16 +593,10 @@ class Adr0038EvidenceTests(AdrTestCase):
         self.note = read(OPERATIONS_DOC_PATH)
 
     def test_the_headline_numbers_come_from_the_recorded_runs(self) -> None:
-        rows = {
-            (row[0].split(" ")[0], row[1]): row[2:] for row in table_rows(self.measured, 5)
-        }
+        rows = {(row[0].split(" ")[0], row[1]): row[2:] for row in table_rows(self.measured, 5)}
         self.assertEqual(rows[("compute", "intersect")], ["19.09 ms", "11.83 ms", "1.61x"])
-        self.assertEqual(
-            rows[("compute", "trace_reflections")], ["53.33 ms", "28.38 ms", "1.88x"]
-        )
-        self.assertEqual(
-            rows[("compute", "accum_dfr_direct")], ["34.76 ms", "18.83 ms", "1.85x"]
-        )
+        self.assertEqual(rows[("compute", "trace_reflections")], ["53.33 ms", "28.38 ms", "1.88x"])
+        self.assertEqual(rows[("compute", "accum_dfr_direct")], ["34.76 ms", "18.83 ms", "1.85x"])
         self.assertEqual(rows[("light", "intersect")][2], "0.27x")
         for cell in ("19.09 ms", "11.83 ms", "53.33 ms", "28.38 ms", "34.76 ms", "18.83 ms"):
             with self.subTest(cell=cell):

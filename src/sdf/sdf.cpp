@@ -33,47 +33,41 @@ namespace {
 // batch or grid that does not fit is rejected rather than silently wrapped.
 constexpr int64_t kMaxIndex = 2147483647;
 
-const at::Tensor *present(const c10::optional<at::Tensor> &value) {
+const at::Tensor* present(const c10::optional<at::Tensor>& value) {
     if (!value.has_value() || !value->defined() || value->numel() == 0)
         return nullptr;
     return &*value;
 }
 
-void require_grid_values(const at::Tensor &values) {
+void require_grid_values(const at::Tensor& values) {
     require_cuda(values, "values");
     require_contiguous(values, "values");
     require_dtype(values, at::kFloat, "values");
     require_rank(values, 3, "values");
     for (int64_t axis = 0; axis < 3; ++axis) {
         if (values.size(axis) < 2)
-            throw std::runtime_error(
-                "values must have at least 2 samples on every axis (got " +
-                std::to_string(values.size(axis)) + " on axis " + std::to_string(axis) + ").");
+            throw std::runtime_error("values must have at least 2 samples on every axis (got " +
+                                     std::to_string(values.size(axis)) + " on axis " + std::to_string(axis) + ").");
     }
     if (values.numel() > kMaxIndex)
         throw std::runtime_error("values has more elements than the kernel index range allows.");
 }
 
-void require_placement_vector(const at::Tensor &tensor, int64_t length, const char *name) {
+void require_placement_vector(const at::Tensor& tensor, int64_t length, const char* name) {
     require_cuda(tensor, name);
     require_contiguous(tensor, name);
     require_dtype(tensor, at::kFloat, name);
     require_rank(tensor, 1, name);
     if (tensor.size(0) != length)
-        throw std::runtime_error(
-            std::string(name) + " must have exactly " + std::to_string(length) + " elements.");
+        throw std::runtime_error(std::string(name) + " must have exactly " + std::to_string(length) + " elements.");
 }
 
-void require_same_device(const at::Tensor &tensor, int device_index, const char *name) {
+void require_same_device(const at::Tensor& tensor, int device_index, const char* name) {
     if (tensor.get_device() != device_index)
-        throw std::runtime_error(
-            std::string(name) + " must be on the same CUDA device as the SDF grid values.");
+        throw std::runtime_error(std::string(name) + " must be on the same CUDA device as the SDF grid values.");
 }
 
-int64_t require_grid_and_rays(
-    const SdfGridTensors &grid,
-    const at::Tensor &origins,
-    const at::Tensor &directions) {
+int64_t require_grid_and_rays(const SdfGridTensors& grid, const at::Tensor& origins, const at::Tensor& directions) {
     require_grid_values(grid.values);
     require_placement_vector(grid.position, 3, "position");
     require_placement_vector(grid.rotation, 4, "rotation");
@@ -93,7 +87,7 @@ int64_t require_grid_and_rays(
     return origins.size(0);
 }
 
-void require_trace_params(const SdfTraceParams &params) {
+void require_trace_params(const SdfTraceParams& params) {
     if (!(params.tmax > 0.0))
         throw std::runtime_error("tmax must be positive.");
     if (params.max_steps < 1)
@@ -104,7 +98,7 @@ void require_trace_params(const SdfTraceParams &params) {
 
 // The tape is the whole of the frozen decision set: hit distance, hit mask, and
 // base voxel index. Backward and JVP consume it and never re-march.
-void require_tape(const SdfTapeTensors &tape, int64_t ray_count, int device_index) {
+void require_tape(const SdfTapeTensors& tape, int64_t ray_count, int device_index) {
     require_cuda(tape.t, "tape_t");
     require_contiguous(tape.t, "tape_t");
     require_dtype(tape.t, at::kFloat, "tape_t");
@@ -115,8 +109,7 @@ void require_tape(const SdfTapeTensors &tape, int64_t ray_count, int device_inde
     require_dtype(tape.base, at::kInt, "tape_base");
     require_rank(tape.base, 2, "tape_base");
     require_last_dim(tape.base, 3, "tape_base");
-    if (tape.t.size(0) != ray_count || tape.hit.size(0) != ray_count ||
-        tape.base.size(0) != ray_count)
+    if (tape.t.size(0) != ray_count || tape.hit.size(0) != ray_count || tape.base.size(0) != ray_count)
         throw std::runtime_error("the tape must match the ray batch size.");
     require_same_device(tape.t, device_index, "tape_t");
     require_same_device(tape.hit, device_index, "tape_hit");
@@ -125,12 +118,8 @@ void require_tape(const SdfTapeTensors &tape, int64_t ray_count, int device_inde
 
 // Gradients and tangents are read with contiguous row arithmetic, so a strided
 // view is rejected instead of being silently misread.
-void require_row_tensor(
-    const at::Tensor *tensor,
-    int64_t ray_count,
-    int64_t width,
-    int device_index,
-    const char *name) {
+void require_row_tensor(const at::Tensor* tensor, int64_t ray_count, int64_t width, int device_index,
+                        const char* name) {
     if (tensor == nullptr)
         return;
     require_cuda(*tensor, name);
@@ -147,11 +136,7 @@ void require_row_tensor(
     require_same_device(*tensor, device_index, name);
 }
 
-void require_like(
-    const at::Tensor *tensor,
-    const at::Tensor &reference,
-    int device_index,
-    const char *name) {
+void require_like(const at::Tensor* tensor, const at::Tensor& reference, int device_index, const char* name) {
     if (tensor == nullptr)
         return;
     require_cuda(*tensor, name);
@@ -164,19 +149,10 @@ void require_like(
 
 } // namespace
 
-std::vector<at::Tensor> sdf_intersect_forward_impl(
-    at::Tensor values,
-    at::Tensor position,
-    at::Tensor rotation,
-    at::Tensor scale,
-    at::Tensor origins,
-    at::Tensor directions,
-    double tmax,
-    int64_t max_steps,
-    double relaxation,
-    double eps_hit) {
-    const SdfGridTensors grid{
-        std::move(values), std::move(position), std::move(rotation), std::move(scale)};
+std::vector<at::Tensor> sdf_intersect_forward_impl(at::Tensor values, at::Tensor position, at::Tensor rotation,
+                                                   at::Tensor scale, at::Tensor origins, at::Tensor directions,
+                                                   double tmax, int64_t max_steps, double relaxation, double eps_hit) {
+    const SdfGridTensors grid{std::move(values), std::move(position), std::move(rotation), std::move(scale)};
     require_grid_and_rays(grid, origins, directions);
     // A non-positive `eps_hit` is the ADR-0037 section 7 sentinel meaning
     // "derive from the resident scale on the device", so it is not rejected
@@ -186,66 +162,35 @@ std::vector<at::Tensor> sdf_intersect_forward_impl(
     c10::cuda::CUDAGuard guard(grid.values.device());
     SdfIntersectForwardOutputs out = sdf_intersect_forward_cuda(grid, origins, directions, params);
     return {
-        out.t,
-        out.hit_mask,
-        out.hit_position,
-        out.normal,
-        out.steps,
-        out.tape_t,
-        out.tape_base,
+        out.t, out.hit_mask, out.hit_position, out.normal, out.steps, out.tape_t, out.tape_base,
     };
 }
 
 std::vector<c10::optional<at::Tensor>> sdf_intersect_backward_impl(
-    at::Tensor values,
-    at::Tensor position,
-    at::Tensor rotation,
-    at::Tensor scale,
-    at::Tensor origins,
-    at::Tensor directions,
-    at::Tensor tape_t,
-    at::Tensor tape_hit,
-    at::Tensor tape_base,
-    c10::optional<at::Tensor> grad_t,
-    c10::optional<at::Tensor> grad_hit_position,
-    c10::optional<at::Tensor> grad_normal,
-    bool need_grad_values,
-    bool need_grad_position,
-    bool need_grad_rotation,
-    bool need_grad_scale,
-    bool need_grad_origins,
-    bool need_grad_directions) {
-    const SdfGridTensors grid{
-        std::move(values), std::move(position), std::move(rotation), std::move(scale)};
+    at::Tensor values, at::Tensor position, at::Tensor rotation, at::Tensor scale, at::Tensor origins,
+    at::Tensor directions, at::Tensor tape_t, at::Tensor tape_hit, at::Tensor tape_base,
+    c10::optional<at::Tensor> grad_t, c10::optional<at::Tensor> grad_hit_position,
+    c10::optional<at::Tensor> grad_normal, bool need_grad_values, bool need_grad_position, bool need_grad_rotation,
+    bool need_grad_scale, bool need_grad_origins, bool need_grad_directions) {
+    const SdfGridTensors grid{std::move(values), std::move(position), std::move(rotation), std::move(scale)};
     const int64_t ray_count = require_grid_and_rays(grid, origins, directions);
     const int device_index = grid.values.get_device();
     const SdfTapeTensors tape{std::move(tape_t), std::move(tape_hit), std::move(tape_base)};
     require_tape(tape, ray_count, device_index);
     const SdfIntersectGradRequest request{
-        present(grad_t),
-        present(grad_hit_position),
-        present(grad_normal),
-        need_grad_values,
-        need_grad_position,
-        need_grad_rotation,
-        need_grad_scale,
-        need_grad_origins,
-        need_grad_directions,
+        present(grad_t),  present(grad_hit_position), present(grad_normal),
+        need_grad_values, need_grad_position,         need_grad_rotation,
+        need_grad_scale,  need_grad_origins,          need_grad_directions,
     };
     require_row_tensor(request.grad_t, ray_count, 0, device_index, "grad_t");
     require_row_tensor(request.grad_hit_position, ray_count, 3, device_index, "grad_hit_position");
     require_row_tensor(request.grad_normal, ray_count, 3, device_index, "grad_normal");
     c10::cuda::CUDAGuard guard(grid.values.device());
-    SdfIntersectBackwardOutputs out =
-        sdf_intersect_backward_cuda(grid, origins, directions, tape, request);
+    SdfIntersectBackwardOutputs out = sdf_intersect_backward_cuda(grid, origins, directions, tape, request);
     std::vector<c10::optional<at::Tensor>> result;
     result.reserve(6);
-    for (const at::Tensor &grad : {out.grad_values,
-                                   out.grad_position,
-                                   out.grad_rotation,
-                                   out.grad_scale,
-                                   out.grad_origins,
-                                   out.grad_directions}) {
+    for (const at::Tensor& grad : {out.grad_values, out.grad_position, out.grad_rotation, out.grad_scale,
+                                   out.grad_origins, out.grad_directions}) {
         if (grad.defined())
             result.emplace_back(grad);
         else
@@ -255,34 +200,19 @@ std::vector<c10::optional<at::Tensor>> sdf_intersect_backward_impl(
 }
 
 std::vector<at::Tensor> sdf_intersect_jvp_impl(
-    at::Tensor values,
-    at::Tensor position,
-    at::Tensor rotation,
-    at::Tensor scale,
-    at::Tensor origins,
-    at::Tensor directions,
-    at::Tensor tape_t,
-    at::Tensor tape_hit,
-    at::Tensor tape_base,
-    c10::optional<at::Tensor> tangent_values,
-    c10::optional<at::Tensor> tangent_position,
-    c10::optional<at::Tensor> tangent_rotation,
-    c10::optional<at::Tensor> tangent_scale,
-    c10::optional<at::Tensor> tangent_origins,
-    c10::optional<at::Tensor> tangent_directions) {
-    const SdfGridTensors grid{
-        std::move(values), std::move(position), std::move(rotation), std::move(scale)};
+    at::Tensor values, at::Tensor position, at::Tensor rotation, at::Tensor scale, at::Tensor origins,
+    at::Tensor directions, at::Tensor tape_t, at::Tensor tape_hit, at::Tensor tape_base,
+    c10::optional<at::Tensor> tangent_values, c10::optional<at::Tensor> tangent_position,
+    c10::optional<at::Tensor> tangent_rotation, c10::optional<at::Tensor> tangent_scale,
+    c10::optional<at::Tensor> tangent_origins, c10::optional<at::Tensor> tangent_directions) {
+    const SdfGridTensors grid{std::move(values), std::move(position), std::move(rotation), std::move(scale)};
     const int64_t ray_count = require_grid_and_rays(grid, origins, directions);
     const int device_index = grid.values.get_device();
     const SdfTapeTensors tape{std::move(tape_t), std::move(tape_hit), std::move(tape_base)};
     require_tape(tape, ray_count, device_index);
     const SdfIntersectTangentInputs tangents{
-        present(tangent_values),
-        present(tangent_position),
-        present(tangent_rotation),
-        present(tangent_scale),
-        present(tangent_origins),
-        present(tangent_directions),
+        present(tangent_values), present(tangent_position), present(tangent_rotation),
+        present(tangent_scale),  present(tangent_origins),  present(tangent_directions),
     };
     require_like(tangents.values, grid.values, device_index, "tangent_values");
     require_like(tangents.position, grid.position, device_index, "tangent_position");
@@ -291,8 +221,7 @@ std::vector<at::Tensor> sdf_intersect_jvp_impl(
     require_row_tensor(tangents.origins, ray_count, 3, device_index, "tangent_origins");
     require_row_tensor(tangents.directions, ray_count, 3, device_index, "tangent_directions");
     c10::cuda::CUDAGuard guard(grid.values.device());
-    SdfIntersectJvpOutputs out =
-        sdf_intersect_jvp_cuda(grid, origins, directions, tape, tangents);
+    SdfIntersectJvpOutputs out = sdf_intersect_jvp_cuda(grid, origins, directions, tape, tangents);
     return {out.tangent_t, out.tangent_hit_position, out.tangent_normal};
 }
 

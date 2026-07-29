@@ -75,14 +75,14 @@ struct OptixDeviceContextEntry {
 };
 
 TorchCudaContext current_torch_cuda_context();
-OptixDeviceContextEntry &get_optix_context(int device_index);
+OptixDeviceContextEntry& get_optix_context(int device_index);
 bool optix_context_available(int device_index);
-void ensure_intersect_pipeline(OptixDeviceContextEntry &entry);
-void ensure_edge_pipeline(OptixDeviceContextEntry &entry);
-OptixPipeline edge_pipeline(const OptixDeviceContextEntry &entry, EdgeOptixLaunchKind kind);
-const OptixShaderBindingTable &edge_sbt(const OptixDeviceContextEntry &entry, EdgeOptixLaunchKind kind);
-void ensure_reflection_trace_pipeline(OptixDeviceContextEntry &entry);
-void optix_check(OptixResult result, const char *expr, const char *file, int line);
+void ensure_intersect_pipeline(OptixDeviceContextEntry& entry);
+void ensure_edge_pipeline(OptixDeviceContextEntry& entry);
+OptixPipeline edge_pipeline(const OptixDeviceContextEntry& entry, EdgeOptixLaunchKind kind);
+const OptixShaderBindingTable& edge_sbt(const OptixDeviceContextEntry& entry, EdgeOptixLaunchKind kind);
+void ensure_reflection_trace_pipeline(OptixDeviceContextEntry& entry);
+void optix_check(OptixResult result, const char* expr, const char* file, int line);
 
 } // namespace rayd::torch_backend
 

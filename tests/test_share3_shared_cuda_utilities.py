@@ -21,18 +21,9 @@ def _is_build_output(path: Path) -> bool:
 
 
 UNITS = {
-    "aabb": (
-        SHARED_INCLUDE / "edge" / "edge_aabb.h",
-        SHARED_SOURCE / "edge" / "edge_shared.cu",
-    ),
-    "dedup": (
-        SHARED_INCLUDE / "reflection" / "dedup.h",
-        SHARED_SOURCE / "reflection" / "dedup_shared.cu",
-    ),
-    "packing": (
-        SHARED_INCLUDE / "scene" / "packing.h",
-        SHARED_SOURCE / "scene" / "packing_shared.cu",
-    ),
+    "aabb": (SHARED_INCLUDE / "edge" / "edge_aabb.h", SHARED_SOURCE / "edge" / "edge_shared.cu"),
+    "dedup": (SHARED_INCLUDE / "reflection" / "dedup.h", SHARED_SOURCE / "reflection" / "dedup_shared.cu"),
+    "packing": (SHARED_INCLUDE / "scene" / "packing.h", SHARED_SOURCE / "scene" / "packing_shared.cu"),
 }
 
 
@@ -54,7 +45,7 @@ class Share3SharedCudaUtilitiesTests(unittest.TestCase):
     def test_public_apis_use_raw_pointers_counts_and_explicit_streams(self):
         aabb = self.text["aabb"]["header"]
         self.assertRegex(aabb, r"void\s+launch_edge_aabb\s*\(")
-        self.assertGreaterEqual(aabb.count("const float *"), 6)
+        self.assertGreaterEqual(len(re.findall(r"const float\s*\*", aabb)), 6)
         self.assertIn("int edge_count", aabb)
         self.assertIn("cudaStream_t stream", aabb)
 
@@ -97,11 +88,7 @@ class Share3SharedCudaUtilitiesTests(unittest.TestCase):
             self.assertIn("cudaStream_t stream", body)
 
     def test_shared_layer_is_enqueue_only_and_backend_neutral(self):
-        combined = "\n".join(
-            unit[kind]
-            for unit in self.text.values()
-            for kind in ("header", "source")
-        )
+        combined = "\n".join(unit[kind] for unit in self.text.values() for kind in ("header", "source"))
         for forbidden in (
             "cudaMalloc",
             "cudaFree",
@@ -130,25 +117,15 @@ class Share3SharedCudaUtilitiesTests(unittest.TestCase):
             self.assertTrue(structs)
             for struct in structs:
                 explicit = (
-                    f"is_standard_layout_v<{struct}>" in header
-                    and f"is_trivially_copyable_v<{struct}>" in header
+                    f"is_standard_layout_v<{struct}>" in header and f"is_trivially_copyable_v<{struct}>" in header
                 )
                 macro = re.search(rf"ASSERT_POD\({struct}\)", header) is not None
                 self.assertTrue(explicit or macro, struct)
         packing = self.text["packing"]["header"]
         self.assertRegex(packing, r"struct\s+alignas\(16\)\s+PackedFloat4")
-        self.assertRegex(
-            packing,
-            r"sizeof\(PackedFloat4\)\s*==\s*(?:16|4u?\s*\*\s*sizeof\(float\))",
-        )
-        self.assertRegex(
-            packing,
-            r"alignof\(PackedFloat4\)\s*==\s*(?:16|4u?\s*\*\s*alignof\(float\))",
-        )
-        self.assertRegex(
-            packing,
-            r"offsetof\(PackedFloat4,\s*w\)\s*==\s*(?:12|3u?\s*\*\s*sizeof\(float\))",
-        )
+        self.assertRegex(packing, r"sizeof\(PackedFloat4\)\s*==\s*(?:16|4u?\s*\*\s*sizeof\(float\))")
+        self.assertRegex(packing, r"alignof\(PackedFloat4\)\s*==\s*(?:16|4u?\s*\*\s*alignof\(float\))")
+        self.assertRegex(packing, r"offsetof\(PackedFloat4,\s*w\)\s*==\s*(?:12|3u?\s*\*\s*sizeof\(float\))")
 
     def test_duplicate_cuda_kernels_have_one_shared_definition(self):
         expected_locations = {
@@ -161,11 +138,7 @@ class Share3SharedCudaUtilitiesTests(unittest.TestCase):
             "pack_global_geometry_kernel": "src/scene/packing_shared.cu",
             "pack_global_vertex_tangent_kernel": "src/scene/packing_shared.cu",
         }
-        cuda_sources = [
-            path
-            for path in (ROOT / "src").rglob("*.cu")
-            if not _is_build_output(path)
-        ]
+        cuda_sources = [path for path in (ROOT / "src").rglob("*.cu") if not _is_build_output(path)]
         for kernel, expected in expected_locations.items():
             definitions = []
             pattern = re.compile(rf"__global__\s+void\s+{kernel}\s*\(")
@@ -175,24 +148,16 @@ class Share3SharedCudaUtilitiesTests(unittest.TestCase):
             self.assertEqual(definitions, [expected], kernel)
 
     def test_cmake_and_callers_name_shared_paths_explicitly(self):
-        drjit_cmake = (ROOT / "drjit" / "CMakeLists.txt").read_text(
-            encoding="utf-8"
-        ).replace("\\", "/")
-        torch_cmake = (ROOT / "torch" / "CMakeLists.txt").read_text(
-            encoding="utf-8"
-        ).replace("\\", "/")
+        drjit_cmake = (ROOT / "drjit" / "CMakeLists.txt").read_text(encoding="utf-8").replace("\\", "/")
+        torch_cmake = (ROOT / "torch" / "CMakeLists.txt").read_text(encoding="utf-8").replace("\\", "/")
         for cmake in (drjit_cmake, torch_cmake):
-            self.assertTrue(
-                "edge/edge_shared.cu" in cmake,
-                "backend CMake is missing the shared AABB source path",
-            )
+            self.assertTrue("edge/edge_shared.cu" in cmake, "backend CMake is missing the shared AABB source path")
             self.assertTrue(
                 "reflection/dedup_shared.cu" in cmake,
                 "backend CMake is missing the shared reflection-dedup source path",
             )
         self.assertTrue(
-            "scene/packing_shared.cu" in torch_cmake,
-            "Torch CMake is missing the shared scene-packing source path",
+            "scene/packing_shared.cu" in torch_cmake, "Torch CMake is missing the shared scene-packing source path"
         )
 
         callers = {
@@ -202,9 +167,7 @@ class Share3SharedCudaUtilitiesTests(unittest.TestCase):
             "torch_dedup": ROOT / "src" / "reflection" / "reflection_kernels.cu",
             "torch_packing": ROOT / "src" / "scene" / "cache.cu",
         }
-        caller_text = {
-            name: path.read_text(encoding="utf-8") for name, path in callers.items()
-        }
+        caller_text = {name: path.read_text(encoding="utf-8") for name, path in callers.items()}
         self.assertIn("<rayd/edge/edge_aabb.h>", caller_text["drjit_aabb"])
         self.assertIn("<rayd/edge/edge_aabb.h>", caller_text["torch_aabb"])
         self.assertIn("<rayd/reflection/dedup.h>", caller_text["drjit_dedup"])
@@ -215,18 +178,10 @@ class Share3SharedCudaUtilitiesTests(unittest.TestCase):
         def reference(p0, edge, inflation):
             p1 = tuple(a + b for a, b in zip(p0, edge))
             radius = max(inflation, 0.0)
-            return tuple(min(a, b) - radius for a, b in zip(p0, p1)) + tuple(
-                max(a, b) + radius for a, b in zip(p0, p1)
-            )
+            return tuple(min(a, b) - radius for a, b in zip(p0, p1)) + tuple(max(a, b) + radius for a, b in zip(p0, p1))
 
-        self.assertEqual(
-            reference((3.0, -1.0, 2.0), (-5.0, 4.0, -2.0), 0.25),
-            (-2.25, -1.25, -0.25, 3.25, 3.25, 2.25),
-        )
-        self.assertEqual(
-            reference((1.0, 2.0, 3.0), (0.0, 0.0, 0.0), -4.0),
-            (1.0, 2.0, 3.0, 1.0, 2.0, 3.0),
-        )
+        self.assertEqual(reference((3.0, -1.0, 2.0), (-5.0, 4.0, -2.0), 0.25), (-2.25, -1.25, -0.25, 3.25, 3.25, 2.25))
+        self.assertEqual(reference((1.0, 2.0, 3.0), (0.0, 0.0, 0.0), -4.0), (1.0, 2.0, 3.0, 1.0, 2.0, 3.0))
         source = self.text["aabb"]["source"]
         self.assertIn("const float radius = fmaxf(inflation, 0.0f);", source)
         self.assertIn("if (edge_count == 0)", source)

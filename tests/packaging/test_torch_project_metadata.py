@@ -32,14 +32,9 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertIn("torch==2.10.0", data["build-system"]["requires"])
 
     def test_public_python_source_has_no_obsolete_product_name(self):
-        source_roots = (
-            TORCH_ROOT / "python" / "rayd" / "torch",
-            WORKSPACE_ROOT / "python" / "rayd" / "_impl",
-        )
+        source_roots = (TORCH_ROOT / "python" / "rayd" / "torch", WORKSPACE_ROOT / "python" / "rayd" / "_impl")
         source = "\n".join(
-            path.read_text(encoding="utf-8")
-            for source_root in source_roots
-            for path in source_root.glob("*.py")
+            path.read_text(encoding="utf-8") for source_root in source_roots for path in source_root.glob("*.py")
         )
         self.assertNotIn("ray" + "dn", source.lower())
         self.assertNotIn("rayd-native", source.lower())
@@ -59,7 +54,7 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertIn("STABLE_TORCH_LIBRARY(rayd_torch_stable", stable_source)
         self.assertIn("TORCH_TARGET_VERSION=0x020a000000000000", cmake)
         stable_start = cmake.index("rayd_torch_stable_ops\n        SHARED")
-        stable_target = cmake[stable_start:cmake.index("execute_process(", stable_start)]
+        stable_target = cmake[stable_start : cmake.index("execute_process(", stable_start)]
         self.assertNotIn("TORCH_PYTHON_LIBRARY", stable_target)
         self.assertNotIn('"${TORCH_LIBRARIES}"', stable_target)
         self.assertNotIn("CUDA::cuda_driver", stable_target)
@@ -94,16 +89,14 @@ class ProjectMetadataTests(unittest.TestCase):
         for artifact in ("_stable_ops*.dll", "_legacy_ops*.dll", "_C*.pyd"):
             self.assertIn(artifact, dev_build)
 
-        local_build = (Path(__file__).resolve().parents[2] / "scripts" / "build_local.ps1").read_text(
-            encoding="utf-8"
-        )
+        local_build = (Path(__file__).resolve().parents[2] / "scripts" / "build_local.ps1").read_text(encoding="utf-8")
         for marker in (
             "CMAKE_BUILD_PARALLEL_LEVEL",
             'CMAKE_GENERATOR = "Ninja"',
             "RAYD_CUDA_GENCODE_ARCHES",
             "CMAKE_CUDA_ARCHITECTURES",
             "TORCH_CUDA_ARCH_LIST",
-            'build/local-$CudaArch',
+            "build/local-$CudaArch",
             "VsDevCmd.bat",
             "NVCC_CCBIN",
             "Get-Command cl.exe -ErrorAction Stop",
@@ -113,7 +106,9 @@ class ProjectMetadataTests(unittest.TestCase):
 
     def test_ci_cuda_fat_binary_covers_witwin_platform_matrix(self):
         root = Path(__file__).resolve().parents[2]
-        expected_cmake = "70-real;75-real;80-real;86-real;87-real;89-real;90-real;100-real;101-real;120-real;120-virtual"
+        expected_cmake = (
+            "70-real;75-real;80-real;86-real;87-real;89-real;90-real;100-real;101-real;120-real;120-virtual"
+        )
         expected_torch = "7.0;7.5;8.0;8.6;8.7;8.9;9.0;10.0;10.1;12.0+PTX"
         pypi = (root / ".github/workflows/pypi.yml").read_text(encoding="utf-8")
         pull_request = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
@@ -123,9 +118,7 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertIn("87-real;120-real;120-virtual", stable)
         self.assertIn("8.7;12.0+PTX", stable)
         self.assertIn("--expected-sass 87,120", stable)
-        torch_linux_env = pypi.split("CIBW_ENVIRONMENT_LINUX:", 2)[2].split(
-            "CIBW_REPAIR_WHEEL_COMMAND_LINUX:", 1
-        )[0]
+        torch_linux_env = pypi.split("CIBW_ENVIRONMENT_LINUX:", 2)[2].split("CIBW_REPAIR_WHEEL_COMMAND_LINUX:", 1)[0]
         self.assertIn(f'CMAKE_CUDA_ARCHITECTURES="{expected_cmake}"', torch_linux_env)
         self.assertIn(f'TORCH_CUDA_ARCH_LIST="{expected_torch}"', torch_linux_env)
         for python, tag in (
@@ -135,34 +128,19 @@ class ProjectMetadataTests(unittest.TestCase):
             ("3.13", "cp313"),
             ("3.14", "cp314"),
         ):
-            self.assertIn(
-                f'{{python-version: "{python}", cibw-build: "{tag}-manylinux_x86_64"}}',
-                pypi,
-            )
-        self.assertIn(
-            "name: release-rayd-torch-linux-py${{ matrix.python-version }}",
-            pypi,
-        )
+            self.assertIn(f'{{python-version: "{python}", cibw-build: "{tag}-manylinux_x86_64"}}', pypi)
+        self.assertIn("name: release-rayd-torch-linux-py${{ matrix.python-version }}", pypi)
         self.assertIn("name: release-rayd-torch-linux-py3.10", pypi)
         torch_verifier = "--stem _legacy_ops --stem _stable_ops"
         self.assertEqual(pypi.count(torch_verifier), 2)
         self.assertNotIn("--stem _C --stem _stable_ops", pypi)
-        self.assertIn('CMAKE_BUILD_PARALLEL_LEVEL=4', pypi)
-        self.assertIn('CMAKE_BUILD_PARALLEL_LEVEL=2', pypi)
-        self.assertIn('CMAKE_CUDA_FLAGS=--threads=2', pypi)
-        self.assertIn(
-            "github.event_name == 'workflow_dispatch' && github.sha",
-            pypi,
-        )
+        self.assertIn("CMAKE_BUILD_PARALLEL_LEVEL=4", pypi)
+        self.assertIn("CMAKE_BUILD_PARALLEL_LEVEL=2", pypi)
+        self.assertIn("CMAKE_CUDA_FLAGS=--threads=2", pypi)
+        self.assertIn("github.event_name == 'workflow_dispatch' && github.sha", pypi)
         self.assertIn("windows-torch-smoke", pypi)
-        self.assertIn(
-            "inputs.scope == 'windows-torch-smoke' && '[\"torch\"]'",
-            pypi,
-        )
-        self.assertIn(
-            "inputs.scope == 'windows-torch-smoke' && '[\"3.10\"]'",
-            pypi,
-        )
+        self.assertIn("inputs.scope == 'windows-torch-smoke' && '[\"torch\"]'", pypi)
+        self.assertIn("inputs.scope == 'windows-torch-smoke' && '[\"3.10\"]'", pypi)
         windows_wheel_job = pypi.split("  build-windows-wheels:", 1)[1]
         self.assertNotIn("CMAKE_CUDA_FLAGS:", windows_wheel_job)
         # Both backends cache CUDA, through the two different mechanisms their
@@ -171,12 +149,12 @@ class ProjectMetadataTests(unittest.TestCase):
         # RAYD_NVCC_LAUNCHER shim can wrap.
         self.assertIn("CMAKE_CUDA_COMPILER_LAUNCHER: sccache", windows_wheel_job)
         self.assertIn("RAYD_NVCC_LAUNCHER: sccache", windows_wheel_job)
-        self.assertIn('CMAKE_CUDA_COMPILER_LAUNCHER=', pypi)
+        self.assertIn("CMAKE_CUDA_COMPILER_LAUNCHER=", pypi)
         # A pinned build directory keeps compile command lines byte-identical
         # between runs; without it every compile hashes to a fresh cache key.
         self.assertEqual(pypi.count("SKBUILD_BUILD_DIR=/project/artifacts/skbuild"), 2)
         self.assertEqual(pypi.count("-Cbuild-dir=artifacts/skbuild"), 2)
-        self.assertIn('mozilla-actions/sccache-action@v0.0.10', pypi)
+        self.assertIn("mozilla-actions/sccache-action@v0.0.10", pypi)
         for grouped_flag in (
             "--generate-code=arch=compute_70,code=[sm_70,sm_75]",
             "--generate-code=arch=compute_80,code=[sm_80,sm_86,sm_87,sm_89]",
@@ -221,18 +199,14 @@ class ProjectMetadataTests(unittest.TestCase):
             self.assertNotIn(removed_field, source)
 
     def test_cuda_multipath_params_are_stream_local(self):
-        source = (WORKSPACE_ROOT / "src" / "scene" / "multipath.cu").read_text(
-            encoding="utf-8"
-        )
+        source = (WORKSPACE_ROOT / "src" / "scene" / "multipath.cu").read_text(encoding="utf-8")
         self.assertNotIn("__constant__", source)
         self.assertNotIn("cudaMemcpyToSymbol", source)
         self.assertIn("extern __shared__", source)
         self.assertIn("getCurrentCUDAStream", source)
 
     def test_optix_auto_fallback_preserves_operational_errors(self):
-        source = (WORKSPACE_ROOT / "src" / "runtime" / "optix.cpp").read_text(
-            encoding="utf-8"
-        )
+        source = (WORKSPACE_ROOT / "src" / "runtime" / "optix.cpp").read_text(encoding="utf-8")
         for capability_error in (
             "OPTIX_ERROR_LIBRARY_NOT_FOUND",
             "OPTIX_ERROR_UNSUPPORTED_ABI_VERSION",
@@ -240,11 +214,5 @@ class ProjectMetadataTests(unittest.TestCase):
             "OPTIX_ERROR_NOT_COMPATIBLE",
         ):
             self.assertIn(capability_error, source)
-        for operational_error in (
-            "OPTIX_ERROR_DEVICE_OUT_OF_MEMORY",
-            "OPTIX_ERROR_CUDA_ERROR",
-        ):
-            self.assertNotIn(
-                f"context_result == {operational_error}",
-                source,
-            )
+        for operational_error in ("OPTIX_ERROR_DEVICE_OUT_OF_MEMORY", "OPTIX_ERROR_CUDA_ERROR"):
+            self.assertNotIn(f"context_result == {operational_error}", source)

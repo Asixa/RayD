@@ -22,12 +22,12 @@ namespace rayd {
 /// multipath pipelines share the exact same build sequence and differ only in
 /// the PTX blob, entry-point names, payload count, and launch-params size.
 struct OptixPipelineConfig {
-    const char *ptx = nullptr;
+    const char* ptx = nullptr;
     size_t ptx_size = 0;
-    std::vector<const char *> raygen_entries;
-    const char *miss_entry = nullptr;
-    const char *closesthit_entry = nullptr;
-    const char *anyhit_entry = nullptr;  // optional
+    std::vector<const char*> raygen_entries;
+    const char* miss_entry = nullptr;
+    const char* closesthit_entry = nullptr;
+    const char* anyhit_entry = nullptr; // optional
     int num_payload_values = 0;
     size_t params_size = 0;
 };
@@ -37,33 +37,24 @@ struct OptixPipelineConfig {
 /// raygen entry points (e.g. segment visibility); `launch()` selects one by
 /// index.
 class OptixLaunchPipeline {
-public:
+  public:
     OptixLaunchPipeline() = default;
     ~OptixLaunchPipeline();
 
-    OptixLaunchPipeline(const OptixLaunchPipeline &) = delete;
-    OptixLaunchPipeline &operator=(const OptixLaunchPipeline &) = delete;
+    OptixLaunchPipeline(const OptixLaunchPipeline&) = delete;
+    OptixLaunchPipeline& operator=(const OptixLaunchPipeline&) = delete;
 
-    void build(OptixDeviceContext context,
-               int hitgroup_record_count,
-               const OptixPipelineConfig &config);
+    void build(OptixDeviceContext context, int hitgroup_record_count, const OptixPipelineConfig& config);
     bool is_ready() const { return ready_; }
     /// Dr.Jit CUDA device the pipeline was built on, or -1 before build().
     int device() const { return device_; }
 
-    template <typename Params>
-    void launch(int raygen_index, const Params &params) const {
-        launch_impl(raygen_index,
-                    &params,
-                    sizeof(Params),
-                    static_cast<unsigned int>(params.n_rays));
+    template <typename Params> void launch(int raygen_index, const Params& params) const {
+        launch_impl(raygen_index, &params, sizeof(Params), static_cast<unsigned int>(params.n_rays));
     }
 
-private:
-    void launch_impl(int raygen_index,
-                     const void *params,
-                     size_t actual_params_size,
-                     unsigned int n_rays) const;
+  private:
+    void launch_impl(int raygen_index, const void* params, size_t actual_params_size, unsigned int n_rays) const;
 
     bool ready_ = false;
     // The module, SBT records, and params buffer below are allocated on the
@@ -77,16 +68,14 @@ private:
     std::vector<OptixProgramGroup> pg_raygens_;
     OptixProgramGroup pg_miss_ = nullptr;
     OptixProgramGroup pg_hitgroup_ = nullptr;
-    std::vector<void *> sbt_raygen_records_;
-    void *sbt_miss_record_ = nullptr;
-    void *sbt_hitgroup_records_ = nullptr;
-    void *params_buffer_ = nullptr;
+    std::vector<void*> sbt_raygen_records_;
+    void* sbt_miss_record_ = nullptr;
+    void* sbt_hitgroup_records_ = nullptr;
+    void* params_buffer_ = nullptr;
 };
 
-std::shared_ptr<OptixLaunchPipeline> shared_optix_launch_pipeline(
-    OptixDeviceContext context,
-    int hitgroup_record_count,
-    const OptixPipelineConfig &config);
+std::shared_ptr<OptixLaunchPipeline> shared_optix_launch_pipeline(OptixDeviceContext context, int hitgroup_record_count,
+                                                                  const OptixPipelineConfig& config);
 
 // Pre-filled pipeline configs (PTX blob, entry points, payload/params sizes) for
 // each multipath pipeline; pass to OptixLaunchPipeline::build().

@@ -10,11 +10,7 @@ import rayd.torch as rt
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA torch is required")
 class IntersectForwardTests(unittest.TestCase):
     def test_single_triangle_hit_and_miss(self):
-        verts = torch.tensor(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
-        )
+        verts = torch.tensor([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device="cuda", dtype=torch.float32)
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene = rt.Scene()
         scene.add_mesh(rt.Mesh(verts, faces))
@@ -33,11 +29,7 @@ class IntersectForwardTests(unittest.TestCase):
         self.assertTrue(torch.isinf(its.t[1]))
 
     def test_default_tmax_sentinel_matches_unbounded_tmax(self):
-        verts = torch.tensor(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
-        )
+        verts = torch.tensor([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device="cuda", dtype=torch.float32)
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene = rt.Scene()
         scene.add_mesh(rt.Mesh(verts, faces))
@@ -55,10 +47,7 @@ class IntersectForwardTests(unittest.TestCase):
 
     def test_two_triangles_returns_nearest_hit(self):
         verts = torch.tensor(
-            [
-                [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0],
-                [0.0, 0.0, 2.0], [1.0, 0.0, 2.0], [0.0, 1.0, 2.0],
-            ],
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 2.0], [1.0, 0.0, 2.0], [0.0, 1.0, 2.0]],
             device="cuda",
             dtype=torch.float32,
         )
@@ -75,11 +64,7 @@ class IntersectForwardTests(unittest.TestCase):
         self.assertEqual(int(its.global_prim_id[0].item()), 0)
 
     def test_intersect_rayflags_none_uses_t_only_result(self):
-        verts = torch.tensor(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
-        )
+        verts = torch.tensor([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device="cuda", dtype=torch.float32)
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene = rt.Scene()
         scene.add_mesh(rt.Mesh(verts, faces))
@@ -97,10 +82,7 @@ class IntersectForwardTests(unittest.TestCase):
         torch.testing.assert_close(reduced.t, full.t)
         self.assertEqual(reduced.p.numel(), 0)
         self.assertEqual(reduced.shape_id.numel(), 0)
-        torch.testing.assert_close(
-            reduced.is_valid(),
-            torch.tensor([True, False], device="cuda"),
-        )
+        torch.testing.assert_close(reduced.is_valid(), torch.tensor([True, False], device="cuda"))
         self.assertEqual(full.p.shape, (2, 3))
         self.assertEqual(full.geo_n.shape, (2, 3))
         self.assertEqual(full.n.numel(), 0)

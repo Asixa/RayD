@@ -16,9 +16,7 @@ PRODUCTION_ROOTS = (ROOT / "src", ROOT / "include", ROOT / "python")
 
 
 def tracked_files() -> list[Path]:
-    result = subprocess.run(
-        ["git", "ls-files", "-z"], cwd=ROOT, check=True, capture_output=True
-    )
+    result = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, check=True, capture_output=True)
     return [ROOT / item.decode("utf-8") for item in result.stdout.split(b"\0") if item]
 
 
@@ -27,10 +25,7 @@ class ConceptAxisLayoutTests(unittest.TestCase):
         self.assertFalse((ROOT / "backends").exists())
 
     def test_agent_guides_are_synchronized(self):
-        self.assertEqual(
-            (ROOT / "AGENTS.md").read_bytes(),
-            (ROOT / "CLAUDE.md").read_bytes(),
-        )
+        self.assertEqual((ROOT / "AGENTS.md").read_bytes(), (ROOT / "CLAUDE.md").read_bytes())
 
     def test_no_tracked_production_implementation_under_backends(self):
         offenders = []
@@ -38,8 +33,7 @@ class ConceptAxisLayoutTests(unittest.TestCase):
             rel = path.relative_to(ROOT)
             if not rel.parts or rel.parts[0] != "backends":
                 continue
-            if any(part in {"tests", "examples", "docs", "build", "scripts"}
-                   for part in rel.parts):
+            if any(part in {"tests", "examples", "docs", "build", "scripts"} for part in rel.parts):
                 continue
             if path.suffix.lower() in PRODUCTION_SUFFIXES:
                 offenders.append(rel.as_posix())
@@ -194,6 +188,7 @@ class ConceptAxisLayoutTests(unittest.TestCase):
                 actual.add(path.relative_to(ROOT).as_posix())
         self.assertEqual(actual, expected)
         self.assertFalse((ROOT / "include/rayd/torch").exists())
+
     def test_torch_generated_ptx_headers_are_concept_owned(self):
         cmake = (ROOT / "torch/CMakeLists.txt").read_text(encoding="utf-8")
         expected = {
@@ -218,6 +213,7 @@ class ConceptAxisLayoutTests(unittest.TestCase):
                 continue
             source = path.read_text(encoding="utf-8")
             self.assertNotRegex(source, r"#include\s*<rayd/torch/[^>]*ptx\.h>")
+
     def test_shared_physical_sources_have_one_root_owner(self):
         expected = {
             "src/bvh/build_shared.cu",
@@ -226,18 +222,13 @@ class ConceptAxisLayoutTests(unittest.TestCase):
             "src/reflection/dedup_shared.cu",
             "src/scene/packing_shared.cu",
         }
-        actual = {
-            path.relative_to(ROOT).as_posix()
-            for path in (ROOT / "src").rglob("*_shared.*")
-            if path.is_file()
-        }
+        actual = {path.relative_to(ROOT).as_posix() for path in (ROOT / "src").rglob("*_shared.*") if path.is_file()}
         self.assertEqual(actual, expected)
         for rel in expected:
             self.assertTrue((ROOT / rel).is_file(), rel)
 
     def test_compile_policy_preserves_logical_tu_identity(self):
-        contract = json.loads((ROOT / "contracts" / "compile_policy.json").read_text(
-            encoding="utf-8"))
+        contract = json.loads((ROOT / "contracts" / "compile_policy.json").read_text(encoding="utf-8"))
         units = contract["translation_units"]
         identities = {(entry["backend"], entry["unit"]) for entry in units}
         self.assertEqual(len(units), 80)
@@ -260,6 +251,7 @@ class ConceptAxisLayoutTests(unittest.TestCase):
             {path.name for path in (namespace / "torch").iterdir() if path.is_file()},
             {"__init__.py", "path_exchange.py", "py.typed"},
         )
+
     def test_private_python_implementation_ownership_is_disjoint(self):
         implementation = ROOT / "python" / "rayd" / "_impl"
         self.assertFalse((implementation / "__init__.py").exists())

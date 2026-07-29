@@ -13,6 +13,7 @@ scripts/*
 !scripts/verify_cuda_binary_arches.py
 !scripts/build_local.ps1
 !scripts/build_local.cmd
+!scripts/format_code.py
 AGENTS.md
 claude.md
 dev_notes.md

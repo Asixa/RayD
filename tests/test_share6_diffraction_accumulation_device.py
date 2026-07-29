@@ -16,10 +16,7 @@ REFLECTION = ROOT / "include/rayd/reflection/accumulation_optix_device.cuh"
 DRJIT = ROOT / "src/diffraction/accumulation_optix_jit.cu"
 TORCH = ROOT / "src/diffraction/accumulation_optix.cu"
 COEXIST = ROOT / "tests/native/share6_accumulation_headers_coexist.cu"
-ACCEPTANCE = (
-    ROOT
-    / "benchmarks/baselines/share6_diffraction_accumulation_20260711.json"
-)
+ACCEPTANCE = ROOT / "benchmarks/baselines/share6_diffraction_accumulation_20260711.json"
 
 
 class SharedDiffractionAccumulationDeviceTests(unittest.TestCase):
@@ -77,9 +74,7 @@ class SharedDiffractionAccumulationDeviceTests(unittest.TestCase):
             for token in forbidden:
                 self.assertNotIn(token, source)
             self.assertIn("struct DiffractionAccumulationPolicy", source)
-            definitions = re.findall(
-                r"(?m)^__constant__ DfrAccumParams params;$", source
-            )
+            definitions = re.findall(r"(?m)^__constant__ DfrAccumParams params;$", source)
             self.assertEqual(len(definitions), 1)
             self.assertLess(len(source.splitlines()), 400)
 
@@ -108,10 +103,7 @@ class SharedDiffractionAccumulationDeviceTests(unittest.TestCase):
 
     def test_policy_preserves_backend_extensions(self) -> None:
         compact_drjit = re.sub(r"\s+", " ", self.drjit)
-        self.assertIn(
-            "lane % static_cast<unsigned int>(params().state_count)",
-            compact_drjit,
-        )
+        self.assertIn("lane % static_cast<unsigned int>(params().state_count)", compact_drjit)
         self.assertIn("return edge_length /", compact_drjit)
         self.assertIn("atomicAdd(base + i, value);", self.drjit)
         self.assertIn("return false;", self.drjit)
@@ -127,26 +119,13 @@ class SharedDiffractionAccumulationDeviceTests(unittest.TestCase):
             self.assertNotIn(token, self.shared)
 
     def test_shared_core_adds_no_runtime_ownership(self) -> None:
-        for token in (
-            "cudaMalloc",
-            "cudaFree",
-            "cudaMemcpy",
-            "cudaStreamSynchronize",
-            "cudaDeviceSynchronize",
-            "<<<",
-        ):
+        for token in ("cudaMalloc", "cudaFree", "cudaMemcpy", "cudaStreamSynchronize", "cudaDeviceSynchronize", "<<<"):
             self.assertNotIn(token, self.shared)
             self.assertNotIn(token, self.algo)
 
     def test_reflection_and_diffraction_namespaces_coexist(self) -> None:
-        self.assertIn(
-            "namespace rayd::shared::multipath::diffraction_accumulation",
-            self.shared,
-        )
-        self.assertIn(
-            "namespace rayd::shared::multipath::reflection_accumulation",
-            self.reflection,
-        )
+        self.assertIn("namespace rayd::shared::multipath::diffraction_accumulation", self.shared)
+        self.assertIn("namespace rayd::shared::multipath::reflection_accumulation", self.reflection)
         coexist = COEXIST.read_text(encoding="utf-8")
         self.assertIn("diffraction/accumulation_optix_device.cuh", coexist)
         self.assertIn("reflection/accumulation_optix_device.cuh", coexist)

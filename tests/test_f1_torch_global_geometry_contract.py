@@ -17,18 +17,11 @@ TYPES_SOURCE = ROOT / "python/rayd/_impl/geometry.py"
 class TorchGlobalGeometryContractTests(unittest.TestCase):
     def test_native_helper_is_declared_for_scene_handles(self) -> None:
         header = CACHE_HEADER.read_text(encoding="utf-8")
-        self.assertIn(
-            "std::vector<at::Tensor> scene_global_geometry(c10::intrusive_ptr<SceneHandle> scene);",
-            header,
-        )
+        self.assertIn("std::vector<at::Tensor> scene_global_geometry(c10::intrusive_ptr<SceneHandle> scene);", header)
 
     def test_native_result_matches_python_six_field_order(self) -> None:
         source = CACHE_SOURCE.read_text(encoding="utf-8")
-        body_match = re.search(
-            r"std::vector<at::Tensor> scene_global_geometry\(.*?\n\}",
-            source,
-            re.DOTALL,
-        )
+        body_match = re.search(r"std::vector<at::Tensor> scene_global_geometry\(.*?\n\}", source, re.DOTALL)
         self.assertIsNotNone(body_match)
         body = body_match.group(0)
         expected = [
@@ -55,20 +48,14 @@ class TorchGlobalGeometryContractTests(unittest.TestCase):
 
     def test_normals_and_global_primitive_ids_are_scene_global(self) -> None:
         source = CACHE_SOURCE.read_text(encoding="utf-8")
-        self.assertRegex(
-            source,
-            r"at::stack\(\s*\{scene\.tri_fn_x, scene\.tri_fn_y, scene\.tri_fn_z\}, 1\)",
-        )
+        self.assertRegex(source, r"at::stack\(\s*\{scene\.tri_fn_x, scene\.tri_fn_y, scene\.tri_fn_z\}, 1\)")
         self.assertIn("face_normal.square().sum(1, true)", source)
         self.assertRegex(
             source,
             r"at::where\(\s*squared_normal\.gt\(0\.0f\), face_normal \* inverse_normal,\s*"
             r"at::zeros_like\(face_normal\)\)",
         )
-        self.assertRegex(
-            source,
-            r"at::arange\(\s*scene\.global_faces\.size\(0\), scene\.face_local_id\.options\(\)\)",
-        )
+        self.assertRegex(source, r"at::arange\(\s*scene\.global_faces\.size\(0\), scene\.face_local_id\.options\(\)\)")
 
 
 if __name__ == "__main__":

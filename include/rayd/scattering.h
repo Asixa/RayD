@@ -22,8 +22,7 @@ struct ScatteringTableEvalResult {
     at::Tensor f_tm;
 };
 
-ScatteringTableEvalResult scattering_table_eval(
-    const ScatteringTableEvalRequest& request);
+ScatteringTableEvalResult scattering_table_eval(const ScatteringTableEvalRequest& request);
 
 struct ScatteringTableEvalBackwardRequest {
     ScatteringTableEvalRequest primal;
@@ -40,8 +39,7 @@ struct ScatteringTableEvalBackwardResult {
     std::optional<at::Tensor> grad_f_tm;
 };
 
-ScatteringTableEvalBackwardResult scattering_table_eval_backward(
-    const ScatteringTableEvalBackwardRequest& request);
+ScatteringTableEvalBackwardResult scattering_table_eval_backward(const ScatteringTableEvalBackwardRequest& request);
 
 struct ScatteringTableEvalJvpRequest {
     ScatteringTableEvalRequest primal;
@@ -56,8 +54,7 @@ struct ScatteringTableEvalJvpResult {
     at::Tensor tangent_f_tm;
 };
 
-ScatteringTableEvalJvpResult scattering_table_eval_jvp(
-    const ScatteringTableEvalJvpRequest& request);
+ScatteringTableEvalJvpResult scattering_table_eval_jvp(const ScatteringTableEvalJvpRequest& request);
 
 struct ScatteringTableSampleRequest {
     at::Tensor valid;
@@ -74,8 +71,7 @@ struct ScatteringTableSampleResult {
     at::Tensor pdf_reverse;
 };
 
-ScatteringTableSampleResult scattering_table_sample(
-    const ScatteringTableSampleRequest& request);
+ScatteringTableSampleResult scattering_table_sample(const ScatteringTableSampleRequest& request);
 
 struct ScatteringTablePdfRequest {
     at::Tensor valid;
@@ -89,8 +85,7 @@ struct ScatteringTablePdfResult {
     at::Tensor pdf;
 };
 
-ScatteringTablePdfResult scattering_table_pdf(
-    const ScatteringTablePdfRequest& request);
+ScatteringTablePdfResult scattering_table_pdf(const ScatteringTablePdfRequest& request);
 
 struct ScatteringEnsembleEvalRequest {
     at::Tensor valid;
@@ -127,8 +122,7 @@ struct ScatteringEnsembleEvalResult {
     at::Tensor keep;
 };
 
-ScatteringEnsembleEvalResult scattering_ensemble_eval(
-    const ScatteringEnsembleEvalRequest& request);
+ScatteringEnsembleEvalResult scattering_ensemble_eval(const ScatteringEnsembleEvalRequest& request);
 
 struct ScatteringEnsembleEvalBackwardRequest {
     ScatteringEnsembleEvalRequest primal;
@@ -187,8 +181,7 @@ struct ScatteringEnsembleEvalJvpResult {
     at::Tensor tangent_length;
 };
 
-ScatteringEnsembleEvalJvpResult scattering_ensemble_eval_jvp(
-    const ScatteringEnsembleEvalJvpRequest& request);
+ScatteringEnsembleEvalJvpResult scattering_ensemble_eval_jvp(const ScatteringEnsembleEvalJvpRequest& request);
 
 struct ScatteringPatchIntegralEvalRequest {
     at::Tensor valid;
@@ -218,8 +211,7 @@ struct ScatteringPatchIntegralEvalResult {
     at::Tensor row_value;
 };
 
-ScatteringPatchIntegralEvalResult scattering_patch_integral_eval(
-    const ScatteringPatchIntegralEvalRequest& request);
+ScatteringPatchIntegralEvalResult scattering_patch_integral_eval(const ScatteringPatchIntegralEvalRequest& request);
 
 struct ScatteringPatchIntegralEvalBackwardRequest {
     ScatteringPatchIntegralEvalRequest primal;
@@ -318,8 +310,7 @@ struct ScatteringChainEnsembleEvalResult {
     at::Tensor keep;
 };
 
-ScatteringChainEnsembleEvalResult scattering_chain_ensemble_eval(
-    const ScatteringChainEnsembleEvalRequest& request);
+ScatteringChainEnsembleEvalResult scattering_chain_ensemble_eval(const ScatteringChainEnsembleEvalRequest& request);
 
 struct ScatteringChainEnsembleEvalBackwardRequest {
     ScatteringChainEnsembleEvalRequest primal;
@@ -532,4 +523,4 @@ struct ScatteringChainRealizationEvalJvpResult {
 ScatteringChainRealizationEvalJvpResult scattering_chain_realization_eval_jvp(
     const ScatteringChainRealizationEvalJvpRequest& request);
 
-}  // namespace rayd::torch
+} // namespace rayd::torch

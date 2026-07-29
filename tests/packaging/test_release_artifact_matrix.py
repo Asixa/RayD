@@ -36,21 +36,14 @@ class ReleaseArtifactMatrixTests(unittest.TestCase):
             for python_tag in PYTHON_TAGS:
                 matching = [name for name in names if python_tag in name]
                 self.assertEqual(len(matching), 2, (distribution, python_tag, matching))
-                self.assertTrue(
-                    any(name.endswith("manylinux_2_28_x86_64.whl") for name in matching),
-                    matching,
-                )
+                self.assertTrue(any(name.endswith("manylinux_2_28_x86_64.whl") for name in matching), matching)
                 self.assertTrue(any(name.endswith("win_amd64.whl") for name in matching), matching)
 
     def test_meta_distribution_has_one_universal_wheel_and_sdist(self):
         self.assertEqual(
-            [path.name for path in self.dist_dir.glob("rayd-*-none-any.whl")],
-            [f"rayd-{self.version}-py3-none-any.whl"],
+            [path.name for path in self.dist_dir.glob("rayd-*-none-any.whl")], [f"rayd-{self.version}-py3-none-any.whl"]
         )
-        self.assertEqual(
-            [path.name for path in self.dist_dir.glob("rayd-*.tar.gz")],
-            [f"rayd-{self.version}.tar.gz"],
-        )
+        self.assertEqual([path.name for path in self.dist_dir.glob("rayd-*.tar.gz")], [f"rayd-{self.version}.tar.gz"])
 
 
 if __name__ == "__main__":

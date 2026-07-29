@@ -43,24 +43,18 @@ import torch.distributed as dist
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--steps", type=int, default=24, help="optimizer steps")
-    parser.add_argument(
-        "--rays", type=int, default=1 << 18, help="global ray batch size"
-    )
+    parser.add_argument("--rays", type=int, default=1 << 18, help="global ray batch size")
     parser.add_argument("--cells", type=int, default=24, help="grid mesh resolution")
     parser.add_argument("--lr", type=float, default=0.02, help="Adam learning rate")
     parser.add_argument("--seed", type=int, default=1234, help="ray sampling seed")
     parser.add_argument(
-        "--check-every",
-        type=int,
-        default=4,
-        help="assert zero cross-rank parameter drift every N steps",
+        "--check-every", type=int, default=4, help="assert zero cross-rank parameter drift every N steps"
     )
     parser.add_argument(
         "--timeout",
         type=float,
         default=600.0,
-        help="collective timeout in seconds; a dead peer fails the run instead "
-        "of hanging it",
+        help="collective timeout in seconds; a dead peer fails the run instead of hanging it",
     )
     return parser.parse_args(argv)
 
@@ -74,19 +68,13 @@ def grid_mesh(cells: int, span: float, device: torch.device):
     axis = torch.linspace(-0.5 * span, 0.5 * span, cells + 1, dtype=torch.float32)
     y, x = torch.meshgrid(axis, axis, indexing="ij")
     flat_x = x.reshape(-1)
-    vertices = torch.stack(
-        (flat_x, y.reshape(-1), torch.zeros_like(flat_x)), dim=1
-    ).contiguous()
-    index = torch.arange((cells + 1) * (cells + 1), dtype=torch.int32).reshape(
-        cells + 1, cells + 1
-    )
+    vertices = torch.stack((flat_x, y.reshape(-1), torch.zeros_like(flat_x)), dim=1).contiguous()
+    index = torch.arange((cells + 1) * (cells + 1), dtype=torch.int32).reshape(cells + 1, cells + 1)
     a = index[:-1, :-1].reshape(-1)
     b = index[:-1, 1:].reshape(-1)
     c = index[1:, :-1].reshape(-1)
     d = index[1:, 1:].reshape(-1)
-    faces = torch.cat(
-        (torch.stack((a, b, c), dim=1), torch.stack((b, d, c), dim=1))
-    ).contiguous()
+    faces = torch.cat((torch.stack((a, b, c), dim=1), torch.stack((b, d, c), dim=1))).contiguous()
     return vertices.to(device), faces.to(device)
 
 
@@ -97,9 +85,7 @@ def global_rays(count: int, seed: int, extent: float, height: float, device):
     partition of one batch rather than `world_size` unrelated batches.
     """
     generator = torch.Generator().manual_seed(seed)
-    xy = (torch.rand((count, 2), generator=generator, dtype=torch.float32) - 0.5) * (
-        2.0 * extent
-    )
+    xy = (torch.rand((count, 2), generator=generator, dtype=torch.float32) - 0.5) * (2.0 * extent)
     origins = torch.cat((xy, torch.full((count, 1), height, dtype=torch.float32)), dim=1)
     directions = torch.zeros((count, 3), dtype=torch.float32)
     directions[:, 2] = -1.0
@@ -121,9 +107,7 @@ def target_distance(origins: torch.Tensor, height: float) -> torch.Tensor:
 
 def parameter_hash(vertices: torch.Tensor) -> str:
     """SHA-256 over the parameter's exact bytes -- equality here is bitwise."""
-    return hashlib.sha256(
-        vertices.detach().to("cpu").contiguous().numpy().tobytes()
-    ).hexdigest()
+    return hashlib.sha256(vertices.detach().to("cpu").contiguous().numpy().tobytes()).hexdigest()
 
 
 def train(args: argparse.Namespace, rank: int, world_size: int, device) -> None:
@@ -139,9 +123,7 @@ def train(args: argparse.Namespace, rank: int, world_size: int, device) -> None:
     scene.add_mesh(rt.Mesh(vertices, faces), dynamic=True)
     scene.build()
 
-    origins, directions = global_rays(
-        args.rays, args.seed, 0.45 * span, ray_height, device
-    )
+    origins, directions = global_rays(args.rays, args.seed, 0.45 * span, ray_height, device)
     begin, end = shard_bounds(args.rays, rank, world_size)
     shard_o = origins[begin:end].contiguous()
     shard_d = directions[begin:end].contiguous()
@@ -155,9 +137,7 @@ def train(args: argparse.Namespace, rank: int, world_size: int, device) -> None:
     # no optimizer state crosses the interconnect either.
     optimizer = torch.optim.Adam([vertices], lr=args.lr)
     print(
-        f"rank={rank} device={device} vertices={vertices.shape[0]} "
-        f"rays={args.rays} shard=[{begin},{end})",
-        flush=True,
+        f"rank={rank} device={device} vertices={vertices.shape[0]} rays={args.rays} shard=[{begin},{end})", flush=True
     )
 
     for step in range(args.steps):
@@ -204,13 +184,8 @@ def train(args: argparse.Namespace, rank: int, world_size: int, device) -> None:
             dist.broadcast(reference, src=0)
             drift = (vertices.detach() - reference).abs().max()
             if float(drift) != 0.0:
-                raise RuntimeError(
-                    f"rank={rank} step={step + 1} parameter drift {float(drift)!r}"
-                )
-            print(
-                f"rank={rank} step={step + 1} loss={float(loss):.8e} drift=0",
-                flush=True,
-            )
+                raise RuntimeError(f"rank={rank} step={step + 1} parameter drift {float(drift)!r}")
+            print(f"rank={rank} step={step + 1} loss={float(loss):.8e} drift=0", flush=True)
 
     digest = parameter_hash(vertices)
     print(f"rank={rank} final_param_sha256={digest}", flush=True)
@@ -246,11 +221,7 @@ def main(argv: list[str] | None = None) -> int:
 
     torch.cuda.set_device(local_rank)
     device = torch.device("cuda", local_rank)
-    dist.init_process_group(
-        backend="nccl",
-        timeout=datetime.timedelta(seconds=args.timeout),
-        device_id=device,
-    )
+    dist.init_process_group(backend="nccl", timeout=datetime.timedelta(seconds=args.timeout), device_id=device)
     try:
         train(args, rank, world_size, device)
         # Everyone reaches the end together, so a rank that failed early cannot

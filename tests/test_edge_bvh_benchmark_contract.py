@@ -41,23 +41,22 @@ def launch_audit(count=1):
 def result(matrix):
     cases = []
     for index, dimensions in enumerate(expected_case_dimensions(matrix, "smoke")):
-        performance = {
-            metric: summary(unit)
-            for metric, (unit, _) in PERFORMANCE_METRICS.items()
-        }
-        cases.append({
-            "case_id": f"smoke-{index:04d}",
-            "dimensions": dimensions,
-            "performance": performance,
-            "launch_audit": launch_audit(),
-            "correctness": {"max_abs_error": 0.0, "max_rel_error": 0.0},
-            "ad": {
-                "vjp_max_abs_error": 0.0,
-                "vjp_max_rel_error": 0.0,
-                "jvp_max_abs_error": 0.0,
-                "jvp_max_rel_error": 0.0,
-            },
-        })
+        performance = {metric: summary(unit) for metric, (unit, _) in PERFORMANCE_METRICS.items()}
+        cases.append(
+            {
+                "case_id": f"smoke-{index:04d}",
+                "dimensions": dimensions,
+                "performance": performance,
+                "launch_audit": launch_audit(),
+                "correctness": {"max_abs_error": 0.0, "max_rel_error": 0.0},
+                "ad": {
+                    "vjp_max_abs_error": 0.0,
+                    "vjp_max_rel_error": 0.0,
+                    "jvp_max_abs_error": 0.0,
+                    "jvp_max_rel_error": 0.0,
+                },
+            }
+        )
     return {
         "schema_version": matrix["schema_version"],
         "matrix_id": matrix["matrix_id"],
@@ -116,16 +115,21 @@ class EdgeBVHBenchmarkContractTests(unittest.TestCase):
 
     def test_schema_and_matrix_require_reproducibility_metadata(self):
         fields = set(self.matrix["required_environment_fields"])
-        self.assertTrue({
-            "gpu_name", "cuda_runtime_version", "cuda_driver_version", "optix_version",
-            "compiler_id", "compiler_version", "build_type", "git_commit",
-        }.issubset(fields))
+        self.assertTrue(
+            {
+                "gpu_name",
+                "cuda_runtime_version",
+                "cuda_driver_version",
+                "optix_version",
+                "compiler_id",
+                "compiler_version",
+                "build_type",
+                "git_commit",
+            }.issubset(fields)
+        )
         self.assertGreaterEqual(self.matrix["measurement"]["minimum_timed_runs"], 5)
         self.assertEqual(self.matrix["measurement"]["required_statistics"], ["median", "p95"])
-        self.assertEqual(
-            self.matrix["measurement"]["launch_audit"]["method"],
-            "independent_stable_audit",
-        )
+        self.assertEqual(self.matrix["measurement"]["launch_audit"]["method"], "independent_stable_audit")
         self.assertTrue(self.matrix["measurement"]["launch_audit"]["timing_isolated"])
 
     def test_valid_result_passes_schema_validation(self):
@@ -192,12 +196,7 @@ class EdgeBVHBenchmarkContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "legacy result"):
             evaluate_gate(baseline, candidate, self.matrix)
 
-        report = evaluate_gate(
-            baseline,
-            candidate,
-            self.matrix,
-            allow_legacy_launch_baseline=True,
-        )
+        report = evaluate_gate(baseline, candidate, self.matrix, allow_legacy_launch_baseline=True)
         self.assertTrue(report["passed"], report)
         self.assertEqual(len(report["warnings"]), len(baseline["cases"]))
 
@@ -209,18 +208,19 @@ class EdgeBVHBenchmarkContractTests(unittest.TestCase):
         stage["total_observed_launches"] += 1
         report = evaluate_gate(baseline, candidate, self.matrix)
         self.assertFalse(report["passed"])
-        self.assertTrue(any(
-            failure["metric"] == "launch_audit.query_point.drjit_kernel_launches"
-            and failure["reason"] == "unexplained launch-count regression"
-            for failure in report["failures"]
-        ))
+        self.assertTrue(
+            any(
+                failure["metric"] == "launch_audit.query_point.drjit_kernel_launches"
+                and failure["reason"] == "unexplained launch-count regression"
+                for failure in report["failures"]
+            )
+        )
 
         stage["increase_explanation"] = "One fused dispatch was split to preserve fixed-winner AD semantics."
         report = evaluate_gate(baseline, candidate, self.matrix)
         self.assertTrue(report["passed"], report)
         comparison = next(
-            item for item in report["comparisons"]
-            if item["metric"] == "launch_audit.query_point.drjit_kernel_launches"
+            item for item in report["comparisons"] if item["metric"] == "launch_audit.query_point.drjit_kernel_launches"
         )
         self.assertEqual(comparison["increase"], 1)
         self.assertTrue(comparison["increase_explanation"])
@@ -305,9 +305,7 @@ class EdgeBVHBenchmarkContractTests(unittest.TestCase):
                 candidate["cases"][0][group][field] = self.matrix["tolerances"][group][field] * 2.0
                 report = evaluate_gate(baseline, candidate, self.matrix)
                 self.assertFalse(report["passed"])
-                self.assertTrue(
-                    any(failure["metric"] == f"{group}.{field}" for failure in report["failures"])
-                )
+                self.assertTrue(any(failure["metric"] == f"{group}.{field}" for failure in report["failures"]))
 
     def test_zero_baseline_regression_is_well_defined(self):
         baseline = result(self.matrix)
@@ -320,9 +318,7 @@ class EdgeBVHBenchmarkContractTests(unittest.TestCase):
         report = evaluate_gate(baseline, candidate, self.matrix)
         self.assertFalse(report["passed"])
         regression = next(
-            failure["regression"]
-            for failure in report["failures"]
-            if failure["metric"] == "hot_query_ms"
+            failure["regression"] for failure in report["failures"] if failure["metric"] == "hot_query_ms"
         )
         self.assertIsNone(regression)
 

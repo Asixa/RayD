@@ -84,9 +84,7 @@ struct DiffractionPathResult {
     at::Tensor p2;
 };
 
-DiffractionPathResult diffraction_paths_order1_forward(
-    const SceneResource &scene,
-    const DiffractionPathConfig &config);
+DiffractionPathResult diffraction_paths_order1_forward(const SceneResource& scene, const DiffractionPathConfig& config);
 
 struct DiffractionAccumulationConfig {
     std::optional<at::Tensor> active;
@@ -128,9 +126,8 @@ struct DiffractionAccumulationResult {
     at::Tensor tape_edge_u;
 };
 
-DiffractionAccumulationResult diffraction_accumulation_forward(
-    const SceneResource &scene,
-    const DiffractionAccumulationConfig &config);
+DiffractionAccumulationResult diffraction_accumulation_forward(const SceneResource& scene,
+                                                               const DiffractionAccumulationConfig& config);
 
 struct CoherentDiffractionConfig {
     std::optional<at::Tensor> active;
@@ -162,9 +159,8 @@ struct CoherentDiffractionResult {
     at::Tensor utd_reject_count;
 };
 
-CoherentDiffractionResult diffraction_coherent_accumulation_forward(
-    const SceneResource &scene,
-    const CoherentDiffractionConfig &config);
+CoherentDiffractionResult diffraction_coherent_accumulation_forward(const SceneResource& scene,
+                                                                    const CoherentDiffractionConfig& config);
 
 struct DiffractionWedgeRequest {
     at::Tensor valid;
@@ -202,8 +198,7 @@ struct DiffractionWedgeResult {
     at::Tensor direction;
 };
 
-DiffractionWedgeResult field_diffraction_wedge(
-    const DiffractionWedgeRequest &request);
+DiffractionWedgeResult field_diffraction_wedge(const DiffractionWedgeRequest& request);
 
 struct DiffractionWedgeBackwardRequest {
     DiffractionWedgeRequest primal;
@@ -231,8 +226,7 @@ struct DiffractionWedgeBackwardResult {
     std::optional<at::Tensor> grad_vertex_opp1;
 };
 
-DiffractionWedgeBackwardResult field_diffraction_wedge_backward(
-    const DiffractionWedgeBackwardRequest &request);
+DiffractionWedgeBackwardResult field_diffraction_wedge_backward(const DiffractionWedgeBackwardRequest& request);
 
 struct DiffractionWedgeJvpRequest {
     DiffractionWedgeRequest primal;
@@ -256,8 +250,6 @@ struct DiffractionWedgeJvpResult {
     at::Tensor tangent_direction;
 };
 
-DiffractionWedgeJvpResult field_diffraction_wedge_jvp(
-    const DiffractionWedgeJvpRequest &request);
-
+DiffractionWedgeJvpResult field_diffraction_wedge_jvp(const DiffractionWedgeJvpRequest& request);
 
 } // namespace rayd::torch

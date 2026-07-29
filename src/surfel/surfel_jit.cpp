@@ -14,43 +14,40 @@ namespace {
 constexpr int IcosahedronVertexCount = 12;
 constexpr int IcosahedronFaceCount = 20;
 
-const std::array<std::array<float, 3>, IcosahedronVertexCount> &icosahedron_vertices_unit_inradius() {
+const std::array<std::array<float, 3>, IcosahedronVertexCount>& icosahedron_vertices_unit_inradius() {
     static const std::array<std::array<float, 3>, IcosahedronVertexCount> vertices = []() {
         constexpr float Phi = 1.618033988749895f;
         constexpr float EdgeLength = 2.f;
-        constexpr float Inradius =
-            EdgeLength * (3.f * 1.7320508075688772f + 3.872983346207417f) / 12.f;
+        constexpr float Inradius = EdgeLength * (3.f * 1.7320508075688772f + 3.872983346207417f) / 12.f;
         constexpr float Scale = 1.f / Inradius;
-        return std::array<std::array<float, 3>, IcosahedronVertexCount> {{
-            {{-Scale,  Phi * Scale, 0.f}},
-            {{ Scale,  Phi * Scale, 0.f}},
+        return std::array<std::array<float, 3>, IcosahedronVertexCount>{{
+            {{-Scale, Phi * Scale, 0.f}},
+            {{Scale, Phi * Scale, 0.f}},
             {{-Scale, -Phi * Scale, 0.f}},
-            {{ Scale, -Phi * Scale, 0.f}},
-            {{0.f, -Scale,  Phi * Scale}},
-            {{0.f,  Scale,  Phi * Scale}},
+            {{Scale, -Phi * Scale, 0.f}},
+            {{0.f, -Scale, Phi * Scale}},
+            {{0.f, Scale, Phi * Scale}},
             {{0.f, -Scale, -Phi * Scale}},
-            {{0.f,  Scale, -Phi * Scale}},
-            {{ Phi * Scale, 0.f, -Scale}},
-            {{ Phi * Scale, 0.f,  Scale}},
+            {{0.f, Scale, -Phi * Scale}},
+            {{Phi * Scale, 0.f, -Scale}},
+            {{Phi * Scale, 0.f, Scale}},
             {{-Phi * Scale, 0.f, -Scale}},
-            {{-Phi * Scale, 0.f,  Scale}},
+            {{-Phi * Scale, 0.f, Scale}},
         }};
     }();
     return vertices;
 }
 
-const std::array<std::array<int, 3>, IcosahedronFaceCount> &icosahedron_faces() {
-    static const std::array<std::array<int, 3>, IcosahedronFaceCount> faces {{
-        {{0, 11, 5}}, {{0, 5, 1}}, {{0, 1, 7}}, {{0, 7, 10}}, {{0, 10, 11}},
-        {{1, 5, 9}}, {{5, 11, 4}}, {{11, 10, 2}}, {{10, 7, 6}}, {{7, 1, 8}},
-        {{3, 9, 4}}, {{3, 4, 2}}, {{3, 2, 6}}, {{3, 6, 8}}, {{3, 8, 9}},
-        {{4, 9, 5}}, {{2, 4, 11}}, {{6, 2, 10}}, {{8, 6, 7}}, {{9, 8, 1}},
+const std::array<std::array<int, 3>, IcosahedronFaceCount>& icosahedron_faces() {
+    static const std::array<std::array<int, 3>, IcosahedronFaceCount> faces{{
+        {{0, 11, 5}},  {{0, 5, 1}},  {{0, 1, 7}},  {{0, 7, 10}}, {{0, 10, 11}}, {{1, 5, 9}}, {{5, 11, 4}},
+        {{11, 10, 2}}, {{10, 7, 6}}, {{7, 1, 8}},  {{3, 9, 4}},  {{3, 4, 2}},   {{3, 2, 6}}, {{3, 6, 8}},
+        {{3, 8, 9}},   {{4, 9, 5}},  {{2, 4, 11}}, {{6, 2, 10}}, {{8, 6, 7}},   {{9, 8, 1}},
     }};
     return faces;
 }
 
-template <bool Detached>
-struct AnalyticSurfelHit {
+template <bool Detached> struct AnalyticSurfelHit {
     FloatT<Detached> t;
     Vector3fT<Detached> p;
     Vector3fT<Detached> n;
@@ -63,44 +60,53 @@ struct AnalyticSurfelHit {
 };
 
 int sh_basis_count_for_degree(int degree) {
-    require(degree >= 0 && degree <= 3,
-            "SurfelAppearance::sh(): sh_degree must be in [0, 3].");
+    require(degree >= 0 && degree <= 3, "SurfelAppearance::sh(): sh_degree must be in [0, 3].");
     return (degree + 1) * (degree + 1);
 }
 
-template <bool Detached>
-FloatT<Detached> sh_basis_value(int basis, const Vector3fT<Detached> &view_dir) {
+template <bool Detached> FloatT<Detached> sh_basis_value(int basis, const Vector3fT<Detached>& view_dir) {
     const FloatT<Detached> x = view_dir.x();
     const FloatT<Detached> y = view_dir.y();
     const FloatT<Detached> z = view_dir.z();
     switch (basis) {
-        case 0: return FloatT<Detached>(0.28209479177387814f);
-        case 1: return FloatT<Detached>(0.4886025119029199f) * y;
-        case 2: return FloatT<Detached>(0.4886025119029199f) * z;
-        case 3: return FloatT<Detached>(0.4886025119029199f) * x;
-        case 4: return FloatT<Detached>(1.0925484305920792f) * x * y;
-        case 5: return FloatT<Detached>(1.0925484305920792f) * y * z;
-        case 6: return FloatT<Detached>(0.31539156525252005f) *
-                       (FloatT<Detached>(3.f) * z * z - FloatT<Detached>(1.f));
-        case 7: return FloatT<Detached>(1.0925484305920792f) * x * z;
-        case 8: return FloatT<Detached>(0.5462742152960396f) * (x * x - y * y);
-        case 9: return FloatT<Detached>(0.5900435899266435f) * y *
-                       (FloatT<Detached>(3.f) * x * x - y * y);
-        case 10: return FloatT<Detached>(2.890611442640554f) * x * y * z;
-        case 11: return FloatT<Detached>(0.4570457994644658f) * y *
-                        (FloatT<Detached>(5.f) * z * z - FloatT<Detached>(1.f));
-        case 12: return FloatT<Detached>(0.3731763325901154f) * z *
-                        (FloatT<Detached>(5.f) * z * z - FloatT<Detached>(3.f));
-        case 13: return FloatT<Detached>(0.4570457994644658f) * x *
-                        (FloatT<Detached>(5.f) * z * z - FloatT<Detached>(1.f));
-        case 14: return FloatT<Detached>(1.445305721320277f) * z * (x * x - y * y);
-        case 15: return FloatT<Detached>(0.5900435899266435f) * x *
-                        (x * x - FloatT<Detached>(3.f) * y * y);
-        default: return zeros<FloatT<Detached>>(slices(view_dir));
+    case 0:
+        return FloatT<Detached>(0.28209479177387814f);
+    case 1:
+        return FloatT<Detached>(0.4886025119029199f) * y;
+    case 2:
+        return FloatT<Detached>(0.4886025119029199f) * z;
+    case 3:
+        return FloatT<Detached>(0.4886025119029199f) * x;
+    case 4:
+        return FloatT<Detached>(1.0925484305920792f) * x * y;
+    case 5:
+        return FloatT<Detached>(1.0925484305920792f) * y * z;
+    case 6:
+        return FloatT<Detached>(0.31539156525252005f) * (FloatT<Detached>(3.f) * z * z - FloatT<Detached>(1.f));
+    case 7:
+        return FloatT<Detached>(1.0925484305920792f) * x * z;
+    case 8:
+        return FloatT<Detached>(0.5462742152960396f) * (x * x - y * y);
+    case 9:
+        return FloatT<Detached>(0.5900435899266435f) * y * (FloatT<Detached>(3.f) * x * x - y * y);
+    case 10:
+        return FloatT<Detached>(2.890611442640554f) * x * y * z;
+    case 11:
+        return FloatT<Detached>(0.4570457994644658f) * y * (FloatT<Detached>(5.f) * z * z - FloatT<Detached>(1.f));
+    case 12:
+        return FloatT<Detached>(0.3731763325901154f) * z * (FloatT<Detached>(5.f) * z * z - FloatT<Detached>(3.f));
+    case 13:
+        return FloatT<Detached>(0.4570457994644658f) * x * (FloatT<Detached>(5.f) * z * z - FloatT<Detached>(1.f));
+    case 14:
+        return FloatT<Detached>(1.445305721320277f) * z * (x * x - y * y);
+    case 15:
+        return FloatT<Detached>(0.5900435899266435f) * x * (x * x - FloatT<Detached>(3.f) * y * y);
+    default:
+        return zeros<FloatT<Detached>>(slices(view_dir));
     }
 }
 
-FloatAD pack_rgb_values(const Vector3fAD &rgb) {
+FloatAD pack_rgb_values(const Vector3fAD& rgb) {
     const size_t count = slices(rgb);
     FloatAD packed = empty<FloatAD>(count * 3);
     const IntAD base = arange<IntAD>(count) * 3;
@@ -110,7 +116,7 @@ FloatAD pack_rgb_values(const Vector3fAD &rgb) {
     return packed;
 }
 
-FloatAD first_appearance_channel(const SurfelAppearance &appearance) {
+FloatAD first_appearance_channel(const SurfelAppearance& appearance) {
     const int count = appearance.surfel_count();
     if (count <= 0 || appearance.channel_count() <= 0 || slices(appearance.values()) == 0) {
         return full<FloatAD>(1.f, std::max(count, 1));
@@ -120,22 +126,18 @@ FloatAD first_appearance_channel(const SurfelAppearance &appearance) {
 }
 
 template <bool Detached>
-AnalyticSurfelHit<Detached> evaluate_analytic_surfel_hit(const RayT<Detached> &ray,
-                                                         const Vector3fT<Detached> &center,
-                                                         const Vector3fT<Detached> &tangent_u,
-                                                         const Vector3fT<Detached> &tangent_v,
-                                                         const FloatT<Detached> &opacity,
-                                                         const FloatT<Detached> &value,
-                                                         const SurfelTraceOptions &options,
-                                                         MaskT<Detached> active) {
+AnalyticSurfelHit<Detached> evaluate_analytic_surfel_hit(const RayT<Detached>& ray, const Vector3fT<Detached>& center,
+                                                         const Vector3fT<Detached>& tangent_u,
+                                                         const Vector3fT<Detached>& tangent_v,
+                                                         const FloatT<Detached>& opacity, const FloatT<Detached>& value,
+                                                         const SurfelTraceOptions& options, MaskT<Detached> active) {
     const int ray_count = static_cast<int>(slices(ray.o));
     AnalyticSurfelHit<Detached> hit;
 
     const Vector3fT<Detached> raw_normal = cross(tangent_u, tangent_v);
     const FloatT<Detached> normal_len_sq = squared_norm(raw_normal);
     const MaskT<Detached> normal_valid = normal_len_sq > FloatT<Detached>(1e-16f);
-    Vector3fT<Detached> normal =
-        raw_normal / sqrt(select(normal_valid, normal_len_sq, FloatT<Detached>(1.f)));
+    Vector3fT<Detached> normal = raw_normal / sqrt(select(normal_valid, normal_len_sq, FloatT<Detached>(1.f)));
     if (options.face_forward) {
         normal = select(dot(normal, ray.d) > FloatT<Detached>(0.f), -normal, normal);
     }
@@ -144,12 +146,8 @@ AnalyticSurfelHit<Detached> evaluate_analytic_surfel_hit(const RayT<Detached> &r
     const MaskT<Detached> plane_valid = abs(denom) > FloatT<Detached>(1e-8f);
     const FloatT<Detached> safe_denom = select(plane_valid, denom, FloatT<Detached>(1.f));
     const FloatT<Detached> plane_t = dot(center - ray.o, normal) / safe_denom;
-    MaskT<Detached> valid = active &&
-                            normal_valid &&
-                            plane_valid &&
-                            drjit::isfinite(plane_t) &&
-                            (plane_t > FloatT<Detached>(RayEpsilon)) &&
-                            (plane_t < ray.tmax);
+    MaskT<Detached> valid = active && normal_valid && plane_valid && drjit::isfinite(plane_t) &&
+                            (plane_t > FloatT<Detached>(RayEpsilon)) && (plane_t < ray.tmax);
 
     const FloatT<Detached> safe_t = select(valid, plane_t, zeros<FloatT<Detached>>(ray_count));
     const Vector3fT<Detached> hit_point = ray(safe_t);
@@ -166,8 +164,7 @@ AnalyticSurfelHit<Detached> evaluate_analytic_surfel_hit(const RayT<Detached> &r
 
     const FloatT<Detached> local_u = (du * vv - dv * uv) / safe_basis_det;
     const FloatT<Detached> local_v = (dv * uu - du * uv) / safe_basis_det;
-    const FloatT<Detached> gaussian =
-        exp(FloatT<Detached>(-0.5f) * (local_u * local_u + local_v * local_v));
+    const FloatT<Detached> gaussian = exp(FloatT<Detached>(-0.5f) * (local_u * local_u + local_v * local_v));
     const FloatT<Detached> alpha_uncapped = opacity * gaussian;
     const FloatT<Detached> alpha_min_value(options.alpha_min);
     const FloatT<Detached> alpha_accept_slack =
@@ -175,8 +172,7 @@ AnalyticSurfelHit<Detached> evaluate_analytic_surfel_hit(const RayT<Detached> &r
     valid &= basis_valid && (alpha_uncapped + alpha_accept_slack >= alpha_min_value);
 
     FloatT<Detached> alpha =
-        minimum(FloatT<Detached>(options.alpha_cap),
-                maximum(FloatT<Detached>(0.f), alpha_uncapped));
+        minimum(FloatT<Detached>(options.alpha_cap), maximum(FloatT<Detached>(0.f), alpha_uncapped));
     alpha = select(valid, alpha, zeros<FloatT<Detached>>(ray_count));
 
     hit.t = plane_t;
@@ -192,11 +188,8 @@ AnalyticSurfelHit<Detached> evaluate_analytic_surfel_hit(const RayT<Detached> &r
 }
 
 template <bool Detached>
-FloatT<Detached> gather_appearance_channel(const SurfelAppearance &appearance,
-                                           const IntT<Detached> &surfel_id,
-                                           int output_channel,
-                                           int sh_degree,
-                                           const Vector3fT<Detached> &view_dir,
+FloatT<Detached> gather_appearance_channel(const SurfelAppearance& appearance, const IntT<Detached>& surfel_id,
+                                           int output_channel, int sh_degree, const Vector3fT<Detached>& view_dir,
                                            MaskT<Detached> active) {
     const int ray_count = static_cast<int>(slices(surfel_id));
     if (appearance.surfel_count() <= 0 || slices(appearance.values()) == 0) {
@@ -213,8 +206,7 @@ FloatT<Detached> gather_appearance_channel(const SurfelAppearance &appearance,
             const IntT<Detached> index =
                 (safe_surfel * storage_basis_count + IntT<Detached>(basis)) * IntT<Detached>(3) +
                 IntT<Detached>(channel);
-            const FloatT<Detached> coeff =
-                gather<FloatT<Detached>>(appearance.values(), index, active);
+            const FloatT<Detached> coeff = gather<FloatT<Detached>>(appearance.values(), index, active);
             value += coeff * sh_basis_value<Detached>(basis, view_dir);
         }
         return value;
@@ -227,107 +219,71 @@ FloatT<Detached> gather_appearance_channel(const SurfelAppearance &appearance,
     return gather<FloatT<Detached>>(appearance.values(), index, active);
 }
 
-template <bool Detached>
-Vector3fT<Detached> normalized_view_direction(const RayT<Detached> &ray) {
+template <bool Detached> Vector3fT<Detached> normalized_view_direction(const RayT<Detached>& ray) {
     const int ray_count = static_cast<int>(slices(ray.o));
     const Vector3fT<Detached> view = -ray.d;
     const FloatT<Detached> len_sq = squared_norm(view);
-    return view / sqrt(select(len_sq > FloatT<Detached>(1e-16f),
-                              len_sq,
-                              FloatT<Detached>(1.f))) +
+    return view / sqrt(select(len_sq > FloatT<Detached>(1e-16f), len_sq, FloatT<Detached>(1.f))) +
            zeros<Vector3fT<Detached>>(ray_count);
 }
 
 } // namespace
 
-SurfelGeometry::SurfelGeometry(const Vector3f &center,
-                               const Vector3f &tangent_u,
-                               const Vector3f &tangent_v) {
+SurfelGeometry::SurfelGeometry(const Vector3f& center, const Vector3f& tangent_u, const Vector3f& tangent_v) {
     initialize(Vector3fAD(center), Vector3fAD(tangent_u), Vector3fAD(tangent_v));
 }
 
-SurfelGeometry::SurfelGeometry(const Vector3fAD &center,
-                               const Vector3fAD &tangent_u,
-                               const Vector3fAD &tangent_v) {
+SurfelGeometry::SurfelGeometry(const Vector3fAD& center, const Vector3fAD& tangent_u, const Vector3fAD& tangent_v) {
     initialize(center, tangent_u, tangent_v);
 }
 
-void SurfelGeometry::initialize(const Vector3fAD &center,
-                                const Vector3fAD &tangent_u,
-                                const Vector3fAD &tangent_v) {
+void SurfelGeometry::initialize(const Vector3fAD& center, const Vector3fAD& tangent_u, const Vector3fAD& tangent_v) {
     const size_t count = slices(center);
     require(count > 0, "SurfelGeometry(): center must contain at least one surfel.");
-    require(slices(tangent_u) == count,
-            "SurfelGeometry(): tangent_u must have the same lane count as center.");
-    require(slices(tangent_v) == count,
-            "SurfelGeometry(): tangent_v must have the same lane count as center.");
+    require(slices(tangent_u) == count, "SurfelGeometry(): tangent_u must have the same lane count as center.");
+    require(slices(tangent_v) == count, "SurfelGeometry(): tangent_v must have the same lane count as center.");
     center_ = center;
     tangent_u_ = tangent_u;
     tangent_v_ = tangent_v;
     surfel_count_ = static_cast<int>(count);
 }
 
-SurfelAppearance SurfelAppearance::rgb(const Float &opacity, const Vector3f &rgb) {
-    return SurfelAppearance(FloatAD(opacity),
-                            pack_rgb_values(Vector3fAD(rgb)),
-                            SurfelColorModel::ConstantRGB,
-                            3,
-                            0);
+SurfelAppearance SurfelAppearance::rgb(const Float& opacity, const Vector3f& rgb) {
+    return SurfelAppearance(FloatAD(opacity), pack_rgb_values(Vector3fAD(rgb)), SurfelColorModel::ConstantRGB, 3, 0);
 }
 
-SurfelAppearance SurfelAppearance::rgb(const FloatAD &opacity, const Vector3fAD &rgb) {
-    return SurfelAppearance(opacity,
-                            pack_rgb_values(rgb),
-                            SurfelColorModel::ConstantRGB,
-                            3,
-                            0);
+SurfelAppearance SurfelAppearance::rgb(const FloatAD& opacity, const Vector3fAD& rgb) {
+    return SurfelAppearance(opacity, pack_rgb_values(rgb), SurfelColorModel::ConstantRGB, 3, 0);
 }
 
-SurfelAppearance SurfelAppearance::features(const Float &opacity,
-                                            const Float &values,
-                                            int channel_count) {
+SurfelAppearance SurfelAppearance::features(const Float& opacity, const Float& values, int channel_count) {
     return SurfelAppearance(opacity, values, SurfelColorModel::FeatureChannels, channel_count, 0);
 }
 
-SurfelAppearance SurfelAppearance::features(const FloatAD &opacity,
-                                            const FloatAD &values,
-                                            int channel_count) {
+SurfelAppearance SurfelAppearance::features(const FloatAD& opacity, const FloatAD& values, int channel_count) {
     return SurfelAppearance(opacity, values, SurfelColorModel::FeatureChannels, channel_count, 0);
 }
 
-SurfelAppearance SurfelAppearance::sh(const Float &opacity,
-                                      const Float &coeffs,
-                                      int sh_degree) {
+SurfelAppearance SurfelAppearance::sh(const Float& opacity, const Float& coeffs, int sh_degree) {
     return SurfelAppearance(opacity, coeffs, SurfelColorModel::SH, 3, sh_degree);
 }
 
-SurfelAppearance SurfelAppearance::sh(const FloatAD &opacity,
-                                      const FloatAD &coeffs,
-                                      int sh_degree) {
+SurfelAppearance SurfelAppearance::sh(const FloatAD& opacity, const FloatAD& coeffs, int sh_degree) {
     return SurfelAppearance(opacity, coeffs, SurfelColorModel::SH, 3, sh_degree);
 }
 
-SurfelAppearance::SurfelAppearance(const Float &opacity,
-                                   const Float &values,
-                                   SurfelColorModel color_model,
-                                   int channel_count,
-                                   int sh_degree) {
+SurfelAppearance::SurfelAppearance(const Float& opacity, const Float& values, SurfelColorModel color_model,
+                                   int channel_count, int sh_degree) {
     initialize(FloatAD(opacity), FloatAD(values), color_model, channel_count, sh_degree);
 }
 
-SurfelAppearance::SurfelAppearance(const FloatAD &opacity,
-                                   const FloatAD &values,
-                                   SurfelColorModel color_model,
-                                   int channel_count,
-                                   int sh_degree) {
+SurfelAppearance::SurfelAppearance(const FloatAD& opacity, const FloatAD& values, SurfelColorModel color_model,
+                                   int channel_count, int sh_degree) {
     initialize(opacity, values, color_model, channel_count, sh_degree);
 }
 
-void SurfelAppearance::initialize(const FloatAD &opacity,
-                                  const FloatAD &values,
-                                  SurfelColorModel color_model,
-                                  int channel_count,
-                                  int sh_degree) {
+void SurfelAppearance::initialize(const FloatAD& opacity, const FloatAD& values, SurfelColorModel color_model,
+                                  int channel_count, int sh_degree) {
     require(channel_count > 0, "SurfelAppearance(): channel_count must be positive.");
     const size_t count = slices(opacity);
     require(count > 0, "SurfelAppearance(): opacity must contain at least one surfel.");
@@ -345,37 +301,22 @@ void SurfelAppearance::initialize(const FloatAD &opacity,
     surfel_count_ = static_cast<int>(count);
 }
 
-SurfelCloud::SurfelCloud(const Vector3f &center,
-                         const Vector3f &tangent_u,
-                         const Vector3f &tangent_v,
-                         const Float &opacity,
-                         const Float &value) {
-    initialize(Vector3fAD(center),
-               Vector3fAD(tangent_u),
-               Vector3fAD(tangent_v),
-               FloatAD(opacity),
-               FloatAD(value));
+SurfelCloud::SurfelCloud(const Vector3f& center, const Vector3f& tangent_u, const Vector3f& tangent_v,
+                         const Float& opacity, const Float& value) {
+    initialize(Vector3fAD(center), Vector3fAD(tangent_u), Vector3fAD(tangent_v), FloatAD(opacity), FloatAD(value));
 }
 
-SurfelCloud::SurfelCloud(const Vector3fAD &center,
-                         const Vector3fAD &tangent_u,
-                         const Vector3fAD &tangent_v,
-                         const FloatAD &opacity,
-                         const FloatAD &value) {
+SurfelCloud::SurfelCloud(const Vector3fAD& center, const Vector3fAD& tangent_u, const Vector3fAD& tangent_v,
+                         const FloatAD& opacity, const FloatAD& value) {
     initialize(center, tangent_u, tangent_v, opacity, value);
 }
 
-void SurfelCloud::initialize(const Vector3fAD &center,
-                             const Vector3fAD &tangent_u,
-                             const Vector3fAD &tangent_v,
-                             const FloatAD &opacity,
-                             const FloatAD &value) {
+void SurfelCloud::initialize(const Vector3fAD& center, const Vector3fAD& tangent_u, const Vector3fAD& tangent_v,
+                             const FloatAD& opacity, const FloatAD& value) {
     const size_t count = slices(center);
     require(count > 0, "SurfelCloud(): center must contain at least one surfel.");
-    require(slices(tangent_u) == count,
-            "SurfelCloud(): tangent_u must have the same lane count as center.");
-    require(slices(tangent_v) == count,
-            "SurfelCloud(): tangent_v must have the same lane count as center.");
+    require(slices(tangent_u) == count, "SurfelCloud(): tangent_u must have the same lane count as center.");
+    require(slices(tangent_v) == count, "SurfelCloud(): tangent_v must have the same lane count as center.");
 
     center_ = center;
     tangent_u_ = tangent_u;
@@ -385,55 +326,43 @@ void SurfelCloud::initialize(const Vector3fAD &center,
     if (slices(opacity) == 0) {
         opacity_ = full<FloatAD>(1.f, count);
     } else {
-        require(slices(opacity) == count,
-                "SurfelCloud(): opacity must have the same lane count as center.");
+        require(slices(opacity) == count, "SurfelCloud(): opacity must have the same lane count as center.");
         opacity_ = opacity;
     }
 
     if (slices(value) == 0) {
         value_ = full<FloatAD>(1.f, count);
     } else {
-        require(slices(value) == count,
-                "SurfelCloud(): value must have the same lane count as center.");
+        require(slices(value) == count, "SurfelCloud(): value must have the same lane count as center.");
         value_ = value;
     }
 }
 
-SurfelScene::SurfelScene(const SurfelCloud &cloud, const SurfelTraceOptions &options)
-    : cloud_(cloud),
-      geometry_(cloud.center(), cloud.tangent_u(), cloud.tangent_v()),
-      appearance_(SurfelAppearance::features(cloud.opacity(), cloud.value(), 1)),
-      options_(options) {
+SurfelScene::SurfelScene(const SurfelCloud& cloud, const SurfelTraceOptions& options)
+    : cloud_(cloud), geometry_(cloud.center(), cloud.tangent_u(), cloud.tangent_v()),
+      appearance_(SurfelAppearance::features(cloud.opacity(), cloud.value(), 1)), options_(options) {
     require(geometry_.surfel_count() > 0, "SurfelScene(): cloud must contain at least one surfel.");
     validate_trace_options("SurfelScene()");
 }
 
-SurfelScene::SurfelScene(const SurfelGeometry &geometry, const SurfelTraceOptions &options)
-    : geometry_(geometry),
-      appearance_(SurfelAppearance::features(full<FloatAD>(1.f, geometry.surfel_count()),
-                                             full<FloatAD>(1.f, geometry.surfel_count()),
-                                             1)),
+SurfelScene::SurfelScene(const SurfelGeometry& geometry, const SurfelTraceOptions& options)
+    : geometry_(geometry), appearance_(SurfelAppearance::features(full<FloatAD>(1.f, geometry.surfel_count()),
+                                                                  full<FloatAD>(1.f, geometry.surfel_count()), 1)),
       options_(options) {
     require(geometry_.surfel_count() > 0, "SurfelScene(): geometry must contain at least one surfel.");
     validate_trace_options("SurfelScene()");
 }
 
-void SurfelScene::validate_trace_options(const char *context) const {
-    (void) context;
-    require(options_.alpha_min > 0.f && options_.alpha_min < 1.f,
-            "SurfelScene(): alpha_min must be in (0, 1).");
-    require(options_.cutoff > 0.f,
-            "SurfelScene(): cutoff must be positive.");
-    require(options_.alpha_cap > 0.f && options_.alpha_cap <= 1.f,
-            "SurfelScene(): alpha_cap must be in (0, 1].");
-    require(options_.proxy_epsilon > 0.f,
-            "SurfelScene(): proxy_epsilon must be positive.");
-    require(options_.max_candidate_hits > 0,
-            "SurfelScene(): max_candidate_hits must be positive.");
+void SurfelScene::validate_trace_options(const char* context) const {
+    (void)context;
+    require(options_.alpha_min > 0.f && options_.alpha_min < 1.f, "SurfelScene(): alpha_min must be in (0, 1).");
+    require(options_.cutoff > 0.f, "SurfelScene(): cutoff must be positive.");
+    require(options_.alpha_cap > 0.f && options_.alpha_cap <= 1.f, "SurfelScene(): alpha_cap must be in (0, 1].");
+    require(options_.proxy_epsilon > 0.f, "SurfelScene(): proxy_epsilon must be positive.");
+    require(options_.max_candidate_hits > 0, "SurfelScene(): max_candidate_hits must be positive.");
     require(options_.transmittance_min >= 0.f && options_.transmittance_min < 1.f,
             "SurfelScene(): transmittance_min must be in [0, 1).");
-    require(options_.max_trace_segments > 0,
-            "SurfelScene(): max_trace_segments must be positive.");
+    require(options_.max_trace_segments > 0, "SurfelScene(): max_trace_segments must be positive.");
 }
 
 void SurfelScene::refresh_detached_appearance() {
@@ -448,14 +377,14 @@ void SurfelScene::refresh_detached_appearance() {
     eval(detached_opacity_, detached_appearance_values_, detached_value_);
 }
 
-void SurfelScene::update_appearance(const SurfelAppearance &appearance) {
+void SurfelScene::update_appearance(const SurfelAppearance& appearance) {
     require(appearance.surfel_count() == geometry_.surfel_count(),
             "SurfelScene::update_appearance(): appearance surfel count must match geometry.");
     appearance_ = appearance;
     refresh_detached_appearance();
 }
 
-void SurfelScene::update_geometry(const SurfelGeometry &geometry) {
+void SurfelScene::update_geometry(const SurfelGeometry& geometry) {
     require(ready_, "SurfelScene::update_geometry(): scene is not built.");
     require(geometry.surfel_count() == geometry_.surfel_count(),
             "SurfelScene::update_geometry(): geometry surfel count must match the built scene.");
@@ -465,16 +394,9 @@ void SurfelScene::update_geometry(const SurfelGeometry &geometry) {
     detached_center_ = detach<false>(geometry_.center());
     detached_tangent_u_ = detach<false>(geometry_.tangent_u());
     detached_tangent_v_ = detach<false>(geometry_.tangent_v());
-    eval(optix_vertex_buffer_,
-         optix_face_buffer_,
-         triangle_to_surfel_id_,
-         detached_center_,
-         detached_tangent_u_,
+    eval(optix_vertex_buffer_, optix_face_buffer_, triangle_to_surfel_id_, detached_center_, detached_tangent_u_,
          detached_tangent_v_);
-    optix_scene_.build(optix_vertex_buffer_,
-                       optix_face_buffer_,
-                       vertex_count_,
-                       triangle_count_,
+    optix_scene_.build(optix_vertex_buffer_, optix_face_buffer_, vertex_count_, triangle_count_,
                        !options_.single_launch);
     ++build_count_;
 }
@@ -488,19 +410,9 @@ void SurfelScene::build() {
     detached_tangent_u_ = detach<false>(geometry_.tangent_u());
     detached_tangent_v_ = detach<false>(geometry_.tangent_v());
     refresh_detached_appearance();
-    eval(optix_vertex_buffer_,
-         optix_face_buffer_,
-         triangle_to_surfel_id_,
-         detached_center_,
-         detached_tangent_u_,
-         detached_tangent_v_,
-         detached_opacity_,
-         detached_value_,
-         detached_appearance_values_);
-    optix_scene_.build(optix_vertex_buffer_,
-                       optix_face_buffer_,
-                       vertex_count_,
-                       triangle_count_,
+    eval(optix_vertex_buffer_, optix_face_buffer_, triangle_to_surfel_id_, detached_center_, detached_tangent_u_,
+         detached_tangent_v_, detached_opacity_, detached_value_, detached_appearance_values_);
+    optix_scene_.build(optix_vertex_buffer_, optix_face_buffer_, vertex_count_, triangle_count_,
                        !options_.single_launch);
     ready_ = true;
     ++build_count_;
@@ -517,37 +429,30 @@ void SurfelScene::build_triangle_buffers() {
 
     Vector3fAD vertices_ad = empty<Vector3fAD>(vertex_count_);
     const IntAD base = arange<IntAD>(surfel_count) * vertices_per_surfel;
-    const Vector3fAD &center = geometry_.center();
-    const Vector3fAD &u = geometry_.tangent_u();
-    const Vector3fAD &v = geometry_.tangent_v();
+    const Vector3fAD& center = geometry_.center();
+    const Vector3fAD& u = geometry_.tangent_u();
+    const Vector3fAD& v = geometry_.tangent_v();
     const FloatAD alpha_min(options_.alpha_min);
-    const FloatAD safe_opacity = options_.opacity_aware_proxy_bounds
-        ? maximum(alpha_min, appearance_.opacity())
-        : full<FloatAD>(1.f, surfel_count);
-    FloatAD influence_radius =
-        sqrt(maximum(FloatAD(0.f), FloatAD(2.f) * log(safe_opacity / alpha_min)));
+    const FloatAD safe_opacity = options_.opacity_aware_proxy_bounds ? maximum(alpha_min, appearance_.opacity())
+                                                                     : full<FloatAD>(1.f, surfel_count);
+    FloatAD influence_radius = sqrt(maximum(FloatAD(0.f), FloatAD(2.f) * log(safe_opacity / alpha_min)));
     if (std::isfinite(options_.cutoff)) {
         influence_radius = minimum(influence_radius, FloatAD(options_.cutoff));
     }
-    const FloatAD proxy_radius =
-        influence_radius * FloatAD(1.0001f) + FloatAD(1e-6f);
+    const FloatAD proxy_radius = influence_radius * FloatAD(1.0001f) + FloatAD(1e-6f);
 
     if (use_icosahedron) {
         const Vector3fAD raw_normal = cross(u, v);
         const FloatAD normal_len_sq = squared_norm(raw_normal);
         const Vector3fAD normal =
-            raw_normal / sqrt(select(normal_len_sq > FloatAD(1e-16f),
-                                     normal_len_sq,
-                                     FloatAD(1.f)));
-        const auto &vertices = icosahedron_vertices_unit_inradius();
+            raw_normal / sqrt(select(normal_len_sq > FloatAD(1e-16f), normal_len_sq, FloatAD(1.f)));
+        const auto& vertices = icosahedron_vertices_unit_inradius();
         for (int vertex = 0; vertex < IcosahedronVertexCount; ++vertex) {
             const FloatAD local_x(vertices[static_cast<size_t>(vertex)][0]);
             const FloatAD local_y(vertices[static_cast<size_t>(vertex)][1]);
             const FloatAD local_z(vertices[static_cast<size_t>(vertex)][2]);
-            const Vector3fAD proxy_vertex =
-                center +
-                proxy_radius * (local_x * u + local_y * v) +
-                proxy_radius * FloatAD(options_.proxy_epsilon) * local_z * normal;
+            const Vector3fAD proxy_vertex = center + proxy_radius * (local_x * u + local_y * v) +
+                                            proxy_radius * FloatAD(options_.proxy_epsilon) * local_z * normal;
             scatter(vertices_ad, proxy_vertex, base + vertex);
         }
     } else if (use_quad) {
@@ -557,8 +462,8 @@ void SurfelScene::build_triangle_buffers() {
         scatter(vertices_ad, center - proxy_radius * u + proxy_radius * v, base + 3);
     } else {
         scatter(vertices_ad, center + (-2.f * proxy_radius) * u - proxy_radius * v, base + 0);
-        scatter(vertices_ad, center + ( 2.f * proxy_radius) * u - proxy_radius * v, base + 1);
-        scatter(vertices_ad, center + ( 3.f * proxy_radius) * v, base + 2);
+        scatter(vertices_ad, center + (2.f * proxy_radius) * u - proxy_radius * v, base + 1);
+        scatter(vertices_ad, center + (3.f * proxy_radius) * v, base + 2);
     }
 
     const Vector3f vertices = detach<false>(vertices_ad);
@@ -580,7 +485,7 @@ void SurfelScene::build_triangle_buffers() {
         std::array<int, IcosahedronFaceCount> face0;
         std::array<int, IcosahedronFaceCount> face1;
         std::array<int, IcosahedronFaceCount> face2;
-        const auto &faces = icosahedron_faces();
+        const auto& faces = icosahedron_faces();
         for (int i = 0; i < IcosahedronFaceCount; ++i) {
             face0[static_cast<size_t>(i)] = faces[static_cast<size_t>(i)][0];
             face1[static_cast<size_t>(i)] = faces[static_cast<size_t>(i)][1];
@@ -608,8 +513,7 @@ void SurfelScene::build_triangle_buffers() {
 }
 
 template <bool Detached>
-SurfelIntersectionT<Detached> SurfelScene::intersect(const RayT<Detached> &ray,
-                                                     MaskT<Detached> active) const {
+SurfelIntersectionT<Detached> SurfelScene::intersect(const RayT<Detached>& ray, MaskT<Detached> active) const {
     require(ready_, "SurfelScene::intersect(): scene is not built.");
 
     const int ray_count = static_cast<int>(slices(ray.o));
@@ -628,17 +532,11 @@ SurfelIntersectionT<Detached> SurfelScene::intersect(const RayT<Detached> &ray,
     if (options_.single_launch) {
         MaskT<Detached> hit_mask = active;
         const SurfelOptixIntersection optix_hit =
-            optix_scene_.template trace_analytic_candidates<Detached>(ray,
-                                                                       triangle_to_surfel_id_,
-                                                                       detached_center_,
-                                                                       detached_tangent_u_,
-                                                                       detached_tangent_v_,
-                                                                       detached_opacity_,
-                                                                       options_.alpha_min,
-                                                                       options_.alpha_cap,
-                                                                       options_.max_candidate_hits,
-                                                                       options_.face_forward,
-                                                                       hit_mask);
+            optix_scene_.template trace_analytic_candidates<Detached>(ray, triangle_to_surfel_id_, detached_center_,
+                                                                      detached_tangent_u_, detached_tangent_v_,
+                                                                      detached_opacity_, options_.alpha_min,
+                                                                      options_.alpha_cap, options_.max_candidate_hits,
+                                                                      options_.face_forward, hit_mask);
         const Mask hit_mask_detached = detach<false>(hit_mask);
         const Int triangle_id = optix_hit.triangle_id;
         const Int surfel_id = gather<Int>(triangle_to_surfel_id_, triangle_id, hit_mask_detached);
@@ -664,13 +562,7 @@ SurfelIntersectionT<Detached> SurfelScene::intersect(const RayT<Detached> &ray,
         }
 
         const AnalyticSurfelHit<Detached> analytic =
-            evaluate_analytic_surfel_hit<Detached>(ray,
-                                                   center,
-                                                   tangent_u,
-                                                   tangent_v,
-                                                   opacity,
-                                                   value,
-                                                   options_,
+            evaluate_analytic_surfel_hit<Detached>(ray, center, tangent_u, tangent_v, opacity, value, options_,
                                                    hit_mask);
         const MaskT<Detached> take = hit_mask && analytic.valid;
         result.t = select(take, analytic.t, result.t);
@@ -691,8 +583,7 @@ SurfelIntersectionT<Detached> SurfelScene::intersect(const RayT<Detached> &ray,
 
     for (int candidate = 0; candidate < options_.max_candidate_hits; ++candidate) {
         MaskT<Detached> hit_mask = search_active && (t_min < ray.tmax);
-        const SurfelOptixIntersection optix_hit =
-            optix_scene_.template intersect<Detached>(ray, t_min, hit_mask);
+        const SurfelOptixIntersection optix_hit = optix_scene_.template intersect<Detached>(ray, t_min, hit_mask);
         const Mask hit_mask_detached = detach<false>(hit_mask);
         const Int triangle_id = optix_hit.triangle_id;
         const Int surfel_id = gather<Int>(triangle_to_surfel_id_, triangle_id, hit_mask_detached);
@@ -718,13 +609,7 @@ SurfelIntersectionT<Detached> SurfelScene::intersect(const RayT<Detached> &ray,
         }
 
         const AnalyticSurfelHit<Detached> analytic =
-            evaluate_analytic_surfel_hit<Detached>(ray,
-                                                   center,
-                                                   tangent_u,
-                                                   tangent_v,
-                                                   opacity,
-                                                   value,
-                                                   options_,
+            evaluate_analytic_surfel_hit<Detached>(ray, center, tangent_u, tangent_v, opacity, value, options_,
                                                    hit_mask);
         const MaskT<Detached> take = analytic.valid && (analytic.t < result.t);
         result.t = select(take, analytic.t, result.t);
@@ -738,17 +623,14 @@ SurfelIntersectionT<Detached> SurfelScene::intersect(const RayT<Detached> &ray,
         result.surfel_id = select(take, IntT<Detached>(surfel_id), result.surfel_id);
         result.triangle_id = select(take, IntT<Detached>(triangle_id), result.triangle_id);
 
-        t_min = select(hit_mask,
-                       optix_hit.t + FloatT<Detached>(RayEpsilon),
-                       t_min);
+        t_min = select(hit_mask, optix_hit.t + FloatT<Detached>(RayEpsilon), t_min);
         search_active = hit_mask && (result.surfel_id < IntT<Detached>(0));
     }
     return result;
 }
 
 template <bool Detached>
-SurfelCompositeT<Detached> SurfelScene::composite_alpha(const RayT<Detached> &ray,
-                                                        MaskT<Detached> active) const {
+SurfelCompositeT<Detached> SurfelScene::composite_alpha(const RayT<Detached>& ray, MaskT<Detached> active) const {
     if constexpr (!Detached) {
         if (options_.continue_after_full_buffer) {
             return composite_alpha_reference<Detached>(ray, active);
@@ -756,22 +638,14 @@ SurfelCompositeT<Detached> SurfelScene::composite_alpha(const RayT<Detached> &ra
     }
     if (options_.single_launch) {
         const SurfelOptixComposite native =
-            optix_scene_.template composite_alpha<Detached>(ray,
-                                                            triangle_to_surfel_id_,
-                                                            detached_center_,
-                                                            detached_tangent_u_,
-                                                            detached_tangent_v_,
-                                                            detached_opacity_,
-                                                            detached_value_,
-                                                             options_.alpha_min,
-                                                             options_.alpha_cap,
-                                                             options_.max_candidate_hits,
-                                                             options_.collect_candidate_stats,
-                                                             options_.continue_after_full_buffer,
-                                                             options_.transmittance_min,
-                                                             options_.max_trace_segments,
-                                                             options_.face_forward,
-                                                             active);
+            optix_scene_.template composite_alpha<Detached>(ray, triangle_to_surfel_id_, detached_center_,
+                                                            detached_tangent_u_, detached_tangent_v_, detached_opacity_,
+                                                            detached_value_, options_.alpha_min, options_.alpha_cap,
+                                                            options_.max_candidate_hits,
+                                                            options_.collect_candidate_stats,
+                                                            options_.continue_after_full_buffer,
+                                                            options_.transmittance_min, options_.max_trace_segments,
+                                                            options_.face_forward, active);
         if constexpr (Detached) {
             SurfelCompositeT<Detached> result;
             result.intensity = native.intensity;
@@ -803,26 +677,16 @@ SurfelCompositeT<Detached> SurfelScene::composite_alpha(const RayT<Detached> &ra
                 const FloatAD opacity = gather<FloatAD>(appearance_.opacity(), surfel_id_ad, hit_mask);
                 const FloatAD value = gather<FloatAD>(first_appearance_channel(appearance_), surfel_id_ad, hit_mask);
                 const AnalyticSurfelHit<Detached> analytic =
-                    evaluate_analytic_surfel_hit<Detached>(ray,
-                                                           center,
-                                                           tangent_u,
-                                                           tangent_v,
-                                                           opacity,
-                                                           value,
-                                                           options_,
+                    evaluate_analytic_surfel_hit<Detached>(ray, center, tangent_u, tangent_v, opacity, value, options_,
                                                            hit_mask);
                 const FloatT<Detached> contribution =
-                    select(analytic.valid,
-                           result.transmittance * analytic.alpha,
-                           zeros<FloatT<Detached>>(ray_count));
+                    select(analytic.valid, result.transmittance * analytic.alpha, zeros<FloatT<Detached>>(ray_count));
                 result.intensity += contribution * analytic.value;
                 result.alpha += contribution;
-                depth_numerator += contribution * select(analytic.valid,
-                                                         analytic.t,
-                                                         zeros<FloatT<Detached>>(ray_count));
-                result.transmittance *= select(analytic.valid,
-                                               FloatT<Detached>(1.f) - analytic.alpha,
-                                               FloatT<Detached>(1.f));
+                depth_numerator +=
+                    contribution * select(analytic.valid, analytic.t, zeros<FloatT<Detached>>(ray_count));
+                result.transmittance *=
+                    select(analytic.valid, FloatT<Detached>(1.f) - analytic.alpha, FloatT<Detached>(1.f));
             }
 
             const MaskT<Detached> has_alpha = result.alpha > FloatT<Detached>(0.f);
@@ -834,7 +698,7 @@ SurfelCompositeT<Detached> SurfelScene::composite_alpha(const RayT<Detached> &ra
 }
 
 template <bool Detached>
-SurfelCompositeT<Detached> SurfelScene::composite_alpha_reference(const RayT<Detached> &ray,
+SurfelCompositeT<Detached> SurfelScene::composite_alpha_reference(const RayT<Detached>& ray,
                                                                   MaskT<Detached> active) const {
     require(ready_, "SurfelScene::composite_alpha_reference(): scene is not built.");
 
@@ -856,8 +720,7 @@ SurfelCompositeT<Detached> SurfelScene::composite_alpha_reference(const RayT<Det
         IntT<Detached> best_id = full<IntT<Detached>>(-1, ray_count);
 
         for (int surfel = 0; surfel < geometry_.surfel_count(); ++surfel) {
-            const IntT<Detached> surfel_id_current =
-                full<IntT<Detached>>(surfel, ray_count);
+            const IntT<Detached> surfel_id_current = full<IntT<Detached>>(surfel, ray_count);
             Vector3fT<Detached> center;
             Vector3fT<Detached> tangent_u;
             Vector3fT<Detached> tangent_v;
@@ -881,25 +744,17 @@ SurfelCompositeT<Detached> SurfelScene::composite_alpha_reference(const RayT<Det
             }
 
             const AnalyticSurfelHit<Detached> analytic =
-                evaluate_analytic_surfel_hit<Detached>(ray,
-                                                       center,
-                                                       tangent_u,
-                                                       tangent_v,
-                                                       opacity,
-                                                       value,
-                                                       options_,
+                evaluate_analytic_surfel_hit<Detached>(ray, center, tangent_u, tangent_v, opacity, value, options_,
                                                        active);
 
             constexpr float SortEpsilon = 1e-6f;
             const FloatT<Detached> order_eps(SortEpsilon);
             const MaskT<Detached> after_previous =
                 (analytic.t > previous_t + order_eps) ||
-                ((abs(analytic.t - previous_t) <= order_eps) &&
-                 (surfel_id_current > previous_id));
+                ((abs(analytic.t - previous_t) <= order_eps) && (surfel_id_current > previous_id));
             const MaskT<Detached> before_best =
-                (analytic.t < best_t - order_eps) ||
-                ((abs(analytic.t - best_t) <= order_eps) &&
-                 ((best_id < IntT<Detached>(0)) || (surfel_id_current < best_id)));
+                (analytic.t < best_t - order_eps) || ((abs(analytic.t - best_t) <= order_eps) &&
+                                                      ((best_id < IntT<Detached>(0)) || (surfel_id_current < best_id)));
             const MaskT<Detached> take = analytic.valid && after_previous && before_best;
 
             best_t = select(take, analytic.t, best_t);
@@ -910,8 +765,7 @@ SurfelCompositeT<Detached> SurfelScene::composite_alpha_reference(const RayT<Det
 
         const MaskT<Detached> has_best = best_id >= IntT<Detached>(0);
         best_alpha = select(has_best, best_alpha, zeros<FloatT<Detached>>(ray_count));
-        const FloatT<Detached> safe_best_t =
-            select(has_best, best_t, zeros<FloatT<Detached>>(ray_count));
+        const FloatT<Detached> safe_best_t = select(has_best, best_t, zeros<FloatT<Detached>>(ray_count));
         const FloatT<Detached> contribution = result.transmittance * best_alpha;
         result.intensity += contribution * best_value;
         result.alpha += contribution;
@@ -926,26 +780,24 @@ SurfelCompositeT<Detached> SurfelScene::composite_alpha_reference(const RayT<Det
     return result;
 }
 
-int SurfelScene::render_channel_count(const SurfelRenderOptions &render_options) const {
+int SurfelScene::render_channel_count(const SurfelRenderOptions& render_options) const {
     switch (render_options.mode) {
-        case SurfelRenderMode::Alpha:
-        case SurfelRenderMode::Depth:
-            return 0;
-        case SurfelRenderMode::RGB:
-        case SurfelRenderMode::RGBDepth:
-            return 3;
-        case SurfelRenderMode::Feature:
-            require(render_options.channel_count > 0,
-                    "SurfelRenderOptions.feature(): channel_count must be positive.");
-            return render_options.channel_count;
-        default:
-            return 0;
+    case SurfelRenderMode::Alpha:
+    case SurfelRenderMode::Depth:
+        return 0;
+    case SurfelRenderMode::RGB:
+    case SurfelRenderMode::RGBDepth:
+        return 3;
+    case SurfelRenderMode::Feature:
+        require(render_options.channel_count > 0, "SurfelRenderOptions.feature(): channel_count must be positive.");
+        return render_options.channel_count;
+    default:
+        return 0;
     }
 }
 
 template <bool Detached>
-SurfelRenderT<Detached> SurfelScene::render(const RayT<Detached> &ray,
-                                            const SurfelRenderOptions &render_options,
+SurfelRenderT<Detached> SurfelScene::render(const RayT<Detached>& ray, const SurfelRenderOptions& render_options,
                                             MaskT<Detached> active) const {
     require(ready_, "SurfelScene::render(): scene is not built.");
     const int ray_count = static_cast<int>(slices(ray.o));
@@ -964,14 +816,11 @@ SurfelRenderT<Detached> SurfelScene::render(const RayT<Detached> &ray,
         require(output_channels <= appearance_channel_count_,
                 "SurfelScene::render(): requested feature channel_count exceeds appearance.");
     }
-    const int effective_sh_degree =
-        appearance_color_model_ == SurfelColorModel::SH ? render_options.sh_degree : 0;
+    const int effective_sh_degree = appearance_color_model_ == SurfelColorModel::SH ? render_options.sh_degree : 0;
 
     SurfelRenderT<Detached> result;
     result.channel_count = output_channels;
-    result.channels = output_channels > 0
-        ? zeros<FloatT<Detached>>(ray_count * output_channels)
-        : FloatT<Detached>();
+    result.channels = output_channels > 0 ? zeros<FloatT<Detached>>(ray_count * output_channels) : FloatT<Detached>();
     result.rgb = zeros<Vector3fT<Detached>>(ray_count);
     result.normal = zeros<Vector3fT<Detached>>(ray_count);
     result.alpha = zeros<FloatT<Detached>>(ray_count);
@@ -979,29 +828,16 @@ SurfelRenderT<Detached> SurfelScene::render(const RayT<Detached> &ray,
     result.depth = full<FloatT<Detached>>(Infinity, ray_count);
 
     const SurfelOptixComposite native =
-        optix_scene_.template render<Detached>(ray,
-                                               triangle_to_surfel_id_,
-                                               detached_center_,
-                                               detached_tangent_u_,
-                                               detached_tangent_v_,
-                                               detached_opacity_,
-                                               detached_appearance_values_,
-                                               appearance_channel_count_,
-                                               static_cast<int>(appearance_color_model_),
-                                                appearance_sh_degree_,
-                                                effective_sh_degree,
-                                                output_channels,
-                                                render_options.normal,
-                                                render_options.background_rgb,
-                                                options_.alpha_min,
-                                                options_.alpha_cap,
-                                                options_.max_candidate_hits,
-                                                options_.collect_candidate_stats,
-                                                Detached && options_.continue_after_full_buffer,
-                                                options_.transmittance_min,
-                                                options_.max_trace_segments,
-                                                options_.face_forward,
-                                                active);
+        optix_scene_.template render<Detached>(ray, triangle_to_surfel_id_, detached_center_, detached_tangent_u_,
+                                               detached_tangent_v_, detached_opacity_, detached_appearance_values_,
+                                               appearance_channel_count_, static_cast<int>(appearance_color_model_),
+                                               appearance_sh_degree_, effective_sh_degree, output_channels,
+                                               render_options.normal, render_options.background_rgb, options_.alpha_min,
+                                               options_.alpha_cap, options_.max_candidate_hits,
+                                               options_.collect_candidate_stats,
+                                               Detached && options_.continue_after_full_buffer,
+                                               options_.transmittance_min, options_.max_trace_segments,
+                                               options_.face_forward, active);
 
     result.candidate_count = IntT<Detached>(native.candidate_count);
     result.candidate_buffer_full = MaskT<Detached>(native.candidate_buffer_full);
@@ -1033,22 +869,12 @@ SurfelRenderT<Detached> SurfelScene::render(const RayT<Detached> &ray,
             const Vector3fAD tangent_v = gather<Vector3fAD>(geometry_.tangent_v(), surfel_id_ad, hit_mask);
             const FloatAD opacity = gather<FloatAD>(appearance_.opacity(), surfel_id_ad, hit_mask);
             const AnalyticSurfelHit<Detached> analytic =
-                evaluate_analytic_surfel_hit<Detached>(ray,
-                                                       center,
-                                                       tangent_u,
-                                                       tangent_v,
-                                                       opacity,
-                                                       zeros<FloatAD>(ray_count),
-                                                       options_,
-                                                       hit_mask);
+                evaluate_analytic_surfel_hit<Detached>(ray, center, tangent_u, tangent_v, opacity,
+                                                       zeros<FloatAD>(ray_count), options_, hit_mask);
             const FloatT<Detached> contribution =
-                select(analytic.valid,
-                       result.transmittance * analytic.alpha,
-                       zeros<FloatT<Detached>>(ray_count));
+                select(analytic.valid, result.transmittance * analytic.alpha, zeros<FloatT<Detached>>(ray_count));
             result.alpha += contribution;
-            depth_numerator += contribution * select(analytic.valid,
-                                                      analytic.t,
-                                                      zeros<FloatT<Detached>>(ray_count));
+            depth_numerator += contribution * select(analytic.valid, analytic.t, zeros<FloatT<Detached>>(ray_count));
             if (render_options.normal) {
                 normal_numerator += analytic.n * contribution;
             }
@@ -1056,30 +882,20 @@ SurfelRenderT<Detached> SurfelScene::render(const RayT<Detached> &ray,
                 const IntAD out_base = IntAD(arange<Int>(ray_count) * output_channels);
                 for (int channel = 0; channel < output_channels; ++channel) {
                     const FloatAD payload =
-                        gather_appearance_channel<Detached>(appearance_,
-                                                            IntT<Detached>(surfel_id),
-                                                            channel,
-                                                            effective_sh_degree,
-                                                            view_dir,
-                                                            hit_mask);
-                    scatter_add(result.channels,
-                                contribution * payload,
-                                out_base + channel,
-                                hit_mask);
+                        gather_appearance_channel<Detached>(appearance_, IntT<Detached>(surfel_id), channel,
+                                                            effective_sh_degree, view_dir, hit_mask);
+                    scatter_add(result.channels, contribution * payload, out_base + channel, hit_mask);
                 }
             }
-            result.transmittance *= select(analytic.valid,
-                                           FloatT<Detached>(1.f) - analytic.alpha,
-                                           FloatT<Detached>(1.f));
+            result.transmittance *=
+                select(analytic.valid, FloatT<Detached>(1.f) - analytic.alpha, FloatT<Detached>(1.f));
         }
 
         if (output_channels >= 3) {
             const IntAD channel_base = IntAD(arange<Int>(ray_count) * output_channels);
             for (int channel = 0; channel < 3; ++channel) {
-                scatter_add(result.channels,
-                            result.transmittance * FloatAD(render_options.background_rgb[channel]),
-                            channel_base + channel,
-                            active);
+                scatter_add(result.channels, result.transmittance * FloatAD(render_options.background_rgb[channel]),
+                            channel_base + channel, active);
             }
             result.rgb = Vector3fAD(gather<FloatAD>(result.channels, channel_base + 0),
                                     gather<FloatAD>(result.channels, channel_base + 1),
@@ -1095,48 +911,41 @@ SurfelRenderT<Detached> SurfelScene::render(const RayT<Detached> &ray,
 }
 
 template <bool Detached>
-MaskT<Detached> SurfelScene::shadow_test(const RayT<Detached> &ray,
-                                         MaskT<Detached> active) const {
+MaskT<Detached> SurfelScene::shadow_test(const RayT<Detached>& ray, MaskT<Detached> active) const {
     return intersect<Detached>(ray, active).is_valid();
 }
 
 template <bool Detached>
-MaskT<Detached> SurfelScene::visible(const Vector3fT<Detached> &start,
-                                     const Vector3fT<Detached> &end,
+MaskT<Detached> SurfelScene::visible(const Vector3fT<Detached>& start, const Vector3fT<Detached>& end,
                                      MaskT<Detached> active) const {
     const int ray_count = static_cast<int>(slices(start));
     const Vector3fT<Detached> delta = end - start;
     const FloatT<Detached> length_sq = squared_norm(delta);
-    const MaskT<Detached> valid_segment =
-        length_sq > FloatT<Detached>((2.f * ShadowEpsilon) * (2.f * ShadowEpsilon));
-    const FloatT<Detached> length =
-        sqrt(select(valid_segment, length_sq, FloatT<Detached>(1.f)));
+    const MaskT<Detached> valid_segment = length_sq > FloatT<Detached>((2.f * ShadowEpsilon) * (2.f * ShadowEpsilon));
+    const FloatT<Detached> length = sqrt(select(valid_segment, length_sq, FloatT<Detached>(1.f)));
     const Vector3fT<Detached> direction = delta / length;
     const Vector3fT<Detached> origin = start + FloatT<Detached>(ShadowEpsilon) * direction;
-    const FloatT<Detached> tmax =
-        maximum(length - FloatT<Detached>(2.f * ShadowEpsilon), FloatT<Detached>(0.f));
+    const FloatT<Detached> tmax = maximum(length - FloatT<Detached>(2.f * ShadowEpsilon), FloatT<Detached>(0.f));
     const RayT<Detached> ray(origin, direction, tmax);
     const MaskT<Detached> trace_active = active && valid_segment;
     const MaskT<Detached> hit = shadow_test<Detached>(ray, trace_active);
     return trace_active && !hit;
 }
 
-template SurfelIntersection SurfelScene::intersect<true>(const Ray &ray, Mask active) const;
-template SurfelIntersectionAD SurfelScene::intersect<false>(const RayAD &ray, MaskAD active) const;
-template SurfelComposite SurfelScene::composite_alpha<true>(const Ray &ray, Mask active) const;
-template SurfelCompositeAD SurfelScene::composite_alpha<false>(const RayAD &ray, MaskAD active) const;
-template SurfelComposite SurfelScene::composite_alpha_reference<true>(const Ray &ray, Mask active) const;
-template SurfelCompositeAD SurfelScene::composite_alpha_reference<false>(const RayAD &ray, MaskAD active) const;
-template SurfelRender SurfelScene::render<true>(const Ray &ray,
-                                                const SurfelRenderOptions &render_options,
+template SurfelIntersection SurfelScene::intersect<true>(const Ray& ray, Mask active) const;
+template SurfelIntersectionAD SurfelScene::intersect<false>(const RayAD& ray, MaskAD active) const;
+template SurfelComposite SurfelScene::composite_alpha<true>(const Ray& ray, Mask active) const;
+template SurfelCompositeAD SurfelScene::composite_alpha<false>(const RayAD& ray, MaskAD active) const;
+template SurfelComposite SurfelScene::composite_alpha_reference<true>(const Ray& ray, Mask active) const;
+template SurfelCompositeAD SurfelScene::composite_alpha_reference<false>(const RayAD& ray, MaskAD active) const;
+template SurfelRender SurfelScene::render<true>(const Ray& ray, const SurfelRenderOptions& render_options,
                                                 Mask active) const;
-template SurfelRenderAD SurfelScene::render<false>(const RayAD &ray,
-                                                   const SurfelRenderOptions &render_options,
+template SurfelRenderAD SurfelScene::render<false>(const RayAD& ray, const SurfelRenderOptions& render_options,
                                                    MaskAD active) const;
-template Mask SurfelScene::shadow_test<true>(const Ray &ray, Mask active) const;
-template MaskAD SurfelScene::shadow_test<false>(const RayAD &ray, MaskAD active) const;
-template Mask SurfelScene::visible<true>(const Vector3f &start, const Vector3f &end, Mask active) const;
-template MaskAD SurfelScene::visible<false>(const Vector3fAD &start, const Vector3fAD &end, MaskAD active) const;
+template Mask SurfelScene::shadow_test<true>(const Ray& ray, Mask active) const;
+template MaskAD SurfelScene::shadow_test<false>(const RayAD& ray, MaskAD active) const;
+template Mask SurfelScene::visible<true>(const Vector3f& start, const Vector3f& end, Mask active) const;
+template MaskAD SurfelScene::visible<false>(const Vector3fAD& start, const Vector3fAD& end, MaskAD active) const;
 
 } // namespace rayd
 
@@ -1158,33 +967,29 @@ namespace rayd {
 namespace dr = drjit;
 
 #ifndef RAYD_OPTIX_EXCEPTION_FLAGS
-#  define RAYD_OPTIX_EXCEPTION_FLAGS OPTIX_EXCEPTION_FLAG_NONE
+#define RAYD_OPTIX_EXCEPTION_FLAGS OPTIX_EXCEPTION_FLAG_NONE
 #endif
 
 #ifndef RAYD_OPTIX_MODULE_OPT_LEVEL
-#  define RAYD_OPTIX_MODULE_OPT_LEVEL OPTIX_COMPILE_OPTIMIZATION_LEVEL_3
+#define RAYD_OPTIX_MODULE_OPT_LEVEL OPTIX_COMPILE_OPTIMIZATION_LEVEL_3
 #endif
 
 namespace {
 
-enum class SurfelOptixLaunchKind {
-    Intersect,
-    Composite
-};
+enum class SurfelOptixLaunchKind { Intersect, Composite };
 
 struct RetiredSurfelOptixJitResources {
     UInt pipeline_handle;
     UInt sbt_handle;
 };
 
-std::mutex &retired_surfel_optix_resources_mutex() {
-    static std::mutex *mutex = new std::mutex();
+std::mutex& retired_surfel_optix_resources_mutex() {
+    static std::mutex* mutex = new std::mutex();
     return *mutex;
 }
 
-std::vector<RetiredSurfelOptixJitResources> &retired_surfel_optix_resources() {
-    static std::vector<RetiredSurfelOptixJitResources> *resources =
-        new std::vector<RetiredSurfelOptixJitResources>();
+std::vector<RetiredSurfelOptixJitResources>& retired_surfel_optix_resources() {
+    static std::vector<RetiredSurfelOptixJitResources>* resources = new std::vector<RetiredSurfelOptixJitResources>();
     return *resources;
 }
 
@@ -1203,11 +1008,11 @@ struct SurfelOptixState {
     OptixProgramGroup pg[2] = {};
     OptixShaderBindingTable sbt = {};
 
-    void *vertex_buffer = nullptr;
-    void *vertex_buffer_ptr = nullptr;
-    void *gas_temp_buffer = nullptr;
+    void* vertex_buffer = nullptr;
+    void* vertex_buffer_ptr = nullptr;
+    void* gas_temp_buffer = nullptr;
     size_t gas_temp_buffer_size = 0;
-    void *gas_buffer = nullptr;
+    void* gas_buffer = nullptr;
     size_t gas_buffer_size = 0;
     OptixTraversableHandle gas_handle = 0;
     OptixAccelBuildOptions accel_options = {};
@@ -1220,27 +1025,22 @@ struct SurfelOptixState {
     OptixProgramGroup trace_pg_miss = nullptr;
     OptixProgramGroup trace_pg_hit_composite = nullptr;
     OptixProgramGroup trace_pg_hit_intersect = nullptr;
-    void *trace_sbt_raygen = nullptr;
-    void *trace_sbt_raygen_composite = nullptr;
-    void *trace_sbt_miss = nullptr;
-    void *trace_sbt_hitgroup = nullptr;
-    void *trace_params_buffer = nullptr;
+    void* trace_sbt_raygen = nullptr;
+    void* trace_sbt_raygen_composite = nullptr;
+    void* trace_sbt_miss = nullptr;
+    void* trace_sbt_hitgroup = nullptr;
+    void* trace_params_buffer = nullptr;
 
     int vertex_count = 0;
     int triangle_count = 0;
 
-    void *trace_raygen_record(SurfelOptixLaunchKind kind) const {
-        return kind == SurfelOptixLaunchKind::Composite
-            ? trace_sbt_raygen_composite
-            : trace_sbt_raygen;
+    void* trace_raygen_record(SurfelOptixLaunchKind kind) const {
+        return kind == SurfelOptixLaunchKind::Composite ? trace_sbt_raygen_composite : trace_sbt_raygen;
     }
 
-    void launch_trace(SurfelOptixLaunchKind kind, const SurfelTraceParams &params) const {
+    void launch_trace(SurfelOptixLaunchKind kind, const SurfelTraceParams& params) const {
         audit_jit_memcpy_async();
-        jit_memcpy_async(JitBackend::CUDA,
-                         trace_params_buffer,
-                         &params,
-                         sizeof(SurfelTraceParams));
+        jit_memcpy_async(JitBackend::CUDA, trace_params_buffer, &params, sizeof(SurfelTraceParams));
 
         OptixShaderBindingTable trace_sbt = {};
         trace_sbt.raygenRecord = reinterpret_cast<CUdeviceptr>(trace_raygen_record(kind));
@@ -1252,26 +1052,21 @@ struct SurfelOptixState {
         trace_sbt.hitgroupRecordCount = 2;
 
         audit_optix_launch();
-        check_optix(optixLaunch(trace_pipeline,
-                                jit_cuda_stream(),
-                                reinterpret_cast<CUdeviceptr>(trace_params_buffer),
-                                sizeof(SurfelTraceParams),
-                                &trace_sbt,
-                                static_cast<unsigned int>(params.ray_count),
-                                1,
+        check_optix(optixLaunch(trace_pipeline, jit_cuda_stream(), reinterpret_cast<CUdeviceptr>(trace_params_buffer),
+                                sizeof(SurfelTraceParams), &trace_sbt, static_cast<unsigned int>(params.ray_count), 1,
                                 1),
                     "optixLaunch(surfel trace)");
     }
 };
 
-static void retire_surfel_optix_jit_resources(SurfelOptixState *state) {
+static void retire_surfel_optix_jit_resources(SurfelOptixState* state) {
     if (state == nullptr || state->pipeline_handle.index() == 0 || state->sbt_handle.index() == 0) {
         return;
     }
 
     std::lock_guard<std::mutex> lock(retired_surfel_optix_resources_mutex());
-    auto &resources = retired_surfel_optix_resources();
-    resources.push_back({ state->pipeline_handle, state->sbt_handle });
+    auto& resources = retired_surfel_optix_resources();
+    resources.push_back({state->pipeline_handle, state->sbt_handle});
 
     state->pipeline_handle = UInt();
     state->sbt_handle = UInt();
@@ -1283,7 +1078,7 @@ static void retire_surfel_optix_jit_resources(SurfelOptixState *state) {
     }
 }
 
-static void destroy_surfel_optix_state(SurfelOptixState *state) {
+static void destroy_surfel_optix_state(SurfelOptixState* state) {
     if (state == nullptr) {
         return;
     }
@@ -1350,7 +1145,7 @@ static void destroy_surfel_optix_state(SurfelOptixState *state) {
     delete state;
 }
 
-static void ensure_surfel_trace_pipeline(SurfelOptixState *state) {
+static void ensure_surfel_trace_pipeline(SurfelOptixState* state) {
     require(state != nullptr, "ensure_surfel_trace_pipeline(): state is null.");
     if (state->trace_pipeline != nullptr) {
         return;
@@ -1372,48 +1167,29 @@ static void ensure_surfel_trace_pipeline(SurfelOptixState *state) {
     pipeline_options.exceptionFlags = RAYD_OPTIX_EXCEPTION_FLAGS;
     pipeline_options.pipelineLaunchParamsVariableName = "params";
     pipeline_options.pipelineLaunchParamsSizeInBytes = sizeof(SurfelTraceParams);
-    pipeline_options.usesPrimitiveTypeFlags =
-        static_cast<unsigned>(OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE);
+    pipeline_options.usesPrimitiveTypeFlags = static_cast<unsigned>(OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE);
     pipeline_options.allowOpacityMicromaps = 0;
     pipeline_options.allowClusteredGeometry = 0;
 
     char log[2048];
     size_t log_size = sizeof(log);
-    check_optix(optixModuleCreate(state->context,
-                                  &module_options,
-                                  direct_optix_pipeline_compile_options(pipeline_options),
-                                  surfel_trace_ptx,
-                                  surfel_trace_ptx_size,
-                                  log,
-                                  &log_size,
-                                  &state->trace_module),
+    check_optix(optixModuleCreate(state->context, &module_options,
+                                  direct_optix_pipeline_compile_options(pipeline_options), surfel_trace_ptx,
+                                  surfel_trace_ptx_size, log, &log_size, &state->trace_module),
                 "optixModuleCreate(surfel trace)");
 
-    state->trace_pg_raygen =
-        make_raygen_group(state->context, state->trace_module, "__raygen__surfel_trace");
+    state->trace_pg_raygen = make_raygen_group(state->context, state->trace_module, "__raygen__surfel_trace");
     state->trace_pg_raygen_composite =
         make_raygen_group(state->context, state->trace_module, "__raygen__surfel_composite");
-    state->trace_pg_miss =
-        make_miss_group(state->context, state->trace_module, "__miss__surfel_trace");
+    state->trace_pg_miss = make_miss_group(state->context, state->trace_module, "__miss__surfel_trace");
     state->trace_pg_hit_composite =
-        make_hitgroup(state->context,
-                      state->trace_module,
-                      nullptr,
-                      "__anyhit__surfel_composite",
-                      nullptr);
+        make_hitgroup(state->context, state->trace_module, nullptr, "__anyhit__surfel_composite", nullptr);
     state->trace_pg_hit_intersect =
-        make_hitgroup(state->context,
-                      state->trace_module,
-                      nullptr,
-                      "__anyhit__surfel_intersect",
-                      nullptr);
+        make_hitgroup(state->context, state->trace_module, nullptr, "__anyhit__surfel_intersect", nullptr);
 
     OptixProgramGroup groups[] = {
-        state->trace_pg_raygen,
-        state->trace_pg_raygen_composite,
-        state->trace_pg_miss,
-        state->trace_pg_hit_composite,
-        state->trace_pg_hit_intersect,
+        state->trace_pg_raygen,        state->trace_pg_raygen_composite, state->trace_pg_miss,
+        state->trace_pg_hit_composite, state->trace_pg_hit_intersect,
     };
     OptixPipelineLinkOptions link_options = {};
     link_options.maxTraceDepth = 1;
@@ -1423,20 +1199,10 @@ static void ensure_surfel_trace_pipeline(SurfelOptixState *state) {
     link_options.maxTraversableGraphDepth = 1;
 
     log_size = sizeof(log);
-    check_optix(optixPipelineCreate(state->context,
-                                    direct_optix_pipeline_compile_options(pipeline_options),
-                                    &link_options,
-                                    groups,
-                                    5,
-                                    log,
-                                    &log_size,
-                                    &state->trace_pipeline),
+    check_optix(optixPipelineCreate(state->context, direct_optix_pipeline_compile_options(pipeline_options),
+                                    &link_options, groups, 5, log, &log_size, &state->trace_pipeline),
                 "optixPipelineCreate(surfel trace)");
-    check_optix(optixPipelineSetStackSize(state->trace_pipeline,
-                                          0,
-                                          0,
-                                          4096,
-                                          1),
+    check_optix(optixPipelineSetStackSize(state->trace_pipeline, 0, 0, 4096, 1),
                 "optixPipelineSetStackSize(surfel trace)");
 
     state->trace_sbt_raygen = make_sbt_record(state->trace_pg_raygen);
@@ -1447,12 +1213,9 @@ static void ensure_surfel_trace_pipeline(SurfelOptixState *state) {
                 "optixSbtRecordPackHeader(surfel composite hitgroup)");
     check_optix(optixSbtRecordPackHeader(state->trace_pg_hit_intersect, &hitgroups[1]),
                 "optixSbtRecordPackHeader(surfel intersect hitgroup)");
-    state->trace_sbt_hitgroup = jit_malloc(AllocType::Device,
-                                           sizeof(EmptySbtRecord) * hitgroups.size());
+    state->trace_sbt_hitgroup = jit_malloc(AllocType::Device, sizeof(EmptySbtRecord) * hitgroups.size());
     audit_jit_memcpy();
-    jit_memcpy(JitBackend::CUDA,
-               state->trace_sbt_hitgroup,
-               hitgroups.data(),
+    jit_memcpy(JitBackend::CUDA, state->trace_sbt_hitgroup, hitgroups.data(),
                sizeof(EmptySbtRecord) * hitgroups.size());
     state->trace_params_buffer = jit_malloc(AllocType::Device, sizeof(SurfelTraceParams));
 }
@@ -1493,10 +1256,7 @@ SurfelOptixScene::~SurfelOptixScene() {
     destroy_surfel_optix_state(m_accel);
 }
 
-void SurfelOptixScene::build(const Float &vertex_buffer,
-                             const Int &face_buffer,
-                             int vertex_count,
-                             int triangle_count,
+void SurfelOptixScene::build(const Float& vertex_buffer, const Int& face_buffer, int vertex_count, int triangle_count,
                              bool build_hitobject_pipeline) {
     require(vertex_count > 0, "SurfelOptixScene::build(): vertex_count must be positive.");
     require(triangle_count > 0, "SurfelOptixScene::build(): triangle_count must be positive.");
@@ -1511,8 +1271,7 @@ void SurfelOptixScene::build(const Float &vertex_buffer,
 
     if (build_hitobject_pipeline) {
         m_accel->pipeline_compile_options.usesMotionBlur = false;
-        m_accel->pipeline_compile_options.traversableGraphFlags =
-            OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS;
+        m_accel->pipeline_compile_options.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS;
         m_accel->pipeline_compile_options.numPayloadValues = 0;
         m_accel->pipeline_compile_options.numAttributeValues = 2;
         m_accel->pipeline_compile_options.exceptionFlags = RAYD_OPTIX_EXCEPTION_FLAGS;
@@ -1527,58 +1286,43 @@ void SurfelOptixScene::build(const Float &vertex_buffer,
 
         char log[1024];
         size_t log_size = sizeof(log);
-        jit_optix_check(optixProgramGroupCreate(m_accel->context,
-                                                m_accel->pgd,
-                                                2,
-                                                &m_accel->pgo,
-                                                log,
-                                                &log_size,
-                                                m_accel->pg));
+        jit_optix_check(
+            optixProgramGroupCreate(m_accel->context, m_accel->pgd, 2, &m_accel->pgo, log, &log_size, m_accel->pg));
 
         m_accel->sbt.missRecordBase =
             reinterpret_cast<CUdeviceptr>(jit_malloc(AllocType::HostPinned, OPTIX_SBT_RECORD_HEADER_SIZE));
         m_accel->sbt.missRecordStrideInBytes = OPTIX_SBT_RECORD_HEADER_SIZE;
         m_accel->sbt.missRecordCount = 1;
-        jit_optix_check(optixSbtRecordPackHeader(m_accel->pg[0],
-                                                 reinterpret_cast<void *>(m_accel->sbt.missRecordBase)));
+        jit_optix_check(optixSbtRecordPackHeader(m_accel->pg[0], reinterpret_cast<void*>(m_accel->sbt.missRecordBase)));
 
-        EmptySbtRecord *hit_record =
-            reinterpret_cast<EmptySbtRecord *>(jit_malloc(AllocType::HostPinned, sizeof(EmptySbtRecord)));
+        EmptySbtRecord* hit_record =
+            reinterpret_cast<EmptySbtRecord*>(jit_malloc(AllocType::HostPinned, sizeof(EmptySbtRecord)));
         jit_optix_check(optixSbtRecordPackHeader(m_accel->pg[1], hit_record));
         m_accel->sbt.hitgroupRecordBase = reinterpret_cast<CUdeviceptr>(hit_record);
         m_accel->sbt.hitgroupRecordStrideInBytes = sizeof(EmptySbtRecord);
         m_accel->sbt.hitgroupRecordCount = 1;
 
         m_accel->sbt.missRecordBase = reinterpret_cast<CUdeviceptr>(
-            jit_malloc_migrate(reinterpret_cast<void *>(m_accel->sbt.missRecordBase), AllocType::Device, 1));
+            jit_malloc_migrate(reinterpret_cast<void*>(m_accel->sbt.missRecordBase), AllocType::Device, 1));
         m_accel->sbt.hitgroupRecordBase = reinterpret_cast<CUdeviceptr>(
-            jit_malloc_migrate(reinterpret_cast<void *>(m_accel->sbt.hitgroupRecordBase), AllocType::Device, 1));
+            jit_malloc_migrate(reinterpret_cast<void*>(m_accel->sbt.hitgroupRecordBase), AllocType::Device, 1));
 
-        m_accel->pipeline_handle = UInt::steal(jit_optix_configure_pipeline(
-            &m_accel->pipeline_compile_options,
-            nullptr,
-            m_accel->pg,
-            2));
-        m_accel->sbt_handle = UInt::steal(
-            jit_optix_configure_sbt(&m_accel->sbt, m_accel->pipeline_handle.index()));
+        m_accel->pipeline_handle =
+            UInt::steal(jit_optix_configure_pipeline(&m_accel->pipeline_compile_options, nullptr, m_accel->pg, 2));
+        m_accel->sbt_handle = UInt::steal(jit_optix_configure_sbt(&m_accel->sbt, m_accel->pipeline_handle.index()));
     }
 
     m_accel->vertex_buffer = jit_malloc(AllocType::Device, sizeof(float) * vertex_count * 3);
     m_accel->vertex_buffer_ptr = m_accel->vertex_buffer;
-    jit_memcpy(JitBackend::CUDA,
-               m_accel->vertex_buffer,
-               vertex_buffer.data(),
-               sizeof(float) * vertex_count * 3);
+    jit_memcpy(JitBackend::CUDA, m_accel->vertex_buffer, vertex_buffer.data(), sizeof(float) * vertex_count * 3);
 
     OptixBuildInput build_input = {};
     build_input.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
-    build_input.triangleArray.vertexBuffers =
-        reinterpret_cast<const CUdeviceptr *>(&m_accel->vertex_buffer_ptr);
+    build_input.triangleArray.vertexBuffers = reinterpret_cast<const CUdeviceptr*>(&m_accel->vertex_buffer_ptr);
     build_input.triangleArray.numVertices = static_cast<unsigned int>(vertex_count);
     build_input.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
     build_input.triangleArray.vertexStrideInBytes = sizeof(float) * 3;
-    build_input.triangleArray.indexBuffer =
-        reinterpret_cast<CUdeviceptr>(const_cast<int *>(face_buffer.data()));
+    build_input.triangleArray.indexBuffer = reinterpret_cast<CUdeviceptr>(const_cast<int*>(face_buffer.data()));
     build_input.triangleArray.numIndexTriplets = static_cast<unsigned int>(triangle_count);
     build_input.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
     build_input.triangleArray.indexStrideInBytes = sizeof(int) * 3;
@@ -1590,36 +1334,23 @@ void SurfelOptixScene::build(const Float &vertex_buffer,
     build_input.triangleArray.primitiveIndexOffset = 0;
     build_input.triangleArray.transformFormat = OPTIX_TRANSFORM_FORMAT_NONE;
 
-    unsigned int triangle_input_flags[] = { 0u };
+    unsigned int triangle_input_flags[] = {0u};
     build_input.triangleArray.flags = triangle_input_flags;
 
     m_accel->accel_options.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
     m_accel->accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
 
-    jit_optix_check(optixAccelComputeMemoryUsage(m_accel->context,
-                                                 &m_accel->accel_options,
-                                                 &build_input,
-                                                 1,
+    jit_optix_check(optixAccelComputeMemoryUsage(m_accel->context, &m_accel->accel_options, &build_input, 1,
                                                  &m_accel->gas_buffer_sizes));
-    m_accel->gas_temp_buffer =
-        jit_malloc(AllocType::Device, m_accel->gas_buffer_sizes.tempSizeInBytes);
+    m_accel->gas_temp_buffer = jit_malloc(AllocType::Device, m_accel->gas_buffer_sizes.tempSizeInBytes);
     m_accel->gas_temp_buffer_size = m_accel->gas_buffer_sizes.tempSizeInBytes;
-    m_accel->gas_buffer =
-        jit_malloc(AllocType::Device, m_accel->gas_buffer_sizes.outputSizeInBytes);
+    m_accel->gas_buffer = jit_malloc(AllocType::Device, m_accel->gas_buffer_sizes.outputSizeInBytes);
     m_accel->gas_buffer_size = m_accel->gas_buffer_sizes.outputSizeInBytes;
 
-    jit_optix_check(optixAccelBuild(m_accel->context,
-                                    jit_cuda_stream(),
-                                    &m_accel->accel_options,
-                                    &build_input,
-                                    1,
-                                    m_accel->gas_temp_buffer,
-                                    m_accel->gas_buffer_sizes.tempSizeInBytes,
-                                    m_accel->gas_buffer,
-                                    m_accel->gas_buffer_sizes.outputSizeInBytes,
-                                    &m_accel->gas_handle,
-                                    nullptr,
-                                    0));
+    jit_optix_check(optixAccelBuild(m_accel->context, jit_cuda_stream(), &m_accel->accel_options, &build_input, 1,
+                                    m_accel->gas_temp_buffer, m_accel->gas_buffer_sizes.tempSizeInBytes,
+                                    m_accel->gas_buffer, m_accel->gas_buffer_sizes.outputSizeInBytes,
+                                    &m_accel->gas_handle, nullptr, 0));
 }
 
 bool SurfelOptixScene::is_ready() const {
@@ -1627,15 +1358,13 @@ bool SurfelOptixScene::is_ready() const {
 }
 
 template <bool Detached>
-SurfelOptixIntersection SurfelOptixScene::intersect(const RayT<Detached> &ray,
-                                                    MaskT<Detached> &active) const {
+SurfelOptixIntersection SurfelOptixScene::intersect(const RayT<Detached>& ray, MaskT<Detached>& active) const {
     return intersect<Detached>(ray, FloatT<Detached>(RayEpsilon), active);
 }
 
 template <bool Detached>
-SurfelOptixIntersection SurfelOptixScene::intersect(const RayT<Detached> &ray,
-                                                    const FloatT<Detached> &t_min_input,
-                                                    MaskT<Detached> &active) const {
+SurfelOptixIntersection SurfelOptixScene::intersect(const RayT<Detached>& ray, const FloatT<Detached>& t_min_input,
+                                                    MaskT<Detached>& active) const {
     require(m_accel != nullptr, "SurfelOptixScene::intersect(): scene is not built.");
     require(m_accel->pipeline_handle.index() != 0 && m_accel->sbt_handle.index() != 0,
             "SurfelOptixScene::intersect(): legacy HitObject pipeline is not built.");
@@ -1677,53 +1406,46 @@ SurfelOptixIntersection SurfelOptixScene::intersect(const RayT<Detached> &ray,
     Float t_max = select(drjit::isfinite(t_max_input), t_max_input, full<Float>(1e8f, ray_count));
     Float time = 0.f;
     UInt ray_mask(255);
-    UInt ray_flags(OPTIX_RAY_FLAG_DISABLE_ANYHIT |
-                   OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT);
+    UInt ray_flags(OPTIX_RAY_FLAG_DISABLE_ANYHIT | OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT);
     UInt sbt_offset(0);
     UInt sbt_stride(1);
     UInt miss_sbt_index(0);
 
     m_accel->handle = dr::opaque<UInt64>(m_accel->gas_handle);
-    uint32_t trace_args[] {
+    uint32_t trace_args[]{
         m_accel->handle.index(),
-        ox.index(), oy.index(), oz.index(),
-        dx.index(), dy.index(), dz.index(),
-        t_min.index(), t_max.index(), time.index(),
-        ray_mask.index(), ray_flags.index(),
-        sbt_offset.index(), sbt_stride.index(),
+        ox.index(),
+        oy.index(),
+        oz.index(),
+        dx.index(),
+        dy.index(),
+        dz.index(),
+        t_min.index(),
+        t_max.index(),
+        time.index(),
+        ray_mask.index(),
+        ray_flags.index(),
+        sbt_offset.index(),
+        sbt_stride.index(),
         miss_sbt_index.index(),
     };
 
-    OptixHitObjectField fields[] {
-        OptixHitObjectField::IsHit,
-        OptixHitObjectField::RayTMax,
-        OptixHitObjectField::Attribute0,
-        OptixHitObjectField::Attribute1,
-        OptixHitObjectField::PrimitiveIndex,
+    OptixHitObjectField fields[]{
+        OptixHitObjectField::IsHit,      OptixHitObjectField::RayTMax,        OptixHitObjectField::Attribute0,
+        OptixHitObjectField::Attribute1, OptixHitObjectField::PrimitiveIndex,
     };
     uint32_t hitobject_out[5];
 
-    jit_optix_ray_trace(sizeof(trace_args) / sizeof(uint32_t),
-                        trace_args,
-                        5,
-                        fields,
-                        hitobject_out,
-                        0, 0, 0,
-                        0,
-                        active_detached.index(),
-                        m_accel->pipeline_handle.index(),
-                        m_accel->sbt_handle.index());
+    jit_optix_ray_trace(sizeof(trace_args) / sizeof(uint32_t), trace_args, 5, fields, hitobject_out, 0, 0, 0, 0,
+                        active_detached.index(), m_accel->pipeline_handle.index(), m_accel->sbt_handle.index());
 
     Mask is_hit = UInt::steal(hitobject_out[0]) != 0u;
     active_detached &= is_hit;
 
     using Single = drjit::float32_array_t<Float>;
-    intersection.t =
-        drjit::reinterpret_array<Single, UInt>(UInt::steal(hitobject_out[1]));
-    intersection.barycentric[0] =
-        drjit::reinterpret_array<Single, UInt>(UInt::steal(hitobject_out[2]));
-    intersection.barycentric[1] =
-        drjit::reinterpret_array<Single, UInt>(UInt::steal(hitobject_out[3]));
+    intersection.t = drjit::reinterpret_array<Single, UInt>(UInt::steal(hitobject_out[1]));
+    intersection.barycentric[0] = drjit::reinterpret_array<Single, UInt>(UInt::steal(hitobject_out[2]));
+    intersection.barycentric[1] = drjit::reinterpret_array<Single, UInt>(UInt::steal(hitobject_out[3]));
     intersection.triangle_id = Int(UInt::steal(hitobject_out[4]));
 
     intersection.t[!active_detached] = Infinity;
@@ -1739,17 +1461,9 @@ SurfelOptixIntersection SurfelOptixScene::intersect(const RayT<Detached> &ray,
 
 template <bool Detached>
 SurfelOptixIntersection SurfelOptixScene::trace_analytic_candidates(
-    const RayT<Detached> &ray,
-    const Int &triangle_to_surfel_id,
-    const Vector3f &center,
-    const Vector3f &tangent_u,
-    const Vector3f &tangent_v,
-    const Float &opacity,
-    float alpha_min,
-    float alpha_cap,
-    int max_candidate_hits,
-    bool face_forward,
-    MaskT<Detached> &active) const {
+    const RayT<Detached>& ray, const Int& triangle_to_surfel_id, const Vector3f& center, const Vector3f& tangent_u,
+    const Vector3f& tangent_v, const Float& opacity, float alpha_min, float alpha_cap, int max_candidate_hits,
+    bool face_forward, MaskT<Detached>& active) const {
     require(m_accel != nullptr, "SurfelOptixScene::trace_analytic_candidates(): scene is not built.");
     require(max_candidate_hits > 0,
             "SurfelOptixScene::trace_analytic_candidates(): max_candidate_hits must be positive.");
@@ -1807,19 +1521,8 @@ SurfelOptixIntersection SurfelOptixScene::trace_analytic_candidates(
     active_detached = active_detached && full<Mask>(true, ray_count);
     Mask valid = empty<Mask>(ray_count);
 
-    drjit::eval(ox,
-                oy,
-                oz,
-                dx,
-                dy,
-                dz,
-                t_max_input,
-                active_detached,
-                triangle_to_surfel_id,
-                center,
-                tangent_u,
-                tangent_v,
-                opacity);
+    drjit::eval(ox, oy, oz, dx, dy, dz, t_max_input, active_detached, triangle_to_surfel_id, center, tangent_u,
+                tangent_v, opacity);
 
     ensure_surfel_trace_pipeline(m_accel);
 
@@ -1832,7 +1535,7 @@ SurfelOptixIntersection SurfelOptixScene::trace_analytic_candidates(
     params.ray_dy = dy.data();
     params.ray_dz = dz.data();
     params.ray_tmax = t_max_input.data();
-    params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
+    params.active_mask = reinterpret_cast<const uint8_t*>(active_detached.data());
     params.ray_count = ray_count;
     params.triangle_to_surfel_id = triangle_to_surfel_id.data();
     params.triangle_count = m_accel->triangle_count;
@@ -1855,7 +1558,7 @@ SurfelOptixIntersection SurfelOptixScene::trace_analytic_candidates(
     params.face_forward = face_forward ? 1 : 0;
     params.out_triangle_id = intersection.triangle_id.data();
     params.out_proxy_t = intersection.t.data();
-    params.out_valid = reinterpret_cast<uint8_t *>(valid.data());
+    params.out_valid = reinterpret_cast<uint8_t*>(valid.data());
 
     {
         ScopedNativeLaunchStage stage(NativeLaunchStage::SurfelTrace);
@@ -1877,25 +1580,12 @@ SurfelOptixIntersection SurfelOptixScene::trace_analytic_candidates(
 
 template <bool Detached>
 SurfelOptixComposite SurfelOptixScene::composite_alpha(
-    const RayT<Detached> &ray,
-    const Int &triangle_to_surfel_id,
-    const Vector3f &center,
-    const Vector3f &tangent_u,
-    const Vector3f &tangent_v,
-    const Float &opacity,
-    const Float &value,
-    float alpha_min,
-    float alpha_cap,
-    int max_candidate_hits,
-    bool collect_candidate_stats,
-    bool continue_after_full_buffer,
-    float transmittance_min,
-    int max_trace_segments,
-    bool face_forward,
-    MaskT<Detached> active) const {
+    const RayT<Detached>& ray, const Int& triangle_to_surfel_id, const Vector3f& center, const Vector3f& tangent_u,
+    const Vector3f& tangent_v, const Float& opacity, const Float& value, float alpha_min, float alpha_cap,
+    int max_candidate_hits, bool collect_candidate_stats, bool continue_after_full_buffer, float transmittance_min,
+    int max_trace_segments, bool face_forward, MaskT<Detached> active) const {
     require(m_accel != nullptr, "SurfelOptixScene::composite_alpha(): scene is not built.");
-    require(max_candidate_hits > 0,
-            "SurfelOptixScene::composite_alpha(): max_candidate_hits must be positive.");
+    require(max_candidate_hits > 0, "SurfelOptixScene::composite_alpha(): max_candidate_hits must be positive.");
 
     const int ray_count = static_cast<int>(slices(ray.o));
     SurfelOptixComposite composite;
@@ -1950,24 +1640,10 @@ SurfelOptixComposite SurfelOptixScene::composite_alpha(
     Float scratch_value = empty<Float>(scratch_count);
     composite.channels = empty<Float>(ray_count);
     Int candidate_count = collect_candidate_stats ? empty<Int>(ray_count) : zeros<Int>(ray_count);
-    Mask candidate_buffer_full = collect_candidate_stats
-        ? empty<Mask>(ray_count)
-        : full<Mask>(false, ray_count);
+    Mask candidate_buffer_full = collect_candidate_stats ? empty<Mask>(ray_count) : full<Mask>(false, ray_count);
 
-    drjit::eval(ox,
-                oy,
-                oz,
-                dx,
-                dy,
-                dz,
-                t_max_input,
-                active_detached,
-                triangle_to_surfel_id,
-                center,
-                tangent_u,
-                tangent_v,
-                opacity,
-                value);
+    drjit::eval(ox, oy, oz, dx, dy, dz, t_max_input, active_detached, triangle_to_surfel_id, center, tangent_u,
+                tangent_v, opacity, value);
 
     ensure_surfel_trace_pipeline(m_accel);
 
@@ -1980,7 +1656,7 @@ SurfelOptixComposite SurfelOptixScene::composite_alpha(
     params.ray_dy = dy.data();
     params.ray_dz = dz.data();
     params.ray_tmax = t_max_input.data();
-    params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
+    params.active_mask = reinterpret_cast<const uint8_t*>(active_detached.data());
     params.ray_count = ray_count;
     params.triangle_to_surfel_id = triangle_to_surfel_id.data();
     params.triangle_count = m_accel->triangle_count;
@@ -2011,7 +1687,7 @@ SurfelOptixComposite SurfelOptixScene::composite_alpha(
     params.continue_after_full_buffer = continue_after_full_buffer ? 1 : 0;
     params.transmittance_min = transmittance_min;
     params.max_trace_segments = max_trace_segments;
-    params.out_valid = reinterpret_cast<uint8_t *>(valid.data());
+    params.out_valid = reinterpret_cast<uint8_t*>(valid.data());
     params.composite_hit_capacity = k;
     params.scratch_surfel_id = scratch_surfel_id.data();
     params.scratch_t = scratch_t.data();
@@ -2023,9 +1699,8 @@ SurfelOptixComposite SurfelOptixScene::composite_alpha(
     params.out_transmittance = composite.transmittance.data();
     params.out_depth = composite.depth.data();
     params.out_candidate_count = collect_candidate_stats ? candidate_count.data() : nullptr;
-    params.out_candidate_buffer_full = collect_candidate_stats
-        ? reinterpret_cast<uint8_t *>(candidate_buffer_full.data())
-        : nullptr;
+    params.out_candidate_buffer_full =
+        collect_candidate_stats ? reinterpret_cast<uint8_t*>(candidate_buffer_full.data()) : nullptr;
 
     {
         ScopedNativeLaunchStage stage(NativeLaunchStage::SurfelTrace);
@@ -2044,34 +1719,15 @@ SurfelOptixComposite SurfelOptixScene::composite_alpha(
 
 template <bool Detached>
 SurfelOptixComposite SurfelOptixScene::render(
-    const RayT<Detached> &ray,
-    const Int &triangle_to_surfel_id,
-    const Vector3f &center,
-    const Vector3f &tangent_u,
-    const Vector3f &tangent_v,
-    const Float &opacity,
-    const Float &appearance_values,
-    int appearance_channel_count,
-    int color_model,
-    int appearance_sh_degree,
-    int sh_degree,
-    int render_channel_count,
-    bool output_normal,
-    const ScalarVector3f &background_rgb,
-    float alpha_min,
-    float alpha_cap,
-    int max_candidate_hits,
-    bool collect_candidate_stats,
-    bool continue_after_full_buffer,
-    float transmittance_min,
-    int max_trace_segments,
-    bool face_forward,
-    MaskT<Detached> active) const {
+    const RayT<Detached>& ray, const Int& triangle_to_surfel_id, const Vector3f& center, const Vector3f& tangent_u,
+    const Vector3f& tangent_v, const Float& opacity, const Float& appearance_values, int appearance_channel_count,
+    int color_model, int appearance_sh_degree, int sh_degree, int render_channel_count, bool output_normal,
+    const ScalarVector3f& background_rgb, float alpha_min, float alpha_cap, int max_candidate_hits,
+    bool collect_candidate_stats, bool continue_after_full_buffer, float transmittance_min, int max_trace_segments,
+    bool face_forward, MaskT<Detached> active) const {
     require(m_accel != nullptr, "SurfelOptixScene::render(): scene is not built.");
-    require(max_candidate_hits > 0,
-            "SurfelOptixScene::render(): max_candidate_hits must be positive.");
-    require(render_channel_count >= 0,
-            "SurfelOptixScene::render(): render_channel_count must be non-negative.");
+    require(max_candidate_hits > 0, "SurfelOptixScene::render(): max_candidate_hits must be positive.");
+    require(render_channel_count >= 0, "SurfelOptixScene::render(): render_channel_count must be non-negative.");
 
     const int ray_count = static_cast<int>(slices(ray.o));
     SurfelOptixComposite composite;
@@ -2124,29 +1780,13 @@ SurfelOptixComposite SurfelOptixScene::render(
     Float scratch_t = empty<Float>(scratch_count);
     Float scratch_alpha = empty<Float>(scratch_count);
     Float scratch_value = empty<Float>(scratch_count);
-    composite.channels = render_channel_count > 0
-        ? empty<Float>(ray_count * render_channel_count)
-        : Float();
+    composite.channels = render_channel_count > 0 ? empty<Float>(ray_count * render_channel_count) : Float();
     composite.normal = output_normal ? empty<Vector3f>(ray_count) : zeros<Vector3f>(ray_count);
     Int candidate_count = collect_candidate_stats ? empty<Int>(ray_count) : zeros<Int>(ray_count);
-    Mask candidate_buffer_full = collect_candidate_stats
-        ? empty<Mask>(ray_count)
-        : full<Mask>(false, ray_count);
+    Mask candidate_buffer_full = collect_candidate_stats ? empty<Mask>(ray_count) : full<Mask>(false, ray_count);
 
-    drjit::eval(ox,
-                oy,
-                oz,
-                dx,
-                dy,
-                dz,
-                t_max_input,
-                active_detached,
-                triangle_to_surfel_id,
-                center,
-                tangent_u,
-                tangent_v,
-                opacity,
-                appearance_values);
+    drjit::eval(ox, oy, oz, dx, dy, dz, t_max_input, active_detached, triangle_to_surfel_id, center, tangent_u,
+                tangent_v, opacity, appearance_values);
 
     ensure_surfel_trace_pipeline(m_accel);
 
@@ -2159,7 +1799,7 @@ SurfelOptixComposite SurfelOptixScene::render(
     params.ray_dy = dy.data();
     params.ray_dz = dz.data();
     params.ray_tmax = t_max_input.data();
-    params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
+    params.active_mask = reinterpret_cast<const uint8_t*>(active_detached.data());
     params.ray_count = ray_count;
     params.triangle_to_surfel_id = triangle_to_surfel_id.data();
     params.triangle_count = m_accel->triangle_count;
@@ -2195,7 +1835,7 @@ SurfelOptixComposite SurfelOptixScene::render(
     params.continue_after_full_buffer = continue_after_full_buffer ? 1 : 0;
     params.transmittance_min = transmittance_min;
     params.max_trace_segments = max_trace_segments;
-    params.out_valid = reinterpret_cast<uint8_t *>(valid.data());
+    params.out_valid = reinterpret_cast<uint8_t*>(valid.data());
     params.composite_hit_capacity = k;
     params.scratch_surfel_id = scratch_surfel_id.data();
     params.scratch_t = scratch_t.data();
@@ -2210,9 +1850,8 @@ SurfelOptixComposite SurfelOptixScene::render(
     params.out_transmittance = composite.transmittance.data();
     params.out_depth = composite.depth.data();
     params.out_candidate_count = collect_candidate_stats ? candidate_count.data() : nullptr;
-    params.out_candidate_buffer_full = collect_candidate_stats
-        ? reinterpret_cast<uint8_t *>(candidate_buffer_full.data())
-        : nullptr;
+    params.out_candidate_buffer_full =
+        collect_candidate_stats ? reinterpret_cast<uint8_t*>(candidate_buffer_full.data()) : nullptr;
 
     {
         ScopedNativeLaunchStage stage(NativeLaunchStage::SurfelTrace);
@@ -2229,115 +1868,43 @@ SurfelOptixComposite SurfelOptixScene::render(
     return composite;
 }
 
-template SurfelOptixIntersection SurfelOptixScene::intersect<true>(const Ray &ray, Mask &active) const;
-template SurfelOptixIntersection SurfelOptixScene::intersect<false>(const RayAD &ray, MaskAD &active) const;
-template SurfelOptixIntersection SurfelOptixScene::intersect<true>(const Ray &ray, const Float &t_min, Mask &active) const;
-template SurfelOptixIntersection SurfelOptixScene::intersect<false>(const RayAD &ray, const FloatAD &t_min, MaskAD &active) const;
+template SurfelOptixIntersection SurfelOptixScene::intersect<true>(const Ray& ray, Mask& active) const;
+template SurfelOptixIntersection SurfelOptixScene::intersect<false>(const RayAD& ray, MaskAD& active) const;
+template SurfelOptixIntersection SurfelOptixScene::intersect<true>(const Ray& ray, const Float& t_min,
+                                                                   Mask& active) const;
+template SurfelOptixIntersection SurfelOptixScene::intersect<false>(const RayAD& ray, const FloatAD& t_min,
+                                                                    MaskAD& active) const;
 template SurfelOptixIntersection SurfelOptixScene::trace_analytic_candidates<true>(
-    const Ray &ray,
-    const Int &triangle_to_surfel_id,
-    const Vector3f &center,
-    const Vector3f &tangent_u,
-    const Vector3f &tangent_v,
-    const Float &opacity,
-    float alpha_min,
-    float alpha_cap,
-    int max_candidate_hits,
-    bool face_forward,
-    Mask &active) const;
+    const Ray& ray, const Int& triangle_to_surfel_id, const Vector3f& center, const Vector3f& tangent_u,
+    const Vector3f& tangent_v, const Float& opacity, float alpha_min, float alpha_cap, int max_candidate_hits,
+    bool face_forward, Mask& active) const;
 template SurfelOptixIntersection SurfelOptixScene::trace_analytic_candidates<false>(
-    const RayAD &ray,
-    const Int &triangle_to_surfel_id,
-    const Vector3f &center,
-    const Vector3f &tangent_u,
-    const Vector3f &tangent_v,
-    const Float &opacity,
-    float alpha_min,
-    float alpha_cap,
-    int max_candidate_hits,
-    bool face_forward,
-    MaskAD &active) const;
+    const RayAD& ray, const Int& triangle_to_surfel_id, const Vector3f& center, const Vector3f& tangent_u,
+    const Vector3f& tangent_v, const Float& opacity, float alpha_min, float alpha_cap, int max_candidate_hits,
+    bool face_forward, MaskAD& active) const;
 template SurfelOptixComposite SurfelOptixScene::composite_alpha<true>(
-    const Ray &ray,
-    const Int &triangle_to_surfel_id,
-    const Vector3f &center,
-    const Vector3f &tangent_u,
-    const Vector3f &tangent_v,
-    const Float &opacity,
-    const Float &value,
-    float alpha_min,
-    float alpha_cap,
-    int max_candidate_hits,
-    bool collect_candidate_stats,
-    bool continue_after_full_buffer,
-    float transmittance_min,
-    int max_trace_segments,
-    bool face_forward,
-    Mask active) const;
+    const Ray& ray, const Int& triangle_to_surfel_id, const Vector3f& center, const Vector3f& tangent_u,
+    const Vector3f& tangent_v, const Float& opacity, const Float& value, float alpha_min, float alpha_cap,
+    int max_candidate_hits, bool collect_candidate_stats, bool continue_after_full_buffer, float transmittance_min,
+    int max_trace_segments, bool face_forward, Mask active) const;
 template SurfelOptixComposite SurfelOptixScene::composite_alpha<false>(
-    const RayAD &ray,
-    const Int &triangle_to_surfel_id,
-    const Vector3f &center,
-    const Vector3f &tangent_u,
-    const Vector3f &tangent_v,
-    const Float &opacity,
-    const Float &value,
-    float alpha_min,
-    float alpha_cap,
-    int max_candidate_hits,
-    bool collect_candidate_stats,
-    bool continue_after_full_buffer,
-    float transmittance_min,
-    int max_trace_segments,
-    bool face_forward,
-    MaskAD active) const;
+    const RayAD& ray, const Int& triangle_to_surfel_id, const Vector3f& center, const Vector3f& tangent_u,
+    const Vector3f& tangent_v, const Float& opacity, const Float& value, float alpha_min, float alpha_cap,
+    int max_candidate_hits, bool collect_candidate_stats, bool continue_after_full_buffer, float transmittance_min,
+    int max_trace_segments, bool face_forward, MaskAD active) const;
 template SurfelOptixComposite SurfelOptixScene::render<true>(
-    const Ray &ray,
-    const Int &triangle_to_surfel_id,
-    const Vector3f &center,
-    const Vector3f &tangent_u,
-    const Vector3f &tangent_v,
-    const Float &opacity,
-    const Float &appearance_values,
-    int appearance_channel_count,
-    int color_model,
-    int appearance_sh_degree,
-    int sh_degree,
-    int render_channel_count,
-    bool output_normal,
-    const ScalarVector3f &background_rgb,
-    float alpha_min,
-    float alpha_cap,
-    int max_candidate_hits,
-    bool collect_candidate_stats,
-    bool continue_after_full_buffer,
-    float transmittance_min,
-    int max_trace_segments,
-    bool face_forward,
-    Mask active) const;
+    const Ray& ray, const Int& triangle_to_surfel_id, const Vector3f& center, const Vector3f& tangent_u,
+    const Vector3f& tangent_v, const Float& opacity, const Float& appearance_values, int appearance_channel_count,
+    int color_model, int appearance_sh_degree, int sh_degree, int render_channel_count, bool output_normal,
+    const ScalarVector3f& background_rgb, float alpha_min, float alpha_cap, int max_candidate_hits,
+    bool collect_candidate_stats, bool continue_after_full_buffer, float transmittance_min, int max_trace_segments,
+    bool face_forward, Mask active) const;
 template SurfelOptixComposite SurfelOptixScene::render<false>(
-    const RayAD &ray,
-    const Int &triangle_to_surfel_id,
-    const Vector3f &center,
-    const Vector3f &tangent_u,
-    const Vector3f &tangent_v,
-    const Float &opacity,
-    const Float &appearance_values,
-    int appearance_channel_count,
-    int color_model,
-    int appearance_sh_degree,
-    int sh_degree,
-    int render_channel_count,
-    bool output_normal,
-    const ScalarVector3f &background_rgb,
-    float alpha_min,
-    float alpha_cap,
-    int max_candidate_hits,
-    bool collect_candidate_stats,
-    bool continue_after_full_buffer,
-    float transmittance_min,
-    int max_trace_segments,
-    bool face_forward,
-    MaskAD active) const;
+    const RayAD& ray, const Int& triangle_to_surfel_id, const Vector3f& center, const Vector3f& tangent_u,
+    const Vector3f& tangent_v, const Float& opacity, const Float& appearance_values, int appearance_channel_count,
+    int color_model, int appearance_sh_degree, int sh_degree, int render_channel_count, bool output_normal,
+    const ScalarVector3f& background_rgb, float alpha_min, float alpha_cap, int max_candidate_hits,
+    bool collect_candidate_stats, bool continue_after_full_buffer, float transmittance_min, int max_trace_segments,
+    bool face_forward, MaskAD active) const;
 
 } // namespace rayd

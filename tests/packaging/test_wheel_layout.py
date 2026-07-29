@@ -1,7 +1,6 @@
 # Copyright Xingyu Chen.
 # Tests wheel layout.
 
-import hashlib
 import json
 import os
 import posixpath
@@ -10,6 +9,8 @@ import zipfile
 from collections import Counter
 from email.parser import BytesParser
 from pathlib import Path, PurePosixPath
+
+from tests.support.hashing import header_set_sha256, normalized_text_sha256, sha256_bytes
 
 
 class WheelLayoutTests(unittest.TestCase):
@@ -24,6 +25,7 @@ class WheelLayoutTests(unittest.TestCase):
         "include/rayd/transmission.h",
         "include/rayd/visibility.h",
     }
+
     @classmethod
     def setUpClass(cls):
         meta = os.environ.get("RAYD_META_WHEEL")
@@ -43,31 +45,12 @@ class WheelLayoutTests(unittest.TestCase):
     @staticmethod
     def metadata(path):
         with zipfile.ZipFile(path) as wheel:
-            metadata_path = next(
-                name
-                for name in wheel.namelist()
-                if name.endswith(".dist-info/METADATA")
-            )
+            metadata_path = next(name for name in wheel.namelist() if name.endswith(".dist-info/METADATA"))
             return BytesParser().parsebytes(wheel.read(metadata_path))
 
-    @staticmethod
-    def sha256(content):
-        return hashlib.sha256(content).hexdigest()
-
-    @classmethod
-    def normalized_text_sha256(cls, content):
-        normalized = content.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-        return cls.sha256(normalized)
-
-    @classmethod
-    def header_set_sha256(cls, headers):
-        digest = hashlib.sha256()
-        for header in sorted(headers, key=lambda item: item["path"]):
-            digest.update(header["path"].encode("utf-8"))
-            digest.update(b"\0")
-            digest.update(header["sha256"].encode("ascii"))
-            digest.update(b"\n")
-        return digest.hexdigest()
+    sha256 = staticmethod(sha256_bytes)
+    normalized_text_sha256 = staticmethod(normalized_text_sha256)
+    header_set_sha256 = staticmethod(header_set_sha256)
 
     def test_namespace_root_is_implicit(self):
         for wheel in (self.drjit_wheel, self.torch_wheel):
@@ -76,13 +59,7 @@ class WheelLayoutTests(unittest.TestCase):
     def test_drjit_wheel_contains_flat_jit_and_shared_concept_headers(self):
         source_root = Path(__file__).resolve().parents[2] / "include" / "rayd"
         wheel_prefix = "rayd/drjit/include/rayd/"
-        root_headers = {
-            "path_exchange.h",
-            "contracts.h",
-            "field_transport.cuh",
-            "math.h",
-            "scattering_table.cuh",
-        }
+        root_headers = {"path_exchange.h", "contracts.h", "field_transport.cuh", "math.h", "scattering_table.cuh"}
         shared_directories = {
             "bvh",
             "diffraction",
@@ -110,56 +87,28 @@ class WheelLayoutTests(unittest.TestCase):
         }
         self.assertEqual(actual, expected)
 
-        root_files = {
-            name for name in actual if len(PurePosixPath(name).parts) == 1
-        }
-        root_directories = {
-            PurePosixPath(name).parts[0]
-            for name in actual
-            if len(PurePosixPath(name).parts) > 1
-        }
+        root_files = {name for name in actual if len(PurePosixPath(name).parts) == 1}
+        root_directories = {PurePosixPath(name).parts[0] for name in actual if len(PurePosixPath(name).parts) > 1}
         self.assertEqual(root_files, root_headers)
         self.assertEqual(root_directories, {"jit", *shared_directories})
 
         jit_headers = {name for name in actual if name.startswith("jit/")}
         self.assertTrue(jit_headers)
-        self.assertTrue(
-            all(PurePosixPath(name).parent == PurePosixPath("jit")
-                for name in jit_headers),
-            jit_headers,
-        )
+        self.assertTrue(all(PurePosixPath(name).parent == PurePosixPath("jit") for name in jit_headers), jit_headers)
         for directory in shared_directories:
-            concept_headers = {
-                name for name in actual if name.startswith(f"{directory}/")
-            }
+            concept_headers = {name for name in actual if name.startswith(f"{directory}/")}
             self.assertTrue(concept_headers, directory)
             self.assertTrue(
-                all(PurePosixPath(name).parent == PurePosixPath(directory)
-                    for name in concept_headers),
-                concept_headers,
+                all(PurePosixPath(name).parent == PurePosixPath(directory) for name in concept_headers), concept_headers
             )
 
-        torch_root_headers = {
-            name.removeprefix("include/rayd/")
-            for name in self.INTEGRATION_HEADERS
-        }
+        torch_root_headers = {name.removeprefix("include/rayd/") for name in self.INTEGRATION_HEADERS}
         self.assertTrue(actual.isdisjoint(torch_root_headers))
+
     def test_backend_files_are_disjoint(self):
-        drjit = {
-            name
-            for name in self.names(self.drjit_wheel)
-            if name.startswith("rayd/") and not name.endswith("/")
-        }
-        torch = {
-            name
-            for name in self.names(self.torch_wheel)
-            if name.startswith("rayd/") and not name.endswith("/")
-        }
-        drjit_impl = {
-            "rayd/_impl/runtime_jit.py",
-            "rayd/_impl/capabilities_jit.py",
-            "rayd/_impl/path_exchange_jit.py",
-        }
+        drjit = {name for name in self.names(self.drjit_wheel) if name.startswith("rayd/") and not name.endswith("/")}
+        torch = {name for name in self.names(self.torch_wheel) if name.startswith("rayd/") and not name.endswith("/")}
+        drjit_impl = {"rayd/_impl/runtime_jit.py", "rayd/_impl/capabilities_jit.py", "rayd/_impl/path_exchange_jit.py"}
         torch_impl = {
             "rayd/_impl/runtime.py",
             "rayd/_impl/capabilities.py",
@@ -176,22 +125,16 @@ class WheelLayoutTests(unittest.TestCase):
         self.assertFalse(drjit & torch)
         self.assertTrue(drjit_impl <= drjit)
         self.assertTrue(torch_impl <= torch)
-        self.assertEqual(
-            {name for name in drjit if not name.startswith("rayd/drjit/")},
-            drjit_impl,
-        )
-        self.assertEqual(
-            {name for name in torch if not name.startswith("rayd/torch/")},
-            torch_impl,
-        )
+        self.assertEqual({name for name in drjit if not name.startswith("rayd/drjit/")}, drjit_impl)
+        self.assertEqual({name for name in torch if not name.startswith("rayd/torch/")}, torch_impl)
         self.assertNotIn("rayd/_impl/__init__.py", drjit | torch)
+
     def test_torch_wheel_contains_untagged_stable_abi_library(self):
         names = self.names(self.torch_wheel)
         stable = [
             name
             for name in names
-            if name.startswith("rayd/torch/_stable_ops")
-            and name.endswith((".dll", ".so", ".dylib"))
+            if name.startswith("rayd/torch/_stable_ops") and name.endswith((".dll", ".so", ".dylib"))
         ]
         self.assertEqual(len(stable), 1, stable)
         self.assertNotRegex(stable[0], r"cp3(?:10|11|12|13|14)")
@@ -199,11 +142,7 @@ class WheelLayoutTests(unittest.TestCase):
     def test_torch_wheel_contains_integrity_described_source_bundle(self):
         prefix = self.SOURCE_PREFIX
         with zipfile.ZipFile(self.torch_wheel) as wheel:
-            names = {
-                name
-                for name in wheel.namelist()
-                if name.startswith(prefix) and not name.endswith("/")
-            }
+            names = {name for name in wheel.namelist() if name.startswith(prefix) and not name.endswith("/")}
             metadata_name = f"{prefix}rayd-source.json"
             manifest_name = f"{prefix}source-files.json"
             self.assertIn(metadata_name, names)
@@ -214,13 +153,8 @@ class WheelLayoutTests(unittest.TestCase):
             manifest = json.loads(manifest_bytes)
             self.assertEqual(metadata["schema_version"], 2)
             self.assertEqual(metadata["source_root"], "source")
-            self.assertEqual(
-                metadata["source_manifest"]["path"], "source-files.json"
-            )
-            self.assertEqual(
-                metadata["source_manifest"]["sha256"],
-                self.sha256(manifest_bytes),
-            )
+            self.assertEqual(metadata["source_manifest"]["path"], "source-files.json")
+            self.assertEqual(metadata["source_manifest"]["sha256"], self.sha256(manifest_bytes))
             self.assertEqual(manifest["schema_version"], 1)
 
             entries = manifest["files"]
@@ -228,9 +162,7 @@ class WheelLayoutTests(unittest.TestCase):
             self.assertEqual(len(paths), len(set(paths)))
             manifest_by_path = {entry["path"]: entry for entry in entries}
             self.assertIn("include/rayd/path_exchange.h", manifest_by_path)
-            self.assertFalse(
-                any(path.startswith("include/rayd/jit/") for path in paths)
-            )
+            self.assertFalse(any(path.startswith("include/rayd/jit/") for path in paths))
             for source_path in paths:
                 with self.subTest(source_path=source_path):
                     self.assertEqual(source_path, posixpath.normpath(source_path))
@@ -238,23 +170,14 @@ class WheelLayoutTests(unittest.TestCase):
                     self.assertNotIn("\\", source_path)
                     member = f"{prefix}source/{source_path}"
                     self.assertIn(member, names)
-                    self.assertEqual(
-                        manifest_by_path[source_path]["sha256"],
-                        self.sha256(wheel.read(member)),
-                    )
+                    self.assertEqual(manifest_by_path[source_path]["sha256"], self.sha256(wheel.read(member)))
 
-            expected_names = {
-                metadata_name,
-                manifest_name,
-                *(f"{prefix}source/{source_path}" for source_path in paths),
-            }
+            expected_names = {metadata_name, manifest_name, *(f"{prefix}source/{source_path}" for source_path in paths)}
             self.assertEqual(names, expected_names)
 
             integration = metadata["integration_abi"]
             self.assertEqual(integration["kind"], "source-header-set-sha256")
-            self.assertEqual(
-                integration["entrypoint"], "include/rayd/integration.h"
-            )
+            self.assertEqual(integration["entrypoint"], "include/rayd/integration.h")
             self.assertEqual(integration["api_version"], 8)
             self.assertEqual(integration["identity"], "rayd.torch.integration")
             headers = integration["headers"]
@@ -266,33 +189,20 @@ class WheelLayoutTests(unittest.TestCase):
                 with self.subTest(integration_header=header["path"]):
                     self.assertIn(header["path"], manifest_by_path)
                     content = wheel.read(f"{prefix}source/{header['path']}")
-                    self.assertEqual(
-                        header["sha256"],
-                        self.normalized_text_sha256(content),
-                    )
-            self.assertEqual(
-                integration["sha256"], self.header_set_sha256(headers)
-            )
+                    self.assertEqual(header["sha256"], self.normalized_text_sha256(content))
+            self.assertEqual(integration["sha256"], self.header_set_sha256(headers))
 
             forbidden = ("/.git/", "/__pycache__/", ".obj", ".pdb", ".pyc")
-            self.assertFalse(
-                any(token in name for name in names for token in forbidden)
-            )
+            self.assertFalse(any(token in name for name in names for token in forbidden))
 
     def test_torch_wheel_separates_legacy_dispatcher_and_compatibility_shim(self):
         names = self.names(self.torch_wheel)
         legacy = [
             name
             for name in names
-            if name.startswith("rayd/torch/_legacy_ops")
-            and name.endswith((".dll", ".so", ".dylib"))
+            if name.startswith("rayd/torch/_legacy_ops") and name.endswith((".dll", ".so", ".dylib"))
         ]
-        compat = [
-            name
-            for name in names
-            if name.startswith("rayd/torch/_C")
-            and name.endswith((".pyd", ".so"))
-        ]
+        compat = [name for name in names if name.startswith("rayd/torch/_C") and name.endswith((".pyd", ".so"))]
         self.assertEqual(len(legacy), 1, legacy)
         self.assertEqual(len(compat), 1, compat)
 
@@ -320,8 +230,7 @@ class WheelLayoutTests(unittest.TestCase):
         # No other shipped stub may shadow an inline-annotated module: a stale
         # stub silently wins over the annotations next to it.
         self.assertEqual(
-            {name for name in drjit if name.endswith(".pyi")},
-            {"rayd/drjit/_C.pyi", "rayd/drjit/__init__.pyi"},
+            {name for name in drjit if name.endswith(".pyi")}, {"rayd/drjit/_C.pyi", "rayd/drjit/__init__.pyi"}
         )
         self.assertEqual({name for name in torch if name.endswith(".pyi")}, set())
 
@@ -333,8 +242,7 @@ class WheelLayoutTests(unittest.TestCase):
         self.assertEqual(meta["Version"], drjit["Version"])
         self.assertEqual(meta["Version"], torch["Version"])
         self.assertEqual(
-            set(meta.get_all("Requires-Dist", [])),
-            {f"rayd-drjit=={meta['Version']}", f"rayd-torch=={meta['Version']}"},
+            set(meta.get_all("Requires-Dist", [])), {f"rayd-drjit=={meta['Version']}", f"rayd-torch=={meta['Version']}"}
         )
 
 

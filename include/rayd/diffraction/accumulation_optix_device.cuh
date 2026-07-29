@@ -36,28 +36,16 @@ namespace rayd::shared::multipath::diffraction_accumulation {
 struct DiffractionAccumulationOptixTraverser {
     ::OptixTraversableHandle handle;
 
-    __device__ __forceinline__ ::rayd::shared::rt::TriangleHit trace_closest(
-        math::Vec3f origin, math::Vec3f direction, float tmin, float tmax) const {
+    __device__ __forceinline__ ::rayd::shared::rt::TriangleHit trace_closest(math::Vec3f origin, math::Vec3f direction,
+                                                                             float tmin, float tmax) const {
         unsigned int hit = 0u;
         unsigned int t = __float_as_uint(1e8f);
         unsigned int prim = 0u;
         unsigned int instance = 0u;
         if (handle != 0ull && tmax > tmin) {
-            optixTrace(handle,
-                       make_float3(origin.x, origin.y, origin.z),
-                       make_float3(direction.x, direction.y, direction.z),
-                       tmin,
-                       tmax,
-                       0.0f,
-                       255u,
-                       OPTIX_RAY_FLAG_DISABLE_ANYHIT,
-                       0,
-                       1,
-                       0,
-                       hit,
-                       t,
-                       prim,
-                       instance);
+            optixTrace(handle, make_float3(origin.x, origin.y, origin.z),
+                       make_float3(direction.x, direction.y, direction.z), tmin, tmax, 0.0f, 255u,
+                       OPTIX_RAY_FLAG_DISABLE_ANYHIT, 0, 1, 0, hit, t, prim, instance);
         }
         ::rayd::shared::rt::TriangleHit result;
         result.t = __uint_as_float(t);
@@ -69,37 +57,31 @@ struct DiffractionAccumulationOptixTraverser {
         return result;
     }
 
-    __device__ __forceinline__ bool trace_occluded(
-        math::Vec3f origin, math::Vec3f direction, float tmin, float tmax) const {
+    __device__ __forceinline__ bool trace_occluded(math::Vec3f origin, math::Vec3f direction, float tmin,
+                                                   float tmax) const {
         if (handle == 0ull || tmax <= tmin) {
             return false;
         }
         unsigned int blocked = 1u;
-        optixTrace(handle,
-                   make_float3(origin.x, origin.y, origin.z),
-                   make_float3(direction.x, direction.y, direction.z),
-                   tmin,
-                   tmax,
-                   0.0f,
-                   255u,
+        optixTrace(handle, make_float3(origin.x, origin.y, origin.z),
+                   make_float3(direction.x, direction.y, direction.z), tmin, tmax, 0.0f, 255u,
                    OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT | OPTIX_RAY_FLAG_DISABLE_ANYHIT |
                        OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT,
-                   0,
-                   1,
-                   0,
-                   blocked);
+                   0, 1, 0, blocked);
         return blocked != 0u;
     }
 
-    __device__ __forceinline__ bool trace_occluded_ignore(
-        math::Vec3f origin, math::Vec3f direction, float tmin, float tmax,
-        const std::int32_t * /*ignore*/, int /*ignore_count*/) const {
+    __device__ __forceinline__ bool trace_occluded_ignore(math::Vec3f origin, math::Vec3f direction, float tmin,
+                                                          float tmax, const std::int32_t* /*ignore*/,
+                                                          int /*ignore_count*/) const {
         return trace_occluded(origin, direction, tmin, tmax);
     }
 
-    __device__ __forceinline__ ::rayd::shared::rt::TriangleHit trace_first_blocker(
-        math::Vec3f origin, math::Vec3f direction, float tmin, float tmax,
-        const std::int32_t * /*ignore*/, int /*ignore_count*/) const {
+    __device__ __forceinline__ ::rayd::shared::rt::TriangleHit trace_first_blocker(math::Vec3f origin,
+                                                                                   math::Vec3f direction, float tmin,
+                                                                                   float tmax,
+                                                                                   const std::int32_t* /*ignore*/,
+                                                                                   int /*ignore_count*/) const {
         return trace_closest(origin, direction, tmin, tmax);
     }
 };
@@ -110,17 +92,14 @@ static_assert(::rayd::shared::rt::is_traverser_v<DiffractionAccumulationOptixTra
 /// OptiX entry struct. Keeps the pre-migration name / static-method surface so the
 /// backend .cu adapters are unchanged; each raygen reads the launch index and
 /// dispatches to the shared algorithm instantiated with the OptiX traverser.
-template <typename Policy>
-struct DiffractionAccumulationDevice {
-    using Algo = ::rayd::shared::multipath::DiffractionAccumulationAlgo<
-        Policy, DiffractionAccumulationOptixTraverser>;
+template <typename Policy> struct DiffractionAccumulationDevice {
+    using Algo = ::rayd::shared::multipath::DiffractionAccumulationAlgo<Policy, DiffractionAccumulationOptixTraverser>;
 
     static __forceinline__ __device__ Algo make_algo() {
-        return Algo{
-            DiffractionAccumulationOptixTraverser{
-                static_cast<::OptixTraversableHandle>(Policy::params().primary_handle)},
-            DiffractionAccumulationOptixTraverser{
-                static_cast<::OptixTraversableHandle>(Policy::params().secondary_handle)}};
+        return Algo{DiffractionAccumulationOptixTraverser{
+                        static_cast<::OptixTraversableHandle>(Policy::params().primary_handle)},
+                    DiffractionAccumulationOptixTraverser{
+                        static_cast<::OptixTraversableHandle>(Policy::params().secondary_handle)}};
     }
 
     static __forceinline__ __device__ void closesthit() {
@@ -132,51 +111,42 @@ struct DiffractionAccumulationDevice {
 
     static __forceinline__ __device__ void miss() { optixSetPayload_0(0u); }
 
-    template <bool PrimaryOnly, bool IncludeCoherent, bool IncludeDirect,
-              bool IncludeKeller, bool IncludeSuffix>
+    template <bool PrimaryOnly, bool IncludeCoherent, bool IncludeDirect, bool IncludeKeller, bool IncludeSuffix>
     static __forceinline__ __device__ void run_diffraction_order1_accumulation_raygen() {
-        make_algo().template run_diffraction_order1_accumulation_algo<
-            PrimaryOnly, IncludeCoherent, IncludeDirect, IncludeKeller, IncludeSuffix>(
-            optixGetLaunchIndex().x);
+        make_algo()
+            .template run_diffraction_order1_accumulation_algo<PrimaryOnly, IncludeCoherent, IncludeDirect,
+                                                               IncludeKeller, IncludeSuffix>(optixGetLaunchIndex().x);
     }
 
     template <bool PrimaryOnly>
     static __forceinline__ __device__ void run_diffraction_order1_source_visibility_raygen() {
-        make_algo().template run_diffraction_order1_source_visibility_algo<PrimaryOnly>(
-            optixGetLaunchIndex().x);
+        make_algo().template run_diffraction_order1_source_visibility_algo<PrimaryOnly>(optixGetLaunchIndex().x);
     }
 
     template <bool PrimaryOnly>
-    static __forceinline__ __device__ void
-    run_diffraction_order1_no_suffix_target_accumulation_raygen() {
+    static __forceinline__ __device__ void run_diffraction_order1_no_suffix_target_accumulation_raygen() {
         make_algo().template run_diffraction_order1_no_suffix_target_accumulation_algo<PrimaryOnly>(
             optixGetLaunchIndex().x);
     }
 
     template <bool PrimaryOnly>
-    static __forceinline__ __device__ void
-    run_diffraction_order1_suffix_first_visibility_raygen() {
-        make_algo().template run_diffraction_order1_suffix_first_visibility_algo<PrimaryOnly>(
-            optixGetLaunchIndex().x);
+    static __forceinline__ __device__ void run_diffraction_order1_suffix_first_visibility_raygen() {
+        make_algo().template run_diffraction_order1_suffix_first_visibility_algo<PrimaryOnly>(optixGetLaunchIndex().x);
     }
 
     template <bool PrimaryOnly>
-    static __forceinline__ __device__ void
-    run_diffraction_order1_suffix_target_accumulation_raygen() {
+    static __forceinline__ __device__ void run_diffraction_order1_suffix_target_accumulation_raygen() {
         make_algo().template run_diffraction_order1_suffix_target_accumulation_algo<PrimaryOnly>(
             optixGetLaunchIndex().x);
     }
 
     template <bool PrimaryOnly>
     static __forceinline__ __device__ void run_diffraction_order1_coherent_accumulation_raygen() {
-        make_algo().template run_diffraction_order1_coherent_accumulation_algo<PrimaryOnly>(
-            optixGetLaunchIndex().x);
+        make_algo().template run_diffraction_order1_coherent_accumulation_algo<PrimaryOnly>(optixGetLaunchIndex().x);
     }
 
-    template <bool PrimaryOnly>
-    static __forceinline__ __device__ void run_diffraction_chain_accumulation_raygen() {
-        make_algo().template run_diffraction_chain_accumulation_algo<PrimaryOnly>(
-            optixGetLaunchIndex().x);
+    template <bool PrimaryOnly> static __forceinline__ __device__ void run_diffraction_chain_accumulation_raygen() {
+        make_algo().template run_diffraction_chain_accumulation_algo<PrimaryOnly>(optixGetLaunchIndex().x);
     }
 };
 

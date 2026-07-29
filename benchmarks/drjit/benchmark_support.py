@@ -2,6 +2,7 @@
 # Benchmarks benchmark support.
 
 import argparse
+from functools import partial
 import gc
 import json
 import math
@@ -17,6 +18,24 @@ import rayd.drjit as pj
 import drjit as dr
 import drjit.cuda as cuda
 import drjit.cuda.ad as ad
+
+try:
+    from benchmarks.common import (
+        cleanup_drjit,
+        make_grid_mesh_data as _make_grid_mesh_data,
+        summarize_timings as _summarize_timings,
+        write_json as _write_json,
+    )
+except ImportError:  # pragma: no cover - supports direct script execution.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from benchmarks.common import (
+        cleanup_drjit,
+        make_grid_mesh_data as _make_grid_mesh_data,
+        summarize_timings as _summarize_timings,
+        write_json as _write_json,
+    )
+
+_cleanup_drjit = partial(cleanup_drjit, dr)
 
 
 RAYD_FLAGS_NONE = getattr(pj.RayFlags, "None")
@@ -63,42 +82,6 @@ def _try_import_mitsuba(variant: str):
     return mi
 
 
-def _make_grid_mesh_data(resolution: int, x_offset: float = 0.0, z_offset: float = 0.0) -> dict[str, list[float] | list[int]]:
-    xs: list[float] = []
-    ys: list[float] = []
-    zs: list[float] = []
-    for y in range(resolution + 1):
-        fy = y / resolution
-        for x in range(resolution + 1):
-            fx = x / resolution
-            xs.append(x_offset + fx)
-            ys.append(fy)
-            zs.append(z_offset)
-
-    i0: list[int] = []
-    i1: list[int] = []
-    i2: list[int] = []
-    stride = resolution + 1
-    for y in range(resolution):
-        for x in range(resolution):
-            v00 = y * stride + x
-            v10 = v00 + 1
-            v01 = v00 + stride
-            v11 = v01 + 1
-            i0.extend([v00, v00])
-            i1.extend([v10, v11])
-            i2.extend([v11, v01])
-
-    return {
-        "x": xs,
-        "y": ys,
-        "z": zs,
-        "i0": i0,
-        "i1": i1,
-        "i2": i2,
-    }
-
-
 def _make_ray_data(side: int, x_offset: float = 0.0, z_origin: float = -1.0) -> dict[str, list[float]]:
     xs: list[float] = []
     ys: list[float] = []
@@ -108,14 +91,7 @@ def _make_ray_data(side: int, x_offset: float = 0.0, z_origin: float = -1.0) -> 
             xs.append(x_offset + (ix + 0.5) / side)
             ys.append((iy + 0.5) / side)
             zs.append(z_origin)
-    return {
-        "ox": xs,
-        "oy": ys,
-        "oz": zs,
-        "dx": [0.0] * len(xs),
-        "dy": [0.0] * len(xs),
-        "dz": [1.0] * len(xs),
-    }
+    return {"ox": xs, "oy": ys, "oz": zs, "dx": [0.0] * len(xs), "dy": [0.0] * len(xs), "dz": [1.0] * len(xs)}
 
 
 def _flatten_vec3_soa(vec: Any) -> list[float]:
@@ -147,26 +123,10 @@ def _vector_mean_abs_diff(a: list[float], b: list[float]) -> float:
     return sum(abs(x - y) for x, y in zip(a, b)) / len(a)
 
 
-def _summarize_timings(times_s: list[float], query_count: int) -> dict[str, float]:
-    avg_s = statistics.fmean(times_s)
-    min_s = min(times_s)
-    return {
-        "min_ms": min_s * 1000.0,
-        "avg_ms": avg_s * 1000.0,
-        "qps_m": query_count / avg_s / 1e6,
-    }
-
-
 def _measure_forward_modes(
-    query_count: int,
-    repeats: int,
-    warmup: int,
-    runs: dict[str, Any],
+    query_count: int, repeats: int, warmup: int, runs: dict[str, Any]
 ) -> dict[str, dict[str, float]]:
-    return {
-        mode: _summarize_timings(_measure(run, repeats, warmup), query_count)
-        for mode, run in runs.items()
-    }
+    return {mode: _summarize_timings(_measure(run, repeats, warmup), query_count) for mode, run in runs.items()}
 
 
 def _measure(fn, repeats: int, warmup: int) -> list[float]:
@@ -192,14 +152,6 @@ def _scalar_to_float(value: Any) -> float:
         return float(value[0])
 
 
-def _cleanup_drjit() -> None:
-    gc.collect()
-    dr.sync_thread()
-    dr.flush_malloc_cache()
-    dr.flush_kernel_cache()
-    dr.sync_thread()
-
-
 def _default_scenario_label(mesh_resolution: int, ray_grid_side: int) -> str:
     return f"{mesh_resolution}x{mesh_resolution} mesh / {ray_grid_side}x{ray_grid_side} rays"
 
@@ -220,8 +172,7 @@ def _parse_scenario_spec(spec: str) -> "BenchmarkScenario":
         ray_grid_side = int(parts[2])
     else:
         raise ValueError(
-            "Invalid --scenario spec. Use 'mesh_resolution:ray_grid_side' "
-            "or 'label:mesh_resolution:ray_grid_side'."
+            "Invalid --scenario spec. Use 'mesh_resolution:ray_grid_side' or 'label:mesh_resolution:ray_grid_side'."
         )
 
     if mesh_resolution <= 0 or ray_grid_side <= 0:
@@ -230,24 +181,12 @@ def _parse_scenario_spec(spec: str) -> "BenchmarkScenario":
     return BenchmarkScenario(label, mesh_resolution, ray_grid_side)
 
 
-def _write_json(path: str | os.PathLike[str], payload: dict[str, Any]) -> None:
-    output_path = Path(path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-
-
-def _plot_benchmark_suite(
-    suite: dict[str, Any],
-    output_path: str | os.PathLike[str],
-    title: str,
-    dpi: int,
-) -> None:
+def _plot_benchmark_suite(suite: dict[str, Any], output_path: str | os.PathLike[str], title: str, dpi: int) -> None:
     try:
         import matplotlib.pyplot as plt  # type: ignore
     except ImportError as exc:
         raise RuntimeError(
-            "matplotlib is required to generate benchmark charts. "
-            "Install it with `python -m pip install matplotlib`."
+            "matplotlib is required to generate benchmark charts. Install it with `python -m pip install matplotlib`."
         ) from exc
 
     scenarios = suite["scenarios"]
@@ -255,10 +194,7 @@ def _plot_benchmark_suite(
     if not scenarios or not backend_names:
         raise ValueError("Cannot plot an empty benchmark suite.")
 
-    colors = {
-        "rayd": "#0F766E",
-        "mitsuba": "#C2410C",
-    }
+    colors = {"rayd": "#0F766E", "mitsuba": "#C2410C"}
     fallback_colors = ["#1D4ED8", "#9333EA", "#B45309", "#047857"]
 
     fig, axes = plt.subplots(2, 3, figsize=(18, 9.2), constrained_layout=False)
@@ -295,11 +231,16 @@ def _plot_benchmark_suite(
         axis.set_title(metric_label, fontsize=14, pad=14)
         axis.set_xticks(scenario_positions)
         axis.set_xticklabels(
-            [_scenario_tick_label(BenchmarkScenario(
-                scenario["config"]["label"],
-                scenario["config"]["mesh_resolution"],
-                scenario["config"]["ray_grid_side"],
-            )) for scenario in scenarios],
+            [
+                _scenario_tick_label(
+                    BenchmarkScenario(
+                        scenario["config"]["label"],
+                        scenario["config"]["mesh_resolution"],
+                        scenario["config"]["ray_grid_side"],
+                    )
+                )
+                for scenario in scenarios
+            ],
             fontsize=11,
         )
         axis.set_ylabel("avg ms", fontsize=12)
@@ -364,10 +305,7 @@ class RayDBackend:
     name = "rayd"
 
     def environment(self) -> dict[str, Any]:
-        return {
-            "backend": self.name,
-            "drjit_version": getattr(dr, "__version__", "unknown"),
-                    }
+        return {"backend": self.name, "drjit_version": getattr(dr, "__version__", "unknown")}
 
     def _mesh(self, mesh_data: dict[str, list[float] | list[int]]) -> Any:
         mesh = pj.Mesh(
@@ -396,9 +334,7 @@ class RayDBackend:
         )
 
     def forward_correctness(
-        self,
-        mesh_data: dict[str, list[float] | list[int]],
-        ray_data: dict[str, list[float]],
+        self, mesh_data: dict[str, list[float] | list[int]], ray_data: dict[str, list[float]]
     ) -> IntersectionSummary:
         scene, _ = self._scene(mesh_data, dynamic=False)
         its = scene.intersect(self._ray_detached(ray_data))
@@ -413,11 +349,7 @@ class RayDBackend:
         )
 
     def forward_performance(
-        self,
-        mesh_data: dict[str, list[float] | list[int]],
-        ray_data: dict[str, list[float]],
-        repeats: int,
-        warmup: int,
+        self, mesh_data: dict[str, list[float] | list[int]], ray_data: dict[str, list[float]], repeats: int, warmup: int
     ) -> dict[str, dict[str, float]]:
         scene, _ = self._scene(mesh_data, dynamic=False)
         rays = self._ray_detached(ray_data)
@@ -430,15 +362,7 @@ class RayDBackend:
             its = scene.intersect(rays, flags=RAYD_FLAGS_NONE)
             dr.eval(its.t)
 
-        return _measure_forward_modes(
-            len(ray_data["ox"]),
-            repeats,
-            warmup,
-            {
-                "full": run_full,
-                "reduced": run_reduced,
-            },
-        )
+        return _measure_forward_modes(len(ray_data["ox"]), repeats, warmup, {"full": run_full, "reduced": run_reduced})
 
     def dynamic_forward_correctness(
         self,
@@ -448,8 +372,7 @@ class RayDBackend:
     ) -> IntersectionSummary:
         scene, mesh_id = self._scene(mesh_data, dynamic=True)
         scene.update_mesh_vertices(
-            mesh_id,
-            cuda.Array3f(updated_mesh_data["x"], updated_mesh_data["y"], updated_mesh_data["z"]),
+            mesh_id, cuda.Array3f(updated_mesh_data["x"], updated_mesh_data["y"], updated_mesh_data["z"])
         )
         scene.sync()
 
@@ -499,13 +422,7 @@ class RayDBackend:
             return run
 
         return _measure_forward_modes(
-            len(updated_ray_data["ox"]),
-            repeats,
-            warmup,
-            {
-                "full": make_run("full"),
-                "reduced": make_run("reduced"),
-            },
+            len(updated_ray_data["ox"]), repeats, warmup, {"full": make_run("full"), "reduced": make_run("reduced")}
         )
 
     def gradient_correctness(
@@ -544,11 +461,7 @@ class RayDBackend:
         dr.eval(grad)
         dr.sync_thread()
 
-        return {
-            "loss": _scalar_to_float(loss),
-            "grad": _flatten_vec3_soa(grad),
-            "num_vertices": len(mesh_data["x"]),
-        }
+        return {"loss": _scalar_to_float(loss), "grad": _flatten_vec3_soa(grad), "num_vertices": len(mesh_data["x"])}
 
     def gradient_performance(
         self,
@@ -586,11 +499,7 @@ class RayDBackend:
 
             its = scene.intersect(rays)
             loss = dr.sum(its.t)
-            traversal_flags = (
-                dr.ADFlag.Default
-                if dynamic_update
-                else dr.ADFlag.ClearInterior
-            )
+            traversal_flags = dr.ADFlag.Default if dynamic_update else dr.ADFlag.ClearInterior
             dr.backward(loss, flags=traversal_flags)
             dr.eval(dr.grad(verts))
 
@@ -605,11 +514,7 @@ class MitsubaBackend:
         self.variant = variant
 
     def environment(self) -> dict[str, Any]:
-        return {
-            "backend": self.name,
-            "variant": self.variant,
-            "version": getattr(self.mi, "__version__", "unknown"),
-        }
+        return {"backend": self.name, "variant": self.variant, "version": getattr(self.mi, "__version__", "unknown")}
 
     def _mesh(self, mesh_data: dict[str, list[float] | list[int]]) -> Any:
         mi = self.mi
@@ -629,12 +534,7 @@ class MitsubaBackend:
     def _scene(self, mesh_data: dict[str, list[float] | list[int]]) -> tuple[Any, Any]:
         mi = self.mi
         mesh = self._mesh(mesh_data)
-        scene = mi.load_dict(
-            {
-                "type": "scene",
-                "mesh": mesh,
-            }
-        )
+        scene = mi.load_dict({"type": "scene", "mesh": mesh})
         return scene, mi.traverse(scene)
 
     def _ray(self, ray_data: dict[str, list[float]], ad_mode: bool) -> Any:
@@ -647,9 +547,7 @@ class MitsubaBackend:
         )
 
     def forward_correctness(
-        self,
-        mesh_data: dict[str, list[float] | list[int]],
-        ray_data: dict[str, list[float]],
+        self, mesh_data: dict[str, list[float] | list[int]], ray_data: dict[str, list[float]]
     ) -> IntersectionSummary:
         scene, _ = self._scene(mesh_data)
         its = scene.ray_intersect(self._ray(ray_data, ad_mode=False))
@@ -664,11 +562,7 @@ class MitsubaBackend:
         )
 
     def forward_performance(
-        self,
-        mesh_data: dict[str, list[float] | list[int]],
-        ray_data: dict[str, list[float]],
-        repeats: int,
-        warmup: int,
+        self, mesh_data: dict[str, list[float] | list[int]], ray_data: dict[str, list[float]], repeats: int, warmup: int
     ) -> dict[str, dict[str, float]]:
         scene, _ = self._scene(mesh_data)
         rays = self._ray(ray_data, ad_mode=False)
@@ -682,15 +576,7 @@ class MitsubaBackend:
             its = scene.ray_intersect(rays, mi.RayFlags.Minimal, False)
             dr.eval(its.t)
 
-        return _measure_forward_modes(
-            len(ray_data["ox"]),
-            repeats,
-            warmup,
-            {
-                "full": run_full,
-                "reduced": run_reduced,
-            },
-        )
+        return _measure_forward_modes(len(ray_data["ox"]), repeats, warmup, {"full": run_full, "reduced": run_reduced})
 
     def dynamic_forward_correctness(
         self,
@@ -725,9 +611,7 @@ class MitsubaBackend:
         warmup: int,
     ) -> dict[str, dict[str, float]]:
         scene, params = self._scene(mesh_data)
-        base_positions = dr.ravel(
-            self.mi.Point3f(mesh_data["x"], mesh_data["y"], mesh_data["z"])
-        )
+        base_positions = dr.ravel(self.mi.Point3f(mesh_data["x"], mesh_data["y"], mesh_data["z"]))
         updated_positions = dr.ravel(
             self.mi.Point3f(updated_mesh_data["x"], updated_mesh_data["y"], updated_mesh_data["z"])
         )
@@ -754,13 +638,7 @@ class MitsubaBackend:
             return run
 
         return _measure_forward_modes(
-            len(updated_ray_data["ox"]),
-            repeats,
-            warmup,
-            {
-                "full": make_run("full"),
-                "reduced": make_run("reduced"),
-            },
+            len(updated_ray_data["ox"]), repeats, warmup, {"full": make_run("full"), "reduced": make_run("reduced")}
         )
 
     def gradient_correctness(
@@ -822,11 +700,7 @@ class MitsubaBackend:
                 params.update()
             its = scene.ray_intersect(rays)
             loss = dr.sum(its.t)
-            traversal_flags = (
-                dr.ADFlag.Default
-                if dynamic_update
-                else dr.ADFlag.ClearInterior
-            )
+            traversal_flags = dr.ADFlag.Default if dynamic_update else dr.ADFlag.ClearInterior
             dr.backward(loss, flags=traversal_flags)
             dr.eval(dr.grad(verts))
 
@@ -889,10 +763,7 @@ def run_benchmark_case(
         static_grad = backend.gradient_correctness(base_mesh, base_rays, dynamic_update=False)
         _cleanup_drjit()
         dynamic_grad = backend.gradient_correctness(
-            base_mesh,
-            updated_rays,
-            dynamic_update=True,
-            updated_mesh_data=updated_mesh,
+            base_mesh, updated_rays, dynamic_update=True, updated_mesh_data=updated_mesh
         )
         _cleanup_drjit()
 
@@ -926,12 +797,7 @@ def run_benchmark_case(
             "num_vertices": dynamic_grad["num_vertices"],
         }
         backend_result["gradient_dynamic_performance"] = backend.gradient_performance(
-            base_mesh,
-            updated_rays,
-            repeats,
-            warmup,
-            dynamic_update=True,
-            updated_mesh_data=updated_mesh,
+            base_mesh, updated_rays, repeats, warmup, dynamic_update=True, updated_mesh_data=updated_mesh
         )
         _cleanup_drjit()
         results["backends"][backend.name] = backend_result
@@ -943,22 +809,14 @@ def run_benchmark_case(
         results["comparisons"]["forward_dynamic"] = _compare_intersections(
             forward_dynamic["rayd"], forward_dynamic["mitsuba"]
         )
-        results["comparisons"]["gradient_static"] = _compare_gradients(
-            grad_static["rayd"], grad_static["mitsuba"]
-        )
-        results["comparisons"]["gradient_dynamic"] = _compare_gradients(
-            grad_dynamic["rayd"], grad_dynamic["mitsuba"]
-        )
+        results["comparisons"]["gradient_static"] = _compare_gradients(grad_static["rayd"], grad_static["mitsuba"])
+        results["comparisons"]["gradient_dynamic"] = _compare_gradients(grad_dynamic["rayd"], grad_dynamic["mitsuba"])
 
     return results
 
 
 def run_benchmark_suite(
-    backends: list[Any],
-    scenarios: list[BenchmarkScenario],
-    repeats: int,
-    warmup: int,
-    dynamic_x_offset: float,
+    backends: list[Any], scenarios: list[BenchmarkScenario], repeats: int, warmup: int, dynamic_x_offset: float
 ) -> dict[str, Any]:
     return {
         "suite_config": {
@@ -1031,15 +889,9 @@ def _build_backends(names: list[str], mitsuba_variant: str) -> list[Any]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Benchmark RayD ray intersection and gradients against Mitsuba."
-    )
+    parser = argparse.ArgumentParser(description="Benchmark RayD ray intersection and gradients against Mitsuba.")
     parser.add_argument(
-        "--backends",
-        nargs="+",
-        default=["rayd", "mitsuba"],
-        choices=["rayd", "mitsuba"],
-        help="Backends to run.",
+        "--backends", nargs="+", default=["rayd", "mitsuba"], choices=["rayd", "mitsuba"], help="Backends to run."
     )
     parser.add_argument("--mitsuba-variant", default="cuda_ad_rgb")
     parser.add_argument("--mesh-resolution", type=int, default=64)
@@ -1059,9 +911,7 @@ def main() -> int:
     parser.add_argument("--json-output", type=str, default=None)
     parser.add_argument("--chart-output", type=str, default=None)
     parser.add_argument(
-        "--chart-title",
-        type=str,
-        default="RayD vs Mitsuba performance benchmark (avg ms, lower is better)",
+        "--chart-title", type=str, default="RayD vs Mitsuba performance benchmark (avg ms, lower is better)"
     )
     parser.add_argument("--chart-dpi", type=int, default=200)
     args = parser.parse_args()
@@ -1100,12 +950,7 @@ def main() -> int:
                     "forward_performance_modes": FORWARD_PERFORMANCE_MODES,
                 },
                 "environment": results["environment"],
-                "scenarios": [
-                    {
-                        "config": scenario.config(),
-                        "results": results,
-                    }
-                ],
+                "scenarios": [{"config": scenario.config(), "results": results}],
             }
             _plot_benchmark_suite(suite_results, args.chart_output, args.chart_title, args.chart_dpi)
 
@@ -1118,5 +963,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
-

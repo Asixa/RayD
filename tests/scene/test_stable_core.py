@@ -29,16 +29,10 @@ class StableCoreTests(unittest.TestCase):
         stable = torch.ops.rayd_torch_stable
         legacy = torch.ops.rayd_torch
         torch.testing.assert_close(
-            stable.intersection_valid(t, shape_id),
-            legacy.intersection_valid(t, shape_id),
-            rtol=0.0,
-            atol=0.0,
+            stable.intersection_valid(t, shape_id), legacy.intersection_valid(t, shape_id), rtol=0.0, atol=0.0
         )
         torch.testing.assert_close(
-            stable.intersection_valid(t, empty_shape),
-            legacy.intersection_valid(t, empty_shape),
-            rtol=0.0,
-            atol=0.0,
+            stable.intersection_valid(t, empty_shape), legacy.intersection_valid(t, empty_shape), rtol=0.0, atol=0.0
         )
 
     def test_loader_override_reports_failures(self):

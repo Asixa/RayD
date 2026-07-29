@@ -13,11 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class OptixPipelineColdCreateTests(unittest.TestCase):
     CASES = (
-        (
-            "intersect",
-            "tests.scene.test_geometry_jit.GeometryCoreTests."
-            "test_constant_hit_returns_minimal_intersection",
-        ),
+        ("intersect", "tests.scene.test_geometry_jit.GeometryCoreTests.test_constant_hit_returns_minimal_intersection"),
         (
             "shadow_test",
             "tests.scene.test_geometry_jit.GeometryCoreTests."
@@ -35,8 +31,7 @@ class OptixPipelineColdCreateTests(unittest.TestCase):
         ),
         (
             "trace_refl_epc_field",
-            "tests.reflection.test_epc_jit.ReflEpcTests."
-            "test_epc_field_batched_direct_path_creates_cold_pipeline",
+            "tests.reflection.test_epc_jit.ReflEpcTests.test_epc_field_batched_direct_path_creates_cold_pipeline",
         ),
         (
             "accumulate_reflections",
@@ -45,13 +40,11 @@ class OptixPipelineColdCreateTests(unittest.TestCase):
         ),
         (
             "accum_dfr_direct",
-            "tests.diffraction.test_accumulation_jit.DfrAccumulationTests."
-            "test_accum_dfr_direct_writes_grid",
+            "tests.diffraction.test_accumulation_jit.DfrAccumulationTests.test_accum_dfr_direct_writes_grid",
         ),
         (
             "accum_dfr_direct_ad_custom_op",
-            "tests.diffraction.test_accumulation_jit.DfrAccumulationTests."
-            "test_accum_dfr_direct_supports_ad_inputs",
+            "tests.diffraction.test_accumulation_jit.DfrAccumulationTests.test_accum_dfr_direct_supports_ad_inputs",
         ),
         (
             "accum_dfr_direct_suffix",
@@ -150,13 +143,11 @@ class OptixPipelineColdCreateTests(unittest.TestCase):
         ),
         (
             "nearest_edges_optix_custom_op",
-            "tests.visibility.test_visibility_topk_jit.VisibilityAndTopKTests."
-            "test_nearest_edges_point_k2",
+            "tests.visibility.test_visibility_topk_jit.VisibilityAndTopKTests.test_nearest_edges_point_k2",
         ),
         (
             "surfel_intersect",
-            "tests.surfel.test_surfel_jit.SurfelCoreTests."
-            "test_quad_surfel_intersection_returns_2dgs_fields",
+            "tests.surfel.test_surfel_jit.SurfelCoreTests.test_quad_surfel_intersection_returns_2dgs_fields",
         ),
     )
 
@@ -177,11 +168,7 @@ class OptixPipelineColdCreateTests(unittest.TestCase):
                     check=False,
                 )
                 combined = result.stdout + "\n" + result.stderr
-                self.assertEqual(
-                    result.returncode,
-                    0,
-                    f"{api_name} cold-create subprocess failed.\n{combined}",
-                )
+                self.assertEqual(result.returncode, 0, f"{api_name} cold-create subprocess failed.\n{combined}")
                 self.assertNotIn("optixPipelineCreate", combined)
                 self.assertNotIn("[COMPILER] COMPILE ERROR", combined)
 

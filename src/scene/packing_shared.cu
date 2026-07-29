@@ -26,19 +26,15 @@ __global__ void pack_global_geometry_kernel(GlobalGeometryPackingParams params) 
         const int source = index * 3;
         const int destination_face = params.face_offset + index;
         const int destination = destination_face * 3;
-        params.global_faces[destination + 0] =
-            params.mesh_faces[source + 0] + params.vertex_offset;
-        params.global_faces[destination + 1] =
-            params.mesh_faces[source + 1] + params.vertex_offset;
-        params.global_faces[destination + 2] =
-            params.mesh_faces[source + 2] + params.vertex_offset;
+        params.global_faces[destination + 0] = params.mesh_faces[source + 0] + params.vertex_offset;
+        params.global_faces[destination + 1] = params.mesh_faces[source + 1] + params.vertex_offset;
+        params.global_faces[destination + 2] = params.mesh_faces[source + 2] + params.vertex_offset;
         params.face_shape_id[destination_face] = params.shape_id;
         params.face_local_id[destination_face] = index;
     }
 }
 
-__global__ void pack_global_vertex_tangent_kernel(
-    GlobalVertexTangentPackingParams params) {
+__global__ void pack_global_vertex_tangent_kernel(GlobalVertexTangentPackingParams params) {
     const int index = blockIdx.x * blockDim.x + threadIdx.x;
     if (index >= params.vertex_count) {
         return;
@@ -50,8 +46,7 @@ __global__ void pack_global_vertex_tangent_kernel(
     params.global_tangent[destination + 2] = params.mesh_tangent[source + 2];
 }
 
-__global__ void zero_global_vertex_tangent_range_kernel(
-    GlobalVertexTangentZeroParams params) {
+__global__ void zero_global_vertex_tangent_range_kernel(GlobalVertexTangentZeroParams params) {
     const int index = blockIdx.x * blockDim.x + threadIdx.x;
     if (index >= params.vertex_count) {
         return;
@@ -68,40 +63,29 @@ int packing_block_count(int count) {
 
 } // namespace
 
-cudaError_t launch_pack_global_geometry_async(
-    const GlobalGeometryPackingParams &params) noexcept {
-    const int launch_count =
-        params.vertex_count > params.face_count ? params.vertex_count : params.face_count;
+cudaError_t launch_pack_global_geometry_async(const GlobalGeometryPackingParams& params) noexcept {
+    const int launch_count = params.vertex_count > params.face_count ? params.vertex_count : params.face_count;
     if (launch_count <= 0) {
         return cudaSuccess;
     }
-    pack_global_geometry_kernel<<<packing_block_count(launch_count),
-                                  PackingBlockSize,
-                                  0,
-                                  params.stream>>>(params);
+    pack_global_geometry_kernel<<<packing_block_count(launch_count), PackingBlockSize, 0, params.stream>>>(params);
     return cudaGetLastError();
 }
 
-cudaError_t launch_pack_global_vertex_tangent_async(
-    const GlobalVertexTangentPackingParams &params) noexcept {
+cudaError_t launch_pack_global_vertex_tangent_async(const GlobalVertexTangentPackingParams& params) noexcept {
     if (params.vertex_count <= 0) {
         return cudaSuccess;
     }
-    pack_global_vertex_tangent_kernel<<<packing_block_count(params.vertex_count),
-                                        PackingBlockSize,
-                                        0,
-                                        params.stream>>>(params);
+    pack_global_vertex_tangent_kernel<<<packing_block_count(params.vertex_count), PackingBlockSize, 0, params.stream>>>(
+        params);
     return cudaGetLastError();
 }
 
-cudaError_t launch_zero_global_vertex_tangent_range_async(
-    const GlobalVertexTangentZeroParams &params) noexcept {
+cudaError_t launch_zero_global_vertex_tangent_range_async(const GlobalVertexTangentZeroParams& params) noexcept {
     if (params.vertex_count <= 0) {
         return cudaSuccess;
     }
-    zero_global_vertex_tangent_range_kernel<<<packing_block_count(params.vertex_count),
-                                              PackingBlockSize,
-                                              0,
+    zero_global_vertex_tangent_range_kernel<<<packing_block_count(params.vertex_count), PackingBlockSize, 0,
                                               params.stream>>>(params);
     return cudaGetLastError();
 }

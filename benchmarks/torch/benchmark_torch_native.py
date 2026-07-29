@@ -10,30 +10,7 @@ import time
 import torch
 import rayd.torch as rt
 
-from .benchmark_support import synchronize, time_ms
-
-
-def _dfr_case():
-    states = rt.DfrStates(
-        edge_index=torch.tensor([0], device="cuda", dtype=torch.int32),
-        edge_pos=torch.tensor([[0.0, 0.0, 0.0]], device="cuda", dtype=torch.float32),
-        edge_dir=torch.tensor([[1.0, 0.0, 0.0]], device="cuda", dtype=torch.float32),
-        edge_t_min=torch.tensor([-0.5], device="cuda", dtype=torch.float32),
-        edge_t_max=torch.tensor([0.5], device="cuda", dtype=torch.float32),
-        n0=torch.tensor([[0.0, 1.0, 0.0]], device="cuda", dtype=torch.float32),
-        n1=torch.tensor([[0.0, -1.0, 0.0]], device="cuda", dtype=torch.float32),
-        prim0=torch.tensor([-1], device="cuda", dtype=torch.int32),
-        prim1=torch.tensor([-1], device="cuda", dtype=torch.int32),
-        exterior_angle=torch.tensor([1.5 * torch.pi], device="cuda", dtype=torch.float32),
-        src=torch.tensor([[0.0, 0.0, 1.0]], device="cuda", dtype=torch.float32),
-        src_power=torch.tensor([2.0], device="cuda", dtype=torch.float32),
-        wi=torch.tensor([[0.0, 0.0, -1.0]], device="cuda", dtype=torch.float32),
-        d0=torch.tensor([[0.0, 0.0, -1.0]], device="cuda", dtype=torch.float32),
-        count=1,
-    )
-    grid = rt.DfrGrid(axis=2, position=-1.0, resolution0=1, resolution1=1, cell_area=4.0)
-    material = rt.DfrMaterial.default(1, device=torch.device("cuda"), dtype=torch.float32)
-    return states, grid, material
+from .benchmark_support import dfr_case as _dfr_case, synchronize, time_ms
 
 
 def main() -> None:
@@ -50,9 +27,7 @@ def main() -> None:
 
     n = args.grid
     xs, ys = torch.meshgrid(
-        torch.linspace(0, 1, n, device="cuda"),
-        torch.linspace(0, 1, n, device="cuda"),
-        indexing="ij",
+        torch.linspace(0, 1, n, device="cuda"), torch.linspace(0, 1, n, device="cuda"), indexing="ij"
     )
     verts = torch.stack([xs.reshape(-1), ys.reshape(-1), torch.zeros(n * n, device="cuda")], dim=1).contiguous()
     faces = []
@@ -66,10 +41,7 @@ def main() -> None:
             faces.append([b, d, c])
     faces = torch.tensor(faces, device="cuda", dtype=torch.int32)
 
-    scene = rt.Scene(
-        trace_backend=args.trace_backend,
-        edge_bvh_backend=args.edge_backend,
-    )
+    scene = rt.Scene(trace_backend=args.trace_backend, edge_bvh_backend=args.edge_backend)
     t0 = time.perf_counter()
     scene.add_mesh(rt.Mesh(verts, faces, edges_enabled=True), dynamic=True)
     scene.build()
@@ -105,39 +77,39 @@ def main() -> None:
         "build_ms": build_ms,
         "dynamic_sync_ms": dynamic_sync_ms,
         "intersect_flags_none_ms": time_ms(
-            lambda: scene.intersect(ray, flags=ray_flags_none).t,
-            args.warmup,
-            args.repeat,
+            lambda: scene.intersect(ray, flags=ray_flags_none).t, args.warmup, args.repeat
         ),
         "intersect_ms": time_ms(lambda: scene.intersect(ray).t, args.warmup, args.repeat),
         "nearest_edge_ms": time_ms(lambda: scene.nearest_edge(points).distance, args.warmup, args.repeat),
         "reflection_trace_ms": time_ms(
-            lambda: scene.trace_reflections(ray, max_bounces=args.max_bounces).t,
-            args.warmup,
-            args.repeat,
+            lambda: scene.trace_reflections(ray, max_bounces=args.max_bounces).t, args.warmup, args.repeat
         ),
         "diffraction_direct_ms": time_ms(
-            lambda: scene.accum_dfr_direct(
-                states=dfr_states,
-                grid=dfr_grid,
-                material=dfr_material,
-                wavelength=0.125,
-                direct_samples=args.direct_samples,
-                seed=17,
-            ).power,
+            lambda: (
+                scene.accum_dfr_direct(
+                    states=dfr_states,
+                    grid=dfr_grid,
+                    material=dfr_material,
+                    wavelength=0.125,
+                    direct_samples=args.direct_samples,
+                    seed=17,
+                ).power
+            ),
             args.warmup,
             args.repeat,
         ),
         "diffraction_paths_ms": time_ms(
-            lambda: scene.trace_dfr_paths(
-                tx_positions=dfr_tx,
-                rx_positions=dfr_rx,
-                states=dfr_states,
-                material=dfr_material,
-                active=dfr_active,
-                max_paths=4,
-                wavelength=0.125,
-            ).count,
+            lambda: (
+                scene.trace_dfr_paths(
+                    tx_positions=dfr_tx,
+                    rx_positions=dfr_rx,
+                    states=dfr_states,
+                    material=dfr_material,
+                    active=dfr_active,
+                    max_paths=4,
+                    wavelength=0.125,
+                ).count
+            ),
             args.warmup,
             args.repeat,
         ),

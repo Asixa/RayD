@@ -40,14 +40,9 @@ def make_rays(size: int, extent: float, ad_mode: bool):
     if ad_mode:
         return rd.RayAD(
             ad.Array3f(ad.Float(xs), ad.Float(ys), ad.Float([1.0] * count)),
-            ad.Array3f(ad.Float([0.0] * count),
-                       ad.Float([0.0] * count),
-                       ad.Float([-1.0] * count)),
+            ad.Array3f(ad.Float([0.0] * count), ad.Float([0.0] * count), ad.Float([-1.0] * count)),
         )
-    return rd.Ray(
-        cuda.Array3f(xs, ys, [1.0] * count),
-        cuda.Array3f([0.0] * count, [0.0] * count, [-1.0] * count),
-    )
+    return rd.Ray(cuda.Array3f(xs, ys, [1.0] * count), cuda.Array3f([0.0] * count, [0.0] * count, [-1.0] * count))
 
 
 def make_options() -> rd.SurfelTraceOptions:
@@ -90,13 +85,7 @@ def fit_step(params, target: np.ndarray, rays, opts, size: int):
     dr.enable_grad(opacity)
 
     scene = rd.SurfelScene(
-        rd.SurfelCloud(
-            ad.Array3f(cx, cy, z),
-            ad.Array3f(su, zeros, zeros),
-            ad.Array3f(zeros, sv, zeros),
-            opacity,
-        ),
-        opts,
+        rd.SurfelCloud(ad.Array3f(cx, cy, z), ad.Array3f(su, zeros, zeros), ad.Array3f(zeros, sv, zeros), opacity), opts
     )
     scene.build()
     pred = scene.composite_alpha(rays).intensity
@@ -112,13 +101,17 @@ def fit_step(params, target: np.ndarray, rays, opts, size: int):
         dr.eval(grad)
         return [float(grad[i]) for i in range(len(params["cx"]))]
 
-    return pred_np, loss_value, {
-        "cx": grad_list(cx),
-        "cy": grad_list(cy),
-        "su": grad_list(su),
-        "sv": grad_list(sv),
-        "opacity": grad_list(opacity),
-    }
+    return (
+        pred_np,
+        loss_value,
+        {
+            "cx": grad_list(cx),
+            "cy": grad_list(cy),
+            "su": grad_list(su),
+            "sv": grad_list(sv),
+            "opacity": grad_list(opacity),
+        },
+    )
 
 
 def clamp(value: float, lo: float, hi: float) -> float:
@@ -159,12 +152,8 @@ def make_frame(target: np.ndarray, pred: np.ndarray, iteration: int, loss: float
     frame = Image.new("RGB", (width, height), (20, 22, 26))
     draw = ImageDraw.Draw(frame)
 
-    draw.text((pad, 14),
-              "Ray-traced 2DGS surfel image fitting",
-              fill=(245, 245, 245))
-    draw.text((pad, 34),
-              f"iteration {iteration:03d}/{total_iterations:03d}    mse={loss:.6f}",
-              fill=(180, 190, 205))
+    draw.text((pad, 14), "Ray-traced 2DGS surfel image fitting", fill=(245, 245, 245))
+    draw.text((pad, 34), f"iteration {iteration:03d}/{total_iterations:03d}    mse={loss:.6f}", fill=(180, 190, 205))
 
     panels = [
         ("target", grayscale_panel(target)),
@@ -224,7 +213,9 @@ def main() -> None:
 
     frames = []
     log = []
-    pred = render_detached(params["cx"], params["cy"], params["su"], params["sv"], params["opacity"], target_rays, opts, args.size)
+    pred = render_detached(
+        params["cx"], params["cy"], params["su"], params["sv"], params["opacity"], target_rays, opts, args.size
+    )
     initial_loss = float(np.mean((pred - target) ** 2))
     frames.append(make_frame(target, pred, 0, initial_loss, args.iterations))
     log.append({"iteration": 0, "loss": initial_loss, "params": json.loads(json.dumps(params))})
@@ -240,25 +231,23 @@ def main() -> None:
     final_png = output_dir / "2dgs_surfel_convergence_final.png"
     metrics_path = output_dir / "2dgs_surfel_convergence_metrics.json"
 
-    frames[0].save(
-        gif_path,
-        save_all=True,
-        append_images=frames[1:],
-        duration=90,
-        loop=0,
-        optimize=False,
-    )
+    frames[0].save(gif_path, save_all=True, append_images=frames[1:], duration=90, loop=0, optimize=False)
     frames[-1].save(final_png)
     metrics_path.write_text(json.dumps(log, indent=2), encoding="utf-8")
 
-    print(json.dumps({
-        "gif": str(gif_path),
-        "final_png": str(final_png),
-        "metrics": str(metrics_path),
-        "initial_loss": log[0]["loss"],
-        "final_loss": log[-1]["loss"],
-        "frames": len(frames),
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                "gif": str(gif_path),
+                "final_png": str(final_png),
+                "metrics": str(metrics_path),
+                "initial_loss": log[0]["loss"],
+                "final_loss": log[-1]["loss"],
+                "frames": len(frames),
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

@@ -60,10 +60,7 @@ class SurfelBackendDecisionTests(unittest.TestCase):
         self.assertIn("forward_and_ad_parity_matrix", gates)
         self.assertIn("measured_build_wheel_cold_create_runtime_memory_cost", gates)
         self.assertIn("core_edge_visibility_group_acceptance_passing", gates)
-        self.assertTrue(
-            self.decision["evidence"]["priority"]
-            ["core_edge_visibility_before_surfel_port"]
-        )
+        self.assertTrue(self.decision["evidence"]["priority"]["core_edge_visibility_before_surfel_port"])
 
     def test_phase_f2_manifest_matches_the_f5_decision(self) -> None:
         manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
@@ -72,12 +69,10 @@ class SurfelBackendDecisionTests(unittest.TestCase):
         self.assertEqual(surfel_api["category"], expected["api"]["category"])
         self.assertEqual(surfel_api["stability"], expected["api"]["stability"])
         self.assertEqual(
-            manifest["backends"]["drjit"]["capabilities"]["surfel"],
-            expected["backend_capabilities"]["drjit"],
+            manifest["backends"]["drjit"]["capabilities"]["surfel"], expected["backend_capabilities"]["drjit"]
         )
         self.assertEqual(
-            manifest["backends"]["torch"]["capabilities"]["surfel"],
-            expected["backend_capabilities"]["torch"],
+            manifest["backends"]["torch"]["capabilities"]["surfel"], expected["backend_capabilities"]["torch"]
         )
         self.assertEqual(expected["new_capability_keys"], [])
 

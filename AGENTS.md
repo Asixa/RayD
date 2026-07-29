@@ -285,6 +285,17 @@ owner.
 - Every maintained Python, C, C++, CUDA source, and header starts with `Copyright Xingyu Chen.` followed by one plain-English sentence describing the file. Use `#` for Python and `//` for native code, keep the sentence concise, and do not put an ADR identifier in the file header.
 - Generated headers under `generated/` are exempt from manual file headers. Regenerate them from their governed sources instead of editing them by hand.
 - `tests/test_source_file_standards.py` enforces these rules. Update the implementation and the test together when the maintained source surface changes.
+
+## Code Formatting and Duplication Control
+
+- Maintained native and Python sources use four spaces, LF endings, and a 120-column limit. Native formatting is owned by `.clang-format`; Python formatting is owned by the root `pyproject.toml`.
+- Function declarations and calls keep parameters on one line when they fit and otherwise pack multiple complete parameters per continuation line. Do not force one parameter per line. Prefer a named request record when a long list represents one coherent input; flat CUDA and OptiX launch contracts may stay flat.
+- Run `python scripts/format_code.py` to format all tracked maintained sources and `python scripts/format_code.py --check` to detect drift. Generated files are excluded and must be regenerated from governed inputs.
+- Reuse production algorithms and shared test helpers instead of copying them. Keep backend adapters separate only when allocation, stream, ABI, packaging, or error ownership differs; put backend-neutral computation below that boundary.
+- Exact whole-file duplication is closed to the explicitly governed independent-wheel path-exchange pair. Add no new duplicate source owner.
+- Internal comments explain intent, invariants, numerical constraints, or ownership in plain language. Put historical narratives, benchmark stories, migration plans, and decision records in `docs/`, not source comments.
+- `docs/dev/coding_standard.md` is the complete development standard for formatting, layout, comments, math ownership, and duplication.
+
 ## Tests
 
 ```bash

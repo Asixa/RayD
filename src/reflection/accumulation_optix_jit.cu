@@ -12,19 +12,10 @@ namespace rayd {
 namespace shared_accum = shared::multipath::reflection_accumulation;
 
 struct ReflectionAccumulationPolicy {
-    static __forceinline__ __device__ bool include_depth(
-        const AccumParams &,
-        int depth) {
-        return depth > 0;
-    }
+    static __forceinline__ __device__ bool include_depth(const AccumParams&, int depth) { return depth > 0; }
 
-    static __forceinline__ __device__ void commit(
-        const AccumParams &params,
-        unsigned int,
-        int,
-        int cell,
-        shared::field::Complex3 field,
-        float power) {
+    static __forceinline__ __device__ void commit(const AccumParams& params, unsigned int, int, int cell,
+                                                  shared::field::Complex3 field, float power) {
         atomicAdd(params.out_field_x_re + cell, field.x.re);
         atomicAdd(params.out_field_x_im + cell, field.x.im);
         atomicAdd(params.out_field_y_re + cell, field.y.re);

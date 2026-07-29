@@ -36,24 +36,9 @@ SCENES = [
         "cases": ["miss", "front_back_face", "finite_tmax"],
         "meshes": [{"vertices": SINGLE_TRI_VERTS, "faces": SINGLE_TRI_FACES}],
         "queries": [
-            {
-                "name": "front_face_hit",
-                "kind": "intersect",
-                "origins": [[0.25, 0.25, -1.0]],
-                "dirs": [[0.0, 0.0, 1.0]],
-            },
-            {
-                "name": "back_face_hit",
-                "kind": "intersect",
-                "origins": [[0.25, 0.25, 1.0]],
-                "dirs": [[0.0, 0.0, -1.0]],
-            },
-            {
-                "name": "spatial_miss",
-                "kind": "intersect",
-                "origins": [[2.0, 2.0, -1.0]],
-                "dirs": [[0.0, 0.0, 1.0]],
-            },
+            {"name": "front_face_hit", "kind": "intersect", "origins": [[0.25, 0.25, -1.0]], "dirs": [[0.0, 0.0, 1.0]]},
+            {"name": "back_face_hit", "kind": "intersect", "origins": [[0.25, 0.25, 1.0]], "dirs": [[0.0, 0.0, -1.0]]},
+            {"name": "spatial_miss", "kind": "intersect", "origins": [[2.0, 2.0, -1.0]], "dirs": [[0.0, 0.0, 1.0]]},
             {
                 "name": "tmax_miss",
                 "kind": "intersect",
@@ -103,8 +88,12 @@ SCENES = [
             {
                 # tri 0 is collinear (zero area) on the x axis; tri 1 is valid
                 "vertices": [
-                    [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0],
-                    [0.0, 3.0, 0.0], [1.0, 3.0, 0.0], [0.0, 4.0, 0.0],
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [2.0, 0.0, 0.0],
+                    [0.0, 3.0, 0.0],
+                    [1.0, 3.0, 0.0],
+                    [0.0, 4.0, 0.0],
                 ],
                 "faces": [[0, 1, 2], [3, 4, 5]],
             }
@@ -155,8 +144,12 @@ SCENES = [
             {
                 # tri 0 at z = 0, tri 1 parallel at z = 0.5
                 "vertices": [
-                    [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0],
-                    [0.0, 0.0, 0.5], [1.0, 0.0, 0.5], [0.0, 1.0, 0.5],
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.5],
+                    [1.0, 0.0, 0.5],
+                    [0.0, 1.0, 0.5],
                 ],
                 "faces": [[0, 1, 2], [3, 4, 5]],
             }
@@ -185,25 +178,22 @@ SCENES = [
             {"vertices": SINGLE_TRI_VERTS, "faces": SINGLE_TRI_FACES},
             {
                 "vertices": [
-                    [2.0, 0.0, 0.0], [3.0, 0.0, 0.0], [2.0, 1.0, 0.0],
-                    [3.0, 0.0, 0.0], [4.0, 0.0, 0.0], [3.0, 1.0, 0.0],
+                    [2.0, 0.0, 0.0],
+                    [3.0, 0.0, 0.0],
+                    [2.0, 1.0, 0.0],
+                    [3.0, 0.0, 0.0],
+                    [4.0, 0.0, 0.0],
+                    [3.0, 1.0, 0.0],
                 ],
                 "faces": [[0, 1, 2], [3, 4, 5]],
             },
-            {
-                "vertices": [[5.0, 0.0, 0.0], [6.0, 0.0, 0.0], [5.0, 1.0, 0.0]],
-                "faces": SINGLE_TRI_FACES,
-            },
+            {"vertices": [[5.0, 0.0, 0.0], [6.0, 0.0, 0.0], [5.0, 1.0, 0.0]], "faces": SINGLE_TRI_FACES},
         ],
         "queries": [
             {
                 "name": "hit_each_mesh",
                 "kind": "intersect",
-                "origins": [
-                    [0.25, 0.25, -1.0],
-                    [3.25, 0.25, -1.0],
-                    [5.25, 0.25, -1.0],
-                ],
+                "origins": [[0.25, 0.25, -1.0], [3.25, 0.25, -1.0], [5.25, 0.25, -1.0]],
                 "dirs": [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
                 "check_id_mapping": True,
             }
@@ -254,12 +244,7 @@ SCENES = [
         "cases": ["ignore_primitive"],
         "meshes": [{"vertices": SINGLE_TRI_VERTS, "faces": SINGLE_TRI_FACES}],
         "queries": [
-            {
-                "name": "no_ignore",
-                "kind": "visible",
-                "start": [[0.25, 0.25, -1.0]],
-                "end": [[0.25, 0.25, 1.0]],
-            },
+            {"name": "no_ignore", "kind": "visible", "start": [[0.25, 0.25, -1.0]], "end": [[0.25, 0.25, 1.0]]},
             {
                 "name": "ignore_pair_prim0",
                 "kind": "visible",
@@ -279,16 +264,9 @@ SCENES = [
     {
         "name": "dynamic_refit",
         "cases": ["dynamic_refit"],
-        "meshes": [
-            {"vertices": SINGLE_TRI_VERTS, "faces": SINGLE_TRI_FACES, "dynamic": True}
-        ],
+        "meshes": [{"vertices": SINGLE_TRI_VERTS, "faces": SINGLE_TRI_FACES, "dynamic": True}],
         "queries": [
-            {
-                "name": "pre_update_hit",
-                "kind": "intersect",
-                "origins": [[0.25, 0.25, -1.0]],
-                "dirs": [[0.0, 0.0, 1.0]],
-            },
+            {"name": "pre_update_hit", "kind": "intersect", "origins": [[0.25, 0.25, -1.0]], "dirs": [[0.0, 0.0, 1.0]]},
             {
                 "name": "shift_mesh_plus_two_x",
                 "kind": "update_vertices",
@@ -353,13 +331,7 @@ SCENES = [
                 "z": -1.0,
                 "dir_z": 1.0,
             },
-            {
-                "name": "batch_of_zero",
-                "kind": "intersect",
-                "origins": [],
-                "dirs": [],
-                "expect_raises": True,
-            },
+            {"name": "batch_of_zero", "kind": "intersect", "origins": [], "dirs": [], "expect_raises": True},
         ],
     },
     {
@@ -367,16 +339,8 @@ SCENES = [
         "cases": ["point_ray_nearest", "finite_infinite_ray", "boundary_edge", "topk"],
         "meshes": [{"vertices": QUAD_VERTS, "faces": QUAD_FACES}],
         "queries": [
-            {
-                "name": "point_near_boundary_edge",
-                "kind": "nearest_edge_point",
-                "points": [[0.5, -0.2, 0.0]],
-            },
-            {
-                "name": "point_near_internal_edge",
-                "kind": "nearest_edge_point",
-                "points": [[0.52, 0.48, 0.0]],
-            },
+            {"name": "point_near_boundary_edge", "kind": "nearest_edge_point", "points": [[0.5, -0.2, 0.0]]},
+            {"name": "point_near_internal_edge", "kind": "nearest_edge_point", "points": [[0.52, 0.48, 0.0]]},
             {
                 "name": "ray_finite_segment",
                 "kind": "nearest_edge_ray",
@@ -390,12 +354,7 @@ SCENES = [
                 "origins": [[0.5, 0.0, 1.0]],
                 "dirs": [[0.0, 0.0, -1.0]],
             },
-            {
-                "name": "topk_k4",
-                "kind": "nearest_edges",
-                "points": [[0.35, 0.2, 0.0]],
-                "k": 4,
-            },
+            {"name": "topk_k4", "kind": "nearest_edges", "points": [[0.35, 0.2, 0.0]], "k": 4},
         ],
     },
     {
@@ -405,8 +364,12 @@ SCENES = [
             {
                 # two triangles giving edges symmetric about y = 0 through origin
                 "vertices": [
-                    [-1.0, 1.0, 0.0], [1.0, 1.0, 0.0], [0.0, 2.0, 0.0],
-                    [-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [0.0, -2.0, 0.0],
+                    [-1.0, 1.0, 0.0],
+                    [1.0, 1.0, 0.0],
+                    [0.0, 2.0, 0.0],
+                    [-1.0, -1.0, 0.0],
+                    [1.0, -1.0, 0.0],
+                    [0.0, -2.0, 0.0],
                 ],
                 "faces": [[0, 1, 2], [3, 4, 5]],
             }
@@ -416,10 +379,7 @@ SCENES = [
                 "name": "point_equidistant_two_edges",
                 "kind": "nearest_edge_point",
                 "points": [[0.0, 0.0, 0.0]],
-                "informative": [
-                    "shape_id", "edge_id", "global_edge_id",
-                    "is_boundary", "edge_t", "edge_point",
-                ],
+                "informative": ["shape_id", "edge_id", "global_edge_id", "is_boundary", "edge_t", "edge_point"],
             },
             {
                 "name": "topk_equidistant",
@@ -427,8 +387,13 @@ SCENES = [
                 "points": [[0.0, 0.0, 0.0]],
                 "k": 4,
                 "informative": [
-                    "shape_ids", "edge_ids", "global_edge_ids",
-                    "is_boundary", "edge_t", "points", "edge_points",
+                    "shape_ids",
+                    "edge_ids",
+                    "global_edge_ids",
+                    "is_boundary",
+                    "edge_t",
+                    "points",
+                    "edge_points",
                 ],
             },
         ],

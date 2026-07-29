@@ -1,26 +1,16 @@
 # Copyright Xingyu Chen.
 # Tests required diffraction path validity.
 
-import re
 import unittest
 from pathlib import Path
+
+from tests.support.source_inspection import read_text as read, struct_body
 
 
 ROOT = Path(__file__).resolve().parents[1]
 RAYD_INCLUDE = ROOT / "include" / "rayd"
 TORCH_SOURCE = ROOT / "src"
 TORCH_PYTHON = ROOT / "python" / "rayd" / "_impl"
-
-
-def read(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
-
-
-def struct_body(text: str, name: str) -> str:
-    match = re.search(rf"struct {name}\s*\{{(?P<body>.*?)\n\}};", text, re.S)
-    if match is None:
-        raise AssertionError(f"missing struct {name}")
-    return match.group("body")
 
 
 class Adr0031RequiredDiffractionPathValidityTests(unittest.TestCase):
@@ -31,36 +21,23 @@ class Adr0031RequiredDiffractionPathValidityTests(unittest.TestCase):
         config = struct_body(diffraction, "DiffractionPathConfig")
         self.assertEqual(config.count("at::Tensor active;"), 1)
         self.assertNotIn("std::optional<at::Tensor> active", config)
-        self.assertIn(
-            "std::optional<at::Tensor> active;",
-            struct_body(diffraction, "DiffractionAccumulationConfig"),
-        )
-        self.assertIn(
-            "std::optional<at::Tensor> active;",
-            struct_body(diffraction, "CoherentDiffractionConfig"),
-        )
+        self.assertIn("std::optional<at::Tensor> active;", struct_body(diffraction, "DiffractionAccumulationConfig"))
+        self.assertIn("std::optional<at::Tensor> active;", struct_body(diffraction, "CoherentDiffractionConfig"))
 
     def test_dispatch_and_public_python_require_active(self):
         library = read(TORCH_SOURCE / "bindings" / "library.cpp")
-        schema = next(
-            line
-            for line in library.splitlines()
-            if 'm.def("diffraction_paths_order1_forward(' in line
-        )
+        schema_start = library.index('m.def("diffraction_paths_order1_forward(')
+        schema = library[schema_start : library.index(");", schema_start)]
         self.assertIn("Tensor active", schema)
         self.assertNotIn("Tensor? active", schema)
 
         autograd = read(TORCH_PYTHON / "multipath.py")
-        trace_native = autograd.split("def trace_dfr_paths_order1_native", 1)[1].split(
-            ") -> DfrPaths:", 1
-        )[0]
+        trace_native = autograd.split("def trace_dfr_paths_order1_native", 1)[1].split(") -> DfrPaths:", 1)[0]
         self.assertIn("active: torch.Tensor,", trace_native)
         self.assertNotIn("active: torch.Tensor | None", trace_native)
 
         scene = read(TORCH_PYTHON / "scene.py")
-        trace_scene = scene.split("def trace_dfr_paths", 1)[1].split(") -> DfrPaths:", 1)[
-            0
-        ]
+        trace_scene = scene.split("def trace_dfr_paths", 1)[1].split(") -> DfrPaths:", 1)[0]
         self.assertIn("active: torch.Tensor,", trace_scene)
         self.assertNotIn("active: torch.Tensor | None", trace_scene)
 
@@ -81,23 +58,15 @@ class Adr0031RequiredDiffractionPathValidityTests(unittest.TestCase):
         self.assertNotIn("optional_mask_ptr(active", body)
 
     def test_device_paths_have_no_implicit_all_valid_branch(self):
-        optix = read(
-            TORCH_SOURCE / "diffraction" / "paths_optix.cu"
-        )
-        shared = read(
-            ROOT / "include" / "rayd" / "diffraction"
-            / "paths_algo.h"
-        )
+        optix = read(TORCH_SOURCE / "diffraction" / "paths_optix.cu")
+        shared = read(ROOT / "include" / "rayd" / "diffraction" / "paths_algo.h")
         for source in (optix, shared):
             self.assertIn("return params.active_mask[state_idx] != 0u;", source)
             self.assertNotIn("params.active_mask == nullptr", source)
 
         optix_lane = optix.split("static __forceinline__ __device__ void trace_paths_order1_impl", 1)[1]
         optix_lane = optix_lane.split("static __forceinline__ __device__", 1)[0]
-        self.assertLess(
-            optix_lane.index("!state_active(state_idx)"),
-            optix_lane.index("vec_from_storage("),
-        )
+        self.assertLess(optix_lane.index("!state_active(state_idx)"), optix_lane.index("vec_from_storage("))
 
         shared_lane = shared.split("RAYD_DEVICE void trace_paths_order1_algo", 1)[1]
         shared_lane = shared_lane.split("RAYD_DEVICE void trace_paths_source_visibility_algo", 1)[0]

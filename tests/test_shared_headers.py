@@ -17,14 +17,10 @@ class SharedHeaderTests(unittest.TestCase):
 
     def test_backends_use_canonical_include(self):
         diffraction = ROOT / "include" / "rayd" / "diffraction"
-        shared_algo = (diffraction / "accumulation_algo.h").read_text(
-            encoding="utf-8"
-        )
+        shared_algo = (diffraction / "accumulation_algo.h").read_text(encoding="utf-8")
         self.assertIn("<rayd/diffraction/utd.h>", shared_algo)
         self.assertNotIn("<utd/", shared_algo)
-        shared_device = (diffraction / "accumulation_optix_device.cuh").read_text(
-            encoding="utf-8"
-        )
+        shared_device = (diffraction / "accumulation_optix_device.cuh").read_text(encoding="utf-8")
         self.assertNotIn("<utd/", shared_device)
 
         sources = [
@@ -33,10 +29,7 @@ class SharedHeaderTests(unittest.TestCase):
         ]
         for source in sources:
             text = source.read_text(encoding="utf-8")
-            self.assertIn(
-                "<rayd/diffraction/accumulation_optix_device.cuh>",
-                text,
-            )
+            self.assertIn("<rayd/diffraction/accumulation_optix_device.cuh>", text)
             self.assertNotIn("<utd/", text)
 
 

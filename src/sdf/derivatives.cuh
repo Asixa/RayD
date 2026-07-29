@@ -51,7 +51,7 @@ using vmath::quaternion_subtract;
 using vmath::transpose_multiply;
 using vmath::zero_mat3;
 
-RAYD_HOST_DEVICE Quat make_quat(const float *values) {
+RAYD_HOST_DEVICE Quat make_quat(const float* values) {
     return Quat{values[0], values[1], values[2], values[3]};
 }
 
@@ -107,7 +107,7 @@ RAYD_HOST_DEVICE Mat3 rotation_derivative(Quat q, int axis) {
 // `J_q^T` applied to a rotation-matrix gradient: contract with `dR/dqh` and then
 // push through the internal normalization, so the answer is a gradient with
 // respect to the raw caller quaternion (ADR-0037 section 6).
-RAYD_HOST_DEVICE Quat quaternion_vjp(Quat raw, const Mat3 &grad_rotation) {
+RAYD_HOST_DEVICE Quat quaternion_vjp(Quat raw, const Mat3& grad_rotation) {
     const float length = quat_length_floor(raw);
     const Quat unit = quaternion_scale(raw, 1.0f / length);
     const Quat grad_unit{
@@ -151,7 +151,7 @@ RAYD_HOST_DEVICE Vec3f normalize_floor_jacobian(float length, Vec3f unit_vector,
 // Gradient of the trilinear weight `c_m` with respect to the grid coordinate:
 // the `dF/dvalues` row of ADR-0037 section 6 differentiated once more, which is
 // what a `values` gradient of the *field gradient* scatters through.
-RAYD_HOST_DEVICE Vec3f corner_weight_gradient(const core::TrilinearCell &cell, int corner) {
+RAYD_HOST_DEVICE Vec3f corner_weight_gradient(const core::TrilinearCell& cell, int corner) {
     const float wx[2] = {1.0f - cell.frac.x, cell.frac.x};
     const float wy[2] = {1.0f - cell.frac.y, cell.frac.y};
     const float wz[2] = {1.0f - cell.frac.z, cell.frac.z};
@@ -161,9 +161,7 @@ RAYD_HOST_DEVICE Vec3f corner_weight_gradient(const core::TrilinearCell &cell, i
     const float slope_i = (di == 0) ? -1.0f : 1.0f;
     const float slope_j = (dj == 0) ? -1.0f : 1.0f;
     const float slope_k = (dk == 0) ? -1.0f : 1.0f;
-    return vmath::make_vec3(slope_i * wy[dj] * wz[dk],
-                            wx[di] * slope_j * wz[dk],
-                            wx[di] * wy[dj] * slope_k);
+    return vmath::make_vec3(slope_i * wy[dj] * wz[dk], wx[di] * slope_j * wz[dk], wx[di] * wy[dj] * slope_k);
 }
 
 // Index-space Hessian of the trilinear interpolant on one voxel. Its diagonal
@@ -175,7 +173,7 @@ struct IndexHessian {
     float yz;
 };
 
-RAYD_HOST_DEVICE IndexHessian index_hessian(const float *values, const core::TrilinearCell &cell) {
+RAYD_HOST_DEVICE IndexHessian index_hessian(const float* values, const core::TrilinearCell& cell) {
     const float wx[2] = {1.0f - cell.frac.x, cell.frac.x};
     const float wy[2] = {1.0f - cell.frac.y, cell.frac.y};
     const float wz[2] = {1.0f - cell.frac.z, cell.frac.z};
@@ -197,9 +195,8 @@ RAYD_HOST_DEVICE IndexHessian index_hessian(const float *values, const core::Tri
     return hessian;
 }
 
-RAYD_HOST_DEVICE Vec3f hessian_multiply(const IndexHessian &hessian, Vec3f v) {
-    return vmath::make_vec3(hessian.xy * v.y + hessian.xz * v.z,
-                            hessian.xy * v.x + hessian.yz * v.z,
+RAYD_HOST_DEVICE Vec3f hessian_multiply(const IndexHessian& hessian, Vec3f v) {
+    return vmath::make_vec3(hessian.xy * v.y + hessian.xz * v.z, hessian.xy * v.x + hessian.yz * v.z,
                             hessian.xz * v.x + hessian.yz * v.y);
 }
 
@@ -222,31 +219,21 @@ struct Lane {
     bool usable;
 };
 
-RAYD_HOST_DEVICE Lane make_lane(
-    const float *position,
-    const float *rotation,
-    const float *scale_values,
-    Vec3f origin,
-    Vec3f direction,
-    core::GridExtent extent) {
+RAYD_HOST_DEVICE Lane make_lane(const float* position, const float* rotation, const float* scale_values, Vec3f origin,
+                                Vec3f direction, core::GridExtent extent) {
     Lane lane{};
     lane.extent = extent;
     lane.cells = core::grid_cells(extent);
     lane.scale = vmath::make_vec3(scale_values[0], scale_values[1], scale_values[2]);
-    lane.placement = core::make_placement(
-        rotation[0],
-        rotation[1],
-        rotation[2],
-        rotation[3],
-        vmath::make_vec3(position[0], position[1], position[2]));
+    lane.placement = core::make_placement(rotation[0], rotation[1], rotation[2], rotation[3],
+                                          vmath::make_vec3(position[0], position[1], position[2]));
     lane.origin = origin;
     lane.raw_direction = direction;
     lane.direction_length = sqrtf(vmath::squared_norm(direction));
     lane.unit_direction = core::normalize_floor(direction);
     lane.local_origin = core::world_to_local_point(lane.placement, origin);
     lane.local_direction = core::world_to_local_direction(lane.placement, lane.unit_direction);
-    bool finite = core::is_finite(lane.scale.x) && core::is_finite(lane.scale.y) &&
-                  core::is_finite(lane.scale.z);
+    bool finite = core::is_finite(lane.scale.x) && core::is_finite(lane.scale.y) && core::is_finite(lane.scale.z);
     for (int axis = 0; axis < 3; ++axis)
         finite = finite && core::is_finite(position[axis]);
     for (int axis = 0; axis < 4; ++axis)
@@ -258,7 +245,7 @@ RAYD_HOST_DEVICE Lane make_lane(
 // Field sampler along one ray. `sphere_trace` calls it once per field
 // evaluation, so after the march `base` holds the frozen winner's voxel.
 struct GridSampler {
-    const float *values;
+    const float* values;
     core::GridExtent extent;
     Vec3f cells;
     Vec3f box_scale;
@@ -274,7 +261,7 @@ struct GridSampler {
     }
 };
 
-RAYD_HOST_DEVICE GridSampler make_sampler(const float *values, const Lane &lane) {
+RAYD_HOST_DEVICE GridSampler make_sampler(const float* values, const Lane& lane) {
     GridSampler sampler{};
     sampler.values = values;
     sampler.extent = lane.extent;
@@ -300,11 +287,7 @@ struct FrozenHit {
     float denominator;
 };
 
-RAYD_HOST_DEVICE FrozenHit evaluate_frozen(
-    const float *values,
-    const Lane &lane,
-    core::BaseIndex base,
-    float t) {
+RAYD_HOST_DEVICE FrozenHit evaluate_frozen(const float* values, const Lane& lane, core::BaseIndex base, float t) {
     FrozenHit hit{};
     hit.local_point = vmath::add(lane.local_origin, vmath::scale(lane.local_direction, t));
     hit.world_point = vmath::add(lane.origin, vmath::scale(lane.unit_direction, t));
@@ -315,8 +298,7 @@ RAYD_HOST_DEVICE FrozenHit evaluate_frozen(
     hit.local_gradient = core::local_gradient(sample.index_gradient, lane.cells, lane.scale);
     hit.world_gradient = core::local_to_world_direction(lane.placement, hit.local_gradient);
     hit.gradient_length = sqrtf(vmath::squared_norm(hit.world_gradient));
-    hit.normal = vmath::scale(
-        hit.world_gradient, 1.0f / fmaxf(hit.gradient_length, core::kSdfEpsNorm));
+    hit.normal = vmath::scale(hit.world_gradient, 1.0f / fmaxf(hit.gradient_length, core::kSdfEpsNorm));
     const float along = vmath::dot(hit.world_gradient, lane.unit_direction);
     // ADR-0037 section 6: sign(0) is +1, and the magnitude floor bounds every
     // derivative of the hit distance by |dF/dtheta| / eps_graze.
@@ -326,11 +308,10 @@ RAYD_HOST_DEVICE FrozenHit evaluate_frozen(
 
 // `dF/dscale_i` at the frozen hit: `scale` enters only the grid coordinate
 // mapping, so the row is exact and closed form (ADR-0037 section 6).
-RAYD_HOST_DEVICE Vec3f scale_partial(const Lane &lane, const FrozenHit &hit) {
-    return vmath::make_vec3(
-        -hit.local_gradient.x * hit.local_point.x / lane.scale.x,
-        -hit.local_gradient.y * hit.local_point.y / lane.scale.y,
-        -hit.local_gradient.z * hit.local_point.z / lane.scale.z);
+RAYD_HOST_DEVICE Vec3f scale_partial(const Lane& lane, const FrozenHit& hit) {
+    return vmath::make_vec3(-hit.local_gradient.x * hit.local_point.x / lane.scale.x,
+                            -hit.local_gradient.y * hit.local_point.y / lane.scale.y,
+                            -hit.local_gradient.z * hit.local_point.z / lane.scale.z);
 }
 
 } // namespace rayd::torch_backend::sdf_math

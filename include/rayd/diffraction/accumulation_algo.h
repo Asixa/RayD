@@ -37,10 +37,18 @@ namespace rayd::shared::math {
 // the former local CUDA vector operators so migrated expressions are byte-for-
 // byte the same computation: operator+ = add, operator- = subtract, and both
 // scalar products = scale (scalar-vector multiply is commutative, bit-exactly).
-RAYD_HOST_DEVICE Vec3f operator+(Vec3f a, Vec3f b) { return add(a, b); }
-RAYD_HOST_DEVICE Vec3f operator-(Vec3f a, Vec3f b) { return subtract(a, b); }
-RAYD_HOST_DEVICE Vec3f operator*(Vec3f a, float s) { return scale(a, s); }
-RAYD_HOST_DEVICE Vec3f operator*(float s, Vec3f a) { return scale(a, s); }
+RAYD_HOST_DEVICE Vec3f operator+(Vec3f a, Vec3f b) {
+    return add(a, b);
+}
+RAYD_HOST_DEVICE Vec3f operator-(Vec3f a, Vec3f b) {
+    return subtract(a, b);
+}
+RAYD_HOST_DEVICE Vec3f operator*(Vec3f a, float s) {
+    return scale(a, s);
+}
+RAYD_HOST_DEVICE Vec3f operator*(float s, Vec3f a) {
+    return scale(a, s);
+}
 
 } // namespace rayd::shared::math
 
@@ -51,8 +59,7 @@ namespace rayd::shared::multipath {
 /// primary and a secondary traverser (the secondary is consulted only when
 /// Policy::params().split_mode != 0); every geometry helper is a static member
 /// and every method that casts a ray is an instance method.
-template <typename Policy, typename Traverser>
-struct DiffractionAccumulationAlgo {
+template <typename Policy, typename Traverser> struct DiffractionAccumulationAlgo {
     using Vec3f = ::rayd::shared::math::Vec3f;
     using TriangleHit = ::rayd::shared::rt::TriangleHit;
     // utd is the host-safe UTD math namespace; its POD vector type is float3a.
@@ -85,7 +92,7 @@ struct DiffractionAccumulationAlgo {
     }
     RAYD_HOST_DEVICE static int imin(int a, int b) { return a < b ? a : b; }
     RAYD_HOST_DEVICE static int imax(int a, int b) { return a > b ? a : b; }
-    RAYD_HOST_DEVICE static int atomic_add(int *address, int value) {
+    RAYD_HOST_DEVICE static int atomic_add(int* address, int value) {
 #if defined(__CUDA_ARCH__)
         return atomicAdd(address, value);
 #else
@@ -94,7 +101,7 @@ struct DiffractionAccumulationAlgo {
         return old;
 #endif
     }
-    RAYD_HOST_DEVICE static void sincos_f(float x, float *s, float *c) {
+    RAYD_HOST_DEVICE static void sincos_f(float x, float* s, float* c) {
 #if defined(__CUDA_ARCH__)
         sincosf(x, s, c);
 #else
@@ -145,14 +152,22 @@ struct DiffractionAccumulationAlgo {
     RAYD_HOST_DEVICE static float state_exterior_angle_at(int i) { return Policy::state_exterior_angle_at(i); }
     RAYD_HOST_DEVICE static float state_src_power_at(int i) { return Policy::state_src_power_at(i); }
     RAYD_HOST_DEVICE static Vec3f state_src_at(int i) { return Policy::state_src_at(i); }
-    RAYD_HOST_DEVICE static int recursive_state_edge_index_at(int i) { return Policy::recursive_state_edge_index_at(i); }
+    RAYD_HOST_DEVICE static int recursive_state_edge_index_at(int i) {
+        return Policy::recursive_state_edge_index_at(i);
+    }
     RAYD_HOST_DEVICE static Vec3f recursive_state_edge_pos_at(int i) { return Policy::recursive_state_edge_pos_at(i); }
     RAYD_HOST_DEVICE static Vec3f recursive_state_edge_dir_at(int i) { return Policy::recursive_state_edge_dir_at(i); }
-    RAYD_HOST_DEVICE static float recursive_state_edge_t_min_at(int i) { return Policy::recursive_state_edge_t_min_at(i); }
-    RAYD_HOST_DEVICE static float recursive_state_edge_t_max_at(int i) { return Policy::recursive_state_edge_t_max_at(i); }
+    RAYD_HOST_DEVICE static float recursive_state_edge_t_min_at(int i) {
+        return Policy::recursive_state_edge_t_min_at(i);
+    }
+    RAYD_HOST_DEVICE static float recursive_state_edge_t_max_at(int i) {
+        return Policy::recursive_state_edge_t_max_at(i);
+    }
     RAYD_HOST_DEVICE static int recursive_state_prim0_at(int i) { return Policy::recursive_state_prim0_at(i); }
     RAYD_HOST_DEVICE static int recursive_state_prim1_at(int i) { return Policy::recursive_state_prim1_at(i); }
-    RAYD_HOST_DEVICE static float recursive_state_exterior_angle_at(int i) { return Policy::recursive_state_exterior_angle_at(i); }
+    RAYD_HOST_DEVICE static float recursive_state_exterior_angle_at(int i) {
+        return Policy::recursive_state_exterior_angle_at(i);
+    }
     RAYD_HOST_DEVICE static bool material_valid_at(int i) { return Policy::material_valid_at(i); }
     RAYD_HOST_DEVICE static float material_gain_at(int i) { return Policy::material_gain_at(i); }
 
@@ -169,8 +184,7 @@ struct DiffractionAccumulationAlgo {
         return choose_hit(p, s);
     }
 
-    template <bool PrimaryOnly>
-    RAYD_DEVICE bool visible_segment_impl(Vec3f start, Vec3f end) const {
+    template <bool PrimaryOnly> RAYD_DEVICE bool visible_segment_impl(Vec3f start, Vec3f end) const {
         const Vec3f delta = end - start;
         const float dist = ::rayd::shared::math::length_f32(delta);
         if (dist <= 1e-5f) {
@@ -183,40 +197,35 @@ struct DiffractionAccumulationAlgo {
             return false;
         }
         if constexpr (!PrimaryOnly) {
-            if (Policy::params().split_mode != 0 &&
-                secondary.trace_occluded(origin, dir, kRayTMin, tmax)) {
+            if (Policy::params().split_mode != 0 && secondary.trace_occluded(origin, dir, kRayTMin, tmax)) {
                 return false;
             }
         }
         return true;
     }
 
-    RAYD_HOST_DEVICE static int global_primitive_id(const TriangleHit &hit) {
+    RAYD_HOST_DEVICE static int global_primitive_id(const TriangleHit& hit) {
         if (hit.hit == 0u) {
             return -1;
         }
         const int instance = hit.instance;
-        if (Policy::params().face_offsets != nullptr && instance >= 0 &&
-            instance < Policy::params().n_meshes) {
+        if (Policy::params().face_offsets != nullptr && instance >= 0 && instance < Policy::params().n_meshes) {
             return Policy::params().face_offsets[instance] + hit.prim;
         }
         return hit.prim;
     }
 
     RAYD_HOST_DEVICE static Vec3f face_normal_for_global_prim(int prim) {
-        if (prim < 0 || prim >= Policy::params().n_triangles ||
-            Policy::params().tri_fn_x == nullptr) {
+        if (prim < 0 || prim >= Policy::params().n_triangles || Policy::params().tri_fn_x == nullptr) {
             return ::rayd::shared::math::make_vec3(0.f, 0.f, 0.f);
         }
         return ::rayd::shared::math::normalize_f32(::rayd::shared::math::make_vec3(Policy::params().tri_fn_x[prim],
-                                  Policy::params().tri_fn_y[prim],
-                                  Policy::params().tri_fn_z[prim]));
+                                                                                   Policy::params().tri_fn_y[prim],
+                                                                                   Policy::params().tri_fn_z[prim]));
     }
 
-    template <bool PrimaryOnly>
-    RAYD_DEVICE bool point_inside_one_ray_impl(Vec3f point, Vec3f ray_dir) const {
-        const TriangleHit hit =
-            trace_scene_impl<PrimaryOnly>(point + 1.0e-3f * ray_dir, ray_dir, 1.0e8f);
+    template <bool PrimaryOnly> RAYD_DEVICE bool point_inside_one_ray_impl(Vec3f point, Vec3f ray_dir) const {
+        const TriangleHit hit = trace_scene_impl<PrimaryOnly>(point + 1.0e-3f * ray_dir, ray_dir, 1.0e8f);
         if (hit.hit == 0u) {
             return false;
         }
@@ -224,12 +233,12 @@ struct DiffractionAccumulationAlgo {
         return ::rayd::shared::math::dot(normal, ray_dir) > 0.f;
     }
 
-    template <bool PrimaryOnly>
-    RAYD_DEVICE bool point_inside_closed_mesh_robust_impl(Vec3f point) const {
-        const Vec3f d0 = ::rayd::shared::math::normalize_f32(::rayd::shared::math::make_vec3(0.81234133f, 0.52311241f, 0.25843197f));
-        const Vec3f d1 = ::rayd::shared::math::normalize_f32(::rayd::shared::math::make_vec3(-0.37139068f, 0.60114462f, 0.70757474f));
-        return point_inside_one_ray_impl<PrimaryOnly>(point, d0) &&
-               point_inside_one_ray_impl<PrimaryOnly>(point, d1);
+    template <bool PrimaryOnly> RAYD_DEVICE bool point_inside_closed_mesh_robust_impl(Vec3f point) const {
+        const Vec3f d0 =
+            ::rayd::shared::math::normalize_f32(::rayd::shared::math::make_vec3(0.81234133f, 0.52311241f, 0.25843197f));
+        const Vec3f d1 = ::rayd::shared::math::normalize_f32(
+            ::rayd::shared::math::make_vec3(-0.37139068f, 0.60114462f, 0.70757474f));
+        return point_inside_one_ray_impl<PrimaryOnly>(point, d0) && point_inside_one_ray_impl<PrimaryOnly>(point, d1);
     }
 
     template <bool PrimaryOnly>
@@ -240,8 +249,8 @@ struct DiffractionAccumulationAlgo {
             return true;
         }
         const Vec3f dir = (1.f / dist) * delta;
-        const TriangleHit hit = trace_scene_impl<PrimaryOnly>(
-            start + kDfrRayBias * dir, dir, fmaxf(dist - 2.f * kDfrRayBias, 0.f));
+        const TriangleHit hit =
+            trace_scene_impl<PrimaryOnly>(start + kDfrRayBias * dir, dir, fmaxf(dist - 2.f * kDfrRayBias, 0.f));
         if (hit.hit == 0u) {
             return true;
         }
@@ -256,8 +265,8 @@ struct DiffractionAccumulationAlgo {
             return true;
         }
         const Vec3f dir = (1.f / dist) * delta;
-        const TriangleHit hit = trace_scene_impl<PrimaryOnly>(
-            start + kDfrRayBias * dir, dir, fmaxf(dist - 2.f * kDfrRayBias, 0.f));
+        const TriangleHit hit =
+            trace_scene_impl<PrimaryOnly>(start + kDfrRayBias * dir, dir, fmaxf(dist - 2.f * kDfrRayBias, 0.f));
         if (hit.hit == 0u) {
             return true;
         }
@@ -269,10 +278,10 @@ struct DiffractionAccumulationAlgo {
     RAYD_HOST_DEVICE static Vec3f grid_cell_center(int cell) {
         const int i = cell % Policy::params().grid_resolution0;
         const int j = cell / Policy::params().grid_resolution0;
-        const float u = (static_cast<float>(i) + 0.5f) /
-                        fmaxf(static_cast<float>(Policy::params().grid_resolution0), 1.f);
-        const float v = (static_cast<float>(j) + 0.5f) /
-                        fmaxf(static_cast<float>(Policy::params().grid_resolution1), 1.f);
+        const float u =
+            (static_cast<float>(i) + 0.5f) / fmaxf(static_cast<float>(Policy::params().grid_resolution0), 1.f);
+        const float v =
+            (static_cast<float>(j) + 0.5f) / fmaxf(static_cast<float>(Policy::params().grid_resolution1), 1.f);
         const float c0 = Policy::params().grid_coord0_min +
                          u * (Policy::params().grid_coord0_max - Policy::params().grid_coord0_min);
         const float c1 = Policy::params().grid_coord1_min +
@@ -290,7 +299,7 @@ struct DiffractionAccumulationAlgo {
         return axis == 0 ? value.x : (axis == 1 ? value.y : value.z);
     }
 
-    RAYD_HOST_DEVICE static bool grid_cell_from_point(Vec3f point, int &cell) {
+    RAYD_HOST_DEVICE static bool grid_cell_from_point(Vec3f point, int& cell) {
         float c0;
         float c1;
         if (Policy::params().grid_axis == 0) {
@@ -319,8 +328,8 @@ struct DiffractionAccumulationAlgo {
         return true;
     }
 
-    RAYD_HOST_DEVICE static float first_order_diffraction_parameter(
-        Vec3f source, Vec3f target, Vec3f edge_origin, Vec3f edge_dir) {
+    RAYD_HOST_DEVICE static float first_order_diffraction_parameter(Vec3f source, Vec3f target, Vec3f edge_origin,
+                                                                    Vec3f edge_dir) {
         return ::rayd::shared::diffraction::first_order_diffraction_parameter(
             ::rayd::shared::diffraction::make_f3(source.x, source.y, source.z),
             ::rayd::shared::diffraction::make_f3(target.x, target.y, target.z),
@@ -404,21 +413,21 @@ struct DiffractionAccumulationAlgo {
     }
 
     template <bool PrimaryOnly>
-    RAYD_DEVICE bool coherent_visibility_and_support(
-        ::rayd::shared::diffraction::PairInputs state, Vec3f target_f3, bool selected_valid,
-        bool selected_inside, Vec3f visibility_point_f3) const {
+    RAYD_DEVICE bool coherent_visibility_and_support(::rayd::shared::diffraction::PairInputs state, Vec3f target_f3,
+                                                     bool selected_valid, bool selected_inside,
+                                                     Vec3f visibility_point_f3) const {
         namespace utd = ::rayd::shared::diffraction;
         if (!selected_valid) {
             return false;
         }
         const utd::float3a target = to_utd(target_f3);
-        const bool target_exterior = utd::wedge_exterior_mask(
-            utd::f3_sub(target, state.edgePos), state.edgeDir, state.n0, state.nn);
+        const bool target_exterior =
+            utd::wedge_exterior_mask(utd::f3_sub(target, state.edgePos), state.edgeDir, state.n0, state.nn);
         float phi, phiP, s, sP, sb;
-        utd::compute_edge_geometry_3d(state.sourcePos, state.edgePos, state.edgeDir, state.n0,
-                                      target, phi, phiP, s, sP, sb);
-        const bool source_exterior = utd::wedge_exterior_mask(
-            utd::f3_sub(state.sourcePos, state.edgePos), state.edgeDir, state.n0, state.nn);
+        utd::compute_edge_geometry_3d(state.sourcePos, state.edgePos, state.edgeDir, state.n0, target, phi, phiP, s, sP,
+                                      sb);
+        const bool source_exterior =
+            utd::wedge_exterior_mask(utd::f3_sub(state.sourcePos, state.edgePos), state.edgeDir, state.n0, state.nn);
         const bool base_valid = source_exterior && sP > utd::UTD_MIN_DISTANCE && s > utd::UTD_MIN_DISTANCE;
         if (!base_valid) {
             return false;
@@ -426,13 +435,11 @@ struct DiffractionAccumulationAlgo {
         const float opening = fmaxf(2.f * kPi - state.wedgeN * kPi, 2.0e-3f);
         const float half_angle = 0.5f * opening;
         const bool wrap_boundary = phi >= 2.f * kPi - half_angle;
-        const float shadow_boundary_distance =
-            wrap_boundary ? 2.f * kPi - phi : phi - state.wedgeN * kPi;
+        const float shadow_boundary_distance = wrap_boundary ? 2.f * kPi - phi : phi - state.wedgeN * kPi;
         const bool selected_stationary = state.selectStationaryPoint > 0.5f;
-        const float support_angle =
-            selected_stationary ? half_angle : shadow_decay_span_from_wedge_n(state.wedgeN);
-        bool shadow_completion = !target_exterior && shadow_boundary_distance >= 0.f &&
-                                 shadow_boundary_distance < support_angle;
+        const float support_angle = selected_stationary ? half_angle : shadow_decay_span_from_wedge_n(state.wedgeN);
+        bool shadow_completion =
+            !target_exterior && shadow_boundary_distance >= 0.f && shadow_boundary_distance < support_angle;
         if (shadow_completion && point_inside_closed_mesh_robust_impl<PrimaryOnly>(target_f3)) {
             shadow_completion = false;
         }
@@ -441,45 +448,45 @@ struct DiffractionAccumulationAlgo {
         return target_exterior || shadow_completion;
     }
 
-    RAYD_HOST_DEVICE static bool coherent_selected_visibility_point(
-        ::rayd::shared::diffraction::PairInputs original, Vec3f target,
-        ::rayd::shared::diffraction::PairInputs &selected, Vec3f &visibility_point) {
+    RAYD_HOST_DEVICE static bool coherent_selected_visibility_point(::rayd::shared::diffraction::PairInputs original,
+                                                                    Vec3f target,
+                                                                    ::rayd::shared::diffraction::PairInputs& selected,
+                                                                    Vec3f& visibility_point) {
         namespace utd = ::rayd::shared::diffraction;
         selected = original;
         visibility_point = ::rayd::shared::math::make_vec3(original.edgePos.x, original.edgePos.y, original.edgePos.z);
         if (original.selectStationaryPoint <= 0.5f) {
             return true;
         }
-        const Vec3f edge_dir =
-            ::rayd::shared::math::normalize_f32(::rayd::shared::math::make_vec3(original.edgeDir.x, original.edgeDir.y, original.edgeDir.z));
-        const Vec3f edge_pos = ::rayd::shared::math::make_vec3(original.edgePos.x, original.edgePos.y, original.edgePos.z);
+        const Vec3f edge_dir = ::rayd::shared::math::normalize_f32(
+            ::rayd::shared::math::make_vec3(original.edgeDir.x, original.edgeDir.y, original.edgeDir.z));
+        const Vec3f edge_pos =
+            ::rayd::shared::math::make_vec3(original.edgePos.x, original.edgePos.y, original.edgePos.z);
         const float edge_length = original.edgeLineMax - original.edgeLineMin;
         const Vec3f edge_origin = edge_pos + original.edgeLineMin * edge_dir;
-        const float parameter = first_order_diffraction_parameter(
-            ::rayd::shared::math::make_vec3(original.sourcePos.x, original.sourcePos.y, original.sourcePos.z),
-            target, edge_origin, edge_dir);
+        const float parameter = first_order_diffraction_parameter(::rayd::shared::math::make_vec3(original.sourcePos.x,
+                                                                                                  original.sourcePos.y,
+                                                                                                  original.sourcePos.z),
+                                                                  target, edge_origin, edge_dir);
         if (!is_finite(parameter) || !(edge_length > kDfrEps)) {
             return false;
         }
         const float clamped_parameter = fminf(fmaxf(parameter, 0.f), edge_length);
         visibility_point = edge_origin + clamped_parameter * edge_dir;
-        selected.edgePos = utd::make_f3(edge_origin.x + parameter * edge_dir.x,
-                                        edge_origin.y + parameter * edge_dir.y,
+        selected.edgePos = utd::make_f3(edge_origin.x + parameter * edge_dir.x, edge_origin.y + parameter * edge_dir.y,
                                         edge_origin.z + parameter * edge_dir.z);
         selected.edgeLineMin = -parameter;
         selected.edgeLineMax = edge_length - parameter;
         return parameter > 0.f && parameter < edge_length;
     }
 
-    template <bool PrimaryOnly>
-    RAYD_DEVICE void run_coherent_utd_lane(int state_idx, int cell) const {
+    template <bool PrimaryOnly> RAYD_DEVICE void run_coherent_utd_lane(int state_idx, int cell) const {
         namespace utd = ::rayd::shared::diffraction;
         utd::PairInputs original = load_coherent_pair_inputs(state_idx);
         const Vec3f target = grid_cell_center(cell);
         utd::PairInputs selected;
         Vec3f visibility_point;
-        const bool selected_valid =
-            coherent_selected_visibility_point(original, target, selected, visibility_point);
+        const bool selected_valid = coherent_selected_visibility_point(original, target, selected, visibility_point);
         if (Policy::params().prefilter_visibility != 0) {
             const int ignore0 = Policy::params().coherent_adjacent_face0 != nullptr
                                     ? Policy::params().coherent_adjacent_face0[state_idx]
@@ -496,32 +503,28 @@ struct DiffractionAccumulationAlgo {
             }
         }
         const bool selected_inside = selected.edgeLineMin < 0.f && selected.edgeLineMax > 0.f;
-        if (!coherent_visibility_and_support<PrimaryOnly>(selected, target, selected_valid,
-                                                          selected_inside, visibility_point)) {
-            if (Policy::params().collect_debug_counts != 0 &&
-                Policy::params().out_utd_reject_count != nullptr) {
+        if (!coherent_visibility_and_support<PrimaryOnly>(selected, target, selected_valid, selected_inside,
+                                                          visibility_point)) {
+            if (Policy::params().collect_debug_counts != 0 && Policy::params().out_utd_reject_count != nullptr) {
                 atomic_add(Policy::params().out_utd_reject_count + cell, 1);
             }
             return;
         }
-        const utd::PairOutputs out = utd::compute_pair_contribution(
-            original, to_utd(target), Policy::params().k, coherent_material_params());
-        const float norm = utd::cplx_abs_sqr(out.vectorField.x) +
-                           utd::cplx_abs_sqr(out.vectorField.y) +
+        const utd::PairOutputs out =
+            utd::compute_pair_contribution(original, to_utd(target), Policy::params().k, coherent_material_params());
+        const float norm = utd::cplx_abs_sqr(out.vectorField.x) + utd::cplx_abs_sqr(out.vectorField.y) +
                            utd::cplx_abs_sqr(out.vectorField.z);
         if (!(norm > 0.f) || !is_finite(norm)) {
-            if (Policy::params().collect_debug_counts != 0 &&
-                Policy::params().out_utd_reject_count != nullptr) {
+            if (Policy::params().collect_debug_counts != 0 && Policy::params().out_utd_reject_count != nullptr) {
                 atomic_add(Policy::params().out_utd_reject_count + cell, 1);
             }
             return;
         }
-        const int owner = Policy::params().coherent_owner_code != nullptr
-                              ? Policy::params().coherent_owner_code[state_idx]
-                              : 0;
-        if (Policy::stage_coherent(cell, state_idx, owner == utd::OWNERSHIP_MIXED,
-                                   out.vectorField.x.re, out.vectorField.x.im, out.vectorField.y.re,
-                                   out.vectorField.y.im, out.vectorField.z.re, out.vectorField.z.im)) {
+        const int owner =
+            Policy::params().coherent_owner_code != nullptr ? Policy::params().coherent_owner_code[state_idx] : 0;
+        if (Policy::stage_coherent(cell, state_idx, owner == utd::OWNERSHIP_MIXED, out.vectorField.x.re,
+                                   out.vectorField.x.im, out.vectorField.y.re, out.vectorField.y.im,
+                                   out.vectorField.z.re, out.vectorField.z.im)) {
             return;
         }
         if (owner == utd::OWNERSHIP_MIXED) {
@@ -536,12 +539,18 @@ struct DiffractionAccumulationAlgo {
                 Policy::atomic_add_same_cell(Policy::params().out_multi_count, cell, 1, cell_group);
         } else {
             const typename Policy::CellGroup cell_group = Policy::cell_group(cell);
-            Policy::atomic_add_same_cell(Policy::params().out_direct_field_x_re, cell, out.vectorField.x.re, cell_group);
-            Policy::atomic_add_same_cell(Policy::params().out_direct_field_x_im, cell, out.vectorField.x.im, cell_group);
-            Policy::atomic_add_same_cell(Policy::params().out_direct_field_y_re, cell, out.vectorField.y.re, cell_group);
-            Policy::atomic_add_same_cell(Policy::params().out_direct_field_y_im, cell, out.vectorField.y.im, cell_group);
-            Policy::atomic_add_same_cell(Policy::params().out_direct_field_z_re, cell, out.vectorField.z.re, cell_group);
-            Policy::atomic_add_same_cell(Policy::params().out_direct_field_z_im, cell, out.vectorField.z.im, cell_group);
+            Policy::atomic_add_same_cell(Policy::params().out_direct_field_x_re, cell, out.vectorField.x.re,
+                                         cell_group);
+            Policy::atomic_add_same_cell(Policy::params().out_direct_field_x_im, cell, out.vectorField.x.im,
+                                         cell_group);
+            Policy::atomic_add_same_cell(Policy::params().out_direct_field_y_re, cell, out.vectorField.y.re,
+                                         cell_group);
+            Policy::atomic_add_same_cell(Policy::params().out_direct_field_y_im, cell, out.vectorField.y.im,
+                                         cell_group);
+            Policy::atomic_add_same_cell(Policy::params().out_direct_field_z_re, cell, out.vectorField.z.re,
+                                         cell_group);
+            Policy::atomic_add_same_cell(Policy::params().out_direct_field_z_im, cell, out.vectorField.z.im,
+                                         cell_group);
             if (Policy::params().out_direct_count != nullptr)
                 Policy::atomic_add_same_cell(Policy::params().out_direct_count, cell, 1, cell_group);
         }
@@ -552,14 +561,14 @@ struct DiffractionAccumulationAlgo {
         if (::rayd::shared::math::dot(projected, projected) > 1e-12f) {
             return ::rayd::shared::math::normalize_f32(projected);
         }
-        const Vec3f fallback =
-            fabsf(axis.z) < 0.9f ? ::rayd::shared::math::make_vec3(0.f, 0.f, 1.f) : ::rayd::shared::math::make_vec3(0.f, 1.f, 0.f);
+        const Vec3f fallback = fabsf(axis.z) < 0.9f ? ::rayd::shared::math::make_vec3(0.f, 0.f, 1.f)
+                                                    : ::rayd::shared::math::make_vec3(0.f, 1.f, 0.f);
         return ::rayd::shared::math::normalize_f32(fallback - ::rayd::shared::math::dot(fallback, axis) * axis);
     }
 
-    RAYD_HOST_DEVICE static bool keller_grid_hit_from_incident(
-        Vec3f incident_vec, unsigned int lane, unsigned int stream, Vec3f edge_point,
-        Vec3f edge_dir, Vec3f &target, int &cell, float &measure_scale) {
+    RAYD_HOST_DEVICE static bool keller_grid_hit_from_incident(Vec3f incident_vec, unsigned int lane,
+                                                               unsigned int stream, Vec3f edge_point, Vec3f edge_dir,
+                                                               Vec3f& target, int& cell, float& measure_scale) {
         const Vec3f incident = ::rayd::shared::math::normalize_f32(incident_vec);
         const float axial = fminf(fmaxf(::rayd::shared::math::dot(incident, edge_dir), -1.f), 1.f);
         const float radial = sqrtf(fmaxf(1.f - axial * axial, 0.f));
@@ -573,19 +582,15 @@ struct DiffractionAccumulationAlgo {
         if (fabsf(denom) <= kDfrEps) {
             return false;
         }
-        const float t = (Policy::params().grid_position -
-                         component(edge_point, Policy::params().grid_axis)) /
-                        denom;
+        const float t = (Policy::params().grid_position - component(edge_point, Policy::params().grid_axis)) / denom;
         if (!(t > kDfrRayBias) || !is_finite(t)) {
             return false;
         }
         target = edge_point + t * ko;
         const Vec3f dko_dphi = radial * (-s * basis0 + c * basis1);
         const float inv_denom = 1.f / denom;
-        const Vec3f u_t =
-            edge_dir - (component(edge_dir, Policy::params().grid_axis) * inv_denom) * ko;
-        const Vec3f u_phi =
-            t * (dko_dphi - (component(dko_dphi, Policy::params().grid_axis) * inv_denom) * ko);
+        const Vec3f u_t = edge_dir - (component(edge_dir, Policy::params().grid_axis) * inv_denom) * ko;
+        const Vec3f u_phi = t * (dko_dphi - (component(dko_dphi, Policy::params().grid_axis) * inv_denom) * ko);
         const float jacobian = ::rayd::shared::math::length_f32(::rayd::shared::math::cross(u_t, u_phi));
         measure_scale = 2.f * kPi * jacobian / fmaxf(Policy::params().grid_cell_area, kDfrEps);
         if (!is_finite(measure_scale))
@@ -593,9 +598,8 @@ struct DiffractionAccumulationAlgo {
         return grid_cell_from_point(target, cell);
     }
 
-    RAYD_HOST_DEVICE static bool keller_grid_hit(
-        int state_idx, unsigned int lane, Vec3f edge_point, Vec3f edge_dir,
-        Vec3f &target, int &cell, float &measure_scale) {
+    RAYD_HOST_DEVICE static bool keller_grid_hit(int state_idx, unsigned int lane, Vec3f edge_point, Vec3f edge_dir,
+                                                 Vec3f& target, int& cell, float& measure_scale) {
         const Vec3f incident = edge_point - state_src_at(state_idx);
         return keller_grid_hit_from_incident(incident, lane, 1u, edge_point, edge_dir, target, cell, measure_scale);
     }
@@ -627,21 +631,20 @@ struct DiffractionAccumulationAlgo {
     }
 
     RAYD_HOST_DEVICE static float material_gain_for_prim(int prim) {
-        if (Policy::params().material_gain == nullptr || prim < 0 ||
-            prim >= Policy::params().material_count || !material_valid_at(prim)) {
+        if (Policy::params().material_gain == nullptr || prim < 0 || prim >= Policy::params().material_count ||
+            !material_valid_at(prim)) {
             return 1.f;
         }
         return fmaxf(material_gain_at(prim), 0.f);
     }
 
     RAYD_HOST_DEVICE static bool suffix_candidate_valid(int prim) {
-        return prim >= 0 && prim < Policy::params().n_triangles &&
-               prim < Policy::params().material_count && material_valid_at(prim);
+        return prim >= 0 && prim < Policy::params().n_triangles && prim < Policy::params().material_count &&
+               material_valid_at(prim);
     }
 
-    RAYD_HOST_DEVICE static bool select_local_suffix_candidate(
-        int face0_prim, int face1_prim, unsigned int lane, unsigned int stream,
-        int &prim, float &candidate_count) {
+    RAYD_HOST_DEVICE static bool select_local_suffix_candidate(int face0_prim, int face1_prim, unsigned int lane,
+                                                               unsigned int stream, int& prim, float& candidate_count) {
         const bool face0_valid = suffix_candidate_valid(face0_prim);
         const bool face1_valid = suffix_candidate_valid(face1_prim) && face1_prim != face0_prim;
         const int count = (face0_valid ? 1 : 0) + (face1_valid ? 1 : 0);
@@ -660,17 +663,20 @@ struct DiffractionAccumulationAlgo {
         return true;
     }
 
-    RAYD_HOST_DEVICE static bool load_triangle(
-        int prim, Vec3f &p0, Vec3f &e1, Vec3f &e2, Vec3f &normal) {
-        if (prim < 0 || prim >= Policy::params().n_triangles ||
-            Policy::params().tri_p0_x == nullptr || Policy::params().tri_e1_x == nullptr ||
-            Policy::params().tri_e2_x == nullptr || Policy::params().tri_fn_x == nullptr) {
+    RAYD_HOST_DEVICE static bool load_triangle(int prim, Vec3f& p0, Vec3f& e1, Vec3f& e2, Vec3f& normal) {
+        if (prim < 0 || prim >= Policy::params().n_triangles || Policy::params().tri_p0_x == nullptr ||
+            Policy::params().tri_e1_x == nullptr || Policy::params().tri_e2_x == nullptr ||
+            Policy::params().tri_fn_x == nullptr) {
             return false;
         }
-        p0 = ::rayd::shared::math::make_vec3(Policy::params().tri_p0_x[prim], Policy::params().tri_p0_y[prim], Policy::params().tri_p0_z[prim]);
-        e1 = ::rayd::shared::math::make_vec3(Policy::params().tri_e1_x[prim], Policy::params().tri_e1_y[prim], Policy::params().tri_e1_z[prim]);
-        e2 = ::rayd::shared::math::make_vec3(Policy::params().tri_e2_x[prim], Policy::params().tri_e2_y[prim], Policy::params().tri_e2_z[prim]);
-        normal = ::rayd::shared::math::make_vec3(Policy::params().tri_fn_x[prim], Policy::params().tri_fn_y[prim], Policy::params().tri_fn_z[prim]);
+        p0 = ::rayd::shared::math::make_vec3(Policy::params().tri_p0_x[prim], Policy::params().tri_p0_y[prim],
+                                             Policy::params().tri_p0_z[prim]);
+        e1 = ::rayd::shared::math::make_vec3(Policy::params().tri_e1_x[prim], Policy::params().tri_e1_y[prim],
+                                             Policy::params().tri_e1_z[prim]);
+        e2 = ::rayd::shared::math::make_vec3(Policy::params().tri_e2_x[prim], Policy::params().tri_e2_y[prim],
+                                             Policy::params().tri_e2_z[prim]);
+        normal = ::rayd::shared::math::make_vec3(Policy::params().tri_fn_x[prim], Policy::params().tri_fn_y[prim],
+                                                 Policy::params().tri_fn_z[prim]);
         if (::rayd::shared::math::dot(normal, normal) <= 1e-12f) {
             normal = ::rayd::shared::math::cross(e1, e2);
         }
@@ -678,8 +684,8 @@ struct DiffractionAccumulationAlgo {
         return ::rayd::shared::math::dot(normal, normal) > 0.f;
     }
 
-    RAYD_HOST_DEVICE static bool intersect_reflection_triangle(
-        Vec3f image_source, Vec3f target, int prim, Vec3f &reflection_point, Vec3f &normal) {
+    RAYD_HOST_DEVICE static bool intersect_reflection_triangle(Vec3f image_source, Vec3f target, int prim,
+                                                               Vec3f& reflection_point, Vec3f& normal) {
         Vec3f p0;
         Vec3f e1;
         Vec3f e2;
@@ -716,10 +722,11 @@ struct DiffractionAccumulationAlgo {
         return true;
     }
 
-    RAYD_HOST_DEVICE static bool suffix_reflection_connection(
-        Vec3f diff_point, Vec3f target, int face0_prim, int face1_prim, unsigned int lane,
-        unsigned int stream, Vec3f &reflection_point, int &prim, float &reflection_gain,
-        float &suffix_fspl, float &candidate_count) {
+    RAYD_HOST_DEVICE static bool suffix_reflection_connection(Vec3f diff_point, Vec3f target, int face0_prim,
+                                                              int face1_prim, unsigned int lane, unsigned int stream,
+                                                              Vec3f& reflection_point, int& prim,
+                                                              float& reflection_gain, float& suffix_fspl,
+                                                              float& candidate_count) {
         if (!select_local_suffix_candidate(face0_prim, face1_prim, lane, stream, prim, candidate_count)) {
             return false;
         }
@@ -763,24 +770,24 @@ struct DiffractionAccumulationAlgo {
         return true;
     }
 
-    RAYD_HOST_DEVICE static float diffraction_weight(
-        int state_idx, Vec3f edge_point, Vec3f target, float edge_measure_weight) {
+    RAYD_HOST_DEVICE static float diffraction_weight(int state_idx, Vec3f edge_point, Vec3f target,
+                                                     float edge_measure_weight) {
         const Vec3f source = state_src_at(state_idx);
         const float source_distance = fmaxf(::rayd::shared::math::length_f32(edge_point - source), kDfrEps);
         const float target_distance = fmaxf(::rayd::shared::math::length_f32(target - edge_point), kDfrEps);
         const float exterior_angle = fmaxf(state_exterior_angle_at(state_idx), 0.25f * kPi);
         const float wedge_scale = fminf(exterior_angle / (2.f * kPi), 2.f);
         const float material_gain = material_gain_for_state(state_idx);
-        const float wave_gain = (Policy::params().wavelength * (1.f / (4.f * kPi))) *
-                                (Policy::params().wavelength * (1.f / (4.f * kPi)));
+        const float wave_gain =
+            (Policy::params().wavelength * (1.f / (4.f * kPi))) * (Policy::params().wavelength * (1.f / (4.f * kPi)));
         return state_src_power_at(state_idx) * material_gain * wave_gain * edge_measure_weight *
                Policy::params().grid_cell_area * wedge_scale * 1.f /
                (source_distance * source_distance * target_distance * target_distance);
     }
 
-    RAYD_HOST_DEVICE static float chain_event_weight(
-        float src_power, int face0_prim, int face1_prim, float edge_t_min, float edge_t_max,
-        float exterior_angle, Vec3f source, Vec3f edge_point, Vec3f target) {
+    RAYD_HOST_DEVICE static float chain_event_weight(float src_power, int face0_prim, int face1_prim, float edge_t_min,
+                                                     float edge_t_max, float exterior_angle, Vec3f source,
+                                                     Vec3f edge_point, Vec3f target) {
         const float source_distance = fmaxf(::rayd::shared::math::length_f32(edge_point - source), kDfrEps);
         const float target_distance = fmaxf(::rayd::shared::math::length_f32(target - edge_point), kDfrEps);
         const float edge_length = fmaxf(edge_t_max - edge_t_min, 0.f);
@@ -791,36 +798,29 @@ struct DiffractionAccumulationAlgo {
     }
 
     // ---- lane bodies (instance: cast rays through the traversers) ----------
-    template <bool PrimaryOnly, bool IncludeCoherent, bool IncludeDirect,
-              bool IncludeKeller, bool IncludeSuffix>
+    template <bool PrimaryOnly, bool IncludeCoherent, bool IncludeDirect, bool IncludeKeller, bool IncludeSuffix>
     RAYD_DEVICE void run_diffraction_order1_accumulation_algo(std::uint32_t lane) const {
-        if (lane >= static_cast<unsigned int>(Policy::params().n_rays) ||
-            Policy::params().state_count <= 0 || Policy::params().grid_resolution0 <= 0 ||
-            Policy::params().grid_resolution1 <= 0) {
+        if (lane >= static_cast<unsigned int>(Policy::params().n_rays) || Policy::params().state_count <= 0 ||
+            Policy::params().grid_resolution0 <= 0 || Policy::params().grid_resolution1 <= 0) {
             return;
         }
 
-        const int direct_limit =
-            IncludeDirect && (Policy::params().strategy_mask & Policy::kDirect) != 0
-                ? Policy::params().direct_samples
-                : 0;
-        const int keller_limit =
-            IncludeKeller && (Policy::params().strategy_mask & Policy::kKeller) != 0
-                ? Policy::params().keller_samples
-                : 0;
-        const int suffix_limit =
-            IncludeSuffix && (Policy::params().strategy_mask & Policy::kSuffix) != 0
-                ? Policy::params().suffix_samples
-                : 0;
+        const int direct_limit = IncludeDirect && (Policy::params().strategy_mask & Policy::kDirect) != 0
+                                     ? Policy::params().direct_samples
+                                     : 0;
+        const int keller_limit = IncludeKeller && (Policy::params().strategy_mask & Policy::kKeller) != 0
+                                     ? Policy::params().keller_samples
+                                     : 0;
+        const int suffix_limit = IncludeSuffix && (Policy::params().strategy_mask & Policy::kSuffix) != 0
+                                     ? Policy::params().suffix_samples
+                                     : 0;
         const int total_samples = direct_limit + keller_limit + suffix_limit;
         if (total_samples <= 0) {
             return;
         }
         const bool is_direct = IncludeDirect && static_cast<int>(lane) < direct_limit;
-        const bool is_keller = IncludeKeller && !is_direct &&
-                               static_cast<int>(lane) < direct_limit + keller_limit;
-        const bool is_suffix = IncludeSuffix &&
-                               static_cast<int>(lane) >= direct_limit + keller_limit &&
+        const bool is_keller = IncludeKeller && !is_direct && static_cast<int>(lane) < direct_limit + keller_limit;
+        const bool is_suffix = IncludeSuffix && static_cast<int>(lane) >= direct_limit + keller_limit &&
                                static_cast<int>(lane) < total_samples;
         if (!is_direct && !is_keller && !is_suffix) {
             return;
@@ -832,16 +832,14 @@ struct DiffractionAccumulationAlgo {
         }
 
         const int grid_cell_count = Policy::params().grid_resolution0 * Policy::params().grid_resolution1;
-        int cell = static_cast<int>(
-            (lane / static_cast<unsigned int>(Policy::params().state_count)) %
-            static_cast<unsigned int>(grid_cell_count));
+        int cell = static_cast<int>((lane / static_cast<unsigned int>(Policy::params().state_count)) %
+                                    static_cast<unsigned int>(grid_cell_count));
         const float edge_u = uniform01(lane, 0u, static_cast<unsigned int>(Policy::params().seed));
         const float edge_t_min = state_edge_t_min_at(state_idx);
         const float edge_t_max = state_edge_t_max_at(state_idx);
         const float edge_t = edge_t_min + edge_u * (edge_t_max - edge_t_min);
         if constexpr (IncludeCoherent) {
-            if (Policy::params().coherent_utd_slot_count >= 84 &&
-                Policy::params().utd_epx != nullptr) {
+            if (Policy::params().coherent_utd_slot_count >= 84 && Policy::params().utd_epx != nullptr) {
                 run_coherent_utd_lane<PrimaryOnly>(state_idx, cell);
                 return;
             }
@@ -854,8 +852,8 @@ struct DiffractionAccumulationAlgo {
         Vec3f target = grid_cell_center(cell);
         float keller_measure_scale = 1.f;
         if constexpr (IncludeKeller) {
-            if (is_keller && !keller_grid_hit(state_idx, lane, edge_point, edge_dir, target, cell,
-                                              keller_measure_scale)) {
+            if (is_keller &&
+                !keller_grid_hit(state_idx, lane, edge_point, edge_dir, target, cell, keller_measure_scale)) {
                 if (Policy::params().collect_debug_counts != 0) {
                     atomic_add(Policy::params().out_utd_rejects, 1);
                 }
@@ -871,9 +869,8 @@ struct DiffractionAccumulationAlgo {
         if constexpr (IncludeSuffix) {
             if (is_suffix) {
                 if (!suffix_reflection_connection(edge_point, target, state_prim0_at(state_idx),
-                                                  state_prim1_at(state_idx), lane, 17u, connection_target,
-                                                  suffix_prim, suffix_reflection_gain, suffix_fspl,
-                                                  suffix_candidate_count)) {
+                                                  state_prim1_at(state_idx), lane, 17u, connection_target, suffix_prim,
+                                                  suffix_reflection_gain, suffix_fspl, suffix_candidate_count)) {
                     if (Policy::params().collect_debug_counts != 0) {
                         atomic_add(Policy::params().out_utd_rejects, 1);
                     }
@@ -891,10 +888,9 @@ struct DiffractionAccumulationAlgo {
         }
         if constexpr (IncludeSuffix) {
             if (is_suffix) {
-                target_visible = visible_segment_ignore_prim_impl<PrimaryOnly>(
-                                     edge_point, connection_target, suffix_prim) &&
-                                 visible_segment_ignore_prim_impl<PrimaryOnly>(
-                                     connection_target, target, suffix_prim);
+                target_visible =
+                    visible_segment_ignore_prim_impl<PrimaryOnly>(edge_point, connection_target, suffix_prim) &&
+                    visible_segment_ignore_prim_impl<PrimaryOnly>(connection_target, target, suffix_prim);
             }
         }
         if (!source_visible || !target_visible) {
@@ -904,12 +900,9 @@ struct DiffractionAccumulationAlgo {
             return;
         }
 
-        const int strategy_sample_count =
-            is_direct ? direct_limit : (is_keller ? keller_limit : suffix_limit);
-        const float edge_measure_weight =
-            sample_edge_weight_for_lane(state_idx, lane, strategy_sample_count);
-        float contribution =
-            diffraction_weight(state_idx, edge_point, connection_target, edge_measure_weight);
+        const int strategy_sample_count = is_direct ? direct_limit : (is_keller ? keller_limit : suffix_limit);
+        const float edge_measure_weight = sample_edge_weight_for_lane(state_idx, lane, strategy_sample_count);
+        float contribution = diffraction_weight(state_idx, edge_point, connection_target, edge_measure_weight);
         if constexpr (IncludeKeller) {
             if (is_keller)
                 contribution *= keller_measure_scale;
@@ -972,21 +965,18 @@ struct DiffractionAccumulationAlgo {
 
     template <bool PrimaryOnly>
     RAYD_DEVICE void run_diffraction_order1_source_visibility_algo(std::uint32_t lane) const {
-        if (lane >= static_cast<unsigned int>(Policy::params().n_rays) ||
-            Policy::params().state_count <= 0 || Policy::params().temp_visibility == nullptr) {
+        if (lane >= static_cast<unsigned int>(Policy::params().n_rays) || Policy::params().state_count <= 0 ||
+            Policy::params().temp_visibility == nullptr) {
             return;
         }
         Policy::params().temp_visibility[lane] = 0u;
 
-        const int direct_limit = (Policy::params().strategy_mask & Policy::kDirect) != 0
-                                     ? Policy::params().direct_samples
-                                     : 0;
-        const int keller_limit = (Policy::params().strategy_mask & Policy::kKeller) != 0
-                                     ? Policy::params().keller_samples
-                                     : 0;
-        const int suffix_limit = (Policy::params().strategy_mask & Policy::kSuffix) != 0
-                                     ? Policy::params().suffix_samples
-                                     : 0;
+        const int direct_limit =
+            (Policy::params().strategy_mask & Policy::kDirect) != 0 ? Policy::params().direct_samples : 0;
+        const int keller_limit =
+            (Policy::params().strategy_mask & Policy::kKeller) != 0 ? Policy::params().keller_samples : 0;
+        const int suffix_limit =
+            (Policy::params().strategy_mask & Policy::kSuffix) != 0 ? Policy::params().suffix_samples : 0;
         const int total_samples = direct_limit + keller_limit + suffix_limit;
         if (total_samples <= 0 || static_cast<int>(lane) >= total_samples) {
             return;
@@ -1005,24 +995,20 @@ struct DiffractionAccumulationAlgo {
         const Vec3f edge_dir = ::rayd::shared::math::normalize_f32(state_edge_dir_at(state_idx));
         const Vec3f edge_point = edge_pos + edge_t * edge_dir;
         const Vec3f source = state_src_at(state_idx);
-        Policy::params().temp_visibility[lane] =
-            visible_segment_impl<PrimaryOnly>(source, edge_point) ? 1u : 0u;
+        Policy::params().temp_visibility[lane] = visible_segment_impl<PrimaryOnly>(source, edge_point) ? 1u : 0u;
     }
 
     template <bool PrimaryOnly>
     RAYD_DEVICE void run_diffraction_order1_no_suffix_target_accumulation_algo(std::uint32_t lane) const {
-        if (lane >= static_cast<unsigned int>(Policy::params().n_rays) ||
-            Policy::params().state_count <= 0 || Policy::params().grid_resolution0 <= 0 ||
-            Policy::params().grid_resolution1 <= 0) {
+        if (lane >= static_cast<unsigned int>(Policy::params().n_rays) || Policy::params().state_count <= 0 ||
+            Policy::params().grid_resolution0 <= 0 || Policy::params().grid_resolution1 <= 0) {
             return;
         }
 
-        const int direct_limit = (Policy::params().strategy_mask & Policy::kDirect) != 0
-                                     ? Policy::params().direct_samples
-                                     : 0;
-        const int keller_limit = (Policy::params().strategy_mask & Policy::kKeller) != 0
-                                     ? Policy::params().keller_samples
-                                     : 0;
+        const int direct_limit =
+            (Policy::params().strategy_mask & Policy::kDirect) != 0 ? Policy::params().direct_samples : 0;
+        const int keller_limit =
+            (Policy::params().strategy_mask & Policy::kKeller) != 0 ? Policy::params().keller_samples : 0;
         const int total_samples = direct_limit + keller_limit;
         if (total_samples <= 0 || static_cast<int>(lane) >= total_samples) {
             return;
@@ -1042,9 +1028,8 @@ struct DiffractionAccumulationAlgo {
         }
 
         const int grid_cell_count = Policy::params().grid_resolution0 * Policy::params().grid_resolution1;
-        int cell = static_cast<int>(
-            (lane / static_cast<unsigned int>(Policy::params().state_count)) %
-            static_cast<unsigned int>(grid_cell_count));
+        int cell = static_cast<int>((lane / static_cast<unsigned int>(Policy::params().state_count)) %
+                                    static_cast<unsigned int>(grid_cell_count));
         const float edge_u = uniform01(lane, 0u, static_cast<unsigned int>(Policy::params().seed));
         const float edge_t_min = state_edge_t_min_at(state_idx);
         const float edge_t_max = state_edge_t_max_at(state_idx);
@@ -1054,8 +1039,7 @@ struct DiffractionAccumulationAlgo {
         const Vec3f edge_point = edge_pos + edge_t * edge_dir;
         Vec3f target = grid_cell_center(cell);
         float keller_measure_scale = 1.f;
-        if (is_keller && !keller_grid_hit(state_idx, lane, edge_point, edge_dir, target, cell,
-                                          keller_measure_scale)) {
+        if (is_keller && !keller_grid_hit(state_idx, lane, edge_point, edge_dir, target, cell, keller_measure_scale)) {
             if (Policy::params().collect_debug_counts != 0) {
                 atomic_add(Policy::params().out_utd_rejects, 1);
             }
@@ -1070,11 +1054,9 @@ struct DiffractionAccumulationAlgo {
         }
 
         const int strategy_sample_count = is_direct ? direct_limit : keller_limit;
-        const float edge_measure_weight =
-            sample_edge_weight_for_lane(state_idx, lane, strategy_sample_count);
-        const float contribution =
-            diffraction_weight(state_idx, edge_point, target, edge_measure_weight) *
-            (is_keller ? keller_measure_scale : 1.f);
+        const float edge_measure_weight = sample_edge_weight_for_lane(state_idx, lane, strategy_sample_count);
+        const float contribution = diffraction_weight(state_idx, edge_point, target, edge_measure_weight) *
+                                   (is_keller ? keller_measure_scale : 1.f);
         if (!(contribution > 0.f) || !is_finite(contribution)) {
             if (Policy::params().collect_debug_counts != 0) {
                 atomic_add(Policy::params().out_utd_rejects, 1);
@@ -1118,24 +1100,20 @@ struct DiffractionAccumulationAlgo {
 
     template <bool PrimaryOnly>
     RAYD_DEVICE void run_diffraction_order1_suffix_first_visibility_algo(std::uint32_t lane) const {
-        if (lane >= static_cast<unsigned int>(Policy::params().n_rays) ||
-            Policy::params().state_count <= 0 || Policy::params().temp_visibility == nullptr) {
+        if (lane >= static_cast<unsigned int>(Policy::params().n_rays) || Policy::params().state_count <= 0 ||
+            Policy::params().temp_visibility == nullptr) {
             return;
         }
 
-        const int direct_limit = (Policy::params().strategy_mask & Policy::kDirect) != 0
-                                     ? Policy::params().direct_samples
-                                     : 0;
-        const int keller_limit = (Policy::params().strategy_mask & Policy::kKeller) != 0
-                                     ? Policy::params().keller_samples
-                                     : 0;
-        const int suffix_limit = (Policy::params().strategy_mask & Policy::kSuffix) != 0
-                                     ? Policy::params().suffix_samples
-                                     : 0;
+        const int direct_limit =
+            (Policy::params().strategy_mask & Policy::kDirect) != 0 ? Policy::params().direct_samples : 0;
+        const int keller_limit =
+            (Policy::params().strategy_mask & Policy::kKeller) != 0 ? Policy::params().keller_samples : 0;
+        const int suffix_limit =
+            (Policy::params().strategy_mask & Policy::kSuffix) != 0 ? Policy::params().suffix_samples : 0;
         const int suffix_begin = direct_limit + keller_limit;
         const int total_samples = suffix_begin + suffix_limit;
-        if (suffix_limit <= 0 || static_cast<int>(lane) < suffix_begin ||
-            static_cast<int>(lane) >= total_samples) {
+        if (suffix_limit <= 0 || static_cast<int>(lane) < suffix_begin || static_cast<int>(lane) >= total_samples) {
             return;
         }
         if (Policy::params().temp_visibility[lane] == 0u) {
@@ -1152,9 +1130,8 @@ struct DiffractionAccumulationAlgo {
         }
 
         const int grid_cell_count = Policy::params().grid_resolution0 * Policy::params().grid_resolution1;
-        int cell = static_cast<int>(
-            (lane / static_cast<unsigned int>(Policy::params().state_count)) %
-            static_cast<unsigned int>(grid_cell_count));
+        int cell = static_cast<int>((lane / static_cast<unsigned int>(Policy::params().state_count)) %
+                                    static_cast<unsigned int>(grid_cell_count));
         const float edge_u = uniform01(lane, 0u, static_cast<unsigned int>(Policy::params().seed));
         const float edge_t_min = state_edge_t_min_at(state_idx);
         const float edge_t_max = state_edge_t_max_at(state_idx);
@@ -1169,10 +1146,9 @@ struct DiffractionAccumulationAlgo {
         float suffix_candidate_count = 1.f;
         int suffix_prim = -1;
         Vec3f connection_target = target;
-        if (!suffix_reflection_connection(edge_point, target, state_prim0_at(state_idx),
-                                          state_prim1_at(state_idx), lane, 17u, connection_target,
-                                          suffix_prim, suffix_reflection_gain, suffix_fspl,
-                                          suffix_candidate_count)) {
+        if (!suffix_reflection_connection(edge_point, target, state_prim0_at(state_idx), state_prim1_at(state_idx),
+                                          lane, 17u, connection_target, suffix_prim, suffix_reflection_gain,
+                                          suffix_fspl, suffix_candidate_count)) {
             Policy::params().temp_visibility[lane] = 0u;
             if (Policy::params().collect_debug_counts != 0) {
                 atomic_add(Policy::params().out_utd_rejects, 1);
@@ -1180,8 +1156,7 @@ struct DiffractionAccumulationAlgo {
             return;
         }
 
-        const bool visible = visible_segment_ignore_prim_impl<PrimaryOnly>(
-            edge_point, connection_target, suffix_prim);
+        const bool visible = visible_segment_ignore_prim_impl<PrimaryOnly>(edge_point, connection_target, suffix_prim);
         Policy::params().temp_visibility[lane] = visible ? 1u : 0u;
         if (!visible && Policy::params().collect_debug_counts != 0) {
             atomic_add(Policy::params().out_vis_rejects, 1);
@@ -1193,25 +1168,20 @@ struct DiffractionAccumulationAlgo {
 
     template <bool PrimaryOnly>
     RAYD_DEVICE void run_diffraction_order1_suffix_target_accumulation_algo(std::uint32_t lane) const {
-        if (lane >= static_cast<unsigned int>(Policy::params().n_rays) ||
-            Policy::params().state_count <= 0 || Policy::params().grid_resolution0 <= 0 ||
-            Policy::params().grid_resolution1 <= 0) {
+        if (lane >= static_cast<unsigned int>(Policy::params().n_rays) || Policy::params().state_count <= 0 ||
+            Policy::params().grid_resolution0 <= 0 || Policy::params().grid_resolution1 <= 0) {
             return;
         }
 
-        const int direct_limit = (Policy::params().strategy_mask & Policy::kDirect) != 0
-                                     ? Policy::params().direct_samples
-                                     : 0;
-        const int keller_limit = (Policy::params().strategy_mask & Policy::kKeller) != 0
-                                     ? Policy::params().keller_samples
-                                     : 0;
-        const int suffix_limit = (Policy::params().strategy_mask & Policy::kSuffix) != 0
-                                     ? Policy::params().suffix_samples
-                                     : 0;
+        const int direct_limit =
+            (Policy::params().strategy_mask & Policy::kDirect) != 0 ? Policy::params().direct_samples : 0;
+        const int keller_limit =
+            (Policy::params().strategy_mask & Policy::kKeller) != 0 ? Policy::params().keller_samples : 0;
+        const int suffix_limit =
+            (Policy::params().strategy_mask & Policy::kSuffix) != 0 ? Policy::params().suffix_samples : 0;
         const int suffix_begin = direct_limit + keller_limit;
         const int total_samples = suffix_begin + suffix_limit;
-        if (suffix_limit <= 0 || static_cast<int>(lane) < suffix_begin ||
-            static_cast<int>(lane) >= total_samples) {
+        if (suffix_limit <= 0 || static_cast<int>(lane) < suffix_begin || static_cast<int>(lane) >= total_samples) {
             return;
         }
         if (Policy::params().temp_visibility != nullptr && Policy::params().temp_visibility[lane] == 0u) {
@@ -1224,9 +1194,8 @@ struct DiffractionAccumulationAlgo {
         }
 
         const int grid_cell_count = Policy::params().grid_resolution0 * Policy::params().grid_resolution1;
-        int cell = static_cast<int>(
-            (lane / static_cast<unsigned int>(Policy::params().state_count)) %
-            static_cast<unsigned int>(grid_cell_count));
+        int cell = static_cast<int>((lane / static_cast<unsigned int>(Policy::params().state_count)) %
+                                    static_cast<unsigned int>(grid_cell_count));
         const float edge_u = uniform01(lane, 0u, static_cast<unsigned int>(Policy::params().seed));
         const float edge_t_min = state_edge_t_min_at(state_idx);
         const float edge_t_max = state_edge_t_max_at(state_idx);
@@ -1241,10 +1210,9 @@ struct DiffractionAccumulationAlgo {
         float suffix_candidate_count = 1.f;
         int suffix_prim = -1;
         Vec3f connection_target = target;
-        if (!suffix_reflection_connection(edge_point, target, state_prim0_at(state_idx),
-                                          state_prim1_at(state_idx), lane, 17u, connection_target,
-                                          suffix_prim, suffix_reflection_gain, suffix_fspl,
-                                          suffix_candidate_count)) {
+        if (!suffix_reflection_connection(edge_point, target, state_prim0_at(state_idx), state_prim1_at(state_idx),
+                                          lane, 17u, connection_target, suffix_prim, suffix_reflection_gain,
+                                          suffix_fspl, suffix_candidate_count)) {
             if (Policy::params().collect_debug_counts != 0) {
                 atomic_add(Policy::params().out_utd_rejects, 1);
             }
@@ -1259,8 +1227,7 @@ struct DiffractionAccumulationAlgo {
         }
 
         const float edge_measure_weight = sample_edge_weight_for_lane(state_idx, lane, suffix_limit);
-        float contribution =
-            diffraction_weight(state_idx, edge_point, connection_target, edge_measure_weight);
+        float contribution = diffraction_weight(state_idx, edge_point, connection_target, edge_measure_weight);
         contribution *= suffix_reflection_gain * suffix_fspl * fmaxf(suffix_candidate_count, 1.f);
         if (!(contribution > 0.f) || !is_finite(contribution)) {
             if (Policy::params().collect_debug_counts != 0) {
@@ -1288,8 +1255,8 @@ struct DiffractionAccumulationAlgo {
 
         const typename Policy::CellGroup cell_group = Policy::cell_group(cell);
         Policy::atomic_add_same_cell(Policy::params().out_power, cell, contribution, cell_group);
-        Policy::atomic_add_same_cell(Policy::params().out_field_x_re, cell,
-                                     sqrtf(fmaxf(contribution, 0.f)), cell_group);
+        Policy::atomic_add_same_cell(Policy::params().out_field_x_re, cell, sqrtf(fmaxf(contribution, 0.f)),
+                                     cell_group);
         Policy::atomic_add_warp(Policy::params().out_suffix_count, 1);
         if (Policy::params().collect_edge_use != 0) {
             Policy::atomic_add_warp(Policy::params().out_edge_uses, 1);
@@ -1298,9 +1265,8 @@ struct DiffractionAccumulationAlgo {
 
     template <bool PrimaryOnly>
     RAYD_DEVICE void run_diffraction_order1_coherent_accumulation_algo(std::uint32_t lane) const {
-        if (lane >= static_cast<unsigned int>(Policy::params().n_rays) ||
-            Policy::params().state_count <= 0 || Policy::params().grid_resolution0 <= 0 ||
-            Policy::params().grid_resolution1 <= 0) {
+        if (lane >= static_cast<unsigned int>(Policy::params().n_rays) || Policy::params().state_count <= 0 ||
+            Policy::params().grid_resolution0 <= 0 || Policy::params().grid_resolution1 <= 0) {
             return;
         }
 
@@ -1331,8 +1297,7 @@ struct DiffractionAccumulationAlgo {
             const Vec3f edge_origin = edge_pos + edge_t_min * edge_dir;
             const float parameter = first_order_diffraction_parameter(source, target, edge_origin, edge_dir);
             if (!is_finite(parameter) || !(edge_length > kDfrEps)) {
-                if (Policy::params().collect_debug_counts != 0 &&
-                    Policy::params().out_utd_reject_count != nullptr) {
+                if (Policy::params().collect_debug_counts != 0 && Policy::params().out_utd_reject_count != nullptr) {
                     atomic_add(Policy::params().out_utd_reject_count + cell, 1);
                 }
                 return;
@@ -1356,11 +1321,9 @@ struct DiffractionAccumulationAlgo {
         }
 
         const float edge_measure_weight = sample_edge_weight_for_lane(state_idx, lane, 1);
-        const float contribution =
-            diffraction_weight(state_idx, edge_point, target, edge_measure_weight);
+        const float contribution = diffraction_weight(state_idx, edge_point, target, edge_measure_weight);
         if (!(contribution > 0.f) || !is_finite(contribution)) {
-            if (Policy::params().collect_debug_counts != 0 &&
-                Policy::params().out_utd_reject_count != nullptr) {
+            if (Policy::params().collect_debug_counts != 0 && Policy::params().out_utd_reject_count != nullptr) {
                 atomic_add(Policy::params().out_utd_reject_count + cell, 1);
             }
             return;
@@ -1372,8 +1335,8 @@ struct DiffractionAccumulationAlgo {
         const float amplitude = sqrtf(fmaxf(contribution, 0.f));
         const float field_re = amplitude * cosf(phase);
         const float field_im = amplitude * sinf(phase);
-        const bool is_multi = Policy::params().state_prefix_depth != nullptr &&
-                              Policy::params().state_prefix_depth[state_idx] > 0;
+        const bool is_multi =
+            Policy::params().state_prefix_depth != nullptr && Policy::params().state_prefix_depth[state_idx] > 0;
 
         if (Policy::stage_coherent(cell, state_idx, is_multi, field_re, field_im, 0.f, 0.f, 0.f, 0.f)) {
             return;
@@ -1400,41 +1363,37 @@ struct DiffractionAccumulationAlgo {
         }
     }
 
-    template <bool PrimaryOnly>
-    RAYD_DEVICE void run_diffraction_chain_accumulation_algo(std::uint32_t lane) const {
-        if (lane >= static_cast<unsigned int>(Policy::params().n_rays) ||
-            Policy::params().state_count <= 0 || Policy::params().recursive_state_count <= 0 ||
-            Policy::params().grid_resolution0 <= 0 || Policy::params().grid_resolution1 <= 0 ||
+    template <bool PrimaryOnly> RAYD_DEVICE void run_diffraction_chain_accumulation_algo(std::uint32_t lane) const {
+        if (lane >= static_cast<unsigned int>(Policy::params().n_rays) || Policy::params().state_count <= 0 ||
+            Policy::params().recursive_state_count <= 0 || Policy::params().grid_resolution0 <= 0 ||
+            Policy::params().grid_resolution1 <= 0 ||
             (Policy::params().max_order != 2 && Policy::params().max_order != 3) ||
             (Policy::params().strategy_mask & (Policy::kDirect | Policy::kKeller | Policy::kSuffix)) == 0) {
             return;
         }
 
-        const int direct_limit = (Policy::params().strategy_mask & Policy::kDirect) != 0
-                                     ? Policy::params().direct_samples
-                                     : 0;
-        const int keller_limit = (Policy::params().strategy_mask & Policy::kKeller) != 0
-                                     ? Policy::params().keller_samples
-                                     : 0;
-        const int suffix_limit = (Policy::params().strategy_mask & Policy::kSuffix) != 0
-                                     ? Policy::params().suffix_samples
-                                     : 0;
+        const int direct_limit =
+            (Policy::params().strategy_mask & Policy::kDirect) != 0 ? Policy::params().direct_samples : 0;
+        const int keller_limit =
+            (Policy::params().strategy_mask & Policy::kKeller) != 0 ? Policy::params().keller_samples : 0;
+        const int suffix_limit =
+            (Policy::params().strategy_mask & Policy::kSuffix) != 0 ? Policy::params().suffix_samples : 0;
         const int total_samples = direct_limit + keller_limit + suffix_limit;
         if (total_samples <= 0 || static_cast<int>(lane) >= total_samples) {
             return;
         }
         const bool is_direct = static_cast<int>(lane) < direct_limit;
         const bool is_keller = !is_direct && static_cast<int>(lane) < direct_limit + keller_limit;
-        const bool is_suffix = static_cast<int>(lane) >= direct_limit + keller_limit &&
-                               static_cast<int>(lane) < total_samples;
+        const bool is_suffix =
+            static_cast<int>(lane) >= direct_limit + keller_limit && static_cast<int>(lane) < total_samples;
 
         const int first_idx = sample_state_index_for_lane(lane);
         if (first_idx < 0)
             return;
-        const unsigned int second_hash = hash_u32(
-            lane ^ (static_cast<unsigned int>(Policy::params().seed) * 0x9e3779b9u) ^ 0x51ed270bu);
-        const int second_idx = static_cast<int>(
-            second_hash % static_cast<unsigned int>(Policy::params().recursive_state_count));
+        const unsigned int second_hash =
+            hash_u32(lane ^ (static_cast<unsigned int>(Policy::params().seed) * 0x9e3779b9u) ^ 0x51ed270bu);
+        const int second_idx =
+            static_cast<int>(second_hash % static_cast<unsigned int>(Policy::params().recursive_state_count));
         int third_idx = -1;
         if (!Policy::active_state(first_idx)) {
             return;
@@ -1443,10 +1402,10 @@ struct DiffractionAccumulationAlgo {
             return;
         }
         if (Policy::params().max_order == 3) {
-            const unsigned int third_hash = hash_u32(
-                lane ^ (static_cast<unsigned int>(Policy::params().seed) * 0x85ebca6bu) ^ 0xc2b2ae35u);
-            third_idx = static_cast<int>(
-                third_hash % static_cast<unsigned int>(Policy::params().recursive_state_count));
+            const unsigned int third_hash =
+                hash_u32(lane ^ (static_cast<unsigned int>(Policy::params().seed) * 0x85ebca6bu) ^ 0xc2b2ae35u);
+            third_idx =
+                static_cast<int>(third_hash % static_cast<unsigned int>(Policy::params().recursive_state_count));
             if (!Policy::recursive_active_state(third_idx)) {
                 return;
             }
@@ -1454,9 +1413,7 @@ struct DiffractionAccumulationAlgo {
 
         const int first_edge_index = state_edge_index_at(first_idx);
         const int second_edge_index = recursive_state_edge_index_at(second_idx);
-        const int third_edge_index = Policy::params().max_order == 3
-                                         ? recursive_state_edge_index_at(third_idx)
-                                         : -1;
+        const int third_edge_index = Policy::params().max_order == 3 ? recursive_state_edge_index_at(third_idx) : -1;
         if (first_edge_index == second_edge_index ||
             (Policy::params().max_order == 3 &&
              (first_edge_index == third_edge_index || second_edge_index == third_edge_index))) {
@@ -1467,9 +1424,8 @@ struct DiffractionAccumulationAlgo {
         }
 
         const int grid_cell_count = Policy::params().grid_resolution0 * Policy::params().grid_resolution1;
-        int cell = static_cast<int>(
-            (lane / static_cast<unsigned int>(Policy::params().state_count)) %
-            static_cast<unsigned int>(grid_cell_count));
+        int cell = static_cast<int>((lane / static_cast<unsigned int>(Policy::params().state_count)) %
+                                    static_cast<unsigned int>(grid_cell_count));
         const float first_u = uniform01(lane, 0u, static_cast<unsigned int>(Policy::params().seed));
         const float second_u = uniform01(lane, 2u, static_cast<unsigned int>(Policy::params().seed));
 
@@ -1505,12 +1461,12 @@ struct DiffractionAccumulationAlgo {
         Vec3f final_target = target;
         float keller_measure_scale = 1.f;
         if (is_keller) {
-            const Vec3f terminal_incident = Policy::params().max_order == 3
-                                                ? (third_point - second_point)
-                                                : (second_point - first_point);
-            if (!keller_grid_hit_from_incident(
-                    terminal_incident, lane, 7u + static_cast<unsigned int>(Policy::params().max_order),
-                    terminal_point, terminal_edge_dir, final_target, cell, keller_measure_scale)) {
+            const Vec3f terminal_incident =
+                Policy::params().max_order == 3 ? (third_point - second_point) : (second_point - first_point);
+            if (!keller_grid_hit_from_incident(terminal_incident, lane,
+                                               7u + static_cast<unsigned int>(Policy::params().max_order),
+                                               terminal_point, terminal_edge_dir, final_target, cell,
+                                               keller_measure_scale)) {
                 if (Policy::params().collect_debug_counts != 0) {
                     atomic_add(Policy::params().out_utd_rejects, 1);
                 }
@@ -1522,16 +1478,14 @@ struct DiffractionAccumulationAlgo {
         float suffix_candidate_count = 1.f;
         int suffix_prim = -1;
         if (is_suffix) {
-            const int suffix_face0_prim = Policy::params().max_order == 3
-                                              ? recursive_state_prim0_at(third_idx)
-                                              : recursive_state_prim0_at(second_idx);
-            const int suffix_face1_prim = Policy::params().max_order == 3
-                                              ? recursive_state_prim1_at(third_idx)
-                                              : recursive_state_prim1_at(second_idx);
-            if (!suffix_reflection_connection(
-                    terminal_point, target, suffix_face0_prim, suffix_face1_prim, lane,
-                    23u + static_cast<unsigned int>(Policy::params().max_order), final_target,
-                    suffix_prim, suffix_reflection_gain, suffix_fspl, suffix_candidate_count)) {
+            const int suffix_face0_prim = Policy::params().max_order == 3 ? recursive_state_prim0_at(third_idx)
+                                                                          : recursive_state_prim0_at(second_idx);
+            const int suffix_face1_prim = Policy::params().max_order == 3 ? recursive_state_prim1_at(third_idx)
+                                                                          : recursive_state_prim1_at(second_idx);
+            if (!suffix_reflection_connection(terminal_point, target, suffix_face0_prim, suffix_face1_prim, lane,
+                                              23u + static_cast<unsigned int>(Policy::params().max_order), final_target,
+                                              suffix_prim, suffix_reflection_gain, suffix_fspl,
+                                              suffix_candidate_count)) {
                 if (Policy::params().collect_debug_counts != 0) {
                     atomic_add(Policy::params().out_utd_rejects, 1);
                 }
@@ -1541,14 +1495,11 @@ struct DiffractionAccumulationAlgo {
         const bool source_visible = visible_segment_impl<PrimaryOnly>(source, first_point);
         const bool first_inter_edge_visible = visible_segment_impl<PrimaryOnly>(first_point, second_point);
         const bool second_inter_edge_visible =
-            Policy::params().max_order == 3
-                ? visible_segment_impl<PrimaryOnly>(second_point, third_point)
-                : true;
+            Policy::params().max_order == 3 ? visible_segment_impl<PrimaryOnly>(second_point, third_point) : true;
         const bool target_visible =
-            is_suffix
-                ? (visible_segment_ignore_prim_impl<PrimaryOnly>(terminal_point, final_target, suffix_prim) &&
-                   visible_segment_ignore_prim_impl<PrimaryOnly>(final_target, target, suffix_prim))
-                : visible_segment_impl<PrimaryOnly>(terminal_point, final_target);
+            is_suffix ? (visible_segment_ignore_prim_impl<PrimaryOnly>(terminal_point, final_target, suffix_prim) &&
+                         visible_segment_ignore_prim_impl<PrimaryOnly>(final_target, target, suffix_prim))
+                      : visible_segment_impl<PrimaryOnly>(terminal_point, final_target);
         if (!source_visible || !target_visible) {
             if (Policy::params().collect_debug_counts != 0) {
                 atomic_add(Policy::params().out_vis_rejects, 1);
@@ -1562,33 +1513,31 @@ struct DiffractionAccumulationAlgo {
             return;
         }
 
-        const float first_weight = chain_event_weight(
-            state_src_power_at(first_idx), state_prim0_at(first_idx), state_prim1_at(first_idx),
-            state_edge_t_min_at(first_idx), state_edge_t_max_at(first_idx),
-            state_exterior_angle_at(first_idx), source, first_point, second_point);
+        const float first_weight =
+            chain_event_weight(state_src_power_at(first_idx), state_prim0_at(first_idx), state_prim1_at(first_idx),
+                               state_edge_t_min_at(first_idx), state_edge_t_max_at(first_idx),
+                               state_exterior_angle_at(first_idx), source, first_point, second_point);
         const Vec3f second_target = Policy::params().max_order == 3 ? third_point : final_target;
-        const float second_weight = chain_event_weight(
-            1.f, recursive_state_prim0_at(second_idx), recursive_state_prim1_at(second_idx),
-            recursive_state_edge_t_min_at(second_idx), recursive_state_edge_t_max_at(second_idx),
-            recursive_state_exterior_angle_at(second_idx), first_point, second_point, second_target);
+        const float second_weight =
+            chain_event_weight(1.f, recursive_state_prim0_at(second_idx), recursive_state_prim1_at(second_idx),
+                               recursive_state_edge_t_min_at(second_idx), recursive_state_edge_t_max_at(second_idx),
+                               recursive_state_exterior_angle_at(second_idx), first_point, second_point, second_target);
         float chain_weight = first_weight * second_weight;
         if (Policy::params().max_order == 3) {
-            const float third_weight = chain_event_weight(
-                1.f, recursive_state_prim0_at(third_idx), recursive_state_prim1_at(third_idx),
-                recursive_state_edge_t_min_at(third_idx), recursive_state_edge_t_max_at(third_idx),
-                recursive_state_exterior_angle_at(third_idx), second_point, third_point, final_target);
+            const float third_weight =
+                chain_event_weight(1.f, recursive_state_prim0_at(third_idx), recursive_state_prim1_at(third_idx),
+                                   recursive_state_edge_t_min_at(third_idx), recursive_state_edge_t_max_at(third_idx),
+                                   recursive_state_exterior_angle_at(third_idx), second_point, third_point,
+                                   final_target);
             chain_weight *= third_weight;
         }
-        const float wave_gain_per_event = (Policy::params().wavelength * (1.f / (4.f * kPi))) *
-                                          (Policy::params().wavelength * (1.f / (4.f * kPi)));
-        const float wave_gain = Policy::params().max_order == 3
-                                    ? wave_gain_per_event * wave_gain_per_event
-                                    : wave_gain_per_event;
-        const int strategy_sample_count =
-            is_direct ? direct_limit : (is_keller ? keller_limit : suffix_limit);
+        const float wave_gain_per_event =
+            (Policy::params().wavelength * (1.f / (4.f * kPi))) * (Policy::params().wavelength * (1.f / (4.f * kPi)));
+        const float wave_gain =
+            Policy::params().max_order == 3 ? wave_gain_per_event * wave_gain_per_event : wave_gain_per_event;
+        const int strategy_sample_count = is_direct ? direct_limit : (is_keller ? keller_limit : suffix_limit);
         const float sample_norm = 1.f / fmaxf(static_cast<float>(strategy_sample_count), 1.f);
-        float contribution =
-            chain_weight * wave_gain * Policy::params().grid_cell_area * sample_norm;
+        float contribution = chain_weight * wave_gain * Policy::params().grid_cell_area * sample_norm;
         if (is_keller)
             contribution *= keller_measure_scale;
         if (is_suffix) {
@@ -1620,8 +1569,8 @@ struct DiffractionAccumulationAlgo {
 
         const typename Policy::CellGroup cell_group = Policy::cell_group(cell);
         Policy::atomic_add_same_cell(Policy::params().out_power, cell, contribution, cell_group);
-        Policy::atomic_add_same_cell(Policy::params().out_field_x_re, cell,
-                                     sqrtf(fmaxf(contribution, 0.f)), cell_group);
+        Policy::atomic_add_same_cell(Policy::params().out_field_x_re, cell, sqrtf(fmaxf(contribution, 0.f)),
+                                     cell_group);
         if (is_direct) {
             Policy::atomic_add_warp(Policy::params().out_direct_count, 1);
         } else if (is_keller) {

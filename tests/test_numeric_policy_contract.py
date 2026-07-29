@@ -10,9 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACTS_H = ROOT / "include" / "rayd" / "contracts.h"
 POLICY_H = ROOT / "include" / "rayd" / "rt" / "numeric_policy.h"
-OPERATIONS = json.loads(
-    (ROOT / "contracts" / "operations.json").read_text(encoding="utf-8")
-)
+OPERATIONS = json.loads((ROOT / "contracts" / "operations.json").read_text(encoding="utf-8"))
 
 
 def parse_float_literal(token: str) -> float:
@@ -57,13 +55,7 @@ class NumericPolicyContractTests(unittest.TestCase):
         return parse_float_literal(match.group(1))
 
     def test_header_backend_profiles_match_operations_json(self):
-        field_order = [
-            "ray_tmin",
-            "shadow_tmin",
-            "endpoint_offset",
-            "parallel_epsilon",
-            "watertight_triangles",
-        ]
+        field_order = ["ray_tmin", "shadow_tmin", "endpoint_offset", "parallel_epsilon", "watertight_triangles"]
         drjit = dict(zip(field_order, self.profile_fields("kDrJitLegacyProfile")))
         torch = dict(zip(field_order, self.profile_fields("kTorchLegacyProfile")))
         json_drjit = self.policy["backend_profiles"]["drjit"]
@@ -90,8 +82,7 @@ class NumericPolicyContractTests(unittest.TestCase):
         match = re.search(r"kSurfelEndpointOffset\s*=\s*(\w+)\s*;", self.header)
         self.assertEqual(match.group(1), "ShadowEpsilon")
         self.assertEqual(
-            self.consts["ShadowEpsilon"],
-            self.policy["backend_profiles"]["drjit"]["surfel_endpoint_offset"],
+            self.consts["ShadowEpsilon"], self.policy["backend_profiles"]["drjit"]["surfel_endpoint_offset"]
         )
 
     def test_frozen_ray_tmin_divergence(self):
@@ -103,17 +94,11 @@ class NumericPolicyContractTests(unittest.TestCase):
         self.assertNotEqual(drjit["ray_tmin"], torch["ray_tmin"])
 
     def test_reflection_trace_miss_distance_is_not_infinity(self):
-        self.assertIn(
-            "std::numeric_limits<float>::infinity()", self.header
-        )
+        self.assertIn("std::numeric_limits<float>::infinity()", self.header)
         reflection_miss = self.family_constant("kReflectionTraceMissDistance")
         self.assertEqual(reflection_miss, 1e8)
-        self.assertEqual(
-            reflection_miss, self.policy["shared_multipath"]["trace_tmax_finite"]
-        )
-        self.assertEqual(
-            reflection_miss, OPERATIONS["miss_sentinels"]["reflection_trace_distance"]
-        )
+        self.assertEqual(reflection_miss, self.policy["shared_multipath"]["trace_tmax_finite"])
+        self.assertEqual(reflection_miss, OPERATIONS["miss_sentinels"]["reflection_trace_distance"])
 
 
 if __name__ == "__main__":

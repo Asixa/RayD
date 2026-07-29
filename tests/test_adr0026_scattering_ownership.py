@@ -8,15 +8,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ADR = ROOT / "docs" / "adr" / "0026-generic-scattering-runtime-ownership.md"
-STABLE_INTEGRATION_ADR = (
-    ROOT / "docs" / "adr" / "0028-stable-typed-integration-naming.md"
-)
-STABLE_INTEGRATION_HEADER = (
-    "include/rayd/integration.h"
-)
-STABLE_INTEGRATION_HEADER_HASH = (
-    "57f83ea460e376166fd5ee22a8243a7c1576a290e1de99c0cbe8e86e93392e14"
-)
+STABLE_INTEGRATION_ADR = ROOT / "docs" / "adr" / "0028-stable-typed-integration-naming.md"
+STABLE_INTEGRATION_HEADER = "include/rayd/integration.h"
+STABLE_INTEGRATION_HEADER_HASH = "57f83ea460e376166fd5ee22a8243a7c1576a290e1de99c0cbe8e86e93392e14"
 
 EXPECTED_FAMILIES = {
     "resident table evaluation AD": {
@@ -24,10 +18,7 @@ EXPECTED_FAMILIES = {
         "scattering_table_eval_backward",
         "scattering_table_eval_jvp",
     },
-    "resident table sampling": {
-        "scattering_table_sample",
-        "scattering_table_pdf",
-    },
+    "resident table sampling": {"scattering_table_sample", "scattering_table_pdf"},
     "single-bounce ensemble": {
         "scattering_ensemble_eval",
         "scattering_ensemble_eval_backward",
@@ -83,9 +74,7 @@ class Adr0026ScatteringOwnershipTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.text = ADR.read_text(encoding="utf-8")
-        cls.stable_integration_text = STABLE_INTEGRATION_ADR.read_text(
-            encoding="utf-8"
-        )
+        cls.stable_integration_text = STABLE_INTEGRATION_ADR.read_text(encoding="utf-8")
 
     def test_accepted_adr_freezes_exact_six_family_seventeen_symbol_matrix(self):
         self.assertIn("- Status: Accepted", self.text)
@@ -104,16 +93,10 @@ class Adr0026ScatteringOwnershipTests(unittest.TestCase):
         self.assertEqual(len(symbols), 17)
 
     def test_governance_files_are_byte_identical_and_link_the_adr(self):
-        self.assertEqual(
-            (ROOT / "AGENTS.md").read_bytes(),
-            (ROOT / "CLAUDE.md").read_bytes(),
-        )
+        self.assertEqual((ROOT / "AGENTS.md").read_bytes(), (ROOT / "CLAUDE.md").read_bytes())
         link = "0026-generic-scattering-runtime-ownership.md"
         self.assertIn(link, (ROOT / "README.md").read_text(encoding="utf-8"))
-        self.assertIn(
-            link,
-            (ROOT / "torch" / "README.md").read_text(encoding="utf-8"),
-        )
+        self.assertIn(link, (ROOT / "torch" / "README.md").read_text(encoding="utf-8"))
 
     def test_adr_freezes_asymmetric_geometry_ad_and_tu_flags(self):
         required = (
@@ -129,34 +112,17 @@ class Adr0026ScatteringOwnershipTests(unittest.TestCase):
                 self.assertIn(phrase, self.text)
 
     def test_phase10b_typed_header_identity_and_dormant_source_scope(self):
-        header = (
-            ROOT / "include" / "rayd" / "integration.h"
-        ).read_text(encoding="utf-8")
+        header = (ROOT / "include" / "rayd" / "integration.h").read_text(encoding="utf-8")
         self.assertIn("#include <rayd/scattering.h>", header)
-        self.assertIn(
-            "rayd.torch.integration",
-            header,
-        )
+        self.assertIn("rayd.torch.integration", header)
 
-        cmake = (ROOT / "torch" / "CMakeLists.txt").read_text(
-            encoding="utf-8"
-        )
-        source_list = cmake.split("set(\n        RAYD_TORCH_NATIVE_CORE_SOURCES", 1)[
-            1
-        ].split("add_library(rayd_torch_native_core", 1)[0]
-        scattering_sources = set(
-            re.findall(r"src/scattering/([a-z0-9_]+)\.cu", source_list)
-        )
+        cmake = (ROOT / "torch" / "CMakeLists.txt").read_text(encoding="utf-8")
+        source_list = cmake.split("set(\n        RAYD_TORCH_NATIVE_CORE_SOURCES", 1)[1].split(
+            "add_library(rayd_torch_native_core", 1
+        )[0]
+        scattering_sources = set(re.findall(r"src/scattering/([a-z0-9_]+)\.cu", source_list))
         self.assertEqual(
-            scattering_sources,
-            {
-                "table",
-                "table_ad",
-                "ensemble",
-                "patch",
-                "chain_ensemble",
-                "chain_realization",
-            },
+            scattering_sources, {"table", "table_ad", "ensemble", "patch", "chain_ensemble", "chain_realization"}
         )
         self.assertNotIn("scattering_event", source_list)
         self.assertIn("tests/scattering/scattering_test.cpp", cmake)
@@ -165,37 +131,20 @@ class Adr0026ScatteringOwnershipTests(unittest.TestCase):
         self.assertIn("NAME rayd_torch_scattering_chain", cmake)
 
     def test_phase10b_source_local_fmad_policy(self):
-        cmake = (ROOT / "torch" / "CMakeLists.txt").read_text(
-            encoding="utf-8"
-        )
+        cmake = (ROOT / "torch" / "CMakeLists.txt").read_text(encoding="utf-8")
         fmad_blocks = [
             block
-            for block in re.findall(
-                r"set_source_files_properties\((.*?)\)", cmake, re.DOTALL
-            )
+            for block in re.findall(r"set_source_files_properties\((.*?)\)", cmake, re.DOTALL)
             if "--fmad=false" in block
         ]
         self.assertEqual(len(fmad_blocks), 1)
-        fmad_sources = set(
-            re.findall(r"src/scattering/([a-z0-9_]+)\.cu", fmad_blocks[0])
-        )
-        self.assertEqual(
-            fmad_sources,
-            {
-                "table_ad",
-                "ensemble",
-                "patch",
-                "chain_ensemble",
-                "chain_realization",
-            },
-        )
+        fmad_sources = set(re.findall(r"src/scattering/([a-z0-9_]+)\.cu", fmad_blocks[0]))
+        self.assertEqual(fmad_sources, {"table_ad", "ensemble", "patch", "chain_ensemble", "chain_realization"})
         self.assertNotIn("src/scattering/table.cu", fmad_blocks[0])
 
         fast_math_blocks = [
             block
-            for block in re.findall(
-                r"set_source_files_properties\((.*?)\)", cmake, re.DOTALL
-            )
+            for block in re.findall(r"set_source_files_properties\((.*?)\)", cmake, re.DOTALL)
             if "--use_fast_math" in block
         ]
         for block in fast_math_blocks:
@@ -210,10 +159,7 @@ class Adr0026ScatteringOwnershipTests(unittest.TestCase):
                 self.assertTrue((ROOT / relative_path).is_file())
 
     def test_stable_integration_historical_hash_and_live_identity_are_pinned(self):
-        self.assertIn(
-            STABLE_INTEGRATION_HEADER_HASH,
-            self.stable_integration_text,
-        )
+        self.assertIn(STABLE_INTEGRATION_HEADER_HASH, self.stable_integration_text)
         header = (ROOT / STABLE_INTEGRATION_HEADER).read_text(encoding="utf-8")
         self.assertIn("kIntegrationApiVersion = 8", header)
         self.assertIn('"rayd.torch.integration"', header)
@@ -237,20 +183,11 @@ class Adr0026ScatteringOwnershipTests(unittest.TestCase):
                 for token in forbidden:
                     self.assertNotIn(token, text)
 
-        chain_sources = tuple(
-            path for path in CANONICAL_SCATTERING_SOURCES if "chain_" in path
-        )
+        chain_sources = tuple(path for path in CANONICAL_SCATTERING_SOURCES if "chain_" in path)
         for relative_path in chain_sources:
             text = (ROOT / relative_path).read_text(encoding="utf-8")
             with self.subTest(path=relative_path):
-                for token in (
-                    "scattering_event_probabilities",
-                    "bdpt",
-                    "montecarlo",
-                    "mis_weight",
-                    "curand",
-                    "solver",
-                ):
+                for token in ("scattering_event_probabilities", "bdpt", "montecarlo", "mis_weight", "curand", "solver"):
                     self.assertNotIn(token, text.lower())
 
 

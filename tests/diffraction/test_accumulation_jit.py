@@ -1,47 +1,18 @@
 # Copyright Xingyu Chen.
 # Tests accumulation Dr.Jit.
 
-import json
 import math
+from functools import partial
 import os
-import subprocess
-import sys
-import textwrap
 import unittest
-from pathlib import Path
+
+from tests.support.subprocess_cases import run_json_case, run_script as run_isolated_script
 
 
-ROOT = Path(__file__).resolve().parents[2]
-
-
-def run_script(script: str, *, check: bool = True):
-    env = os.environ.copy()
-    env["PYTHONSAFEPATH"] = "1"
-    result = subprocess.run(
-        [sys.executable, "-c", textwrap.dedent(script)],
-        cwd=ROOT,
-        env=env,
-        text=True,
-        capture_output=True,
-        timeout=120,
-        check=False,
-    )
-    if check and result.returncode != 0:
-        raise AssertionError(
-            "Subprocess failed.\n"
-            f"Return code: {result.returncode}\n"
-            f"STDOUT:\n{result.stdout}\n"
-            f"STDERR:\n{result.stderr}"
-        )
-    return result
-
-
-def run_json(script: str):
-    result = run_script(script)
-    lines = [line for line in result.stdout.splitlines() if line.strip()]
-    if not lines:
-        raise AssertionError(f"Subprocess produced no JSON.\nSTDERR:\n{result.stderr}")
-    return json.loads(lines[-1])
+SUBPROCESS_ENV = os.environ.copy()
+SUBPROCESS_ENV["PYTHONSAFEPATH"] = "1"
+run_script = partial(run_isolated_script, timeout=120, env=SUBPROCESS_ENV)
+run_json = partial(run_json_case, timeout=120, env=SUBPROCESS_ENV)
 
 
 class DfrAccumulationTests(unittest.TestCase):
@@ -755,9 +726,7 @@ class DfrAccumulationTests(unittest.TestCase):
         self.assertGreater(data["keller_path_count"], 0)
         self.assertLessEqual(data["keller_path_count"], 64)
         self.assertEqual(data["keller_vis_rejects"], 0)
-        self.assertEqual(
-            data["keller_path_count"] + data["keller_utd_rejects"], 64
-        )
+        self.assertEqual(data["keller_path_count"] + data["keller_utd_rejects"], 64)
         self.assertEqual(data["keller_edge_uses"], data["keller_path_count"])
         self.assertEqual(data["keller_launches"], 2)
 

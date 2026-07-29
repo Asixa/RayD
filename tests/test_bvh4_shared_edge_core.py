@@ -9,30 +9,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 INCLUDE_DIR = ROOT / "include" / "rayd" / "edge"
 SOURCE_DIR = ROOT / "src" / "edge"
-CONTRACT_HEADERS = (
-    "bvh_types.h",
-    "bvh_build.h",
-    "bvh_query.h",
-    "edge_distance.h",
-)
+CONTRACT_HEADERS = ("bvh_types.h", "bvh_build.h", "bvh_query.h", "edge_distance.h")
 # P3 Stage A extracted the primitive-agnostic machinery into shared/bvh/. The
 # raw-pointer/caller-owned and enqueue-only contracts now also cover the core.
 BVH_CORE_INCLUDE_DIR = ROOT / "include" / "rayd" / "bvh"
 BVH_CORE_SOURCE_DIR = ROOT / "src" / "bvh"
-BVH_CORE_HEADERS = (
-    "topology.h",
-    "build.h",
-    "refit.h",
-)
+BVH_CORE_HEADERS = ("topology.h", "build.h", "refit.h")
 
 
 class BVH4SharedEdgeCoreTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.sources = {
-            name: (INCLUDE_DIR / name).read_text(encoding="utf-8")
-            for name in CONTRACT_HEADERS
-        }
+        cls.sources = {name: (INCLUDE_DIR / name).read_text(encoding="utf-8") for name in CONTRACT_HEADERS}
         cls.combined = "\n".join(cls.sources.values())
 
     def test_contract_headers_exist_in_shared_tree(self):
@@ -90,28 +78,20 @@ class BVH4SharedEdgeCoreTests(unittest.TestCase):
             "drjit",
             "nanobind",
         )
-        for path in (
-            SOURCE_DIR / "edge_shared.cu",
-            BVH_CORE_SOURCE_DIR / "build_shared.cu",
-        ):
+        for path in (SOURCE_DIR / "edge_shared.cu", BVH_CORE_SOURCE_DIR / "build_shared.cu"):
             source = path.read_text(encoding="utf-8")
             for token in forbidden:
                 self.assertNotIn(token, source)
             self.assertIn("params.stream", source)
 
     def test_storage_is_raw_pointer_count_and_caller_owned(self):
-        combined = self.combined + "\n" + "\n".join(
-            (BVH_CORE_INCLUDE_DIR / name).read_text(encoding="utf-8")
-            for name in BVH_CORE_HEADERS
+        combined = (
+            self.combined
+            + "\n"
+            + "\n".join((BVH_CORE_INCLUDE_DIR / name).read_text(encoding="utf-8") for name in BVH_CORE_HEADERS)
         )
-        pointer_fields = re.findall(
-            r"(?:const\s+)?(?:float|void|std::int32_t)\s*\*\w+",
-            combined,
-        )
-        count_fields = re.findall(
-            r"std::size_t\s+(?:count|\w+_count|capacity|\w+_stride|size_bytes)",
-            combined,
-        )
+        pointer_fields = re.findall(r"(?:const\s+)?(?:float|void|std::int32_t)\s*\*\s*\w+", combined)
+        count_fields = re.findall(r"std::size_t\s+(?:count|\w+_count|capacity|\w+_stride|size_bytes)", combined)
         self.assertGreaterEqual(len(pointer_fields), 20)
         self.assertGreaterEqual(len(count_fields), 12)
         self.assertGreaterEqual(combined.lower().count("caller-owned"), 6)
@@ -122,13 +102,11 @@ class BVH4SharedEdgeCoreTests(unittest.TestCase):
         for name in struct_names:
             macro_assertion = f"RAYD_SHARED_EDGE_ASSERT_POD({name})"
             self.assertTrue(
-                macro_assertion in self.combined
-                or f"is_standard_layout_v<{name}>" in self.combined,
+                macro_assertion in self.combined or f"is_standard_layout_v<{name}>" in self.combined,
                 f"missing standard-layout assertion for {name}",
             )
             self.assertTrue(
-                macro_assertion in self.combined
-                or f"is_trivially_copyable_v<{name}>" in self.combined,
+                macro_assertion in self.combined or f"is_trivially_copyable_v<{name}>" in self.combined,
                 f"missing trivially-copyable assertion for {name}",
             )
 

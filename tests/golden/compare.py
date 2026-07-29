@@ -37,10 +37,7 @@ def _stripped(run):
     for scene_name, scene_data in run.items():
         queries = {}
         for query_name, record in scene_data["queries"].items():
-            queries[query_name] = {
-                "discrete": record["discrete"],
-                "continuous": record["continuous"],
-            }
+            queries[query_name] = {"discrete": record["discrete"], "continuous": record["continuous"]}
         out[scene_name] = queries
     return out
 
@@ -76,25 +73,19 @@ def _assert_continuous(testcase, actual, expected, path, abs_tol, rel_tol):
         return
     testcase.assertTrue(
         math.isclose(actual_value, expected_value, rel_tol=rel_tol, abs_tol=abs_tol),
-        f"{path}: actual={actual_value!r}, expected={expected_value!r}, "
-        f"abs_tol={abs_tol}, rel_tol={rel_tol}",
+        f"{path}: actual={actual_value!r}, expected={expected_value!r}, abs_tol={abs_tol}, rel_tol={rel_tol}",
     )
 
 
 def assert_scene_matches_baseline(testcase, actual_scene, baseline_scene_data, name, abs_tol, rel_tol):
     actual_queries = actual_scene["queries"]
     baseline_queries = baseline_scene_data["queries"]
-    testcase.assertEqual(
-        set(actual_queries.keys()), set(baseline_queries.keys()), f"{name}: query set drift"
-    )
+    testcase.assertEqual(set(actual_queries.keys()), set(baseline_queries.keys()), f"{name}: query set drift")
     for query_name, baseline_record in baseline_queries.items():
         actual_record = actual_queries[query_name]
         path = f"{name}.{query_name}"
         testcase.assertEqual(actual_record["kind"], baseline_record["kind"], f"{path}: kind")
-        testcase.assertEqual(
-            actual_record["discrete"], baseline_record["discrete"], f"{path}: discrete"
-        )
+        testcase.assertEqual(actual_record["discrete"], baseline_record["discrete"], f"{path}: discrete")
         _assert_continuous(
-            testcase, actual_record["continuous"], baseline_record["continuous"],
-            f"{path}.continuous", abs_tol, rel_tol,
+            testcase, actual_record["continuous"], baseline_record["continuous"], f"{path}.continuous", abs_tol, rel_tol
         )

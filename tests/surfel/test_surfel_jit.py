@@ -1,48 +1,14 @@
 # Copyright Xingyu Chen.
 # Tests surfel Dr.Jit.
 
-import json
 import math
-import subprocess
-import sys
-import textwrap
 import unittest
 from pathlib import Path
 
+from tests.support.subprocess_cases import run_json_case
+
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def run_script(script: str, timeout: int = 120, check: bool = True):
-    result = subprocess.run(
-        [sys.executable, "-c", textwrap.dedent(script)],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        timeout=timeout,
-        check=False,
-    )
-    if check and result.returncode != 0:
-        raise AssertionError(
-            "Subprocess failed.\n"
-            f"Return code: {result.returncode}\n"
-            f"STDOUT:\n{result.stdout}\n"
-            f"STDERR:\n{result.stderr}"
-        )
-    return result
-
-
-def run_json_case(script: str, timeout: int = 120):
-    result = run_script(script, timeout=timeout, check=True)
-    lines = [line for line in result.stdout.splitlines() if line.strip()]
-    if not lines:
-        raise AssertionError(f"Subprocess produced no JSON output.\nSTDERR:\n{result.stderr}")
-    try:
-        return json.loads(lines[-1])
-    except json.JSONDecodeError as exc:
-        raise AssertionError(
-            f"Failed to parse JSON from subprocess.\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
-        ) from exc
 
 
 class SurfelCoreTests(unittest.TestCase):

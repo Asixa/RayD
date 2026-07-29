@@ -43,8 +43,8 @@ struct CudaBvhTraverser {
     TriangleTraversalScratchView scratch;
     std::size_t lane;
 
-    __device__ __forceinline__ rt::TriangleHit trace_closest(
-        math::Vec3f origin, math::Vec3f direction, float tmin, float tmax) const {
+    __device__ __forceinline__ rt::TriangleHit trace_closest(math::Vec3f origin, math::Vec3f direction, float tmin,
+                                                             float tmax) const {
         const float inv_dx = safe_rcp(direction.x);
         const float inv_dy = safe_rcp(direction.y);
         const float inv_dz = safe_rcp(direction.z);
@@ -53,53 +53,48 @@ struct CudaBvhTraverser {
         float best_u = 0.0f;
         float best_v = 0.0f;
         bool overflowed = false;
-        traverse_closest<true>(view.triangles, view.node_bounds, view.topology,
-                               scratch, lane, origin.x, origin.y, origin.z,
-                               direction.x, direction.y, direction.z,
-                               inv_dx, inv_dy, inv_dz, tmin,
-                               best_t, best_prim, best_u, best_v, overflowed);
+        traverse_closest<true>(view.triangles, view.node_bounds, view.topology, scratch, lane, origin.x, origin.y,
+                               origin.z, direction.x, direction.y, direction.z, inv_dx, inv_dy, inv_dz, tmin, best_t,
+                               best_prim, best_u, best_v, overflowed);
         return decode(best_prim, best_t, best_u, best_v, tmax);
     }
 
-    __device__ __forceinline__ bool trace_occluded(
-        math::Vec3f origin, math::Vec3f direction, float tmin, float tmax) const {
+    __device__ __forceinline__ bool trace_occluded(math::Vec3f origin, math::Vec3f direction, float tmin,
+                                                   float tmax) const {
         const float inv_dx = safe_rcp(direction.x);
         const float inv_dy = safe_rcp(direction.y);
         const float inv_dz = safe_rcp(direction.z);
         bool overflowed = false;
-        return traverse_any_hit(view.triangles, view.node_bounds, view.topology,
-                                scratch, lane, origin.x, origin.y, origin.z,
-                                direction.x, direction.y, direction.z,
-                                inv_dx, inv_dy, inv_dz, tmin, tmax, overflowed);
+        return traverse_any_hit(view.triangles, view.node_bounds, view.topology, scratch, lane, origin.x, origin.y,
+                                origin.z, direction.x, direction.y, direction.z, inv_dx, inv_dy, inv_dz, tmin, tmax,
+                                overflowed);
     }
 
-    __device__ __forceinline__ bool trace_occluded_ignore(
-        math::Vec3f origin, math::Vec3f direction, float tmin, float tmax,
-        const std::int32_t *ignore, int ignore_count) const {
+    __device__ __forceinline__ bool trace_occluded_ignore(math::Vec3f origin, math::Vec3f direction, float tmin,
+                                                          float tmax, const std::int32_t* ignore,
+                                                          int ignore_count) const {
         int best_prim = -1;
         first_blocker(origin, direction, tmin, tmax, ignore, ignore_count, best_prim);
         return best_prim >= 0;
     }
 
-    __device__ __forceinline__ rt::TriangleHit trace_first_blocker(
-        math::Vec3f origin, math::Vec3f direction, float tmin, float tmax,
-        const std::int32_t *ignore, int ignore_count) const {
+    __device__ __forceinline__ rt::TriangleHit trace_first_blocker(math::Vec3f origin, math::Vec3f direction,
+                                                                   float tmin, float tmax, const std::int32_t* ignore,
+                                                                   int ignore_count) const {
         int best_prim = -1;
-        const float best_t = first_blocker(origin, direction, tmin, tmax,
-                                           ignore, ignore_count, best_prim);
+        const float best_t = first_blocker(origin, direction, tmin, tmax, ignore, ignore_count, best_prim);
         return decode(best_prim, best_t, 0.0f, 0.0f, tmax);
     }
 
-private:
+  private:
     /// Closest non-ignored blocker. The generic Traverser contract supplies
     /// `ignore` already advanced to this lane's row; `lane` therefore selects
     /// only the depth-major traversal-scratch column. The local scratch view is
     /// rebased to that column while retaining the original depth stride, so
     /// query zero addresses `base + depth * original_query_stride` and its
     /// reduced capacity still bounds every reachable slot.
-    __device__ __forceinline__ float first_blocker(
-        math::Vec3f origin, math::Vec3f direction, float tmin, float tmax,
-        const std::int32_t *ignore, int ignore_count, int &best_prim) const {
+    __device__ __forceinline__ float first_blocker(math::Vec3f origin, math::Vec3f direction, float tmin, float tmax,
+                                                   const std::int32_t* ignore, int ignore_count, int& best_prim) const {
         const float inv_dx = safe_rcp(direction.x);
         const float inv_dy = safe_rcp(direction.y);
         const float inv_dz = safe_rcp(direction.z);
@@ -110,29 +105,18 @@ private:
         // zero so traverse_first_blocker does not advance the ignore row a
         // second time for lanes > 0.
         TriangleTraversalScratchView lane_scratch = scratch;
-        lane_scratch.node_indices = scratch.node_indices != nullptr
-            ? scratch.node_indices + lane
-            : nullptr;
-        lane_scratch.overflow = scratch.overflow != nullptr
-            ? scratch.overflow + lane
-            : nullptr;
-        lane_scratch.capacity = scratch.capacity > lane
-            ? scratch.capacity - lane
-            : 0;
-        lane_scratch.overflow_capacity = scratch.overflow_capacity > lane
-            ? scratch.overflow_capacity - lane
-            : 0;
-        traverse_first_blocker(view.triangles, view.node_bounds, view.topology,
-                               lane_scratch, ignore, static_cast<std::int32_t>(ignore_count),
-                               0, origin.x, origin.y, origin.z,
-                               direction.x, direction.y, direction.z,
-                               inv_dx, inv_dy, inv_dz, tmin,
-                               best_t, best_prim, overflowed);
+        lane_scratch.node_indices = scratch.node_indices != nullptr ? scratch.node_indices + lane : nullptr;
+        lane_scratch.overflow = scratch.overflow != nullptr ? scratch.overflow + lane : nullptr;
+        lane_scratch.capacity = scratch.capacity > lane ? scratch.capacity - lane : 0;
+        lane_scratch.overflow_capacity = scratch.overflow_capacity > lane ? scratch.overflow_capacity - lane : 0;
+        traverse_first_blocker(view.triangles, view.node_bounds, view.topology, lane_scratch, ignore,
+                               static_cast<std::int32_t>(ignore_count), 0, origin.x, origin.y, origin.z, direction.x,
+                               direction.y, direction.z, inv_dx, inv_dy, inv_dz, tmin, best_t, best_prim, overflowed);
         return best_t;
     }
 
-    __device__ __forceinline__ rt::TriangleHit decode(
-        int best_prim, float best_t, float best_u, float best_v, float miss_t) const {
+    __device__ __forceinline__ rt::TriangleHit decode(int best_prim, float best_t, float best_u, float best_v,
+                                                      float miss_t) const {
         rt::TriangleHit hit;
         if (best_prim >= 0) {
             hit.t = best_t;
@@ -153,7 +137,6 @@ private:
     }
 };
 
-static_assert(rt::is_traverser_v<CudaBvhTraverser>,
-              "CudaBvhTraverser must satisfy the rt::Traverser concept.");
+static_assert(rt::is_traverser_v<CudaBvhTraverser>, "CudaBvhTraverser must satisfy the rt::Traverser concept.");
 
 } // namespace rayd::shared::bvh

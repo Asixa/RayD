@@ -78,48 +78,33 @@ RAYD_HOST_DEVICE math::Vec3f normalize_floor(math::Vec3f value) {
 // Placement from a scalar-first quaternion `(qw, qx, qy, qz)`, normalized
 // internally with the same floor. The columns are `R(qh)` exactly as written in
 // ADR-0037 section 2.
-RAYD_HOST_DEVICE Placement make_placement(float qw,
-                                          float qx,
-                                          float qy,
-                                          float qz,
-                                          math::Vec3f position) {
-    const float length =
-        fmaxf(sqrtf(qw * qw + qx * qx + qy * qy + qz * qz), kSdfEpsNorm);
+RAYD_HOST_DEVICE Placement make_placement(float qw, float qx, float qy, float qz, math::Vec3f position) {
+    const float length = fmaxf(sqrtf(qw * qw + qx * qx + qy * qy + qz * qz), kSdfEpsNorm);
     const float w = qw / length;
     const float x = qx / length;
     const float y = qy / length;
     const float z = qz / length;
     Placement placement{};
-    placement.axis_x = math::make_vec3(1.0f - 2.0f * (y * y + z * z),
-                                       2.0f * (x * y + w * z),
-                                       2.0f * (x * z - w * y));
-    placement.axis_y = math::make_vec3(2.0f * (x * y - w * z),
-                                       1.0f - 2.0f * (x * x + z * z),
-                                       2.0f * (y * z + w * x));
-    placement.axis_z = math::make_vec3(2.0f * (x * z + w * y),
-                                       2.0f * (y * z - w * x),
-                                       1.0f - 2.0f * (x * x + y * y));
+    placement.axis_x = math::make_vec3(1.0f - 2.0f * (y * y + z * z), 2.0f * (x * y + w * z), 2.0f * (x * z - w * y));
+    placement.axis_y = math::make_vec3(2.0f * (x * y - w * z), 1.0f - 2.0f * (x * x + z * z), 2.0f * (y * z + w * x));
+    placement.axis_z = math::make_vec3(2.0f * (x * z + w * y), 2.0f * (y * z - w * x), 1.0f - 2.0f * (x * x + y * y));
     placement.position = position;
     return placement;
 }
 
 // `R^T d`: a direction, or any vector that must not be translated.
-RAYD_HOST_DEVICE math::Vec3f world_to_local_direction(const Placement &placement,
-                                                      math::Vec3f direction) {
-    return math::make_vec3(math::dot(placement.axis_x, direction),
-                           math::dot(placement.axis_y, direction),
+RAYD_HOST_DEVICE math::Vec3f world_to_local_direction(const Placement& placement, math::Vec3f direction) {
+    return math::make_vec3(math::dot(placement.axis_x, direction), math::dot(placement.axis_y, direction),
                            math::dot(placement.axis_z, direction));
 }
 
 // `R^T (p - position)`: the world-to-local point map.
-RAYD_HOST_DEVICE math::Vec3f world_to_local_point(const Placement &placement,
-                                                  math::Vec3f point) {
+RAYD_HOST_DEVICE math::Vec3f world_to_local_point(const Placement& placement, math::Vec3f point) {
     return world_to_local_direction(placement, math::subtract(point, placement.position));
 }
 
 // `R v`: carries a local-frame vector, in particular a field gradient, to world.
-RAYD_HOST_DEVICE math::Vec3f local_to_world_direction(const Placement &placement,
-                                                      math::Vec3f local_vector) {
+RAYD_HOST_DEVICE math::Vec3f local_to_world_direction(const Placement& placement, math::Vec3f local_vector) {
     return math::add(math::add(math::scale(placement.axis_x, local_vector.x),
                                math::scale(placement.axis_y, local_vector.y)),
                      math::scale(placement.axis_z, local_vector.z));
@@ -127,12 +112,7 @@ RAYD_HOST_DEVICE math::Vec3f local_to_world_direction(const Placement &placement
 
 // One slab of the box. An axis the ray is parallel to constrains nothing when
 // the origin lies inside it and forces a miss otherwise.
-RAYD_HOST_DEVICE void clip_axis(float half,
-                                float origin,
-                                float direction,
-                                float &t_lo,
-                                float &t_hi,
-                                bool &inside) {
+RAYD_HOST_DEVICE void clip_axis(float half, float origin, float direction, float& t_lo, float& t_hi, bool& inside) {
     if (fabsf(direction) <= kSdfEpsParallel) {
         inside = inside && (fabsf(origin) <= half);
         return;
@@ -146,9 +126,7 @@ RAYD_HOST_DEVICE void clip_axis(float half,
 // Traced interval of ADR-0037 section 3: the ray/box overlap on `[0, tmax]`,
 // computed by a slab test in the local frame. The ray has no tmin of its own, so
 // an origin inside the box starts at `t_lo = 0`, which is a supported case.
-RAYD_HOST_DEVICE Interval clip_ray_to_box(math::Vec3f local_origin,
-                                          math::Vec3f local_direction,
-                                          math::Vec3f scale,
+RAYD_HOST_DEVICE Interval clip_ray_to_box(math::Vec3f local_origin, math::Vec3f local_direction, math::Vec3f scale,
                                           float tmax) {
     float t_lo = 0.0f;
     float t_hi = tmax;
@@ -169,11 +147,8 @@ RAYD_HOST_DEVICE float min_voxel_edge(math::Vec3f scale, math::Vec3f cells) {
 // ADR-0037 section 7: a non-positive host scalar means "derive from the resident
 // scale and the grid extents", which every lane computes identically and which
 // costs no device-to-host read.
-RAYD_HOST_DEVICE float resolve_eps_hit(float requested,
-                                       math::Vec3f scale,
-                                       math::Vec3f cells) {
-    return requested > 0.0f ? requested
-                            : kSdfEpsHitVoxelFraction * min_voxel_edge(scale, cells);
+RAYD_HOST_DEVICE float resolve_eps_hit(float requested, math::Vec3f scale, math::Vec3f cells) {
+    return requested > 0.0f ? requested : kSdfEpsHitVoxelFraction * min_voxel_edge(scale, cells);
 }
 
 // Bisection on a bracket that the march proved contains a crossing:
@@ -182,11 +157,7 @@ RAYD_HOST_DEVICE float resolve_eps_hit(float requested,
 // interpolant crosses zero inside the bracket and `eps_hit` is only a tolerance
 // (ADR-0037 section 4). A non-finite sample is the one way out: that lane misses.
 template <typename Sampler>
-RAYD_HOST_DEVICE MarchResult bisect_bracket(Sampler &sample,
-                                            float lo,
-                                            float hi,
-                                            float sigma,
-                                            float eps_hit,
+RAYD_HOST_DEVICE MarchResult bisect_bracket(Sampler& sample, float lo, float hi, float sigma, float eps_hit,
                                             int steps) {
     MarchResult result{0.5f * (lo + hi), 0.0f, true, steps};
     for (int iteration = 0; iteration < kSdfBisectionSteps; ++iteration) {
@@ -220,8 +191,7 @@ RAYD_HOST_DEVICE MarchResult bisect_bracket(Sampler &sample,
 // before it is sampled so the interpolant is never read outside the box, and the
 // sign-flip test runs before the exit test because a step whose raw target
 // leaves the box may still cross the level set inside it.
-template <typename Sampler>
-RAYD_HOST_DEVICE MarchResult sphere_trace(Sampler &sample, const MarchConfig &config) {
+template <typename Sampler> RAYD_HOST_DEVICE MarchResult sphere_trace(Sampler& sample, const MarchConfig& config) {
     float t = config.t_lo;
     float d = sample(t);
     MarchResult result{t, d, false, 1};

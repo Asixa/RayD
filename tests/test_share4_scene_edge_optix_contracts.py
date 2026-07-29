@@ -27,36 +27,49 @@ class Share4SceneEdgeOptixContractsTests(unittest.TestCase):
         for type_name in ("SceneIntersectionPayload", "EmptySbtRecord"):
             self.assertIn(type_name, combined)
             self.assertIn(f"std::is_standard_layout_v<{type_name}>", combined)
-        for type_name in (
-            "EdgeGeometrySoAView", "EdgeQuerySoAView", "EdgeQueryOutputView",
-        ):
+        for type_name in ("EdgeGeometrySoAView", "EdgeQuerySoAView", "EdgeQueryOutputView"):
             self.assertIn(type_name, combined)
             self.assertIn(f"RAYD_SHARED_EDGE_OPTIX_ASSERT_POD({type_name})", combined)
 
     def test_payload_and_sbt_abi_are_explicit(self):
         combined = "\n".join(path.read_text(encoding="utf-8") for path in (SCENE_CONTRACT, EDGE_CONTRACT, SBT_CONTRACT))
         for token in (
-            "SbtRecordAlignment = 16u", "SbtRecordHeaderSize = 32u", "EdgePayloadTopKMax = 8",
-            "SceneIntersectionPayloadSlot::Count) == 5u", "SceneHitObjectFieldSlot::Count) == 6u",
-            "EdgePointPayloadSlot::Count) == 4u", "EdgeRayPayloadSlot::CommonCount) == 4u",
-            "DrJitEdgeRayPayloadSlot::Valid) == 4u", "TorchEdgeRayPayloadSlot::TierRadius) == 4u",
+            "SbtRecordAlignment = 16u",
+            "SbtRecordHeaderSize = 32u",
+            "EdgePayloadTopKMax = 8",
+            "SceneIntersectionPayloadSlot::Count) == 5u",
+            "SceneHitObjectFieldSlot::Count) == 6u",
+            "EdgePointPayloadSlot::Count) == 4u",
+            "EdgeRayPayloadSlot::CommonCount) == 4u",
+            "DrJitEdgeRayPayloadSlot::Valid) == 4u",
+            "TorchEdgeRayPayloadSlot::TierRadius) == 4u",
         ):
             self.assertIn(token, combined)
 
     def test_pipeline_compile_counts_derive_from_shared_contract(self):
         source = PIPELINE_CONTRACT.read_text(encoding="utf-8")
         for token in (
-            "SceneIntersectionPayloadCount = 5u", "TriangleHitPayloadCount = 6u",
-            "VisibilityPayloadCount = 3u", "DiffractionPayloadCount = 4u",
-            "EdgePointRayPayloadCount = 5u", "EdgeTopKPayloadCount = 16u",
-            "TriangleAttributeCount = 2u", "EdgeAttributeCount = 3u",
+            "SceneIntersectionPayloadCount = 5u",
+            "TriangleHitPayloadCount = 6u",
+            "VisibilityPayloadCount = 3u",
+            "DiffractionPayloadCount = 4u",
+            "EdgePointRayPayloadCount = 5u",
+            "EdgeTopKPayloadCount = 16u",
+            "TriangleAttributeCount = 2u",
+            "EdgeAttributeCount = 3u",
         ):
             self.assertIn(token, source)
 
-        consumers = tuple(ROOT / path for path in (
-            "src/runtime/runtime_jit.cpp", "src/runtime/optix.cpp", "src/visibility/visibility.cpp",
-            "src/reflection/reflection.cpp", "src/diffraction/diffraction.cpp",
-        ))
+        consumers = tuple(
+            ROOT / path
+            for path in (
+                "src/runtime/runtime_jit.cpp",
+                "src/runtime/optix.cpp",
+                "src/visibility/visibility.cpp",
+                "src/reflection/reflection.cpp",
+                "src/diffraction/diffraction.cpp",
+            )
+        )
         combined = "\n".join(path.read_text(encoding="utf-8") for path in consumers)
         self.assertGreaterEqual(combined.count("shared::optix::"), 16)
         self.assertNotRegex(combined, r"numPayloadValues\s*=\s*(?:5|6|16)\s*;")
@@ -67,8 +80,10 @@ class Share4SceneEdgeOptixContractsTests(unittest.TestCase):
             source = path.read_text(encoding="utf-8")
             self.assertIn("rayd/edge/optix_device.cuh", source)
             for symbol in (
-                "shared::optix::edge_query_active", "shared::optix::edge_geometry_active",
-                "shared::optix::write_invalid_edge_result", "shared::optix::set_edge_point_payload",
+                "shared::optix::edge_query_active",
+                "shared::optix::edge_geometry_active",
+                "shared::optix::write_invalid_edge_result",
+                "shared::optix::set_edge_point_payload",
                 "shared::optix::insert_edge_topk_payload_candidate",
             ):
                 self.assertIn(symbol, source)

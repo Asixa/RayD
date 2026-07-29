@@ -39,11 +39,7 @@ class SharedReflectionAccumulationDeviceTests(unittest.TestCase):
             self.assertIn(token, self.algo)
             self.assertNotIn(token, self.drjit)
             self.assertNotIn(token, self.torch)
-        entry_tokens = (
-            "void closest_hit()",
-            "void miss()",
-            "void raygen(const Params &params)",
-        )
+        entry_tokens = ("void closest_hit()", "void miss()", "void raygen(const Params& params)")
         for token in entry_tokens:
             self.assertIn(token, self.shared)
         self.assertIn("accumulation_algo.h", self.shared)
@@ -68,9 +64,7 @@ class SharedReflectionAccumulationDeviceTests(unittest.TestCase):
             self.assertEqual(source.count("__constant__ AccumParams params"), 1)
 
     def test_optix_entry_identity_is_shared(self) -> None:
-        entry_pattern = re.compile(
-            r'extern "C" __global__ void (__\w+__reflection_accumulation)\(\)'
-        )
+        entry_pattern = re.compile(r'extern "C" __global__ void (__\w+__reflection_accumulation)\(\)')
         expected = [
             "__closesthit__reflection_accumulation",
             "__miss__reflection_accumulation",
@@ -96,25 +90,14 @@ class SharedReflectionAccumulationDeviceTests(unittest.TestCase):
         self.assertNotIn("WarpCellGroup", self.shared)
 
     def test_shared_core_adds_no_resource_or_launch_ownership(self) -> None:
-        for token in (
-            "cudaMalloc",
-            "cudaFree",
-            "cudaMemcpy",
-            "cudaStreamSynchronize",
-            "cudaDeviceSynchronize",
-            "<<<",
-        ):
+        for token in ("cudaMalloc", "cudaFree", "cudaMemcpy", "cudaStreamSynchronize", "cudaDeviceSynchronize", "<<<"):
             self.assertNotIn(token, self.shared)
 
     def test_params_abi_headers_are_unchanged_and_backend_local(self) -> None:
         self.assertNotIn("reflection_accumulation_params.h", self.shared)
         self.assertNotIn("torch/reflection/accum_params.h", self.shared)
-        self.assertIn(
-            "#include <src/reflection/accumulation_params_jit.h>", self.drjit
-        )
-        self.assertIn(
-            "#include <src/reflection/accum_params.h>", self.torch
-        )
+        self.assertIn("#include <src/reflection/accumulation_params_jit.h>", self.drjit)
+        self.assertIn("#include <src/reflection/accum_params.h>", self.torch)
 
 
 if __name__ == "__main__":

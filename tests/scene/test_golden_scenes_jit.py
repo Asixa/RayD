@@ -71,14 +71,10 @@ class GoldenSceneTests(unittest.TestCase):
     def test_results_match_checked_in_baselines(self):
         abs_tol, rel_tol = compare.continuous_tolerances()
         baseline_names = compare.baseline_scene_names()
-        self.assertEqual(
-            set(self.run_a.keys()), set(baseline_names), "scene set drift vs checked-in baselines"
-        )
+        self.assertEqual(set(self.run_a.keys()), set(baseline_names), "scene set drift vs checked-in baselines")
         for name in baseline_names:
             baseline = compare.baseline_scene(name)
-            compare.assert_scene_matches_baseline(
-                self, self.run_a[name], baseline, name, abs_tol, rel_tol
-            )
+            compare.assert_scene_matches_baseline(self, self.run_a[name], baseline, name, abs_tol, rel_tol)
 
 
 if __name__ == "__main__":

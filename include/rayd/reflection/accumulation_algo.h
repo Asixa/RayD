@@ -67,12 +67,16 @@ RAYD_HOST_DEVICE bool is_finite(float value) {
 }
 
 // Integer min/max, the host-safe form of the device min()/max() builtins.
-RAYD_HOST_DEVICE int imax(int a, int b) { return a > b ? a : b; }
-RAYD_HOST_DEVICE int imin(int a, int b) { return a < b ? a : b; }
+RAYD_HOST_DEVICE int imax(int a, int b) {
+    return a > b ? a : b;
+}
+RAYD_HOST_DEVICE int imin(int a, int b) {
+    return a < b ? a : b;
+}
 
 // atomicAdd on device; a non-atomic byte-equivalent on the host so the wedge
 // slot reservation compiles off-device (the host path is never executed).
-RAYD_HOST_DEVICE int atomic_add(int *address, int value) {
+RAYD_HOST_DEVICE int atomic_add(int* address, int value) {
 #if defined(__CUDA_ARCH__)
     return atomicAdd(address, value);
 #else
@@ -82,17 +86,14 @@ RAYD_HOST_DEVICE int atomic_add(int *address, int value) {
 #endif
 }
 
-
 RAYD_HOST_DEVICE Vec3f fallback_axis(Vec3f direction) {
-    return fabsf(direction.z) < 0.9f
-        ? math::make_vec3(0.0f, 0.0f, 1.0f)
-        : math::make_vec3(0.0f, 1.0f, 0.0f);
+    return fabsf(direction.z) < 0.9f ? math::make_vec3(0.0f, 0.0f, 1.0f) : math::make_vec3(0.0f, 1.0f, 0.0f);
 }
 
 RAYD_HOST_DEVICE Vec3f stable_perpendicular(Vec3f direction, Vec3f preferred) {
     const Vec3f normalized_direction = math::normalize_f32(direction);
-    Vec3f projected = math::subtract(
-        preferred, math::scale(normalized_direction, math::dot(preferred, normalized_direction)));
+    Vec3f projected =
+        math::subtract(preferred, math::scale(normalized_direction, math::dot(preferred, normalized_direction)));
     if (math::dot(projected, projected) > 1.0e-12f)
         return math::normalize_f32(projected);
     const Vec3f axis = fallback_axis(normalized_direction);
@@ -110,9 +111,8 @@ RAYD_HOST_DEVICE Vec3f offset_surface_point(Vec3f point, Vec3f direction, Vec3f 
     return math::add(point, math::scale(normal, signed_offset));
 }
 
-RAYD_HOST_DEVICE ::rayd::shared::rt::TriangleHit choose_hit(
-    ::rayd::shared::rt::TriangleHit primary,
-    ::rayd::shared::rt::TriangleHit secondary) {
+RAYD_HOST_DEVICE ::rayd::shared::rt::TriangleHit choose_hit(::rayd::shared::rt::TriangleHit primary,
+                                                            ::rayd::shared::rt::TriangleHit secondary) {
     if (primary.hit == 0u)
         return secondary;
     if (secondary.hit == 0u)
@@ -121,19 +121,13 @@ RAYD_HOST_DEVICE ::rayd::shared::rt::TriangleHit choose_hit(
 }
 
 template <typename Traverser>
-RAYD_DEVICE ::rayd::shared::rt::TriangleHit trace_scene(
-    int split_mode,
-    const Traverser &primary,
-    const Traverser &secondary,
-    Vec3f origin,
-    Vec3f direction,
-    float tmax) {
-    const ::rayd::shared::rt::TriangleHit primary_hit =
-        primary.trace_closest(origin, direction, TraceTMin, tmax);
+RAYD_DEVICE ::rayd::shared::rt::TriangleHit trace_scene(int split_mode, const Traverser& primary,
+                                                        const Traverser& secondary, Vec3f origin, Vec3f direction,
+                                                        float tmax) {
+    const ::rayd::shared::rt::TriangleHit primary_hit = primary.trace_closest(origin, direction, TraceTMin, tmax);
     if (split_mode == 0)
         return primary_hit;
-    const ::rayd::shared::rt::TriangleHit secondary_hit =
-        secondary.trace_closest(origin, direction, TraceTMin, tmax);
+    const ::rayd::shared::rt::TriangleHit secondary_hit = secondary.trace_closest(origin, direction, TraceTMin, tmax);
     return choose_hit(primary_hit, secondary_hit);
 }
 
@@ -141,7 +135,7 @@ RAYD_HOST_DEVICE float component(Vec3f value, int axis) {
     return axis == 0 ? value.x : (axis == 1 ? value.y : value.z);
 }
 
-RAYD_HOST_DEVICE void plane_coords(Vec3f value, int axis, float &coord0, float &coord1) {
+RAYD_HOST_DEVICE void plane_coords(Vec3f value, int axis, float& coord0, float& coord1) {
     if (axis == 0) {
         coord0 = value.y;
         coord1 = value.z;
@@ -177,62 +171,43 @@ RAYD_HOST_DEVICE float uniform01(unsigned int ray_index, unsigned int depth, uns
 }
 
 template <typename Params>
-RAYD_HOST_DEVICE bool material_reflection_coefficients(
-    const Params &params,
-    int global_primitive,
-    float cos_theta,
-    Complex &r_te,
-    Complex &r_tm) {
+RAYD_HOST_DEVICE bool material_reflection_coefficients(const Params& params, int global_primitive, float cos_theta,
+                                                       Complex& r_te, Complex& r_tm) {
     r_te = field::c_make(0.0f, 0.0f);
     r_tm = field::c_make(0.0f, 0.0f);
-    if (global_primitive < 0 || global_primitive >= params.material_count ||
-        params.material_valid == nullptr || params.material_valid[global_primitive] == 0u)
+    if (global_primitive < 0 || global_primitive >= params.material_count || params.material_valid == nullptr ||
+        params.material_valid[global_primitive] == 0u)
         return false;
-    const float omega = fmaxf(
-        2.0f * Pi * SpeedOfLight / fmaxf(params.wavelength, Epsilon), Epsilon);
-    return field::fresnel_reflection_coefficients(
-        params.material_eta_r[global_primitive],
-        params.material_sigma[global_primitive],
-        params.material_mu_r[global_primitive],
-        params.material_gain[global_primitive],
-        omega,
-        cos_theta,
-        r_te,
-        r_tm,
-        Epsilon);
+    const float omega = fmaxf(2.0f * Pi * SpeedOfLight / fmaxf(params.wavelength, Epsilon), Epsilon);
+    return field::fresnel_reflection_coefficients(params.material_eta_r[global_primitive],
+                                                  params.material_sigma[global_primitive],
+                                                  params.material_mu_r[global_primitive],
+                                                  params.material_gain[global_primitive], omega, cos_theta, r_te, r_tm,
+                                                  Epsilon);
 }
 
 template <typename Params>
-RAYD_HOST_DEVICE Complex3 reflect_field_vector(
-    const Params &params,
-    Complex3 field_value,
-    Vec3f incident_direction,
-    Vec3f normal,
-    int global_primitive,
-    Vec3f &reflected_direction) {
+RAYD_HOST_DEVICE Complex3 reflect_field_vector(const Params& params, Complex3 field_value, Vec3f incident_direction,
+                                               Vec3f normal, int global_primitive, Vec3f& reflected_direction) {
     const Vec3f incident_hat = math::normalize_f32(incident_direction);
     const Vec3f normal_hat = math::normalize_f32(normal);
     const float direction_dot_normal = math::dot(incident_hat, normal_hat);
-    reflected_direction = math::normalize_f32(
-        math::subtract(incident_hat, math::scale(normal_hat, 2.0f * direction_dot_normal)));
+    reflected_direction =
+        math::normalize_f32(math::subtract(incident_hat, math::scale(normal_hat, 2.0f * direction_dot_normal)));
 
     Vec3f s_hat = math::cross(normal_hat, incident_hat);
-    s_hat = math::dot(s_hat, s_hat) <= 1.0e-12f
-        ? stable_perpendicular(incident_hat, normal_hat)
-        : math::normalize_f32(s_hat);
+    s_hat = math::dot(s_hat, s_hat) <= 1.0e-12f ? stable_perpendicular(incident_hat, normal_hat)
+                                                : math::normalize_f32(s_hat);
     Vec3f p_in_hat = math::cross(s_hat, incident_hat);
-    p_in_hat = math::dot(p_in_hat, p_in_hat) <= 1.0e-12f
-        ? stable_perpendicular(incident_hat, normal_hat)
-        : math::normalize_f32(p_in_hat);
+    p_in_hat = math::dot(p_in_hat, p_in_hat) <= 1.0e-12f ? stable_perpendicular(incident_hat, normal_hat)
+                                                         : math::normalize_f32(p_in_hat);
     Vec3f p_out_hat = math::cross(s_hat, reflected_direction);
-    p_out_hat = math::dot(p_out_hat, p_out_hat) <= 1.0e-12f
-        ? stable_perpendicular(reflected_direction, normal_hat)
-        : math::normalize_f32(p_out_hat);
+    p_out_hat = math::dot(p_out_hat, p_out_hat) <= 1.0e-12f ? stable_perpendicular(reflected_direction, normal_hat)
+                                                            : math::normalize_f32(p_out_hat);
 
     Complex r_te;
     Complex r_tm;
-    if (!material_reflection_coefficients(
-            params, global_primitive, fabsf(direction_dot_normal), r_te, r_tm))
+    if (!material_reflection_coefficients(params, global_primitive, fabsf(direction_dot_normal), r_te, r_tm))
         return field::c3_zero();
     const Complex e_s = field::c3_dot_real(field_value, s_hat);
     const Complex e_p = field::c3_dot_real(field_value, p_in_hat);
@@ -241,17 +216,9 @@ RAYD_HOST_DEVICE Complex3 reflect_field_vector(
 }
 
 template <typename Params>
-RAYD_HOST_DEVICE void store_wedge_event(
-    const Params &params,
-    unsigned int ray_index,
-    int depth,
-    int global_primitive,
-    Vec3f hit_point,
-    Vec3f normal,
-    Vec3f incident_direction,
-    Vec3f source_point,
-    float source_power,
-    Vec3f initial_direction) {
+RAYD_HOST_DEVICE void store_wedge_event(const Params& params, unsigned int ray_index, int depth, int global_primitive,
+                                        Vec3f hit_point, Vec3f normal, Vec3f incident_direction, Vec3f source_point,
+                                        float source_power, Vec3f initial_direction) {
     if (params.collect_wedges == 0 || params.out_wedge_count == nullptr)
         return;
     if (depth > 0 && params.collect_wedge_prefixes == 0)
@@ -259,12 +226,9 @@ RAYD_HOST_DEVICE void store_wedge_event(
     float stored_source_power = source_power;
     const int sample_stride = imax(params.wedge_sample_stride, 1);
     if (params.collect_wedge_prefixes != 0 && sample_stride > 1) {
-        const unsigned int max_prefix_depth =
-            static_cast<unsigned int>(imax(params.max_bounces, 1));
-        const unsigned int ordinal =
-            ray_index * max_prefix_depth + static_cast<unsigned int>(depth);
-        const unsigned int phase =
-            static_cast<unsigned int>(params.seed) % static_cast<unsigned int>(sample_stride);
+        const unsigned int max_prefix_depth = static_cast<unsigned int>(imax(params.max_bounces, 1));
+        const unsigned int ordinal = ray_index * max_prefix_depth + static_cast<unsigned int>(depth);
+        const unsigned int phase = static_cast<unsigned int>(params.seed) % static_cast<unsigned int>(sample_stride);
         if ((ordinal + phase) % static_cast<unsigned int>(sample_stride) != 0u)
             return;
         stored_source_power *= static_cast<float>(sample_stride);
@@ -295,25 +259,16 @@ RAYD_HOST_DEVICE void store_wedge_event(
 }
 
 template <typename Params, typename Policy>
-RAYD_HOST_DEVICE bool accumulate_plane(
-    const Params &params,
-    unsigned int ray_index,
-    int depth,
-    Vec3f origin,
-    Vec3f direction,
-    float blocker_t,
-    Vec3f image_source,
-    Complex3 field_value) {
+RAYD_HOST_DEVICE bool accumulate_plane(const Params& params, unsigned int ray_index, int depth, Vec3f origin,
+                                       Vec3f direction, float blocker_t, Vec3f image_source, Complex3 field_value) {
     if (!Policy::include_depth(params, depth) || field::c3_power(field_value) <= 0.0f)
         return false;
     const int axis = params.grid_axis;
     const float axis_direction = component(direction, axis);
     if (fabsf(axis_direction) <= Epsilon)
         return false;
-    const float safe_axis_direction =
-        axis_direction + (axis_direction >= 0.0f ? Epsilon : -Epsilon);
-    const float t_plane =
-        (params.grid_position - component(origin, axis)) / safe_axis_direction;
+    const float safe_axis_direction = axis_direction + (axis_direction >= 0.0f ? Epsilon : -Epsilon);
+    const float t_plane = (params.grid_position - component(origin, axis)) / safe_axis_direction;
     if (!(t_plane > RayBias && t_plane < blocker_t))
         return false;
 
@@ -321,35 +276,28 @@ RAYD_HOST_DEVICE bool accumulate_plane(
     float coord0 = 0.0f;
     float coord1 = 0.0f;
     plane_coords(target, axis, coord0, coord1);
-    if (coord0 < params.grid_coord0_min || coord0 >= params.grid_coord0_max ||
-        coord1 < params.grid_coord1_min || coord1 >= params.grid_coord1_max)
+    if (coord0 < params.grid_coord0_min || coord0 >= params.grid_coord0_max || coord1 < params.grid_coord1_min ||
+        coord1 >= params.grid_coord1_max)
         return false;
     const float span0 = params.grid_coord0_max - params.grid_coord0_min;
     const float span1 = params.grid_coord1_max - params.grid_coord1_min;
-    if (span0 <= 0.0f || span1 <= 0.0f ||
-        params.grid_resolution0 <= 0 || params.grid_resolution1 <= 0)
+    if (span0 <= 0.0f || span1 <= 0.0f || params.grid_resolution0 <= 0 || params.grid_resolution1 <= 0)
         return false;
 
     const float u = (coord0 - params.grid_coord0_min) / span0;
     const float v = (coord1 - params.grid_coord1_min) / span1;
-    const int ix = imin(imax(static_cast<int>(u * params.grid_resolution0), 0),
-                        params.grid_resolution0 - 1);
-    const int iy = imin(imax(static_cast<int>(v * params.grid_resolution1), 0),
-                        params.grid_resolution1 - 1);
+    const int ix = imin(imax(static_cast<int>(u * params.grid_resolution0), 0), params.grid_resolution0 - 1);
+    const int iy = imin(imax(static_cast<int>(v * params.grid_resolution1), 0), params.grid_resolution1 - 1);
     const int cell = iy * params.grid_resolution0 + ix;
 
     const Vec3f target_plane = axis_plane_point(axis, params.grid_position, coord0, coord1);
     const float unfolded_distance = math::length_f32(math::subtract(target_plane, image_source));
-    const float fspl = field::free_space_amplitude(
-        params.wavelength, unfolded_distance, Epsilon);
+    const float fspl = field::free_space_amplitude(params.wavelength, unfolded_distance, Epsilon);
     const float cos_theta = fmaxf(fabsf(axis_direction), Epsilon);
-    const float geometry_power_scale =
-        params.solid_angle_per_ray / fmaxf(params.cell_area, Epsilon) *
-        unfolded_distance * unfolded_distance / cos_theta;
+    const float geometry_power_scale = params.solid_angle_per_ray / fmaxf(params.cell_area, Epsilon) *
+                                       unfolded_distance * unfolded_distance / cos_theta;
     const float amplitude_scale = fspl * sqrtf(fmaxf(geometry_power_scale, 0.0f));
-    const float wave_number = fabsf(params.k) > Epsilon
-        ? params.k
-        : (2.0f * Pi / fmaxf(params.wavelength, Epsilon));
+    const float wave_number = fabsf(params.k) > Epsilon ? params.k : (2.0f * Pi / fmaxf(params.wavelength, Epsilon));
     const Complex phase = field::propagation_phase(wave_number, unfolded_distance);
     const Complex coefficient = field::c_scale(phase, amplitude_scale);
     const Complex3 contribution_field = field::c3_mul_complex(field_value, coefficient);
@@ -358,8 +306,7 @@ RAYD_HOST_DEVICE bool accumulate_plane(
     const float contribution_power = field::c3_power(contribution_field);
     if (!(contribution_power > 0.0f) || !is_finite(contribution_power))
         return false;
-    Policy::commit(
-        params, ray_index, depth, cell, contribution_field, contribution_power);
+    Policy::commit(params, ray_index, depth, cell, contribution_field, contribution_power);
     return true;
 }
 
@@ -371,14 +318,11 @@ RAYD_HOST_DEVICE bool accumulate_plane(
 /// 0), and `ray_index` is this lane's ray id. `Policy` supplies the compile-time
 /// include-depth predicate and the grid commit (device atomics).
 template <typename Params, typename Policy, typename Traverser>
-RAYD_DEVICE void reflection_accumulation_algo(
-    const Params &params,
-    std::uint32_t ray_index,
-    const Traverser &primary,
-    const Traverser &secondary) {
+RAYD_DEVICE void reflection_accumulation_algo(const Params& params, std::uint32_t ray_index, const Traverser& primary,
+                                              const Traverser& secondary) {
     using namespace reflection_accumulation_algo_detail;
-    using math::Vec3f;
     using field::Complex3;
+    using math::Vec3f;
     using ::rayd::shared::rt::TriangleHit;
 
     if (ray_index >= static_cast<unsigned int>(params.n_rays))
@@ -386,42 +330,35 @@ RAYD_DEVICE void reflection_accumulation_algo(
     if (params.active_mask != nullptr && params.active_mask[ray_index] == 0u)
         return;
 
-    Vec3f origin = math::make_vec3(
-        params.ray_ox[ray_index], params.ray_oy[ray_index], params.ray_oz[ray_index]);
-    Vec3f direction = math::normalize_f32(math::make_vec3(
-        params.ray_dx[ray_index], params.ray_dy[ray_index], params.ray_dz[ray_index]));
+    Vec3f origin = math::make_vec3(params.ray_ox[ray_index], params.ray_oy[ray_index], params.ray_oz[ray_index]);
+    Vec3f direction = math::normalize_f32(
+        math::make_vec3(params.ray_dx[ray_index], params.ray_dy[ray_index], params.ray_dz[ray_index]));
     const Vec3f initial_direction = direction;
-    Vec3f image_source = math::make_vec3(
-        params.tx_x[ray_index], params.tx_y[ray_index], params.tx_z[ray_index]);
-    const Vec3f tx_polarization = math::make_vec3(
-        params.tx_pol_x[ray_index], params.tx_pol_y[ray_index], params.tx_pol_z[ray_index]);
+    Vec3f image_source = math::make_vec3(params.tx_x[ray_index], params.tx_y[ray_index], params.tx_z[ray_index]);
+    const Vec3f tx_polarization =
+        math::make_vec3(params.tx_pol_x[ray_index], params.tx_pol_y[ray_index], params.tx_pol_z[ray_index]);
     Vec3f transverse_polarization =
         math::subtract(tx_polarization, math::scale(direction, math::dot(tx_polarization, direction)));
     transverse_polarization = math::dot(transverse_polarization, transverse_polarization) <= 1.0e-12f
-        ? stable_perpendicular(direction, tx_polarization)
-        : math::normalize_f32(transverse_polarization);
+                                  ? stable_perpendicular(direction, tx_polarization)
+                                  : math::normalize_f32(transverse_polarization);
     Complex3 field_value = field::c3_from_real(transverse_polarization);
     float path_length = 0.0f;
 
     for (int depth = 0; depth <= params.max_bounces; ++depth) {
-        const float tmax_input = depth == 0 && params.ray_tmax != nullptr
-            ? params.ray_tmax[ray_index]
-            : TraceTMax;
+        const float tmax_input = depth == 0 && params.ray_tmax != nullptr ? params.ray_tmax[ray_index] : TraceTMax;
         const float trace_tmax = is_finite(tmax_input) ? tmax_input : TraceTMax;
-        const TriangleHit hit =
-            trace_scene(params.split_mode, primary, secondary, origin, direction, trace_tmax);
+        const TriangleHit hit = trace_scene(params.split_mode, primary, secondary, origin, direction, trace_tmax);
         const float blocker_t = hit.hit != 0u ? hit.t : TraceTMax;
 
-        accumulate_plane<Params, Policy>(
-            params, ray_index, depth, origin, direction, blocker_t, image_source, field_value);
+        accumulate_plane<Params, Policy>(params, ray_index, depth, origin, direction, blocker_t, image_source,
+                                         field_value);
         if (hit.hit == 0u || depth >= params.max_bounces)
             break;
 
         const int shape_id = static_cast<int>(hit.instance);
         const int local_primitive = static_cast<int>(hit.prim);
-        const int face_offset = shape_id >= 0 && shape_id < params.n_meshes
-            ? params.face_offsets[shape_id]
-            : 0;
+        const int face_offset = shape_id >= 0 && shape_id < params.n_meshes ? params.face_offsets[shape_id] : 0;
         const int global_primitive = face_offset + local_primitive;
         const float bary_u = hit.bary_u;
         const float bary_v = hit.bary_v;
@@ -429,44 +366,28 @@ RAYD_DEVICE void reflection_accumulation_algo(
         Vec3f hit_point = math::add(origin, math::scale(direction, blocker_t));
         Vec3f geometric_normal = math::make_vec3(0.0f, 0.0f, 1.0f);
         if (global_primitive >= 0 && global_primitive < params.n_triangles) {
-            hit_point = math::make_vec3(
-                params.tri_p0_x[global_primitive] + bary_u * params.tri_e1_x[global_primitive] +
-                    bary_v * params.tri_e2_x[global_primitive],
-                params.tri_p0_y[global_primitive] + bary_u * params.tri_e1_y[global_primitive] +
-                    bary_v * params.tri_e2_y[global_primitive],
-                params.tri_p0_z[global_primitive] + bary_u * params.tri_e1_z[global_primitive] +
-                    bary_v * params.tri_e2_z[global_primitive]);
-            geometric_normal = math::normalize_f32(math::make_vec3(
-                params.tri_fn_x[global_primitive],
-                params.tri_fn_y[global_primitive],
-                params.tri_fn_z[global_primitive]));
+            hit_point = math::make_vec3(params.tri_p0_x[global_primitive] + bary_u * params.tri_e1_x[global_primitive] +
+                                            bary_v * params.tri_e2_x[global_primitive],
+                                        params.tri_p0_y[global_primitive] + bary_u * params.tri_e1_y[global_primitive] +
+                                            bary_v * params.tri_e2_y[global_primitive],
+                                        params.tri_p0_z[global_primitive] + bary_u * params.tri_e1_z[global_primitive] +
+                                            bary_v * params.tri_e2_z[global_primitive]);
+            geometric_normal = math::normalize_f32(math::make_vec3(params.tri_fn_x[global_primitive],
+                                                                   params.tri_fn_y[global_primitive],
+                                                                   params.tri_fn_z[global_primitive]));
         }
         if (math::dot(direction, geometric_normal) > 0.0f)
             geometric_normal = math::scale(geometric_normal, -1.0f);
 
         Vec3f reflected_direction;
         const float source_power = field::c3_power(field_value) * params.solid_angle_per_ray;
-        const Complex3 reflected_field = reflect_field_vector(
-            params,
-            field_value,
-            direction,
-            geometric_normal,
-            global_primitive,
-            reflected_direction);
+        const Complex3 reflected_field = reflect_field_vector(params, field_value, direction, geometric_normal,
+                                                              global_primitive, reflected_direction);
         if (field::c3_power(reflected_field) <= 0.0f)
             break;
 
-        store_wedge_event(
-            params,
-            ray_index,
-            depth,
-            global_primitive,
-            hit_point,
-            geometric_normal,
-            direction,
-            image_source,
-            source_power,
-            initial_direction);
+        store_wedge_event(params, ray_index, depth, global_primitive, hit_point, geometric_normal, direction,
+                          image_source, source_power, initial_direction);
 
         const float image_distance = math::dot(math::subtract(image_source, hit_point), geometric_normal);
         image_source = math::subtract(image_source, math::scale(geometric_normal, 2.0f * image_distance));
@@ -478,11 +399,9 @@ RAYD_DEVICE void reflection_accumulation_algo(
         const int next_depth = depth + 1;
         if (params.rr_depth > 0 && params.rr_prob < 1.0f && next_depth >= params.rr_depth) {
             const float field_power = field::c3_power(field_value);
-            const float continue_probability =
-                fminf(fmaxf(field_power, 1.0e-8f), fmaxf(params.rr_prob, 1.0e-8f));
-            if (uniform01(ray_index,
-                          static_cast<unsigned int>(next_depth),
-                          static_cast<unsigned int>(params.seed)) >= continue_probability)
+            const float continue_probability = fminf(fmaxf(field_power, 1.0e-8f), fmaxf(params.rr_prob, 1.0e-8f));
+            if (uniform01(ray_index, static_cast<unsigned int>(next_depth), static_cast<unsigned int>(params.seed)) >=
+                continue_probability)
                 break;
             const float roulette_scale = reciprocal_sqrt(fmaxf(continue_probability, 1.0e-8f));
             field_value.x = field::c_scale(field_value.x, roulette_scale);
@@ -491,8 +410,7 @@ RAYD_DEVICE void reflection_accumulation_algo(
         }
 
         if (params.stop_threshold > 0.0f) {
-            const float fspl = field::free_space_amplitude(
-                params.wavelength, path_length, Epsilon);
+            const float fspl = field::free_space_amplitude(params.wavelength, path_length, Epsilon);
             if (field::c3_power(field_value) * fspl * fspl <= params.stop_threshold)
                 break;
         }

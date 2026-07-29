@@ -1,49 +1,14 @@
 # Copyright Xingyu Chen.
 # Tests geometry Dr.Jit.
 
-import json
 import math
-import json
-import subprocess
-import sys
-import textwrap
 import unittest
 from pathlib import Path
 
+from tests.support.subprocess_cases import run_json_case
+
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def run_script(script: str, timeout: int = 120, check: bool = True):
-    result = subprocess.run(
-        [sys.executable, "-c", textwrap.dedent(script)],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        timeout=timeout,
-        check=False,
-    )
-    if check and result.returncode != 0:
-        raise AssertionError(
-            "Subprocess failed.\n"
-            f"Return code: {result.returncode}\n"
-            f"STDOUT:\n{result.stdout}\n"
-            f"STDERR:\n{result.stderr}"
-        )
-    return result
-
-
-def run_json_case(script: str, timeout: int = 120):
-    result = run_script(script, timeout=timeout, check=True)
-    lines = [line for line in result.stdout.splitlines() if line.strip()]
-    if not lines:
-        raise AssertionError(f"Subprocess produced no JSON output.\nSTDERR:\n{result.stderr}")
-    try:
-        return json.loads(lines[-1])
-    except json.JSONDecodeError as exc:
-        raise AssertionError(
-            f"Failed to parse JSON from subprocess.\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
-        ) from exc
 
 
 class GeometryCoreTests(unittest.TestCase):
@@ -1334,11 +1299,7 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertGreater(data["first_gradient"]["loss"], 0.0)
         self.assertGreater(data["second_gradient"]["loss"], 0.0)
         self.assertAlmostEqual(data["first_gradient"]["loss"], data["second_gradient"]["loss"], places=5)
-        self.assertAlmostEqual(
-            data["first_gradient"]["grad_z_sum"],
-            data["second_gradient"]["grad_z_sum"],
-            places=5,
-        )
+        self.assertAlmostEqual(data["first_gradient"]["grad_z_sum"], data["second_gradient"]["grad_z_sum"], places=5)
 
     def test_multi_mesh_hit_reports_shape_and_local_prim(self):
         data = run_json_case(
@@ -2342,18 +2303,21 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertEqual(data["face_offsets"], [0, 2, 3])
         self.assertEqual(data["edge_offsets"], [0, 5, 8])
         self.assertEqual(data["vertex_offsets"], [0, 4, 7])
-        self.assertEqual(data["topology_edge1"], {
-            "v0": 0,
-            "v1": 2,
-            "v0_global": 0,
-            "v1_global": 2,
-            "face0_global": 0,
-            "face1_global": 1,
-            "opposite0": 1,
-            "opposite1": 3,
-            "opposite0_global": 1,
-            "opposite1_global": 3,
-        })
+        self.assertEqual(
+            data["topology_edge1"],
+            {
+                "v0": 0,
+                "v1": 2,
+                "v0_global": 0,
+                "v1_global": 2,
+                "face0_global": 0,
+                "face1_global": 1,
+                "opposite0": 1,
+                "opposite1": 3,
+                "opposite0_global": 1,
+                "opposite1_global": 3,
+            },
+        )
         self.assertEqual(data["tri0_edges"], [0, 3, 1])
         self.assertEqual(data["tri1_edges"], [1, 4, 2])
         self.assertEqual(data["tri2_edges_local"], [0, 2, 1])
@@ -2407,20 +2371,19 @@ class GeometryCoreTests(unittest.TestCase):
 
         self.assertEqual(data["vertex_count"], 7)
         self.assertEqual(data["face_count"], 3)
-        self.assertEqual(data["vertices"], [
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [2.0, 0.0, 0.0],
-            [3.0, 0.0, 0.0],
-            [2.0, 1.0, 0.0],
-        ])
-        self.assertEqual(data["faces"], [
-            [0, 1, 2],
-            [0, 2, 3],
-            [4, 5, 6],
-        ])
+        self.assertEqual(
+            data["vertices"],
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [2.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+                [2.0, 1.0, 0.0],
+            ],
+        )
+        self.assertEqual(data["faces"], [[0, 1, 2], [0, 2, 3], [4, 5, 6]])
         self.assertEqual(data["shape_id"], [0, 0, 1])
         self.assertEqual(data["local_prim_id"], [0, 1, 0])
         self.assertEqual(data["global_prim_id"], [0, 1, 2])
@@ -2575,24 +2538,10 @@ class GeometryCoreTests(unittest.TestCase):
             """
         )
 
-        self.assertEqual(data["tri_edges_global"], [
-            [-1, 0, 1, 5, -1],
-            [-1, 3, 4, 7, -1],
-            [-1, 1, 2, 6, -1],
-        ])
-        self.assertEqual(data["tri_edges_local"], [
-            [-1, 0, 1, 0, -1],
-            [-1, 3, 4, 2, -1],
-            [-1, 1, 2, 1, -1],
-        ])
-        self.assertEqual(data["adj_faces_global"], [
-            [-1, 0, 2, -1],
-            [-1, 1, -1, -1],
-        ])
-        self.assertEqual(data["adj_faces_local"], [
-            [-1, 0, 0, -1],
-            [-1, 1, -1, -1],
-        ])
+        self.assertEqual(data["tri_edges_global"], [[-1, 0, 1, 5, -1], [-1, 3, 4, 7, -1], [-1, 1, 2, 6, -1]])
+        self.assertEqual(data["tri_edges_local"], [[-1, 0, 1, 0, -1], [-1, 3, 4, 2, -1], [-1, 1, 2, 1, -1]])
+        self.assertEqual(data["adj_faces_global"], [[-1, 0, 2, -1], [-1, 1, -1, -1]])
+        self.assertEqual(data["adj_faces_local"], [[-1, 0, 0, -1], [-1, 1, -1, -1]])
 
     def test_scene_edge_topology_stays_stable_across_pending_and_transform_updates(self):
         data = run_json_case(
@@ -3604,18 +3553,9 @@ class GeometryCoreTests(unittest.TestCase):
             self.assertAlmostEqual(sample["current_grad_z_sum"], 1.0, places=5)
             self.assertAlmostEqual(sample["other_grad_z_sum"], 0.0, places=6)
 
-        self.assertLessEqual(
-            data["final_counts"]["ad"],
-            data["warm_counts"]["ad"] + 64,
-        )
-        self.assertLessEqual(
-            data["final_counts"]["jit"],
-            data["warm_counts"]["jit"] + 64,
-        )
-        self.assertEqual(
-            data["version_after_updates"],
-            data["version_before"] + 16,
-        )
+        self.assertLessEqual(data["final_counts"]["ad"], data["warm_counts"]["ad"] + 64)
+        self.assertLessEqual(data["final_counts"]["jit"], data["warm_counts"]["jit"] + 64)
+        self.assertEqual(data["version_after_updates"], data["version_before"] + 16)
         self.assertFalse(data["pending"])
         self.assertEqual(data["updated_meshes"], 1)
         self.assertEqual(data["updated_vertex_meshes"], 1)
@@ -3853,6 +3793,7 @@ class GeometryCoreTests(unittest.TestCase):
                 self.assertGreater(data[bucket][mode]["min_ms"], 0.0, msg=f"{bucket}:{mode}")
                 self.assertGreater(data[bucket][mode]["avg_ms"], 0.0, msg=f"{bucket}:{mode}")
                 self.assertGreater(data[bucket][mode]["qps_m"], 0.0, msg=f"{bucket}:{mode}")
+
 
 if __name__ == "__main__":
     unittest.main()

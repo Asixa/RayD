@@ -33,9 +33,7 @@ def audit() -> dict[str, object]:
     ]
     library = library_path.read_text(encoding="utf-8")
     module = module_path.read_text(encoding="utf-8")
-    stable_text = "\n".join(
-        path.read_text(encoding="utf-8") for path in stable_sources
-    )
+    stable_text = "\n".join(path.read_text(encoding="utf-8") for path in stable_sources)
     legacy_ops = _ops(library)
     stable_ops = _ops(stable_text)
     module_exports = _ops(module)
@@ -47,13 +45,7 @@ def audit() -> dict[str, object]:
         if count:
             py_object_files[_display_path(path)] = count
 
-    hashed = [
-        TORCH_ROOT / "CMakeLists.txt",
-        library_path,
-        module_path,
-        runtime_path,
-        *stable_sources,
-    ]
+    hashed = [TORCH_ROOT / "CMakeLists.txt", library_path, module_path, runtime_path, *stable_sources]
     digest = hashlib.sha256()
     for path in hashed:
         digest.update(_display_path(path).encode())
@@ -82,10 +74,7 @@ def audit() -> dict[str, object]:
                 "uses_stable_registration": "STABLE_TORCH_LIBRARY" in stable_text,
             },
             "_legacy_ops": {
-                "sources": [
-                    _display_path(library_path),
-                    "src/bindings/legacy_anchor.cpp",
-                ],
+                "sources": [_display_path(library_path), "src/bindings/legacy_anchor.cpp"],
                 "operators": legacy_ops,
                 "operator_count": len(legacy_ops),
                 "owns_scene_custom_class": "m.class_<SceneHandle>" in library,
@@ -96,12 +85,8 @@ def audit() -> dict[str, object]:
         "migration": {
             "stable": stable_ops,
             "typed_native_candidates": {
-                "axial_edge_visibility_forward": (
-                    "dormant_same_graph_exact_optix_source_integration"
-                ),
-                "segment_penetration_complete_family": (
-                    "dormant_same_graph_batched_optix_fixed_winner_ad"
-                ),
+                "axial_edge_visibility_forward": ("dormant_same_graph_exact_optix_source_integration"),
+                "segment_penetration_complete_family": ("dormant_same_graph_batched_optix_fixed_winner_ad"),
             },
             "legacy_retained": {
                 "scene_custom_class_and_stateful_queries": (
@@ -115,9 +100,8 @@ def audit() -> dict[str, object]:
             },
             "retired": {
                 "plan13_extern_c_integration": (
-                    "All same-graph native consumers use the versioned typed "
-                    "rayd::torch integration surface."
-                ),
+                    "All same-graph native consumers use the versioned typed rayd::torch integration surface."
+                )
             },
         },
         "inventory": {

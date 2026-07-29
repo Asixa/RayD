@@ -1,4 +1,4 @@
 # Copyright Xingyu Chen.
-# Benchmarks init.
+# Declares the shared benchmark package.
 
 __all__ = []

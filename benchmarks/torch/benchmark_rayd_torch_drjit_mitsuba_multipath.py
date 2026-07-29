@@ -20,6 +20,22 @@ import torch
 import rayd.torch as rt
 
 try:
+    from benchmarks.common import (
+        diffraction_path_output_bytes as _dfr_path_output_bytes,
+        format_count as _format_count,
+        materialize_reflection_slots as _materialize_reflection_slots,
+        time_build as _time_build,
+    )
+except ImportError:  # pragma: no cover - supports direct script execution.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from benchmarks.common import (
+        diffraction_path_output_bytes as _dfr_path_output_bytes,
+        format_count as _format_count,
+        materialize_reflection_slots as _materialize_reflection_slots,
+        time_build as _time_build,
+    )
+
+try:
     from .benchmark_rayd_torch_drjit_mitsuba_stress import (
         RAYDI_ROOT,
         _cleanup_drjit,
@@ -42,13 +58,7 @@ SPEED_OF_LIGHT = 299_792_458.0
 WORKLOADS = ("reflection_trace", "diffraction_export")
 
 PRESETS: dict[str, dict[str, Any]] = {
-    "smoke": {
-        "ray_counts": [4_096],
-        "state_counts": [4_096],
-        "max_bounces": [2],
-        "repeats": 2,
-        "warmup": 1,
-    },
+    "smoke": {"ray_counts": [4_096], "state_counts": [4_096], "max_bounces": [2], "repeats": 2, "warmup": 1},
     "standard": {
         "ray_counts": [65_536, 1_048_576],
         "state_counts": [65_536, 1_048_576],
@@ -80,16 +90,6 @@ def _parse_int_list(values: list[str] | None, default: list[int]) -> list[int]:
     return out
 
 
-def _format_count(value: int) -> str:
-    if value >= 1_000_000_000:
-        return f"{value / 1_000_000_000:.3g}B"
-    if value >= 1_000_000:
-        return f"{value / 1_000_000:.3g}M"
-    if value >= 1_000:
-        return f"{value / 1_000:.3g}K"
-    return str(value)
-
-
 def _summarize_samples(samples_ms: list[float]) -> dict[str, Any]:
     ordered = sorted(samples_ms)
     return {
@@ -102,11 +102,7 @@ def _summarize_samples(samples_ms: list[float]) -> dict[str, Any]:
 
 
 def _measure(
-    fn: Callable[[], Any],
-    materialize: Callable[[Any], None],
-    sync: Callable[[], None],
-    repeats: int,
-    warmup: int,
+    fn: Callable[[], Any], materialize: Callable[[Any], None], sync: Callable[[], None], repeats: int, warmup: int
 ) -> dict[str, Any]:
     for _ in range(warmup):
         value = fn()
@@ -125,21 +121,9 @@ def _measure(
     return {**_summarize_samples(samples_ms), "last_value": last_value}
 
 
-def _time_build(fn: Callable[[], Any], sync: Callable[[], None]) -> tuple[Any, float]:
-    start = time.perf_counter()
-    value = fn()
-    sync()
-    return value, (time.perf_counter() - start) * 1000.0
-
-
 def _reflection_trace_output_bytes(ray_count: int, max_bounces: int) -> int:
     slot_count = ray_count * max_bounces
     return ray_count * 4 + slot_count * (4 + 4 + 4)
-
-
-def _dfr_path_output_bytes(capacity: int) -> int:
-    per_path = 1 + 6 * 4 + 4 + 3 * 2 * 4 + 3 * 3 * 4
-    return 4 + capacity * per_path
 
 
 def _base_metric(
@@ -184,11 +168,7 @@ def _torch_parallel_reflector_scene() -> tuple[rt.Scene, float]:
         device="cuda",
         dtype=torch.float32,
     )
-    faces = torch.tensor(
-        [[0, 1, 2], [0, 2, 3], [4, 5, 6], [4, 6, 7]],
-        device="cuda",
-        dtype=torch.int32,
-    )
+    faces = torch.tensor([[0, 1, 2], [0, 2, 3], [4, 5, 6], [4, 6, 7]], device="cuda", dtype=torch.int32)
     scene = rt.Scene()
     scene.add_mesh(rt.Mesh(vertices, faces))
     _, build_ms = _time_build(scene.build, torch.cuda.synchronize)
@@ -204,14 +184,7 @@ def _torch_reflection_ray(ray_count: int) -> rt.Ray:
     x = -0.9 + 1.8 * ix.to(torch.float32) / float(denom)
     y = -0.9 + 1.8 * iy.to(torch.float32) / float(denom)
     origins = torch.stack((x, y, torch.full_like(x, 0.5)), dim=1).contiguous()
-    directions = torch.stack(
-        (
-            torch.zeros_like(x),
-            torch.zeros_like(x),
-            torch.ones_like(x),
-        ),
-        dim=1,
-    ).contiguous()
+    directions = torch.stack((torch.zeros_like(x), torch.zeros_like(x), torch.ones_like(x)), dim=1).contiguous()
     return rt.Ray(origins, directions)
 
 
@@ -249,9 +222,7 @@ def run_C_reflection_trace(args: argparse.Namespace, ray_count: int, max_bounces
 
 def _torch_dfr_scene() -> tuple[rt.Scene, float]:
     vertices = torch.tensor(
-        [[-1.0, -1.0, 10.0], [1.0, -1.0, 10.0], [-1.0, 1.0, 10.0]],
-        device="cuda",
-        dtype=torch.float32,
+        [[-1.0, -1.0, 10.0], [1.0, -1.0, 10.0], [-1.0, 1.0, 10.0]], device="cuda", dtype=torch.float32
     )
     faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
     scene = rt.Scene()
@@ -314,12 +285,7 @@ def run_C_diffraction_export(args: argparse.Namespace, state_count: int) -> dict
 
     def call_kernel():
         paths = scene.trace_dfr_paths(
-            tx_positions=tx,
-            rx_positions=rx,
-            states=states,
-            material=material,
-            max_paths=state_count,
-            wavelength=0.125,
+            tx_positions=tx, rx_positions=rx, states=states, material=material, max_paths=state_count, wavelength=0.125
         )
         return (
             paths.count,
@@ -337,9 +303,7 @@ def run_C_diffraction_export(args: argparse.Namespace, state_count: int) -> dict
     measured = _measure(call_kernel, lambda _value: None, torch.cuda.synchronize, args.repeats, args.warmup)
     count, valid, _rx_id, _edge0, delay, _field_x_re, _field_x_im, _p0, _p1, _p2 = measured.pop("last_value")
     valid_count_tensor, checksum = torch.ops.rayd_torch.diffraction_path_stats(
-        count.contiguous(),
-        valid.contiguous(),
-        delay.contiguous(),
+        count.contiguous(), valid.contiguous(), delay.contiguous()
     )
     valid_count = int(valid_count_tensor[0].item())
     result = _base_metric(
@@ -382,20 +346,13 @@ def _rayd_reflection_ray(rayd: Any, cuda: Any, dr: Any, ray_count: int) -> Any:
     y = -0.9 + 1.8 * cuda.Float(iy) / denom
     origin = cuda.Array3f(x, y, dr.full(cuda.Float, 0.5, ray_count))
     direction = cuda.Array3f(
-        dr.zeros(cuda.Float, ray_count),
-        dr.zeros(cuda.Float, ray_count),
-        dr.full(cuda.Float, 1.0, ray_count),
+        dr.zeros(cuda.Float, ray_count), dr.zeros(cuda.Float, ray_count), dr.full(cuda.Float, 1.0, ray_count)
     )
     return rayd.Ray(origin, direction)
 
 
 def run_rayd_reflection_trace(
-    args: argparse.Namespace,
-    rayd: Any,
-    cuda: Any,
-    dr: Any,
-    ray_count: int,
-    max_bounces: int,
+    args: argparse.Namespace, rayd: Any, cuda: Any, dr: Any, ray_count: int, max_bounces: int
 ) -> dict[str, Any]:
     scene, build_ms = _rayd_parallel_reflector_scene(rayd, cuda, dr)
     ray = _rayd_reflection_ray(rayd, cuda, dr, ray_count)
@@ -443,56 +400,38 @@ def _rayd_dfr_states(cuda: Any, dr: Any, state_count: int) -> Any:
     states.count = state_count
     states.edge_index = dr.arange(cuda.Int, state_count)
     states.edge_pos = cuda.Array3f(
-        dr.zeros(cuda.Float, state_count),
-        dr.zeros(cuda.Float, state_count),
-        dr.zeros(cuda.Float, state_count),
+        dr.zeros(cuda.Float, state_count), dr.zeros(cuda.Float, state_count), dr.zeros(cuda.Float, state_count)
     )
     states.edge_dir = cuda.Array3f(
-        dr.full(cuda.Float, 1.0, state_count),
-        dr.zeros(cuda.Float, state_count),
-        dr.zeros(cuda.Float, state_count),
+        dr.full(cuda.Float, 1.0, state_count), dr.zeros(cuda.Float, state_count), dr.zeros(cuda.Float, state_count)
     )
     states.edge_t_min = dr.full(cuda.Float, -0.5, state_count)
     states.edge_t_max = dr.full(cuda.Float, 0.5, state_count)
     states.n0 = cuda.Array3f(
-        dr.zeros(cuda.Float, state_count),
-        dr.full(cuda.Float, 1.0, state_count),
-        dr.zeros(cuda.Float, state_count),
+        dr.zeros(cuda.Float, state_count), dr.full(cuda.Float, 1.0, state_count), dr.zeros(cuda.Float, state_count)
     )
     states.n1 = cuda.Array3f(
-        dr.zeros(cuda.Float, state_count),
-        dr.full(cuda.Float, -1.0, state_count),
-        dr.zeros(cuda.Float, state_count),
+        dr.zeros(cuda.Float, state_count), dr.full(cuda.Float, -1.0, state_count), dr.zeros(cuda.Float, state_count)
     )
     states.prim0 = dr.full(cuda.Int, -1, state_count)
     states.prim1 = dr.full(cuda.Int, -1, state_count)
     states.exterior_angle = dr.full(cuda.Float, 1.5 * math.pi, state_count)
     states.src = cuda.Array3f(
-        dr.zeros(cuda.Float, state_count),
-        dr.zeros(cuda.Float, state_count),
-        dr.full(cuda.Float, 1.0, state_count),
+        dr.zeros(cuda.Float, state_count), dr.zeros(cuda.Float, state_count), dr.full(cuda.Float, 1.0, state_count)
     )
     states.src_power = dr.full(cuda.Float, 2.0, state_count)
     states.wi = cuda.Array3f(
-        dr.zeros(cuda.Float, state_count),
-        dr.zeros(cuda.Float, state_count),
-        dr.full(cuda.Float, -1.0, state_count),
+        dr.zeros(cuda.Float, state_count), dr.zeros(cuda.Float, state_count), dr.full(cuda.Float, -1.0, state_count)
     )
     states.d0 = cuda.Array3f(
-        dr.zeros(cuda.Float, state_count),
-        dr.zeros(cuda.Float, state_count),
-        dr.full(cuda.Float, -1.0, state_count),
+        dr.zeros(cuda.Float, state_count), dr.zeros(cuda.Float, state_count), dr.full(cuda.Float, -1.0, state_count)
     )
     states.prefix_depth = dr.full(cuda.Int, 0, state_count)
     return states
 
 
 def run_rayd_diffraction_export(
-    args: argparse.Namespace,
-    rayd: Any,
-    cuda: Any,
-    dr: Any,
-    state_count: int,
+    args: argparse.Namespace, rayd: Any, cuda: Any, dr: Any, state_count: int
 ) -> dict[str, Any]:
     scene = rayd.Scene()
     vertices = cuda.Array3f([-1.0, 1.0, -1.0], [-1.0, -1.0, 1.0], [10.0, 10.0, 10.0])
@@ -570,14 +509,8 @@ def _mitsuba_parallel_reflector_scene(mi: Any, dr: Any) -> tuple[Any, float]:
         return mi.load_dict(
             {
                 "type": "scene",
-                "lower": {
-                    "type": "rectangle",
-                    "to_world": transform.translate([0.0, 0.0, 0.0]),
-                },
-                "upper": {
-                    "type": "rectangle",
-                    "to_world": transform.translate([0.0, 0.0, 1.0]),
-                },
+                "lower": {"type": "rectangle", "to_world": transform.translate([0.0, 0.0, 0.0])},
+                "upper": {"type": "rectangle", "to_world": transform.translate([0.0, 0.0, 1.0])},
             }
         )
 
@@ -594,19 +527,13 @@ def _mitsuba_reflection_ray(mi: Any, dr: Any, ray_count: int) -> Any:
     y = -0.9 + 1.8 * mi.Float(iy) / denom
     origin = mi.Point3f(x, y, dr.full(mi.Float, 0.5, ray_count))
     direction = mi.Vector3f(
-        dr.zeros(mi.Float, ray_count),
-        dr.zeros(mi.Float, ray_count),
-        dr.full(mi.Float, 1.0, ray_count),
+        dr.zeros(mi.Float, ray_count), dr.zeros(mi.Float, ray_count), dr.full(mi.Float, 1.0, ray_count)
     )
     return mi.Ray3f(origin, direction)
 
 
 def run_mitsuba_reflection_trace(
-    args: argparse.Namespace,
-    mi: Any,
-    dr: Any,
-    ray_count: int,
-    max_bounces: int,
+    args: argparse.Namespace, mi: Any, dr: Any, ray_count: int, max_bounces: int
 ) -> dict[str, Any]:
     scene, build_ms = _mitsuba_parallel_reflector_scene(mi, dr)
     ray = _mitsuba_reflection_ray(mi, dr, ray_count)
@@ -628,12 +555,7 @@ def run_mitsuba_reflection_trace(
                 hit_point = origin + direction * pi.t
                 normal = si.n
             else:
-                si = scene.ray_intersect(
-                    bounce_ray,
-                    ray_flags=mi.RayFlags.Minimal,
-                    coherent=True,
-                    active=active,
-                )
+                si = scene.ray_intersect(bounce_ray, ray_flags=mi.RayFlags.Minimal, coherent=True, active=active)
                 hit = active & si.is_valid()
                 hit_t = si.t
                 prim_index = si.prim_index
@@ -649,11 +571,10 @@ def run_mitsuba_reflection_trace(
         checksum = dr.sum(dr.concat(ts))
         return ts, prim_ids, valid_count, slot_count, checksum
 
-    def materialize(value: Any) -> None:
-        ts, prim_ids, valid_count, slot_count, checksum = value
-        dr.eval(*ts, *prim_ids, valid_count, slot_count, checksum)
+    measured = _measure(
+        call_kernel, lambda value: _materialize_reflection_slots(dr, value), dr.sync_thread, args.repeats, args.warmup
+    )
 
-    measured = _measure(call_kernel, materialize, dr.sync_thread, args.repeats, args.warmup)
     _ts, _prim_ids, valid_count, slot_count, checksum = measured.pop("last_value")
     return _base_metric(
         backend="mitsuba_path",
@@ -703,10 +624,7 @@ def _mi_segment_visible(mi: Any, dr: Any, scene: Any, start: Any, end: Any, eps:
 
 
 def run_mitsuba_diffraction_export(args: argparse.Namespace, mi: Any, dr: Any, state_count: int) -> dict[str, Any]:
-    scene, build_ms = _time_build(
-        lambda: _mitsuba_scene_from_sionna(args.sionna_root, "diffraction"),
-        dr.sync_thread,
-    )
+    scene, build_ms = _time_build(lambda: _mitsuba_scene_from_sionna(args.sionna_root, "diffraction"), dr.sync_thread)
     tx = _mi_repeat_point(mi, (0.0, 0.0, 1.0), state_count)
     rx = _mi_repeat_point(mi, (0.0, 0.0, -1.0), state_count)
     edge_pos = _mi_repeat_point(mi, (0.0, 0.0, 0.0), state_count)
@@ -780,11 +698,7 @@ def _run_backend_case(
     except Exception as exc:
         if args.fail_fast:
             raise
-        return {
-            "backend": backend,
-            "workload": workload,
-            "error": f"{type(exc).__name__}: {exc}",
-        }
+        return {"backend": backend, "workload": workload, "error": f"{type(exc).__name__}: {exc}"}
     raise ValueError(f"unsupported backend/workload pair: {backend}/{workload}")
 
 
@@ -871,17 +785,10 @@ def _plot_results(results: dict[str, Any], output_dir: Path) -> list[str]:
     output_dir.mkdir(parents=True, exist_ok=True)
     backend_order = ["torch", "rayd_path", "mitsuba_path"]
     colors = {"torch": "#2563eb", "rayd_path": "#16a34a", "mitsuba_path": "#c2410c"}
-    backend_titles = {
-        "torch": "RayD Torch",
-        "rayd_path": "RayD path",
-        "mitsuba_path": "Mitsuba path",
-    }
+    backend_titles = {"torch": "RayD Torch", "rayd_path": "RayD path", "mitsuba_path": "Mitsuba path"}
     workloads = [workload for workload in WORKLOADS if any(row["workload"] == workload for row in rows)]
     fig, axes = plt.subplots(
-        len(workloads),
-        1,
-        figsize=(max(8.5, 1.2 * max(1, len(rows))), 4.8 * len(workloads)),
-        squeeze=False,
+        len(workloads), 1, figsize=(max(8.5, 1.2 * max(1, len(rows))), 4.8 * len(workloads)), squeeze=False
     )
     titles = {
         "reflection_trace": "Reflection trace: parallel reflectors, public reduced path fields",
@@ -901,13 +808,11 @@ def _plot_results(results: dict[str, Any], output_dir: Path) -> list[str]:
             values = []
             for label in cases:
                 match = next(
-                    (row for row in workload_rows if row["backend"] == backend and row["case_label"] == label),
-                    None,
+                    (row for row in workload_rows if row["backend"] == backend and row["case_label"] == label), None
                 )
                 values.append(float(match["avg_ms"]) if match else float("nan"))
             offsets = [
-                case_index + (backend_index - (len(backends) - 1) / 2) * width
-                for case_index in range(len(cases))
+                case_index + (backend_index - (len(backends) - 1) / 2) * width for case_index in range(len(cases))
             ]
             ax.bar(offsets, values, width=width, label=backend_titles.get(backend, backend), color=colors.get(backend))
         ax.set_xticks(range(len(cases)))
@@ -933,21 +838,10 @@ def _build_cases(args: argparse.Namespace) -> list[dict[str, Any]]:
     if "reflection_trace" in args.workloads:
         for ray_count in args.ray_counts:
             for max_bounces in args.max_bounces_values:
-                cases.append(
-                    {
-                        "workload": "reflection_trace",
-                        "ray_count": ray_count,
-                        "max_bounces": max_bounces,
-                    }
-                )
+                cases.append({"workload": "reflection_trace", "ray_count": ray_count, "max_bounces": max_bounces})
     if "diffraction_export" in args.workloads:
         for state_count in args.state_counts:
-            cases.append(
-                {
-                    "workload": "diffraction_export",
-                    "state_count": state_count,
-                }
-            )
+            cases.append({"workload": "diffraction_export", "state_count": state_count})
     return cases
 
 
@@ -1014,7 +908,11 @@ def main() -> None:
         backends: dict[str, Any] = {}
         for backend in args.backends:
             if backend == "mitsuba_path" and mitsuba_bundle is None:
-                backends[backend] = {"backend": backend, "workload": case_cfg["workload"], "error": "Mitsuba is not installed."}
+                backends[backend] = {
+                    "backend": backend,
+                    "workload": case_cfg["workload"],
+                    "error": "Mitsuba is not installed.",
+                }
                 continue
             result = _run_backend_case(
                 args,

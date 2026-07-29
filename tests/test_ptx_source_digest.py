@@ -61,14 +61,11 @@ class PtxSourceDigestTest(unittest.TestCase):
     def test_record_covers_every_committed_ptx_header_and_option(self):
         # A ninth PTX module, or a header dropped from the record, must not be
         # able to slip past the guard by simply not being mentioned.
-        recorded_headers = sorted(
-            module["header"] for module in RECORD["modules"].values())
-        self.assertEqual(
-            _committed_ptx_headers(ROOT / "generated" / "drjit" / "ptx"), recorded_headers)
+        recorded_headers = sorted(module["header"] for module in RECORD["modules"].values())
+        self.assertEqual(_committed_ptx_headers(ROOT / "generated" / "drjit" / "ptx"), recorded_headers)
 
         cmake = CMAKELISTS.read_text(encoding="utf-8")
-        declared_options = set(
-            re.findall(r"^option\((RAYD_REGENERATE_\w+_PTX)", cmake, re.MULTILINE))
+        declared_options = set(re.findall(r"^option\((RAYD_REGENERATE_\w+_PTX)", cmake, re.MULTILINE))
         recorded_options = {m["option"] for m in RECORD["modules"].values()}
         self.assertEqual(declared_options, recorded_options)
         self.assertEqual(len(recorded_options), len(RECORD["modules"]))
@@ -89,24 +86,27 @@ class PtxSourceDigestTest(unittest.TestCase):
                 added = sorted(set(computed["sources"]) - set(recorded["sources"]))
                 removed = sorted(set(recorded["sources"]) - set(computed["sources"]))
                 self.assertEqual(
-                    computed["source_sha256"], recorded["source_sha256"],
+                    computed["source_sha256"],
+                    recorded["source_sha256"],
                     f"{name} PTX sources changed since the record was written "
                     f"(added={added}, removed={removed}). Regenerate the PTX with "
                     f"-D{recorded['option']}=ON, copy the build-tree header over "
                     f"{recorded['header']}, then run "
-                    f"'python drjit/scripts/audit_ptx_sources.py --write'.")
+                    f"'python drjit/scripts/audit_ptx_sources.py --write'.",
+                )
                 self.assertEqual(
-                    computed["external_includes"], recorded["external_includes"],
+                    computed["external_includes"],
+                    recorded["external_includes"],
                     f"{name} gained or lost an out-of-repository include; its "
                     f"device code may have changed without any tracked file "
-                    f"changing.")
+                    f"changing.",
+                )
 
     def test_committed_ptx_headers_match_their_recorded_digest(self):
         for name, module in RECORD["modules"].items():
             with self.subTest(module=name):
                 header = ROOT / module["header"]
-                digest = hashlib.sha256(
-                    header.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+                digest = hashlib.sha256(header.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
                 self.assertEqual(digest, module["header_sha256"])
 
     def test_cmake_depends_equals_the_include_closure(self):
@@ -115,9 +115,11 @@ class PtxSourceDigestTest(unittest.TestCase):
         # missing a file and the guard is leaky on exactly that file.
         drift = AUDIT.depends_drift()
         self.assertEqual(
-            drift, {},
+            drift,
+            {},
             "rayd_embed_ptx() DEPENDS is out of sync with the include closure in "
-            f"{CMAKELISTS.relative_to(ROOT).as_posix()}: {json.dumps(drift, indent=2)}")
+            f"{CMAKELISTS.relative_to(ROOT).as_posix()}: {json.dumps(drift, indent=2)}",
+        )
 
     def test_nvcc_ptx_flags_are_recorded_verbatim(self):
         # The digest covers sources only, so the compile flags are pinned here.
@@ -127,13 +129,17 @@ class PtxSourceDigestTest(unittest.TestCase):
         self.assertEqual(flags, AUDIT.NVCC_PTX_FLAGS)
         cmake_text = RAYD_CUDA_CMAKE.read_text(encoding="utf-8")
         self.assertEqual(
-            cmake_text.count(flags), 2,
+            cmake_text.count(flags),
+            2,
             f"expected the PTX nvcc flags '{flags}' exactly twice in "
             f"{RAYD_CUDA_CMAKE.relative_to(ROOT).as_posix()} (Windows and POSIX "
-            f"branches of rayd_embed_ptx)")
+            f"branches of rayd_embed_ptx)",
+        )
         self.assertNotIn(
-            "-ptx ", CMAKELISTS.read_text(encoding="utf-8"),
-            "PTX nvcc flags belong to rayd_embed_ptx(), not to a call site")
+            "-ptx ",
+            CMAKELISTS.read_text(encoding="utf-8"),
+            "PTX nvcc flags belong to rayd_embed_ptx(), not to a call site",
+        )
 
     def test_configure_time_check_is_wired(self):
         # Secondary to this test file, but it is what tells a developer mid-edit.
@@ -142,7 +148,9 @@ class PtxSourceDigestTest(unittest.TestCase):
         self.assertIn("scripts/audit_ptx_sources.py", cmake)
         self.assertIn(
             'option(RAYD_STRICT_PTX_SOURCE_CHECK "Fail configuration when the '
-            'committed PTX source-identity record is stale." OFF)', cmake)
+            'committed PTX source-identity record is stale." OFF)',
+            cmake,
+        )
         self.assertIn("RAYD_STRICT_PTX_SOURCE_CHECK)\n        message(FATAL_ERROR", cmake)
 
     def test_adoption_record_does_not_overclaim(self):
@@ -178,14 +186,12 @@ class PtxSourceDigestTest(unittest.TestCase):
         # cannot go stale. Keep it that way.
         self.assertEqual(_committed_ptx_headers(ROOT / "torch"), [])
         torch_cmake = TORCH_CMAKELISTS.read_text(encoding="utf-8")
-        headers = re.findall(
-            r"^\s*set\(RAYD_TORCH_\w*PTX_HEADER\s+\"([^\"]+)\"\)",
-            torch_cmake, re.MULTILINE)
+        headers = re.findall(r"^\s*set\(RAYD_TORCH_\w*PTX_HEADER\s+\"([^\"]+)\"\)", torch_cmake, re.MULTILINE)
         self.assertTrue(headers)
         for header in headers:
             self.assertTrue(
-                header.startswith("${CMAKE_CURRENT_BINARY_DIR}/"),
-                f"Torch PTX header escapes the binary dir: {header}")
+                header.startswith("${CMAKE_CURRENT_BINARY_DIR}/"), f"Torch PTX header escapes the binary dir: {header}"
+            )
 
 
 if __name__ == "__main__":

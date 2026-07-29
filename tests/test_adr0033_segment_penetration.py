@@ -50,13 +50,9 @@ class Adr0033SegmentPenetrationTests(unittest.TestCase):
 
     def test_one_optix_launch_contains_the_d_plus_one_march(self) -> None:
         host = read("src/penetration/penetration.cpp")
-        device = read(
-            "src/penetration/penetration_optix.cu"
-        )
+        device = read("src/penetration/penetration_optix.cu")
         self.assertEqual(host.count("->launch("), 1)
-        self.assertIn(
-            "validated.segment_count > 0 && request.input_active_any", host
-        )
+        self.assertIn("validated.segment_count > 0 && request.input_active_any", host)
         self.assertEqual(device.count("optixTrace("), 1)
         self.assertIn("probe <= params.hit_capacity", device)
         self.assertIn("probe == params.hit_capacity", device)
@@ -69,9 +65,7 @@ class Adr0033SegmentPenetrationTests(unittest.TestCase):
         self.assertIn("rayd::shared::SmallEpsilon", device)
 
     def test_all_inactive_validation_and_batch_sanitize_are_device_resident(self) -> None:
-        cuda = read(
-            "src/penetration/penetration.cu"
-        )
+        cuda = read("src/penetration/penetration.cu")
         host = read("src/penetration/penetration.cpp")
         self.assertIn("!input_active_any && input_active != nullptr", cuda)
         self.assertIn("atomicOr(capacity_failure_state, failure_bit)", cuda)
@@ -85,19 +79,12 @@ class Adr0033SegmentPenetrationTests(unittest.TestCase):
         self.assertIn("t[index] = -1.0f", cuda)
         self.assertNotIn("overflow[index] = 0u", cuda[cuda.index("sanitize_kernel") :])
         family = host + cuda
-        for forbidden in (
-            "cudaMemcpyDeviceToHost",
-            "cudaStreamSynchronize",
-            ".item(",
-            "nonzero",
-        ):
+        for forbidden in ("cudaMemcpyDeviceToHost", "cudaStreamSynchronize", ".item(", "nonzero"):
             self.assertNotIn(forbidden, family)
 
     def test_tape_freezes_restart_and_ad_never_retraces(self) -> None:
         header = read("include/rayd/penetration.h")
-        cuda = read(
-            "src/penetration/penetration.cu"
-        )
+        cuda = read("src/penetration/penetration.cu")
         for field in (
             "tape_primitive_id",
             "tape_barycentric",
@@ -184,22 +171,15 @@ class Adr0033SegmentPenetrationTests(unittest.TestCase):
 
     def test_family_is_typed_only_and_documented(self) -> None:
         library = read("src/bindings/library.cpp")
-        python_roots = (
-            ROOT / "python" / "rayd" / "torch",
-            ROOT / "python" / "rayd" / "_impl",
-        )
+        python_roots = (ROOT / "python" / "rayd" / "torch", ROOT / "python" / "rayd" / "_impl")
         python_sources = "\n".join(
-            path.read_text(encoding="utf-8")
-            for root in python_roots
-            for path in root.rglob("*.py")
+            path.read_text(encoding="utf-8") for root in python_roots for path in root.rglob("*.py")
         )
         self.assertNotIn("segment_penetration", library)
         self.assertNotIn("segment_penetration", python_sources)
         audit = json.loads(read("torch/abi_audit.json"))
         self.assertEqual(
-            audit["migration"]["typed_native_candidates"][
-                "segment_penetration_complete_family"
-            ],
+            audit["migration"]["typed_native_candidates"]["segment_penetration_complete_family"],
             "dormant_same_graph_batched_optix_fixed_winner_ad",
         )
         self.assertTrue((ROOT / "docs/adr/0033-batched-segment-penetration.md").is_file())

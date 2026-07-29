@@ -42,9 +42,7 @@ def sphere_grid(size: int = 65) -> tuple[Tensor, Tensor, Tensor, Tensor]:
     position = torch.zeros(3, device=DEVICE, dtype=DTYPE)
     rotation = torch.tensor(IDENTITY_QUAT, device=DEVICE, dtype=DTYPE)
     scale = torch.full((3,), 2.0, device=DEVICE, dtype=DTYPE)
-    values = bake(
-        lambda p: sphere_sdf(p, position, 0.5), (size, size, size), position, rotation, scale
-    )
+    values = bake(lambda p: sphere_sdf(p, position, 0.5), (size, size, size), position, rotation, scale)
     return values, position, rotation, scale
 
 
@@ -54,18 +52,12 @@ def oriented_case(size: int = 65) -> tuple[Tensor, ...]:
     position = torch.tensor([0.1, -0.2, 0.05], device=DEVICE, dtype=DTYPE)
     rotation = 1.3 * quat((0.3, 0.5, 0.8), 0.7, position)  # deliberately unnormalized
     scale = torch.tensor([2.0, 1.4, 1.6], device=DEVICE, dtype=DTYPE)
-    values = bake(
-        lambda p: sphere_sdf(p, position, 0.45), (size, size, size), position, rotation, scale
-    )
+    values = bake(lambda p: sphere_sdf(p, position, 0.45), (size, size, size), position, rotation, scale)
     origins = position + torch.tensor(
-        [[0.05, -0.1, -2.0], [-0.12, 0.08, -2.0], [0.0, 0.15, -2.0]],
-        device=DEVICE,
-        dtype=DTYPE,
+        [[0.05, -0.1, -2.0], [-0.12, 0.08, -2.0], [0.0, 0.15, -2.0]], device=DEVICE, dtype=DTYPE
     )
     directions = 1.7 * torch.tensor(  # deliberately unnormalized
-        [[0.02, 0.01, 1.0], [-0.03, 0.02, 1.0], [0.0, -0.04, 1.0]],
-        device=DEVICE,
-        dtype=DTYPE,
+        [[0.02, 0.01, 1.0], [-0.03, 0.02, 1.0], [0.0, -0.04, 1.0]], device=DEVICE, dtype=DTYPE
     )
     return values, position, rotation, scale, origins, directions
 
@@ -73,9 +65,7 @@ def oriented_case(size: int = 65) -> tuple[Tensor, ...]:
 # Impact parameters sweeping through the tangent point of the radius-0.5 sphere.
 def grazing_rays() -> tuple[Tensor, Tensor]:
     offsets = torch.linspace(0.45, 0.55, 21, device=DEVICE, dtype=DTYPE)
-    origins = torch.stack(
-        [offsets, torch.zeros_like(offsets), torch.full_like(offsets, -3.0)], dim=-1
-    )
+    origins = torch.stack([offsets, torch.zeros_like(offsets), torch.full_like(offsets, -3.0)], dim=-1)
     directions = torch.zeros_like(origins)
     directions[:, 2] = 1.0
     return origins, directions
@@ -85,11 +75,7 @@ def grazing_rays() -> tuple[Tensor, Tensor]:
 def objective(result: SdfIntersection | ref.SdfIntersectionRef, weights: Tensor) -> Tensor:
     finite_t = torch.where(result.hit_mask, result.t, torch.zeros_like(result.t))
     rows = weights.unsqueeze(-1)
-    return (
-        (finite_t * weights).sum()
-        + (result.position * rows).sum()
-        + (result.normal * rows).sum()
-    )
+    return (finite_t * weights).sum() + (result.position * rows).sum() + (result.normal * rows).sum()
 
 
 @REQUIRES_CUDA
@@ -115,14 +101,9 @@ class SdfIntersectForwardTests(unittest.TestCase):
 
         result = sdf_intersect(grid, origins, directions)
         self.assertTrue(bool(result.hit_mask.all()))
+        torch.testing.assert_close(result.t, sphere_hit_t(origins, directions, grid.position, 0.5), atol=1e-3, rtol=0.0)
         torch.testing.assert_close(
-            result.t, sphere_hit_t(origins, directions, grid.position, 0.5), atol=1e-3, rtol=0.0
-        )
-        torch.testing.assert_close(
-            result.normal,
-            result.position / result.position.norm(dim=-1, keepdim=True),
-            atol=5e-2,
-            rtol=0.0,
+            result.normal, result.position / result.position.norm(dim=-1, keepdim=True), atol=5e-2, rtol=0.0
         )
 
     def test_ray_starting_inside_marches_outward(self) -> None:
@@ -132,9 +113,7 @@ class SdfIntersectForwardTests(unittest.TestCase):
 
         result = sdf_intersect(grid, origins, directions)
         self.assertTrue(bool(result.hit_mask.all()))
-        torch.testing.assert_close(
-            result.t, torch.full((1,), 0.5, device=DEVICE), atol=1e-3, rtol=0.0
-        )
+        torch.testing.assert_close(result.t, torch.full((1,), 0.5, device=DEVICE), atol=1e-3, rtol=0.0)
         # A signed distance field's gradient points outward on both sides.
         torch.testing.assert_close(result.normal, directions, atol=5e-2, rtol=0.0)
 
@@ -146,9 +125,7 @@ class SdfIntersectForwardTests(unittest.TestCase):
 
         result = sdf_intersect(grid, origins, directions)
         clipped = sdf_intersect(grid, origins[3:], directions[3:], tmax=1.0)
-        torch.testing.assert_close(
-            result.hit_mask, torch.tensor([True, False, False, True], device=DEVICE)
-        )
+        torch.testing.assert_close(result.hit_mask, torch.tensor([True, False, False, True], device=DEVICE))
         self.assertFalse(bool(clipped.hit_mask.any()))
 
         missed = torch.cat([result.t[1:3], clipped.t])
@@ -216,9 +193,7 @@ class SdfIntersectGradientTests(unittest.TestCase):
     # Gradients of `objective` for every one of the six supported inputs. The
     # reference result exposes the same field names, so it feeds the same
     # objective as the native one.
-    def gradients(
-        self, inputs: tuple[Tensor, ...], weights: Tensor, native: bool
-    ) -> list[Tensor]:
+    def gradients(self, inputs: tuple[Tensor, ...], weights: Tensor, native: bool) -> list[Tensor]:
         tracked = [value.detach().clone().requires_grad_(True) for value in inputs]
         grid = tracked[:4]
         if native:
@@ -232,18 +207,11 @@ class SdfIntersectGradientTests(unittest.TestCase):
         inputs = oriented_case()
         weights = torch.tensor([1.0, 2.0, 3.0], device=DEVICE, dtype=DTYPE)
         for name, expected, actual in zip(
-            INPUT_NAMES,
-            self.gradients(inputs, weights, False),
-            self.gradients(inputs, weights, True),
+            INPUT_NAMES, self.gradients(inputs, weights, False), self.gradients(inputs, weights, True)
         ):
             with self.subTest(input=name):
                 self.assertGreater(float(expected.abs().max()), 1e-3)
-                torch.testing.assert_close(
-                    actual,
-                    expected,
-                    atol=1e-4 * float(expected.abs().max()),
-                    rtol=1e-4,
-                )
+                torch.testing.assert_close(actual, expected, atol=1e-4 * float(expected.abs().max()), rtol=1e-4)
 
     def test_gradcheck_on_a_small_grid(self) -> None:
         """A plane field is reproduced exactly by trilinear interpolation, so the
@@ -253,38 +221,24 @@ class SdfIntersectGradientTests(unittest.TestCase):
         rotation = torch.tensor(IDENTITY_QUAT, device=DEVICE, dtype=DTYPE)
         scale = torch.full((3,), 2.0, device=DEVICE, dtype=DTYPE)
         values = bake(lambda p: p[..., 2] - 0.1, (5, 5, 5), position, rotation, scale)
-        origins = torch.tensor(
-            [[0.05, -0.1, -3.0], [-0.12, 0.08, -3.0]], device=DEVICE, dtype=DTYPE
-        )
-        directions = torch.tensor(
-            [[0.02, 0.01, 1.0], [-0.03, 0.02, 1.0]], device=DEVICE, dtype=DTYPE
-        )
+        origins = torch.tensor([[0.05, -0.1, -3.0], [-0.12, 0.08, -3.0]], device=DEVICE, dtype=DTYPE)
+        directions = torch.tensor([[0.02, 0.01, 1.0], [-0.03, 0.02, 1.0]], device=DEVICE, dtype=DTYPE)
         inputs = tuple(
             value.detach().clone().requires_grad_(True)
             for value in (values, position, rotation, scale, origins, directions)
         )
 
         def evaluate(*tensors: Tensor) -> tuple[Tensor, Tensor, Tensor]:
-            result = sdf_intersect(
-                SdfGrid(*tensors[:4]), tensors[4], tensors[5], eps_hit=1e-6, max_steps=128
-            )
+            result = sdf_intersect(SdfGrid(*tensors[:4]), tensors[4], tensors[5], eps_hit=1e-6, max_steps=128)
             return result.t, result.position, result.normal
 
-        self.assertTrue(
-            torch.autograd.gradcheck(
-                evaluate, inputs, eps=1e-3, atol=5e-3, rtol=5e-3, nondet_tol=1e-4
-            )
-        )
+        self.assertTrue(torch.autograd.gradcheck(evaluate, inputs, eps=1e-3, atol=5e-3, rtol=5e-3, nondet_tol=1e-4))
 
     def test_missed_lanes_contribute_no_gradient(self) -> None:
         grid_inputs = sphere_grid()
         origins, directions = z_rays([0.7, 0.0, 5.0], DEVICE, DTYPE)  # miss, hit, miss
-        mixed = self.gradients(
-            (*grid_inputs, origins, directions), torch.ones(3, device=DEVICE), True
-        )
-        hit_only = self.gradients(
-            (*grid_inputs, origins[1:2], directions[1:2]), torch.ones(1, device=DEVICE), True
-        )
+        mixed = self.gradients((*grid_inputs, origins, directions), torch.ones(3, device=DEVICE), True)
+        hit_only = self.gradients((*grid_inputs, origins[1:2], directions[1:2]), torch.ones(1, device=DEVICE), True)
 
         zero = torch.zeros(2, 3, device=DEVICE)
         for name, gradient in zip(("origins", "directions"), mixed[4:]):
@@ -321,21 +275,15 @@ class SdfIntersectForwardModeTests(unittest.TestCase):
 
     # Tangents of the three differentiable outputs under one dual level.
     def push_forward(self, native: bool) -> list[Tensor]:
-        tape = ref.march(
-            ref.SdfGridRef(*self.inputs[:4]), self.inputs[4], self.inputs[5], ref.TraceConfig()
-        )
+        tape = ref.march(ref.SdfGridRef(*self.inputs[:4]), self.inputs[4], self.inputs[5], ref.TraceConfig())
         with forward_ad.dual_level():
-            duals = [
-                forward_ad.make_dual(value, tangent)
-                for value, tangent in zip(self.inputs, self.tangents)
-            ]
+            duals = [forward_ad.make_dual(value, tangent) for value, tangent in zip(self.inputs, self.tangents)]
             if native:
                 result = sdf_intersect(SdfGrid(*duals[:4]), duals[4], duals[5])
             else:
                 result = ref.reattach(ref.SdfGridRef(*duals[:4]), duals[4], duals[5], tape)
             return [
-                forward_ad.unpack_dual(field).tangent.clone()
-                for field in (result.t, result.position, result.normal)
+                forward_ad.unpack_dual(field).tangent.clone() for field in (result.t, result.position, result.normal)
             ]
 
     def test_forward_mode_matches_the_frozen_tape_reference(self) -> None:
@@ -344,19 +292,13 @@ class SdfIntersectForwardModeTests(unittest.TestCase):
         ):
             with self.subTest(output=name):
                 self.assertGreater(float(expected.abs().max()), 1e-3)
-                torch.testing.assert_close(
-                    actual, expected, atol=1e-4 * float(expected.abs().max()), rtol=1e-4
-                )
+                torch.testing.assert_close(actual, expected, atol=1e-4 * float(expected.abs().max()), rtol=1e-4)
 
     def test_forward_and_reverse_modes_are_duals(self) -> None:
         tangent_t, tangent_position, tangent_normal = self.push_forward(True)
         tracked = [value.detach().clone().requires_grad_(True) for value in self.inputs]
         result = sdf_intersect(SdfGrid(*tracked[:4]), tracked[4], tracked[5])
-        cotangents = (
-            torch.randn_like(result.t),
-            torch.randn_like(result.position),
-            torch.randn_like(result.normal),
-        )
+        cotangents = (torch.randn_like(result.t), torch.randn_like(result.position), torch.randn_like(result.normal))
         (
             (result.t * cotangents[0]).sum()
             + (result.position * cotangents[1]).sum()
@@ -365,14 +307,9 @@ class SdfIntersectForwardModeTests(unittest.TestCase):
 
         pushed = sum(
             float((cotangent * tangent).sum())
-            for cotangent, tangent in zip(
-                cotangents, (tangent_t, tangent_position, tangent_normal)
-            )
+            for cotangent, tangent in zip(cotangents, (tangent_t, tangent_position, tangent_normal))
         )
-        pulled = sum(
-            float((value.grad * tangent).sum())
-            for value, tangent in zip(tracked, self.tangents)
-        )
+        pulled = sum(float((value.grad * tangent).sum()) for value, tangent in zip(tracked, self.tangents))
         self.assertAlmostEqual(pushed, pulled, delta=1e-4 * max(abs(pushed), 1.0))
 
     def test_missed_lanes_have_zero_tangents(self) -> None:
@@ -384,10 +321,7 @@ class SdfIntersectForwardModeTests(unittest.TestCase):
                 for value in (*grid_inputs, origins, directions)
             ]
             result = sdf_intersect(SdfGrid(*duals[:4]), duals[4], duals[5])
-            tangents = [
-                forward_ad.unpack_dual(field).tangent
-                for field in (result.t, result.position, result.normal)
-            ]
+            tangents = [forward_ad.unpack_dual(field).tangent for field in (result.t, result.position, result.normal)]
             self.assertTrue(torch.equal(tangents[0][1:], torch.zeros(2, device=DEVICE)))
             for tangent in tangents[1:]:
                 self.assertTrue(torch.equal(tangent[1:], torch.zeros(2, 3, device=DEVICE)))
@@ -402,12 +336,7 @@ class SdfIntersectValidationTests(unittest.TestCase):
         self.origins, self.directions = z_rays([0.0], DEVICE, DTYPE)
 
     def grid(self, **overrides: Tensor) -> SdfGrid:
-        fields = {
-            "values": self.values,
-            "position": self.position,
-            "rotation": self.rotation,
-            "scale": self.scale,
-        }
+        fields = {"values": self.values, "position": self.position, "rotation": self.rotation, "scale": self.scale}
         fields.update(overrides)
         return SdfGrid(**fields)
 

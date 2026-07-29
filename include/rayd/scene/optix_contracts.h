@@ -43,8 +43,7 @@ static_assert(std::is_standard_layout_v<SceneIntersectionPayload>);
 static_assert(std::is_trivially_copyable_v<SceneIntersectionPayload>);
 static_assert(static_cast<std::uint8_t>(SceneIntersectionPayloadSlot::Count) == 5u);
 static_assert(static_cast<std::uint8_t>(SceneHitObjectFieldSlot::Count) == 6u);
-static_assert(static_cast<std::uint8_t>(SceneIntersectionPayloadSlot::Count) ==
-              SceneIntersectionPayloadCount);
+static_assert(static_cast<std::uint8_t>(SceneIntersectionPayloadSlot::Count) == SceneIntersectionPayloadCount);
 static_assert(sizeof(SceneIntersectionPayload) == 5u * sizeof(std::uint32_t));
 
 } // namespace rayd::shared::optix

@@ -373,15 +373,10 @@ class DeviceCalibration:
         lines = [
             f"{self.operation} probe, {self.rows} rows",
             *(
-                f"  cuda:{index}  {seconds * 1e3:8.3f} ms  "
-                f"{self.rows / seconds / 1e6:8.2f} Mrow/s  weight {weight:.4f}"
+                f"  cuda:{index}  {seconds * 1e3:8.3f} ms  {self.rows / seconds / 1e6:8.2f} Mrow/s  weight {weight:.4f}"
                 if seconds > 0.0
                 else f"  cuda:{index}  (no timing)  weight {weight:.4f}"
-                for index, seconds, weight in zip(
-                    self.devices,
-                    self.seconds,
-                    self.throughput_weights or self.weights,
-                )
+                for index, seconds, weight in zip(self.devices, self.seconds, self.throughput_weights or self.weights)
             ),
         ]
         for weights, seconds in zip(self.candidates, self.candidate_seconds):
@@ -517,9 +512,7 @@ def calibrate_chunk_size(
     )
 
 
-def _resolve_lane_window(
-    lane_offset: int, lane_count: int, total_samples: int
-) -> tuple[int, int]:
+def _resolve_lane_window(lane_offset: int, lane_count: int, total_samples: int) -> tuple[int, int]:
     """The `(begin, count)` window a diffraction accumulation call asks for.
 
     This is the host-side twin of `resolve_lane_window()` in
@@ -538,9 +531,7 @@ def _resolve_lane_window(
     if count < 0:
         return begin, remaining
     if count > remaining:
-        raise RuntimeError(
-            "lane_offset + lane_count must not exceed the total sample count."
-        )
+        raise RuntimeError("lane_offset + lane_count must not exceed the total sample count.")
     return begin, count
 
 
@@ -648,18 +639,12 @@ def _material_to(material: DfrMaterial, device: torch.device) -> DfrMaterial:
 
 
 def _material_requires_grad(material: DfrMaterial) -> bool:
-    return any(
-        value.requires_grad
-        for value in (material.eta_r, material.sigma, material.mu_r, material.gain)
-    )
+    return any(value.requires_grad for value in (material.eta_r, material.sigma, material.mu_r, material.gain))
 
 
 def _add_accum(left: DfrAccum, right: DfrAccum) -> DfrAccum:
     """Sum two partial accumulation results field by field, on their device."""
-    return DfrAccum(
-        left.grid_cell_count,
-        *(getattr(left, name) + getattr(right, name) for name in _DFR_ACCUM_FIELDS),
-    )
+    return DfrAccum(left.grid_cell_count, *(getattr(left, name) + getattr(right, name) for name in _DFR_ACCUM_FIELDS))
 
 
 def _accum_requires_grad(result: DfrAccum) -> bool:
@@ -679,11 +664,7 @@ def _accum_to(result: DfrAccum, device: torch.device) -> DfrAccum:
     if result.power.device == device:
         return result
     return DfrAccum(
-        result.grid_cell_count,
-        *(
-            getattr(result, name).to(device, non_blocking=True)
-            for name in _DFR_ACCUM_FIELDS
-        ),
+        result.grid_cell_count, *(getattr(result, name).to(device, non_blocking=True) for name in _DFR_ACCUM_FIELDS)
     )
 
 
@@ -716,10 +697,7 @@ def _states_bytes(states: DfrStates) -> int:
 
 
 def _material_bytes(material: DfrMaterial) -> int:
-    return sum(
-        _tensor_bytes(getattr(material, name))
-        for name in ("eta_r", "sigma", "mu_r", "gain", "valid")
-    )
+    return sum(_tensor_bytes(getattr(material, name)) for name in ("eta_r", "sigma", "mu_r", "gain", "valid"))
 
 
 def _device_index(value: object, position: int) -> int:
@@ -736,10 +714,7 @@ def _device_index(value: object, position: int) -> int:
             f"{type(value).__name__} at position {position}."
         )
     if device.type != "cuda":
-        raise ValueError(
-            f"Scene(devices=...) only accepts CUDA devices, got {device!r} "
-            f"at position {position}."
-        )
+        raise ValueError(f"Scene(devices=...) only accepts CUDA devices, got {device!r} at position {position}.")
     # Bare ``"cuda"`` follows PyTorch's current-device semantics. Treating it
     # as cuda:0 silently selects the wrong master after ``set_device()``.
     return torch.cuda.current_device() if device.index is None else device.index
@@ -747,63 +722,45 @@ def _device_index(value: object, position: int) -> int:
 
 def _normalize_devices(devices: Sequence[object]) -> list[int]:
     if isinstance(devices, (int, str, torch.device)):
-        raise TypeError(
-            "Scene(devices=...) expects a sequence of devices; "
-            f"pass [{devices!r}] instead of {devices!r}."
-        )
+        raise TypeError(f"Scene(devices=...) expects a sequence of devices; pass [{devices!r}] instead of {devices!r}.")
     indices = [_device_index(value, position) for position, value in enumerate(devices)]
     if not indices:
         raise ValueError("Scene(devices=...) needs at least one device.")
     duplicates = sorted({index for index in indices if indices.count(index) > 1})
     if duplicates:
         raise ValueError(
-            f"Scene(devices=...) received duplicate devices {duplicates}; "
-            "each device holds exactly one replica."
+            f"Scene(devices=...) received duplicate devices {duplicates}; each device holds exactly one replica."
         )
     if not torch.cuda.is_available():
-        raise RuntimeError(
-            "Scene(devices=...) needs CUDA, but torch.cuda.is_available() is False."
-        )
+        raise RuntimeError("Scene(devices=...) needs CUDA, but torch.cuda.is_available() is False.")
     count = torch.cuda.device_count()
     for index in indices:
         if index < 0 or index >= count:
             raise ValueError(
-                f"Scene(devices=...) got device index {index}, but only "
-                f"{count} CUDA device(s) are visible."
+                f"Scene(devices=...) got device index {index}, but only {count} CUDA device(s) are visible."
             )
     return indices
 
 
-def _normalize_weight_values(
-    values: Sequence[float], devices: Sequence[int], name: str
-) -> tuple[float, ...]:
+def _normalize_weight_values(values: Sequence[float], devices: Sequence[int], name: str) -> tuple[float, ...]:
     weights = tuple(float(value) for value in values)
     if len(weights) != len(devices):
-        raise ValueError(
-            f"MultiDeviceOptions.{name} has {len(weights)} entries but "
-            f"{len(devices)} devices were given."
-        )
+        raise ValueError(f"MultiDeviceOptions.{name} has {len(weights)} entries but {len(devices)} devices were given.")
     for weight in weights:
         if not (weight >= 0.0) or weight == float("inf"):
-            raise ValueError(
-                f"MultiDeviceOptions.{name} must be finite and non-negative, got {weights}."
-            )
+            raise ValueError(f"MultiDeviceOptions.{name} must be finite and non-negative, got {weights}.")
     if sum(weights) <= 0.0:
         raise ValueError(f"MultiDeviceOptions.{name} must not sum to zero.")
     return weights
 
 
-def _normalize_weights(
-    options: MultiDeviceOptions, devices: Sequence[int]
-) -> tuple[float, ...]:
+def _normalize_weights(options: MultiDeviceOptions, devices: Sequence[int]) -> tuple[float, ...]:
     if options.weights is None:
         return (1.0,) * len(devices)
     return _normalize_weight_values(options.weights, devices, "weights")
 
 
-def _normalize_operation_weights(
-    options: MultiDeviceOptions, devices: Sequence[int]
-) -> dict[str, tuple[float, ...]]:
+def _normalize_operation_weights(options: MultiDeviceOptions, devices: Sequence[int]) -> dict[str, tuple[float, ...]]:
     values = options.operation_weights
     if values is None:
         return {}
@@ -815,20 +772,15 @@ def _normalize_operation_weights(
     normalized: dict[str, tuple[float, ...]] = {}
     for operation, weights in values.items():
         if not isinstance(operation, str) or not operation.strip():
-            raise TypeError(
-                "MultiDeviceOptions.operation_weights keys must be non-empty strings."
-            )
-        normalized[operation] = _normalize_weight_values(
-            weights, devices, f"operation_weights[{operation!r}]"
-        )
+            raise TypeError("MultiDeviceOptions.operation_weights keys must be non-empty strings.")
+        normalized[operation] = _normalize_weight_values(weights, devices, f"operation_weights[{operation!r}]")
     return normalized
 
 
 def _require_peer_access(options: MultiDeviceOptions, devices: Sequence[int]) -> None:
     if not isinstance(options.require_peer_access, bool):
         raise TypeError(
-            "MultiDeviceOptions.require_peer_access must be a bool, got "
-            f"{type(options.require_peer_access).__name__}."
+            f"MultiDeviceOptions.require_peer_access must be a bool, got {type(options.require_peer_access).__name__}."
         )
     if not options.require_peer_access or len(devices) < 2:
         return
@@ -836,8 +788,7 @@ def _require_peer_access(options: MultiDeviceOptions, devices: Sequence[int]) ->
     missing = [
         index
         for index in devices[1:]
-        if not torch.cuda.can_device_access_peer(master, index)
-        or not torch.cuda.can_device_access_peer(index, master)
+        if not torch.cuda.can_device_access_peer(master, index) or not torch.cuda.can_device_access_peer(index, master)
     ]
     if missing:
         raise RuntimeError(
@@ -849,9 +800,7 @@ def _require_peer_access(options: MultiDeviceOptions, devices: Sequence[int]) ->
         )
 
 
-def _require_homogeneous_devices(
-    options: MultiDeviceOptions, devices: Sequence[int]
-) -> None:
+def _require_homogeneous_devices(options: MultiDeviceOptions, devices: Sequence[int]) -> None:
     if not isinstance(options.require_homogeneous_devices, bool):
         raise TypeError(
             "MultiDeviceOptions.require_homogeneous_devices must be a bool, got "
@@ -862,17 +811,10 @@ def _require_homogeneous_devices(
     identities = []
     for index in devices:
         properties = torch.cuda.get_device_properties(index)
-        identities.append(
-            (
-                str(properties.name),
-                int(properties.major),
-                int(properties.minor),
-            )
-        )
+        identities.append((str(properties.name), int(properties.major), int(properties.minor)))
     if len(set(identities)) != 1:
         details = ", ".join(
-            f"cuda:{index}={name} (sm_{major}{minor})"
-            for index, (name, major, minor) in zip(devices, identities)
+            f"cuda:{index}={name} (sm_{major}{minor})" for index, (name, major, minor) in zip(devices, identities)
         )
         raise RuntimeError(
             "Scene(devices=...) requires identical GPU model and compute "
@@ -885,9 +827,7 @@ def _require_homogeneous_devices(
 
 def _positive_int(value: object, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError(
-            f"MultiDeviceOptions.{name} must be an int, got {type(value).__name__}."
-        )
+        raise TypeError(f"MultiDeviceOptions.{name} must be an int, got {type(value).__name__}.")
     if value < 1:
         raise ValueError(f"MultiDeviceOptions.{name} must be at least 1, got {value}.")
     return int(value)
@@ -904,23 +844,14 @@ def _validate_chunking(options: MultiDeviceOptions) -> bool:
             "MultiDeviceOptions.offload must be callable as offload(chunk_start, "
             f"result), got {type(options.offload).__name__}."
         )
-    return (
-        options.chunk_rays is not None
-        or options.tape_memory_budget_bytes is not None
-        or options.offload is not None
-    )
+    return options.chunk_rays is not None or options.tape_memory_budget_bytes is not None or options.offload is not None
 
 
 def _validate_pipeline(options: MultiDeviceOptions) -> None:
     """Check the throughput knobs of Phase 2d."""
     if not isinstance(options.pipeline, bool):
-        raise TypeError(
-            "MultiDeviceOptions.pipeline must be a bool, got "
-            f"{type(options.pipeline).__name__}."
-        )
-    chunks = _positive_int(
-        options.pipeline_chunks_per_device, "pipeline_chunks_per_device"
-    )
+        raise TypeError(f"MultiDeviceOptions.pipeline must be a bool, got {type(options.pipeline).__name__}.")
+    chunks = _positive_int(options.pipeline_chunks_per_device, "pipeline_chunks_per_device")
     if chunks < 2:
         raise ValueError(
             "MultiDeviceOptions.pipeline_chunks_per_device must be at least 2 -- "
@@ -932,11 +863,7 @@ def _validate_pipeline(options: MultiDeviceOptions) -> None:
 
 
 def plan(
-    devices: Sequence[object] | None,
-    options: MultiDeviceOptions | None,
-    *,
-    trace_backend: str,
-    edge_bvh_backend: str,
+    devices: Sequence[object] | None, options: MultiDeviceOptions | None, *, trace_backend: str, edge_bvh_backend: str
 ) -> "_ReplicatedScene | None":
     """Return the orchestrator for `devices`, or `None` for the single-device path.
 
@@ -952,10 +879,7 @@ def plan(
     indices = _normalize_devices(devices)
     resolved = MultiDeviceOptions() if options is None else options
     if not isinstance(resolved, MultiDeviceOptions):
-        raise TypeError(
-            "Scene(options=...) expects rayd.torch.MultiDeviceOptions, got "
-            f"{type(resolved).__name__}."
-        )
+        raise TypeError(f"Scene(options=...) expects rayd.torch.MultiDeviceOptions, got {type(resolved).__name__}.")
     weights = _normalize_weights(resolved, indices)
     operation_weights = _normalize_operation_weights(resolved, indices)
     chunking = _validate_chunking(resolved)
@@ -964,15 +888,7 @@ def plan(
     _require_homogeneous_devices(resolved, indices)
     if len(indices) == 1 and not chunking:
         return None
-    return _ReplicatedScene(
-        indices,
-        resolved,
-        weights,
-        operation_weights,
-        trace_backend,
-        edge_bvh_backend,
-        chunking,
-    )
+    return _ReplicatedScene(indices, resolved, weights, operation_weights, trace_backend, edge_bvh_backend, chunking)
 
 
 class _PipeStreams(NamedTuple):
@@ -1029,10 +945,7 @@ class _ReplicatedScene:
         self.options = options
         self.weights = tuple(weights)
         self._base_weights = tuple(weights)
-        self._operation_weights = {
-            str(operation): tuple(values)
-            for operation, values in operation_weights.items()
-        }
+        self._operation_weights = {str(operation): tuple(values) for operation, values in operation_weights.items()}
         self._calibration_override: tuple[float, ...] | None = None
         self.chunked = bool(chunked)
         # Pipelining is a sharding story: a one-device scene has no scatter and
@@ -1081,10 +994,7 @@ class _ReplicatedScene:
             )
 
     def _poison(self, operation: str, error: BaseException) -> None:
-        self._poisoned = (
-            f"{operation}: {type(error).__name__}"
-            + (f": {error}" if str(error) else "")
-        )
+        self._poisoned = f"{operation}: {type(error).__name__}" + (f": {error}" if str(error) else "")
 
     def _require_replicas(self) -> tuple:
         self.require_healthy()
@@ -1114,14 +1024,7 @@ class _ReplicatedScene:
         master = self.master_device
         try:
             for position, (mesh, _dynamic) in enumerate(meshes):
-                for name in (
-                    "vertices",
-                    "faces",
-                    "uv",
-                    "face_uv",
-                    "to_world_left",
-                    "to_world_right",
-                ):
+                for name in ("vertices", "faces", "uv", "face_uv", "to_world_left", "to_world_right"):
                     value = getattr(mesh, name)
                     if value.device != master:
                         raise ValueError(
@@ -1137,10 +1040,7 @@ class _ReplicatedScene:
 
             replicas = []
             for device in self.devices:
-                replica = Scene(
-                    trace_backend=self._trace_backend,
-                    edge_bvh_backend=self._edge_bvh_backend,
-                )
+                replica = Scene(trace_backend=self._trace_backend, edge_bvh_backend=self._edge_bvh_backend)
                 for mesh, dynamic in meshes:
                     replica.add_mesh(
                         Mesh(
@@ -1282,9 +1182,7 @@ class _ReplicatedScene:
             start = stop
         return shards
 
-    def _lane_shards(
-        self, begin: int, count: int, operation: str | None = None
-    ) -> list[tuple]:
+    def _lane_shards(self, begin: int, count: int, operation: str | None = None) -> list[tuple]:
         """Weighted, warp-aligned `(replica, device, lane_begin, lane_count)` windows.
 
         The windows are contiguous, disjoint, and cover `[begin, begin + count)`
@@ -1303,9 +1201,7 @@ class _ReplicatedScene:
         shards = []
         start = 0
         carried = 0.0
-        for position, (replica, device) in enumerate(
-            zip(self._require_replicas(), self.devices)
-        ):
+        for position, (replica, device) in enumerate(zip(self._require_replicas(), self.devices)):
             if position + 1 == len(weights):
                 stop = count
             else:
@@ -1335,9 +1231,7 @@ class _ReplicatedScene:
             value.record_stream(stream)
         return value
 
-    def _slice(
-        self, value: torch.Tensor | None, start: int, stop: int, device: torch.device
-    ) -> torch.Tensor | None:
+    def _slice(self, value: torch.Tensor | None, start: int, stop: int, device: torch.device) -> torch.Tensor | None:
         """One shard of a batched input, on `device`.
 
         A shard covering the whole batch passes the caller's tensor through
@@ -1351,13 +1245,7 @@ class _ReplicatedScene:
         return self._retain(value.to(device, non_blocking=True))
 
     def _slice_rows(
-        self,
-        value: torch.Tensor | None,
-        name: str,
-        total: int,
-        start: int,
-        stop: int,
-        device: torch.device,
+        self, value: torch.Tensor | None, name: str, total: int, start: int, stop: int, device: torch.device
     ) -> torch.Tensor | None:
         """Shard an optional per-row input whose batch axis must be explicit."""
         if value is None:
@@ -1370,19 +1258,13 @@ class _ReplicatedScene:
             )
         return self._slice(value, start, stop, device)
 
-    def _shard_ray(
-        self, ray: Ray, start: int, stop: int, device: torch.device
-    ) -> Ray:
+    def _shard_ray(self, ray: Ray, start: int, stop: int, device: torch.device) -> Ray:
         tmax = ray.tmax
         if tmax.numel() == 0:
             shard_tmax = self._retain(tmax.to(device, non_blocking=True))
         else:
             shard_tmax = self._slice(tmax, start, stop, device)
-        return Ray(
-            self._slice(ray.o, start, stop, device),
-            self._slice(ray.d, start, stop, device),
-            shard_tmax,
-        )
+        return Ray(self._slice(ray.o, start, stop, device), self._slice(ray.d, start, stop, device), shard_tmax)
 
     def _gather(self, parts: list[torch.Tensor]) -> torch.Tensor:
         """Concatenate one output field back onto the master device."""
@@ -1410,10 +1292,7 @@ class _ReplicatedScene:
         shards = self._shards(total, operation)
         if not shards:
             return None
-        inputs = [
-            (replica, shard(device, start, stop))
-            for replica, device, start, stop in shards
-        ]
+        inputs = [(replica, shard(device, start, stop)) for replica, device, start, stop in shards]
         return [call(replica, arguments) for replica, arguments in inputs]
 
     def _pipe_streams(self, device: torch.device) -> "_PipeStreams":
@@ -1438,17 +1317,13 @@ class _ReplicatedScene:
             with torch.cuda.device(device):
                 compute = torch.cuda.Stream(device=device)
                 gather_src = torch.cuda.Stream(device=device)
-                scatter_dst = (
-                    None if device == master else torch.cuda.Stream(device=device)
-                )
+                scatter_dst = None if device == master else torch.cuda.Stream(device=device)
             scatter_src = gather_dst = None
             if device != master:
                 with torch.cuda.device(master):
                     scatter_src = torch.cuda.Stream(device=master)
                     gather_dst = torch.cuda.Stream(device=master)
-            streams = _PipeStreams(
-                compute, scatter_src, scatter_dst, gather_src, gather_dst
-            )
+            streams = _PipeStreams(compute, scatter_src, scatter_dst, gather_src, gather_dst)
             self._streams[device.index] = streams
         return streams
 
@@ -1543,21 +1418,11 @@ class _ReplicatedScene:
         the same either way.
         """
         for column in columns:
-            if (
-                column.requires_grad
-                or not column.is_contiguous()
-                or column.dim() < 1
-                or column.shape[0] != rows
-            ):
+            if column.requires_grad or not column.is_contiguous() or column.dim() < 1 or column.shape[0] != rows:
                 return None
         master = self.master_device
         return [
-            torch.empty(
-                (total,) + tuple(column.shape[1:]),
-                dtype=column.dtype,
-                device=master,
-            )
-            for column in columns
+            torch.empty((total,) + tuple(column.shape[1:]), dtype=column.dtype, device=master) for column in columns
         ]
 
     def _run_chunked(
@@ -1587,14 +1452,8 @@ class _ReplicatedScene:
         """
         if chunk_rows is None:
             budget = self.options.tape_memory_budget_bytes
-            output_cost = max(
-                int(row_bytes if result_row_bytes is None else result_row_bytes), 0
-            )
-            fixed_output = (
-                total * output_cost
-                if budget is not None and self.options.offload is None
-                else 0
-            )
+            output_cost = max(int(row_bytes if result_row_bytes is None else result_row_bytes), 0)
+            fixed_output = total * output_cost if budget is not None and self.options.offload is None else 0
             plan = calibrate_chunk_size(
                 operation,
                 total,
@@ -1618,9 +1477,7 @@ class _ReplicatedScene:
             )
         self.last_chunk_plan = plan
         offload = self.options.offload
-        master_rows = plan.chunk_rays if master_chunk_rows is None else max(
-            int(master_chunk_rows), 1
-        )
+        master_rows = plan.chunk_rays if master_chunk_rows is None else max(int(master_chunk_rows), 1)
         queues = []
         for replica, device, start, stop in self._shards(total, operation):
             rows = master_rows if device == self.master_device else plan.chunk_rays
@@ -1628,10 +1485,7 @@ class _ReplicatedScene:
                 (
                     replica,
                     device,
-                    [
-                        (chunk_start, min(chunk_start + rows, stop))
-                        for chunk_start in range(start, stop, rows)
-                    ],
+                    [(chunk_start, min(chunk_start + rows, stop)) for chunk_start in range(start, stop, rows)],
                 )
             )
         plan.chunk_count = sum(len(chunks) for _replica, _device, chunks in queues)
@@ -1694,9 +1548,7 @@ class _ReplicatedScene:
                     # have work waiting on it, even if scatter/call/extract or
                     # gather raises on the host.
                     started.add(device.index)
-                arguments, copied = self._scatter_chunk(
-                    streams, device, shard, chunk_start, chunk_stop
-                )
+                arguments, copied = self._scatter_chunk(streams, device, shard, chunk_start, chunk_stop)
                 if copied is not None:
                     streams.compute.wait_event(copied)
                 with torch.cuda.device(device), torch.cuda.stream(streams.compute):
@@ -1724,45 +1576,21 @@ class _ReplicatedScene:
                             "run backward inside the hook, or use one unchunked launch."
                         )
                     if offload is None:
-                        sink = self._master_buffers(
-                            total, chunk_stop - chunk_start, columns
-                        )
-                moved, gathered = self._gather_chunk(
-                    streams, device, columns, sink, (chunk_start, chunk_stop)
-                )
+                        sink = self._master_buffers(total, chunk_stop - chunk_start, columns)
+                moved, gathered = self._gather_chunk(streams, device, columns, sink, (chunk_start, chunk_stop))
                 pipeline.append((chunk_start, chunk_stop, moved, gathered))
                 del columns, moved
                 if len(pipeline) > depth:
-                    self._retire(
-                        pipeline.popleft(),
-                        plan,
-                        master_stream,
-                        assemble,
-                        collected,
-                        sink,
-                    )
+                    self._retire(pipeline.popleft(), plan, master_stream, assemble, collected, sink)
             while pipeline:
-                self._retire(
-                    pipeline.popleft(),
-                    plan,
-                    master_stream,
-                    assemble,
-                    collected,
-                    sink,
-                )
+                self._retire(pipeline.popleft(), plan, master_stream, assemble, collected, sink)
             if offload is not None:
                 return None
             if sink is not None:
                 return assemble(total, sink)
             collected.sort(key=lambda piece: piece[0])
             width = len(collected[0][1])
-            return assemble(
-                total,
-                [
-                    self._concat([piece[1][index] for piece in collected])
-                    for index in range(width)
-                ],
-            )
+            return assemble(total, [self._concat([piece[1][index] for piece in collected]) for index in range(width)])
         finally:
             # `call`, `extract`, gather, assembly, and the user's offload hook
             # are all allowed to raise.  A finally edge is mandatory: without
@@ -1807,9 +1635,7 @@ class _ReplicatedScene:
             done.record(self._streams[index].compute)
             torch.cuda.current_stream(torch.device("cuda", index)).wait_event(done)
 
-    def _retire(
-        self, piece, plan: ChunkPlan, master_stream, assemble, collected, sink=None
-    ) -> None:
+    def _retire(self, piece, plan: ChunkPlan, master_stream, assemble, collected, sink=None) -> None:
         """Hand one finished chunk to the hook, or keep it for the gather."""
         chunk_start, chunk_stop, moved, gathered = piece
         # The chunk ran on a side stream; whoever reads it next reads it from
@@ -1817,9 +1643,7 @@ class _ReplicatedScene:
         master_stream.wait_event(gathered)
         rows = chunk_stop - chunk_start
         if plan.measured_row_bytes is None and rows > 0:
-            plan.measured_row_bytes = (
-                sum(value.numel() * value.element_size() for value in moved) / rows
-            )
+            plan.measured_row_bytes = sum(value.numel() * value.element_size() for value in moved) / rows
         if sink is not None:
             # The rows are already in the operation's own output, which the
             # caller's stream owns and which nothing frees until the caller
@@ -1834,17 +1658,13 @@ class _ReplicatedScene:
 
     # -- dispatch policy ---------------------------------------------------
 
-    def _remote_shards_viable(
-        self, operation: str, total: int, transfer_row_bytes: int
-    ) -> bool:
+    def _remote_shards_viable(self, operation: str, total: int, transfer_row_bytes: int) -> bool:
         """Every active remote must have enough work to amortize its copies."""
         if len(self.devices) < 2 or total <= 0:
             return False
         scale = max(int(transfer_row_bytes), _DISPATCH_BASELINE_TRANSFER_BYTES)
         floor = (
-            self.min_rays_per_device * scale
-            + _DISPATCH_BASELINE_TRANSFER_BYTES
-            - 1
+            self.min_rays_per_device * scale + _DISPATCH_BASELINE_TRANSFER_BYTES - 1
         ) // _DISPATCH_BASELINE_TRANSFER_BYTES
         remote = [
             stop - start
@@ -1883,9 +1703,7 @@ class _ReplicatedScene:
             return "sharded"
         return "pipelined"
 
-    def _master_takes_everything(
-        self, operation: str | int, total: int | None = None
-    ) -> bool:
+    def _master_takes_everything(self, operation: str | int, total: int | None = None) -> bool:
         """Do the weights leave the master with the whole batch?
 
         `weights=[1, 0]` -- which is what a calibration answers with when an
@@ -1902,9 +1720,7 @@ class _ReplicatedScene:
         weights = self._weights_for(str(operation))
         return total > 0 and not any(weight > 0.0 for weight in weights[1:])
 
-    def _pipeline_rows(
-        self, operation: str | int, total: int | None = None
-    ) -> tuple[int, int]:
+    def _pipeline_rows(self, operation: str | int, total: int | None = None) -> tuple[int, int]:
         """The auto chunk sizes: `(remote_rows, master_rows)`.
 
         Sizing from the widest shard rather than the narrowest bounds the total
@@ -1957,19 +1773,13 @@ class _ReplicatedScene:
         because they *are* a single-device call.
         """
         self.require_healthy()
-        transfer_cost = max(
-            int(row_bytes if transfer_row_bytes is None else transfer_row_bytes), 1
-        )
-        output_cost = max(
-            int(row_bytes if result_row_bytes is None else result_row_bytes), 0
-        )
+        transfer_cost = max(int(row_bytes if transfer_row_bytes is None else transfer_row_bytes), 1)
+        output_cost = max(int(row_bytes if result_row_bytes is None else result_row_bytes), 0)
         # `row_bytes` includes the native output and any frozen tape.
         # `transfer_cost` includes copied inputs plus returned output. Add only
         # its non-output part so the hard budget covers remote scatter without
         # counting the output twice.
-        memory_cost = max(int(row_bytes), 1) + max(
-            transfer_cost - output_cost, 0
-        )
+        memory_cost = max(int(row_bytes), 1) + max(transfer_cost - output_cost, 0)
         mode = self._dispatch_mode(operation, total, transfer_cost)
         self.last_dispatch = mode
         if mode == "master":
@@ -1980,19 +1790,10 @@ class _ReplicatedScene:
                 self.last_dispatch = "master"
                 return master()
             columns = [extract(result) for result in results]
-            return assemble(
-                total, [self._gather(list(parts)) for parts in zip(*columns)]
-            )
+            return assemble(total, [self._gather(list(parts)) for parts in zip(*columns)])
         if mode == "chunked":
             return self._run_chunked(
-                operation,
-                total,
-                memory_cost,
-                shard,
-                call,
-                extract,
-                assemble,
-                result_row_bytes=output_cost,
+                operation, total, memory_cost, shard, call, extract, assemble, result_row_bytes=output_cost
             )
         if self._master_takes_everything(operation, total):
             # A split that leaves the other devices empty is a single-device
@@ -2073,29 +1874,19 @@ class _ReplicatedScene:
         prior split.
         """
         replicas = self._require_replicas()
-        default_operation = (
-            f"trace_reflections:{int(max_bounces)}"
-            if int(max_bounces) > 0
-            else "intersect_full"
-        )
+        default_operation = f"trace_reflections:{int(max_bounces)}" if int(max_bounces) > 0 else "intersect_full"
         if probe is not None and operation is None:
             raise ValueError(
                 "Scene.calibrate_devices(operation=...) is required with a custom "
                 "probe so its weights are applied only to the operation the probe "
                 "measures."
             )
-        if (
-            probe is None
-            and operation is not None
-            and str(operation) != default_operation
-        ):
+        if probe is None and operation is not None and str(operation) != default_operation:
             raise ValueError(
                 f"The built-in calibration probe measures {default_operation!r}, "
                 f"not {str(operation)!r}. Pass a custom probe for that operation."
             )
-        target_operation = (
-            str(operation) if operation is not None else default_operation
-        )
+        target_operation = str(operation) if operation is not None else default_operation
         if not target_operation:
             raise ValueError("calibrate(operation=...) must be a non-empty string.")
         rows = _positive_int(int(rows), "calibrate(rows=...)")
@@ -2119,18 +1910,13 @@ class _ReplicatedScene:
         rates = [1.0 / value if value > 0.0 else 0.0 for value in seconds]
         total_rate = sum(rates)
         if total_rate <= 0.0:
-            raise RuntimeError(
-                "Scene.calibrate_devices() measured no time on any device; the probe "
-                "did not run."
-            )
+            raise RuntimeError("Scene.calibrate_devices() measured no time on any device; the probe did not run.")
         throughput = tuple(rate * len(rates) / total_rate for rate in rates)
         weights = throughput
         candidates: tuple[tuple[float, ...], ...] = ()
         candidate_seconds: tuple[float, ...] = ()
         if refine and len(self.devices) > 1:
-            candidates, candidate_seconds = self._time_weight_candidates(
-                weights, probe, repeats, int(warm_up)
-            )
+            candidates, candidate_seconds = self._time_weight_candidates(weights, probe, repeats, int(warm_up))
             weights = candidates[_pick_candidate(candidate_seconds)]
         # Calibration is operation-local. Keep `weights` as the most recently
         # calibrated split for the legacy debug/property surface, but never let
@@ -2162,10 +1948,7 @@ class _ReplicatedScene:
         master = self.master_device
         candidates: list[tuple[float, ...]] = []
         for share in _REFINE_SHARES:
-            scaled = tuple(
-                weight if device == master else weight * share
-                for weight, device in zip(base, self.devices)
-            )
+            scaled = tuple(weight if device == master else weight * share for weight, device in zip(base, self.devices))
             if sum(scaled) > 0.0 and scaled not in candidates:
                 candidates.append(scaled)
         samples: list[list[float]] = [[] for _ in candidates]
@@ -2261,9 +2044,7 @@ class _ReplicatedScene:
                 shard,
                 call,
                 lambda result: (result.t,),
-                lambda rows, columns: _ReducedIntersection(
-                    self.master_native_scene(), columns[0]
-                ),
+                lambda rows, columns: _ReducedIntersection(self.master_native_scene(), columns[0]),
                 master,
                 transfer_row_bytes=28,
             )
@@ -2379,9 +2160,7 @@ class _ReplicatedScene:
                 self._slice(start_points, start, stop, device),
                 self._slice(end_a, start, stop, device),
                 self._slice(end_b, start, stop, device),
-                self._slice_rows(
-                    ignore_prim_ids, "ignore_prim_ids", total, start, stop, device
-                ),
+                self._slice_rows(ignore_prim_ids, "ignore_prim_ids", total, start, stop, device),
                 self._slice_rows(active, "active", total, start, stop, device),
             )
 
@@ -2396,22 +2175,11 @@ class _ReplicatedScene:
             call,
             _field_reader(_SEGMENT_PAIR_FIELDS),
             lambda rows, columns: SegmentPairVisibility(rows, *columns),
-            lambda: self.master().visible_pair(
-                start_points, end_a, end_b, ignore_prim_ids, active
-            ),
+            lambda: self.master().visible_pair(start_points, end_a, end_b, ignore_prim_ids, active),
             transfer_row_bytes=47,
         )
 
-    def visible_edge(
-        self,
-        source,
-        edge_position,
-        edge_direction,
-        edge_t_min,
-        edge_t_max,
-        sample_fractions,
-        active,
-    ):
+    def visible_edge(self, source, edge_position, edge_direction, edge_t_min, edge_t_max, sample_fractions, active):
         total = int(source.shape[0])
 
         def shard(device, start, stop):
@@ -2437,13 +2205,7 @@ class _ReplicatedScene:
             _field_reader(_AXIAL_EDGE_FIELDS),
             lambda rows, columns: AxialEdgeVisibility(rows, *columns),
             lambda: self.master().visible_edge(
-                source,
-                edge_position,
-                edge_direction,
-                edge_t_min,
-                edge_t_max,
-                sample_fractions,
-                active,
+                source, edge_position, edge_direction, edge_t_min, edge_t_max, sample_fractions, active
             ),
             transfer_row_bytes=46,
         )
@@ -2456,14 +2218,7 @@ class _ReplicatedScene:
             return (
                 self._slice(points, start, stop, device),
                 self._slice(chain_length, start, stop, device),
-                self._slice_rows(
-                    ignore_prim_per_segment,
-                    "ignore_prim_per_segment",
-                    total,
-                    start,
-                    stop,
-                    device,
-                ),
+                self._slice_rows(ignore_prim_per_segment, "ignore_prim_per_segment", total, start, stop, device),
                 self._slice_rows(active, "active", total, start, stop, device),
             )
 
@@ -2478,19 +2233,14 @@ class _ReplicatedScene:
             call,
             _field_reader(_SEGMENT_CHAIN_FIELDS),
             lambda rows, columns: SegmentChainVisibility(rows, segments, *columns),
-            lambda: self.master().visible_chain(
-                points, chain_length, ignore_prim_per_segment, active
-            ),
+            lambda: self.master().visible_chain(points, chain_length, ignore_prim_per_segment, active),
             transfer_row_bytes=(segments + 1) * 12 + 5 + segments * 4 + 9,
         )
 
     def trace_reflections(self, ray: Ray, max_bounces: int, active):
         total = int(ray.o.shape[0])
         operation = f"trace_reflections:{int(max_bounces)}"
-        row_bytes = max_bounces * (
-            _REFLECTION_TAPE_BYTES_PER_RAY_BOUNCE
-            + _REFLECTION_OUTPUT_BYTES_PER_RAY_BOUNCE
-        )
+        row_bytes = max_bounces * (_REFLECTION_TAPE_BYTES_PER_RAY_BOUNCE + _REFLECTION_OUTPUT_BYTES_PER_RAY_BOUNCE)
 
         def shard(device, start, stop):
             return (
@@ -2522,8 +2272,7 @@ class _ReplicatedScene:
                 call,
                 _reflection_fields,
                 lambda rows, columns: ReflectionChain(*columns),
-                result_row_bytes=max_bounces
-                * _REFLECTION_OUTPUT_BYTES_PER_RAY_BOUNCE,
+                result_row_bytes=max_bounces * _REFLECTION_OUTPUT_BYTES_PER_RAY_BOUNCE,
             )
         if mode == "pipelined":
             if self._master_takes_everything(operation, total):
@@ -2546,9 +2295,7 @@ class _ReplicatedScene:
                     _reflection_fields if full else _reduced_reflection_fields,
                     lambda rows, values: values,
                     result_row_bytes=(
-                        max_bounces * _REFLECTION_OUTPUT_BYTES_PER_RAY_BOUNCE
-                        if full
-                        else max_bounces * 9
+                        max_bounces * _REFLECTION_OUTPUT_BYTES_PER_RAY_BOUNCE if full else max_bounces * 9
                     ),
                     chunk_rows=remote_rows,
                     master_chunk_rows=master_rows,
@@ -2568,9 +2315,7 @@ class _ReplicatedScene:
             # before either is waited on.
             image_sources = None
             if full:
-                image_sources = self._gather(
-                    [result.image_sources for result in results]
-                )
+                image_sources = self._gather([result.image_sources for result in results])
             valid = self._gather([result.valid for result in results])
             t = self._gather([result.t for result in results])
             prim_ids = self._gather([result.prim_ids for result in results])
@@ -2600,9 +2345,7 @@ class _ReplicatedScene:
             call,
             _field_reader(_REFL_EPC_FIELD_FIELDS),
             lambda rows, columns: ReflEpcField(*columns),
-            lambda: self.master().trace_refl_epc_field(
-                source, receiver, max_bounces, active
-            ),
+            lambda: self.master().trace_refl_epc_field(source, receiver, max_bounces, active),
             transfer_row_bytes=38 + 4 * max_bounces,
         )
 
@@ -2634,24 +2377,15 @@ class _ReplicatedScene:
         begin, count = _resolve_lane_window(lane_offset, lane_count, total_samples)
         candidate_shards = self._lane_shards(begin, count, operation)
         remote_counts = [
-            shard_count
-            for _replica, device, _begin, shard_count in candidate_shards
-            if device != self.master_device
+            shard_count for _replica, device, _begin, shard_count in candidate_shards if device != self.master_device
         ]
-        force_master = (
-            not remote_counts
-            or any(rows < self.min_lanes_per_device for rows in remote_counts)
-        )
+        force_master = not remote_counts or any(rows < self.min_lanes_per_device for rows in remote_counts)
         budget = self.options.tape_memory_budget_bytes
         # Seven float grids plus seven int32 counters. Keep three full payloads
         # in the estimate: the running partial, the next native result, and the
         # master-side merge/copy.
         grid_bytes = max(int(grid_cell_count), 0) * 7 * 4 + 7 * 4
-        replicated_input_bytes = (
-            max(int(fixed_input_bytes), 0)
-            if len(self.devices) > 1 and not force_master
-            else 0
-        )
+        replicated_input_bytes = max(int(fixed_input_bytes), 0) if len(self.devices) > 1 and not force_master else 0
         plan = calibrate_chunk_size(
             operation,
             count,
@@ -2659,17 +2393,11 @@ class _ReplicatedScene:
             chunk_rays=self.options.chunk_rays,
             budget_bytes=budget,
             resident_chunks=1,
-            fixed_output_bytes=(
-                3 * grid_bytes + replicated_input_bytes
-                if budget is not None
-                else 0
-            ),
+            fixed_output_bytes=(3 * grid_bytes + replicated_input_bytes if budget is not None else 0),
         )
         plan.chunk_rays = _lane_chunk_size(plan.chunk_rays, count)
         self.last_chunk_plan = plan
-        explicit_lane_chunking = (
-            self.options.chunk_rays is not None or budget is not None
-        )
+        explicit_lane_chunking = self.options.chunk_rays is not None or budget is not None
         if count == 0:
             self.last_dispatch = "master"
             plan.chunk_count = 1
@@ -2678,11 +2406,7 @@ class _ReplicatedScene:
             self.last_dispatch = "master"
             plan.chunk_count = 1
             return call(self.master(), scatter(self.master_device), begin, count)
-        shards = (
-            [(self.master(), self.master_device, begin, count)]
-            if force_master
-            else candidate_shards
-        )
+        shards = [(self.master(), self.master_device, begin, count)] if force_master else candidate_shards
         if not shards:
             # An empty window is one empty launch on the master, which is what
             # the single-device path does with the very same arguments.
@@ -2726,16 +2450,10 @@ class _ReplicatedScene:
                 result = call(replicas[index], inputs[index], chunk_begin, chunk_count)
                 if partials[index] is None:
                     partials[index] = result
-                elif (
-                    requires_grad
-                    or _accum_requires_grad(partials[index])
-                    or _accum_requires_grad(result)
-                ):
+                elif requires_grad or _accum_requires_grad(partials[index]) or _accum_requires_grad(result):
                     partials[index] = _add_accum(partials[index], result)
                 else:
-                    partials[index] = _add_accum_in_place(
-                        partials[index], result
-                    )
+                    partials[index] = _add_accum_in_place(partials[index], result)
 
         master = self.master_device
         merged = None
@@ -2744,11 +2462,7 @@ class _ReplicatedScene:
             merged = (
                 hosted
                 if merged is None
-                else (
-                    _add_accum(merged, hosted)
-                    if requires_grad
-                    else _add_accum_in_place(merged, hosted)
-                )
+                else (_add_accum(merged, hosted) if requires_grad else _add_accum_in_place(merged, hosted))
             )
         return merged
 
@@ -2768,11 +2482,7 @@ class _ReplicatedScene:
         lane_count: int,
     ) -> DfrAccum:
         def scatter(device):
-            return (
-                _states_to(states, device),
-                _material_to(material, device),
-                _to(active, device),
-            )
+            return (_states_to(states, device), _material_to(material, device), _to(active, device))
 
         def call(replica, moved, begin, count):
             shard_states, shard_material, shard_active = moved
@@ -2797,12 +2507,9 @@ class _ReplicatedScene:
             lane_count,
             scatter,
             call,
-            requires_grad=_states_require_grad(states)
-            or _material_requires_grad(material),
+            requires_grad=_states_require_grad(states) or _material_requires_grad(material),
             grid_cell_count=int(grid.resolution0) * int(grid.resolution1),
-            fixed_input_bytes=_states_bytes(states)
-            + _material_bytes(material)
-            + _tensor_bytes(active),
+            fixed_input_bytes=_states_bytes(states) + _material_bytes(material) + _tensor_bytes(active),
         )
 
     def accum_dfr(
@@ -2921,14 +2628,7 @@ def _intersection_fields(result) -> tuple[torch.Tensor, ...]:
     )
 
 
-_NEAREST_POINT_EDGE_FIELDS = (
-    "distance",
-    "edge_point",
-    "edge_t",
-    "shape_id",
-    "edge_id",
-    "global_edge_id",
-)
+_NEAREST_POINT_EDGE_FIELDS = ("distance", "edge_point", "edge_t", "shape_id", "edge_id", "global_edge_id")
 _NEAREST_RAY_EDGE_FIELDS = (
     "distance",
     "ray_t",
@@ -2952,18 +2652,8 @@ _NEAREST_EDGES_TOPK_FIELDS = (
 )
 _SEGMENT_PAIR_FIELDS = ("visible_a", "visible_b")
 _AXIAL_EDGE_FIELDS = ("any_visible",)
-_SEGMENT_CHAIN_FIELDS = (
-    "all_visible",
-    "first_blocked_segment",
-    "first_blocked_prim",
-)
-_REFL_EPC_FIELD_FIELDS = (
-    "field_real",
-    "field_imag",
-    "path_length",
-    "valid",
-    "resolved_prim_ids",
-)
+_SEGMENT_CHAIN_FIELDS = ("all_visible", "first_blocked_segment", "first_blocked_prim")
+_REFL_EPC_FIELD_FIELDS = ("field_real", "field_imag", "path_length", "valid", "resolved_prim_ids")
 
 # Every `DfrAccum` payload is a partial: the float grids merge by float32
 # summation, the integer counters merge exactly.

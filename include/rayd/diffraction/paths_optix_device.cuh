@@ -36,28 +36,16 @@ namespace algo_detail = ::rayd::shared::multipath::diffraction_paths_algo_detail
 struct DiffractionPathsOptixTraverser {
     ::OptixTraversableHandle handle;
 
-    __device__ __forceinline__ ::rayd::shared::rt::TriangleHit trace_closest(
-        math::Vec3f origin, math::Vec3f direction, float tmin, float tmax) const {
+    __device__ __forceinline__ ::rayd::shared::rt::TriangleHit trace_closest(math::Vec3f origin, math::Vec3f direction,
+                                                                             float tmin, float tmax) const {
         unsigned int hit = 0u;
         unsigned int t = __float_as_uint(1e8f);
         unsigned int prim = 0u;
         unsigned int instance = 0u;
         if (handle != 0ull && tmax > tmin) {
-            optixTrace(handle,
-                       make_float3(origin.x, origin.y, origin.z),
-                       make_float3(direction.x, direction.y, direction.z),
-                       tmin,
-                       tmax,
-                       0.0f,
-                       255u,
-                       OPTIX_RAY_FLAG_DISABLE_ANYHIT,
-                       0,
-                       1,
-                       0,
-                       hit,
-                       t,
-                       prim,
-                       instance);
+            optixTrace(handle, make_float3(origin.x, origin.y, origin.z),
+                       make_float3(direction.x, direction.y, direction.z), tmin, tmax, 0.0f, 255u,
+                       OPTIX_RAY_FLAG_DISABLE_ANYHIT, 0, 1, 0, hit, t, prim, instance);
         }
         ::rayd::shared::rt::TriangleHit result;
         result.t = __uint_as_float(t);
@@ -69,20 +57,22 @@ struct DiffractionPathsOptixTraverser {
         return result;
     }
 
-    __device__ __forceinline__ bool trace_occluded(
-        math::Vec3f origin, math::Vec3f direction, float tmin, float tmax) const {
+    __device__ __forceinline__ bool trace_occluded(math::Vec3f origin, math::Vec3f direction, float tmin,
+                                                   float tmax) const {
         return trace_closest(origin, direction, tmin, tmax).hit != 0u;
     }
 
-    __device__ __forceinline__ bool trace_occluded_ignore(
-        math::Vec3f origin, math::Vec3f direction, float tmin, float tmax,
-        const std::int32_t * /*ignore*/, int /*ignore_count*/) const {
+    __device__ __forceinline__ bool trace_occluded_ignore(math::Vec3f origin, math::Vec3f direction, float tmin,
+                                                          float tmax, const std::int32_t* /*ignore*/,
+                                                          int /*ignore_count*/) const {
         return trace_occluded(origin, direction, tmin, tmax);
     }
 
-    __device__ __forceinline__ ::rayd::shared::rt::TriangleHit trace_first_blocker(
-        math::Vec3f origin, math::Vec3f direction, float tmin, float tmax,
-        const std::int32_t * /*ignore*/, int /*ignore_count*/) const {
+    __device__ __forceinline__ ::rayd::shared::rt::TriangleHit trace_first_blocker(math::Vec3f origin,
+                                                                                   math::Vec3f direction, float tmin,
+                                                                                   float tmax,
+                                                                                   const std::int32_t* /*ignore*/,
+                                                                                   int /*ignore_count*/) const {
         return trace_closest(origin, direction, tmin, tmax);
     }
 };
@@ -105,33 +95,33 @@ static __forceinline__ __device__ void miss() {
 
 /// Combined order-1 export raygen. `SplitScene` selects the primary-only vs
 /// primary+secondary visibility casts.
-template <typename Params, bool SplitScene>
-static __forceinline__ __device__ void raygen_order1(const Params &params) {
+template <typename Params, bool SplitScene> static __forceinline__ __device__ void raygen_order1(const Params& params) {
     const unsigned int lane = optixGetLaunchIndex().x;
     const DiffractionPathsOptixTraverser primary{params.primary_handle};
     const DiffractionPathsOptixTraverser secondary{params.secondary_handle};
-    ::rayd::shared::multipath::trace_paths_order1_algo<
-        Params, DiffractionPathsOptixTraverser, SplitScene>(params, lane, primary, secondary);
+    ::rayd::shared::multipath::trace_paths_order1_algo<Params, DiffractionPathsOptixTraverser, SplitScene>(params, lane,
+                                                                                                           primary,
+                                                                                                           secondary);
 }
 
 /// Two-phase source-visibility prepass raygen (primary handle only).
-template <typename Params>
-static __forceinline__ __device__ void raygen_source_visibility(const Params &params) {
+template <typename Params> static __forceinline__ __device__ void raygen_source_visibility(const Params& params) {
     const unsigned int lane = optixGetLaunchIndex().x;
     const DiffractionPathsOptixTraverser primary{params.primary_handle};
     const DiffractionPathsOptixTraverser secondary{params.secondary_handle};
-    ::rayd::shared::multipath::trace_paths_source_visibility_algo<
-        Params, DiffractionPathsOptixTraverser>(params, lane, primary, secondary);
+    ::rayd::shared::multipath::trace_paths_source_visibility_algo<Params, DiffractionPathsOptixTraverser>(params, lane,
+                                                                                                          primary,
+                                                                                                          secondary);
 }
 
 /// Two-phase target-export raygen (primary handle only).
-template <typename Params>
-static __forceinline__ __device__ void raygen_target_export(const Params &params) {
+template <typename Params> static __forceinline__ __device__ void raygen_target_export(const Params& params) {
     const unsigned int lane = optixGetLaunchIndex().x;
     const DiffractionPathsOptixTraverser primary{params.primary_handle};
     const DiffractionPathsOptixTraverser secondary{params.secondary_handle};
-    ::rayd::shared::multipath::trace_paths_target_export_algo<
-        Params, DiffractionPathsOptixTraverser>(params, lane, primary, secondary);
+    ::rayd::shared::multipath::trace_paths_target_export_algo<Params, DiffractionPathsOptixTraverser>(params, lane,
+                                                                                                      primary,
+                                                                                                      secondary);
 }
 
 } // namespace diffraction_paths

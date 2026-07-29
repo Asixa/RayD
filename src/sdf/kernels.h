@@ -53,9 +53,9 @@ struct SdfIntersectForwardOutputs {
 // caller actually needs a gradient for. A null gradient pointer is an absent
 // gradient, not a zero one; an unneeded input gets an undefined tensor back.
 struct SdfIntersectGradRequest {
-    const at::Tensor *grad_t;
-    const at::Tensor *grad_hit_position;
-    const at::Tensor *grad_normal;
+    const at::Tensor* grad_t;
+    const at::Tensor* grad_hit_position;
+    const at::Tensor* grad_normal;
     bool need_grad_values;
     bool need_grad_position;
     bool need_grad_rotation;
@@ -75,12 +75,12 @@ struct SdfIntersectBackwardOutputs {
 
 // Tangents of the six supported inputs. A null pointer is a zero tangent.
 struct SdfIntersectTangentInputs {
-    const at::Tensor *values;
-    const at::Tensor *position;
-    const at::Tensor *rotation;
-    const at::Tensor *scale;
-    const at::Tensor *origins;
-    const at::Tensor *directions;
+    const at::Tensor* values;
+    const at::Tensor* position;
+    const at::Tensor* rotation;
+    const at::Tensor* scale;
+    const at::Tensor* origins;
+    const at::Tensor* directions;
 };
 
 struct SdfIntersectJvpOutputs {
@@ -89,24 +89,15 @@ struct SdfIntersectJvpOutputs {
     at::Tensor tangent_normal;
 };
 
-SdfIntersectForwardOutputs sdf_intersect_forward_cuda(
-    const SdfGridTensors &grid,
-    const at::Tensor &origins,
-    const at::Tensor &directions,
-    const SdfTraceParams &params);
+SdfIntersectForwardOutputs sdf_intersect_forward_cuda(const SdfGridTensors& grid, const at::Tensor& origins,
+                                                      const at::Tensor& directions, const SdfTraceParams& params);
 
-SdfIntersectBackwardOutputs sdf_intersect_backward_cuda(
-    const SdfGridTensors &grid,
-    const at::Tensor &origins,
-    const at::Tensor &directions,
-    const SdfTapeTensors &tape,
-    const SdfIntersectGradRequest &request);
+SdfIntersectBackwardOutputs sdf_intersect_backward_cuda(const SdfGridTensors& grid, const at::Tensor& origins,
+                                                        const at::Tensor& directions, const SdfTapeTensors& tape,
+                                                        const SdfIntersectGradRequest& request);
 
-SdfIntersectJvpOutputs sdf_intersect_jvp_cuda(
-    const SdfGridTensors &grid,
-    const at::Tensor &origins,
-    const at::Tensor &directions,
-    const SdfTapeTensors &tape,
-    const SdfIntersectTangentInputs &tangents);
+SdfIntersectJvpOutputs sdf_intersect_jvp_cuda(const SdfGridTensors& grid, const at::Tensor& origins,
+                                              const at::Tensor& directions, const SdfTapeTensors& tape,
+                                              const SdfIntersectTangentInputs& tangents);
 
 } // namespace rayd::torch_backend

@@ -12,9 +12,7 @@ import rayd.torch as rt
 class MultipathTests(unittest.TestCase):
     def test_visibility_returns_bool_tensor(self):
         verts = torch.tensor(
-            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]], device="cuda", dtype=torch.float32
         )
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene = rt.Scene()
@@ -23,9 +21,7 @@ class MultipathTests(unittest.TestCase):
         start = torch.tensor([[0.0, 0.0, -1.0]], device="cuda", dtype=torch.float32)
         end = torch.tensor([[0.0, 0.0, 1.0]], device="cuda", dtype=torch.float32)
         with mock.patch.object(
-            torch.Tensor,
-            "contiguous",
-            side_effect=AssertionError("Scene.visible() must not copy endpoints in Python."),
+            torch.Tensor, "contiguous", side_effect=AssertionError("Scene.visible() must not copy endpoints in Python.")
         ):
             visible = scene.visible(start, end)
         self.assertEqual(visible.dtype, torch.bool)
@@ -83,7 +79,9 @@ class MultipathTests(unittest.TestCase):
             ),
             mock.patch(
                 "torch.empty",
-                side_effect=AssertionError("Scene.trace_reflections() backward must not create empty grad sentinels in Python."),
+                side_effect=AssertionError(
+                    "Scene.trace_reflections() backward must not create empty grad sentinels in Python."
+                ),
             ),
         ):
             chain.t.backward(upstream)
@@ -105,15 +103,9 @@ class MultipathTests(unittest.TestCase):
         scene.build()
         ray = rt.Ray(
             torch.tensor(
-                [[0.0, 0.0, -1.0], [0.25, 0.25, -1.0], [-0.25, 0.25, -1.0]],
-                device="cuda",
-                dtype=torch.float32,
+                [[0.0, 0.0, -1.0], [0.25, 0.25, -1.0], [-0.25, 0.25, -1.0]], device="cuda", dtype=torch.float32
             ),
-            torch.tensor(
-                [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
-                device="cuda",
-                dtype=torch.float32,
-            ),
+            torch.tensor([[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]], device="cuda", dtype=torch.float32),
         )
         upstream = torch.tensor([[0.25], [-1.5], [2.0]], device="cuda", dtype=torch.float32)
 
@@ -121,7 +113,9 @@ class MultipathTests(unittest.TestCase):
         public_grad = verts.grad.detach().clone()
 
         active = torch.empty((0,), device="cuda", dtype=torch.bool)
-        values = torch.ops.rayd_torch.trace_reflections_forward(scene._require_native_scene(), ray.o, ray.d, ray.tmax, active, 1)
+        values = torch.ops.rayd_torch.trace_reflections_forward(
+            scene._require_native_scene(), ray.o, ray.d, ray.tmax, active, 1
+        )
         expected = torch.ops.rayd_torch.intersect_backward_t(
             scene._require_native_scene(),
             ray.o,
@@ -139,14 +133,7 @@ class MultipathTests(unittest.TestCase):
 
     def test_two_bounce_reflection_trace_fills_subsequent_bounces(self):
         verts = torch.tensor(
-            [
-                [0.0, -1.0, 0.0],
-                [2.0, -1.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [2.0, -1.0, 0.0],
-                [2.0, 1.0, 0.0],
-                [2.0, -1.0, 4.0],
-            ],
+            [[0.0, -1.0, 0.0], [2.0, -1.0, 0.0], [0.0, 1.0, 0.0], [2.0, -1.0, 0.0], [2.0, 1.0, 0.0], [2.0, -1.0, 4.0]],
             device="cuda",
             dtype=torch.float32,
         )
@@ -172,14 +159,7 @@ class MultipathTests(unittest.TestCase):
 
     def test_reflection_trace_reduced_fields_match_full_image_source_trace(self):
         verts = torch.tensor(
-            [
-                [0.0, -1.0, 0.0],
-                [2.0, -1.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [2.0, -1.0, 0.0],
-                [2.0, 1.0, 0.0],
-                [2.0, -1.0, 4.0],
-            ],
+            [[0.0, -1.0, 0.0], [2.0, -1.0, 0.0], [0.0, 1.0, 0.0], [2.0, -1.0, 0.0], [2.0, 1.0, 0.0], [2.0, -1.0, 4.0]],
             device="cuda",
             dtype=torch.float32,
         )
@@ -202,23 +182,14 @@ class MultipathTests(unittest.TestCase):
         torch.testing.assert_close(t, torch.tensor([[1.0, 1.0]], device="cuda"), atol=1e-3, rtol=1e-3)
         torch.testing.assert_close(prim_ids, torch.tensor([[0, 1]], device="cuda", dtype=torch.int32))
         torch.testing.assert_close(
-            image_sources[0],
-            torch.tensor([[0.0, 0.0, -1.0], [4.0, 0.0, -1.0]], device="cuda"),
-            atol=1e-3,
-            rtol=1e-3,
+            image_sources[0], torch.tensor([[0.0, 0.0, -1.0], [4.0, 0.0, -1.0]], device="cuda"), atol=1e-3, rtol=1e-3
         )
 
     def test_native_path_stats_match_reference(self):
         valid = torch.tensor(
-            [[True, True, False], [True, False, False], [True, True, True]],
-            device="cuda",
-            dtype=torch.bool,
+            [[True, True, False], [True, False, False], [True, True, True]], device="cuda", dtype=torch.bool
         )
-        t = torch.tensor(
-            [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]],
-            device="cuda",
-            dtype=torch.float32,
-        )
+        t = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]], device="cuda", dtype=torch.float32)
         counts, checksum = torch.ops.rayd_torch.reflection_trace_stats(valid.contiguous(), t.contiguous())
         self.assertEqual(int(counts[0].item()), 6)
         self.assertEqual(int(counts[1].item()), 1)
@@ -233,14 +204,7 @@ class MultipathTests(unittest.TestCase):
 
     def test_two_bounce_reflection_second_t_has_gradient(self):
         verts = torch.tensor(
-            [
-                [0.0, -1.0, 0.0],
-                [2.0, -1.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [2.0, -1.0, 0.0],
-                [2.0, 1.0, 0.0],
-                [2.0, -1.0, 4.0],
-            ],
+            [[0.0, -1.0, 0.0], [2.0, -1.0, 0.0], [0.0, 1.0, 0.0], [2.0, -1.0, 0.0], [2.0, 1.0, 0.0], [2.0, -1.0, 4.0]],
             device="cuda",
             dtype=torch.float32,
             requires_grad=True,
@@ -262,14 +226,7 @@ class MultipathTests(unittest.TestCase):
 
     def test_two_bounce_reflection_second_t_vjp_matches_finite_difference(self):
         base_verts = torch.tensor(
-            [
-                [0.0, -1.0, 0.0],
-                [2.0, -1.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [2.0, -1.0, 0.0],
-                [2.0, 1.0, 0.0],
-                [2.0, -1.0, 4.0],
-            ],
+            [[0.0, -1.0, 0.0], [2.0, -1.0, 0.0], [0.0, 1.0, 0.0], [2.0, -1.0, 0.0], [2.0, 1.0, 0.0], [2.0, -1.0, 4.0]],
             device="cuda",
             dtype=torch.float32,
         )
@@ -297,14 +254,7 @@ class MultipathTests(unittest.TestCase):
 
     def test_two_bounce_reflection_second_t_jvp_matches_finite_difference(self):
         base_verts = torch.tensor(
-            [
-                [0.0, -1.0, 0.0],
-                [2.0, -1.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [2.0, -1.0, 0.0],
-                [2.0, 1.0, 0.0],
-                [2.0, -1.0, 4.0],
-            ],
+            [[0.0, -1.0, 0.0], [2.0, -1.0, 0.0], [0.0, 1.0, 0.0], [2.0, -1.0, 0.0], [2.0, 1.0, 0.0], [2.0, -1.0, 4.0]],
             device="cuda",
             dtype=torch.float32,
         )
@@ -340,7 +290,9 @@ class MultipathTests(unittest.TestCase):
             ),
             mock.patch(
                 "torch.empty",
-                side_effect=AssertionError("Scene.trace_reflections() jvp must not create active mask sentinels in Python."),
+                side_effect=AssertionError(
+                    "Scene.trace_reflections() jvp must not create active mask sentinels in Python."
+                ),
             ),
         ):
             _primal, jvp = torch.func.jvp(fn, (base_verts,), (tangent,))
@@ -350,33 +302,15 @@ class MultipathTests(unittest.TestCase):
 
     def test_two_bounce_reflection_image_sources_vjp_uses_strided_upstream(self):
         base_verts = torch.tensor(
-            [
-                [0.0, -1.0, 0.0],
-                [2.0, -1.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [2.0, -1.0, 0.0],
-                [2.0, 1.0, 0.0],
-                [2.0, -1.0, 4.0],
-            ],
+            [[0.0, -1.0, 0.0], [2.0, -1.0, 0.0], [0.0, 1.0, 0.0], [2.0, -1.0, 0.0], [2.0, 1.0, 0.0], [2.0, -1.0, 4.0]],
             device="cuda",
             dtype=torch.float32,
         )
         faces = torch.tensor([[0, 1, 2], [3, 4, 5]], device="cuda", dtype=torch.int32)
-        base_ray_o = torch.tensor(
-            [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
-            device="cuda",
-            dtype=torch.float32,
-        )
-        base_ray_d = torch.tensor(
-            [[0.8, 0.0, -1.0], [0.8, 0.0, -1.0]],
-            device="cuda",
-            dtype=torch.float32,
-        )
+        base_ray_o = torch.tensor([[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]], device="cuda", dtype=torch.float32)
+        base_ray_d = torch.tensor([[0.8, 0.0, -1.0], [0.8, 0.0, -1.0]], device="cuda", dtype=torch.float32)
         upstream = torch.tensor(
-            [
-                [[0.25, -0.5, 0.75], [1.0, -0.25, 0.5]],
-                [[-0.75, 0.4, 0.2], [0.1, 0.8, -0.3]],
-            ],
+            [[[0.25, -0.5, 0.75], [1.0, -0.25, 0.5]], [[-0.75, 0.4, 0.2], [0.1, 0.8, -0.3]]],
             device="cuda",
             dtype=torch.float32,
         ).permute(1, 0, 2)
@@ -405,11 +339,7 @@ class MultipathTests(unittest.TestCase):
         tangent_verts = torch.zeros_like(base_verts)
         tangent_verts[:3, 2] = 0.03
         tangent_verts[3:, 0] = -0.04
-        tangent_ray_o = torch.tensor(
-            [[0.02, -0.01, 0.03], [-0.03, 0.04, -0.02]],
-            device="cuda",
-            dtype=torch.float32,
-        )
+        tangent_ray_o = torch.tensor([[0.02, -0.01, 0.03], [-0.03, 0.04, -0.02]], device="cuda", dtype=torch.float32)
         tangent_ray_d = torch.zeros_like(base_ray_d)
         vjp_dot = (
             (strided_grads[0] * tangent_verts).sum()
@@ -427,14 +357,10 @@ class MultipathTests(unittest.TestCase):
         eps = 1e-3
         fd = (
             weighted_image_sources(
-                base_verts + eps * tangent_verts,
-                base_ray_o + eps * tangent_ray_o,
-                base_ray_d + eps * tangent_ray_d,
+                base_verts + eps * tangent_verts, base_ray_o + eps * tangent_ray_o, base_ray_d + eps * tangent_ray_d
             )
             - weighted_image_sources(
-                base_verts - eps * tangent_verts,
-                base_ray_o - eps * tangent_ray_o,
-                base_ray_d - eps * tangent_ray_d,
+                base_verts - eps * tangent_verts, base_ray_o - eps * tangent_ray_o, base_ray_d - eps * tangent_ray_d
             )
         ) / (2.0 * eps)
         torch.testing.assert_close(vjp_dot, fd, atol=3e-2, rtol=3e-2)
@@ -457,21 +383,12 @@ class MultipathTests(unittest.TestCase):
             requires_grad=True,
         )
         receiver = torch.tensor(
-            [[0.0, 0.0, 1.0], [0.2, 0.1, 1.0], [-0.2, 0.2, 1.0]],
-            device="cuda",
-            dtype=torch.float32,
-            requires_grad=True,
+            [[0.0, 0.0, 1.0], [0.2, 0.1, 1.0], [-0.2, 0.2, 1.0]], device="cuda", dtype=torch.float32, requires_grad=True
         )
         out = scene.trace_refl_epc_field(source, receiver, max_bounces=1)
-        grad_real = torch.tensor(
-            [[0.25, 9.0], [-1.5, 9.0], [0.75, 9.0]], device="cuda", dtype=torch.float32
-        )[:, 0]
-        grad_imag = torch.tensor(
-            [[1.25, 9.0], [-0.5, 9.0], [0.0, 9.0]], device="cuda", dtype=torch.float32
-        )[:, 0]
-        grad_path = torch.tensor(
-            [[-0.25, 9.0], [0.6, 9.0], [2.0, 9.0]], device="cuda", dtype=torch.float32
-        )[:, 0]
+        grad_real = torch.tensor([[0.25, 9.0], [-1.5, 9.0], [0.75, 9.0]], device="cuda", dtype=torch.float32)[:, 0]
+        grad_imag = torch.tensor([[1.25, 9.0], [-0.5, 9.0], [0.0, 9.0]], device="cuda", dtype=torch.float32)[:, 0]
+        grad_path = torch.tensor([[-0.25, 9.0], [0.6, 9.0], [2.0, 9.0]], device="cuda", dtype=torch.float32)[:, 0]
         self.assertFalse(grad_real.is_contiguous())
         self.assertFalse(grad_imag.is_contiguous())
         self.assertFalse(grad_path.is_contiguous())
@@ -479,18 +396,16 @@ class MultipathTests(unittest.TestCase):
             "torch.zeros_like",
             side_effect=AssertionError("Scene.trace_refl_epc_field() backward must not fill grads in Python."),
         ):
-            torch.autograd.backward((out.field_real, out.field_imag, out.path_length), (grad_real, grad_imag, grad_path))
+            torch.autograd.backward(
+                (out.field_real, out.field_imag, out.path_length), (grad_real, grad_imag, grad_path)
+            )
         self.assertIsNotNone(verts.grad)
         self.assertIsNotNone(source.grad)
         self.assertIsNotNone(receiver.grad)
 
         active = torch.empty((0,), device="cuda", dtype=torch.bool)
         values = torch.ops.rayd_torch.trace_refl_epc_field_forward(
-            scene._require_native_scene(),
-            source.detach(),
-            receiver.detach(),
-            active,
-            1,
+            scene._require_native_scene(), source.detach(), receiver.detach(), active, 1
         )
         tape_prim_id, tape_barycentric, tape_t = values[5], values[6], values[2]
         inv_denom = 1.0 / (1.0 + tape_t)
@@ -517,28 +432,20 @@ class MultipathTests(unittest.TestCase):
 
     def test_reflection_epc_field_jvp_avoids_python_zero_tangents(self):
         verts = torch.tensor(
-            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]], device="cuda", dtype=torch.float32
         )
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene = rt.Scene()
         scene.add_mesh(rt.Mesh(verts, faces))
         scene.build()
         source = torch.tensor(
-            [[0.0, 0.0, -1.0], [0.2, 0.1, -1.0], [-0.2, 0.2, -1.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[0.0, 0.0, -1.0], [0.2, 0.1, -1.0], [-0.2, 0.2, -1.0]], device="cuda", dtype=torch.float32
         )
         receiver = torch.tensor(
-            [[0.0, 0.0, 1.0], [0.2, 0.1, 1.0], [-0.2, 0.2, 1.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[0.0, 0.0, 1.0], [0.2, 0.1, 1.0], [-0.2, 0.2, 1.0]], device="cuda", dtype=torch.float32
         )
         tangent_receiver = torch.tensor(
-            [[0.05, -0.03, 0.02], [-0.02, 0.04, 0.01], [0.1, 0.2, -0.1]],
-            device="cuda",
-            dtype=torch.float32,
+            [[0.05, -0.03, 0.02], [-0.02, 0.04, 0.01], [0.1, 0.2, -0.1]], device="cuda", dtype=torch.float32
         ).t()
         self.assertFalse(tangent_receiver.is_contiguous())
 
@@ -552,7 +459,9 @@ class MultipathTests(unittest.TestCase):
             ),
             mock.patch(
                 "torch.empty",
-                side_effect=AssertionError("Scene.trace_refl_epc_field() jvp must not create active mask sentinels in Python."),
+                side_effect=AssertionError(
+                    "Scene.trace_refl_epc_field() jvp must not create active mask sentinels in Python."
+                ),
             ),
         ):
             _primal, jvp = torch.func.jvp(fn, (receiver,), (tangent_receiver,))
@@ -580,24 +489,20 @@ class MultipathTests(unittest.TestCase):
         receiver = torch.tensor([[0.0, 0.0, 1.0]], device="cuda", dtype=torch.float32)
         upstream_real = torch.ones_like(source[:, 0])
         upstream_imag = torch.full_like(source[:, 0], -0.5)
-        with mock.patch("torch.cat", side_effect=AssertionError("Scene.trace_refl_epc_field() must not use torch.cat.")), \
-             mock.patch.object(
-                 torch.Tensor,
-                 "contiguous",
-                 side_effect=AssertionError("Scene.trace_refl_epc_field() must not copy source/receiver in Python."),
-             ), \
-             mock.patch(
-                 "torch.zeros_like",
-                 side_effect=AssertionError("Scene.trace_refl_epc_field() backward must not fill grads in Python."),
-             ):
+        with (
+            mock.patch("torch.cat", side_effect=AssertionError("Scene.trace_refl_epc_field() must not use torch.cat.")),
+            mock.patch.object(
+                torch.Tensor,
+                "contiguous",
+                side_effect=AssertionError("Scene.trace_refl_epc_field() must not copy source/receiver in Python."),
+            ),
+            mock.patch(
+                "torch.zeros_like",
+                side_effect=AssertionError("Scene.trace_refl_epc_field() backward must not fill grads in Python."),
+            ),
+        ):
             out = scene.trace_refl_epc_field(source, receiver, max_bounces=1)
-            torch.autograd.backward(
-                (out.field_real, out.field_imag),
-                (
-                    upstream_real,
-                    upstream_imag,
-                ),
-            )
+            torch.autograd.backward((out.field_real, out.field_imag), (upstream_real, upstream_imag))
         self.assertIsNotNone(verts0.grad)
         self.assertIsNotNone(verts1.grad)
         torch.testing.assert_close(verts0.grad, torch.zeros_like(verts0), atol=1e-5, rtol=1e-5)
@@ -639,9 +544,7 @@ class MultipathTests(unittest.TestCase):
 
     def test_reflection_accumulation_native_binding_smoke(self):
         verts = torch.tensor(
-            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]], device="cuda", dtype=torch.float32
         )
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene = rt.Scene()
@@ -683,9 +586,7 @@ class MultipathTests(unittest.TestCase):
     def test_legacy_dfr_direct_entrypoints_are_removed(self):
         scene = rt.Scene()
         verts = torch.tensor(
-            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]], device="cuda", dtype=torch.float32
         )
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene.add_mesh(rt.Mesh(verts, faces))
@@ -700,9 +601,7 @@ class MultipathTests(unittest.TestCase):
 
     def test_diffraction_paths_order1_native_binding_smoke(self):
         verts = torch.tensor(
-            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]], device="cuda", dtype=torch.float32
         )
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene = rt.Scene()
@@ -808,14 +707,10 @@ class MultipathTests(unittest.TestCase):
 
     def test_diffraction_paths_order1_accepts_multi_mesh_scene(self):
         verts0 = torch.tensor(
-            [[10.0, -1.0, 0.0], [12.0, -1.0, 0.0], [10.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[10.0, -1.0, 0.0], [12.0, -1.0, 0.0], [10.0, 1.0, 0.0]], device="cuda", dtype=torch.float32
         )
         verts1 = torch.tensor(
-            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]], device="cuda", dtype=torch.float32
         )
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene = rt.Scene()
@@ -876,9 +771,7 @@ class MultipathTests(unittest.TestCase):
 
     def test_diffraction_path_requires_active_while_coherent_remains_optional(self):
         verts = torch.tensor(
-            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]], device="cuda", dtype=torch.float32
         )
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene = rt.Scene()
@@ -910,12 +803,7 @@ class MultipathTests(unittest.TestCase):
         grid = rt.DfrGrid(axis=2, position=0.0, resolution0=2, resolution1=2)
         with self.assertRaises(TypeError):
             scene.trace_dfr_paths(
-                tx_positions=tx_pos,
-                rx_positions=rx_pos,
-                states=states,
-                material=material,
-                max_paths=1,
-                wavelength=1.0,
+                tx_positions=tx_pos, rx_positions=rx_pos, states=states, material=material, max_paths=1, wavelength=1.0
             )
 
         with self.assertRaises((TypeError, RuntimeError)):
@@ -934,19 +822,13 @@ class MultipathTests(unittest.TestCase):
             side_effect=AssertionError("Coherent public call must not create a Python empty active sentinel."),
         ):
             coherent = scene.accum_dfr_coherent_direct(
-                states=states,
-                grid=grid,
-                material=material,
-                active=None,
-                wavelength=1.0,
+                states=states, grid=grid, material=material, active=None, wavelength=1.0
             )
         self.assertEqual(tuple(coherent.direct_field_x_re.shape), (2, 2))
 
     def test_diffraction_paths_require_contiguous_active_while_accumulation_accepts_strided(self):
         verts = torch.tensor(
-            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]], device="cuda", dtype=torch.float32
         )
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene = rt.Scene()
@@ -1011,13 +893,7 @@ class MultipathTests(unittest.TestCase):
             seed=13,
         )
         accum_contig = scene.accum_dfr_direct(
-            states=states,
-            grid=grid,
-            material=material,
-            active=active_contig,
-            wavelength=1.0,
-            direct_samples=4,
-            seed=13,
+            states=states, grid=grid, material=material, active=active_contig, wavelength=1.0, direct_samples=4, seed=13
         )
         torch.testing.assert_close(accum_strided.power, accum_contig.power)
         torch.testing.assert_close(accum_strided.field_x_re, accum_contig.field_x_re)
@@ -1056,9 +932,7 @@ class MultipathTests(unittest.TestCase):
             return view
 
         verts = torch.tensor(
-            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]], device="cuda", dtype=torch.float32
         )
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene = rt.Scene()
@@ -1133,18 +1007,7 @@ class MultipathTests(unittest.TestCase):
             wavelength=1.0,
         )
 
-        for name in (
-            "count",
-            "valid",
-            "tx_id",
-            "rx_id",
-            "order",
-            "edge0",
-            "delay",
-            "field_x_re",
-            "field_x_im",
-            "p0",
-        ):
+        for name in ("count", "valid", "tx_id", "rx_id", "order", "edge0", "delay", "field_x_re", "field_x_im", "p0"):
             torch.testing.assert_close(getattr(paths_strided, name), getattr(paths_contig, name))
 
     def test_coherent_diffraction_accepts_strided_state_material_and_logical_count(self):
@@ -1181,9 +1044,7 @@ class MultipathTests(unittest.TestCase):
             return view
 
         verts = torch.tensor(
-            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]], device="cuda", dtype=torch.float32
         )
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene = rt.Scene()
@@ -1237,13 +1098,7 @@ class MultipathTests(unittest.TestCase):
         )
 
         direct_strided = scene.accum_dfr_direct(
-            states=states,
-            grid=grid,
-            material=material,
-            active=active,
-            wavelength=1.0,
-            direct_samples=4,
-            seed=17,
+            states=states, grid=grid, material=material, active=active, wavelength=1.0, direct_samples=4, seed=17
         )
         direct_expected = scene.accum_dfr_direct(
             states=expected_states,
@@ -1269,18 +1124,10 @@ class MultipathTests(unittest.TestCase):
             torch.testing.assert_close(getattr(direct_strided, name), getattr(direct_expected, name))
 
         strided = scene.accum_dfr_coherent_direct(
-            states=states,
-            grid=grid,
-            material=material,
-            active=active,
-            wavelength=1.0,
+            states=states, grid=grid, material=material, active=active, wavelength=1.0
         )
         expected = scene.accum_dfr_coherent_direct(
-            states=expected_states,
-            grid=grid,
-            material=expected_material,
-            active=active.contiguous(),
-            wavelength=1.0,
+            states=expected_states, grid=grid, material=expected_material, active=active.contiguous(), wavelength=1.0
         )
 
         for name in (
@@ -1363,9 +1210,7 @@ class MultipathTests(unittest.TestCase):
             )
 
         verts = torch.tensor(
-            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]], device="cuda", dtype=torch.float32
         )
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene = rt.Scene()
@@ -1439,14 +1284,10 @@ class MultipathTests(unittest.TestCase):
 
     def test_default_diffraction_material_covers_all_mesh_faces(self):
         verts0 = torch.tensor(
-            [[10.0, -1.0, 0.0], [12.0, -1.0, 0.0], [10.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[10.0, -1.0, 0.0], [12.0, -1.0, 0.0], [10.0, 1.0, 0.0]], device="cuda", dtype=torch.float32
         )
         verts1 = torch.tensor(
-            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]], device="cuda", dtype=torch.float32
         )
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene = rt.Scene()
@@ -1462,9 +1303,7 @@ class MultipathTests(unittest.TestCase):
 
     def test_diffraction_accumulation_native_binding_smoke(self):
         verts = torch.tensor(
-            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]], device="cuda", dtype=torch.float32
         )
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene = rt.Scene()
@@ -1552,9 +1391,7 @@ class MultipathTests(unittest.TestCase):
 
     def test_scene_accum_dfr_direct_native_api(self):
         verts = torch.tensor(
-            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]], device="cuda", dtype=torch.float32
         )
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene = rt.Scene()
@@ -1625,30 +1462,26 @@ class MultipathTests(unittest.TestCase):
         with (
             mock.patch(
                 "torch.empty",
-                side_effect=AssertionError("Scene.accum_dfr_direct() no-AD path must not create Python empty sentinels."),
+                side_effect=AssertionError(
+                    "Scene.accum_dfr_direct() no-AD path must not create Python empty sentinels."
+                ),
             ),
             mock.patch(
                 "torch.zeros_like",
-                side_effect=AssertionError("Scene.accum_dfr_direct() no-AD path must not fill missing state vectors in Python."),
+                side_effect=AssertionError(
+                    "Scene.accum_dfr_direct() no-AD path must not fill missing state vectors in Python."
+                ),
             ),
         ):
             missing_out = scene.accum_dfr_direct(
-                states=states,
-                grid=grid,
-                material=material,
-                wavelength=1.0,
-                direct_samples=4,
-                keller_samples=4,
-                seed=11,
+                states=states, grid=grid, material=material, wavelength=1.0, direct_samples=4, keller_samples=4, seed=11
             )
         torch.testing.assert_close(missing_out.power, explicit_out.power)
         torch.testing.assert_close(missing_out.field_x_re, explicit_out.field_x_re)
 
     def test_scene_accum_dfr_direct_backward_reaches_state_and_material(self):
         verts = torch.tensor(
-            [[-1.0, -1.0, 10.0], [1.0, -1.0, 10.0], [-1.0, 1.0, 10.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[-1.0, -1.0, 10.0], [1.0, -1.0, 10.0], [-1.0, 1.0, 10.0]], device="cuda", dtype=torch.float32
         )
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene = rt.Scene()
@@ -1690,34 +1523,27 @@ class MultipathTests(unittest.TestCase):
         )
         grid = rt.DfrGrid(axis=2, position=-1.0, resolution0=2, resolution1=2)
         out = scene.accum_dfr_direct(
-            states=states,
-            grid=grid,
-            material=material,
-            wavelength=0.125,
-            seed=17,
-            direct_samples=64,
+            states=states, grid=grid, material=material, wavelength=0.125, seed=17, direct_samples=64
         )
-        upstream_field = torch.arange(
-            1,
-            out.field_x_re.numel() + 1,
-            device="cuda",
-            dtype=torch.float32,
-        ).reshape_as(out.field_x_re)
+        upstream_field = torch.arange(1, out.field_x_re.numel() + 1, device="cuda", dtype=torch.float32).reshape_as(
+            out.field_x_re
+        )
         with (
             mock.patch(
                 "torch.zeros",
-                side_effect=AssertionError("Scene.accum_dfr_direct() backward must not fill missing upstreams in Python."),
+                side_effect=AssertionError(
+                    "Scene.accum_dfr_direct() backward must not fill missing upstreams in Python."
+                ),
             ),
             mock.patch(
                 "torch.zeros_like",
-                side_effect=AssertionError("Scene.accum_dfr_direct() backward must not fill missing upstreams in Python."),
+                side_effect=AssertionError(
+                    "Scene.accum_dfr_direct() backward must not fill missing upstreams in Python."
+                ),
             ),
         ):
             field_grads = torch.autograd.grad(
-                out.field_x_re,
-                (edge_pos, gain),
-                grad_outputs=upstream_field,
-                retain_graph=True,
+                out.field_x_re, (edge_pos, gain), grad_outputs=upstream_field, retain_graph=True
             )
         for grad in field_grads:
             self.assertIsNotNone(grad)
@@ -1781,9 +1607,7 @@ class MultipathTests(unittest.TestCase):
             return view
 
         verts = torch.tensor(
-            [[-1.0, -1.0, 10.0], [1.0, -1.0, 10.0], [-1.0, 1.0, 10.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[-1.0, -1.0, 10.0], [1.0, -1.0, 10.0], [-1.0, 1.0, 10.0]], device="cuda", dtype=torch.float32
         )
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene = rt.Scene()
@@ -1842,9 +1666,7 @@ class MultipathTests(unittest.TestCase):
                 direct_samples=8,
             )
             strided_grads = torch.autograd.grad(
-                (out.power, out.field_x_re),
-                inputs,
-                grad_outputs=(upstream_power, upstream_field),
+                (out.power, out.field_x_re), inputs, grad_outputs=(upstream_power, upstream_field)
             )
 
         expected_states = rt.DfrStates(
@@ -1904,9 +1726,7 @@ class MultipathTests(unittest.TestCase):
 
     def test_scene_accum_dfr_direct_jvp_reaches_power_and_field_x_re(self):
         verts = torch.tensor(
-            [[-1.0, -1.0, 10.0], [1.0, -1.0, 10.0], [-1.0, 1.0, 10.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[-1.0, -1.0, 10.0], [1.0, -1.0, 10.0], [-1.0, 1.0, 10.0]], device="cuda", dtype=torch.float32
         )
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene = rt.Scene()
@@ -1963,12 +1783,7 @@ class MultipathTests(unittest.TestCase):
                 side_effect=AssertionError("Scene.accum_dfr_direct() jvp must not fill tangents in Python."),
             ):
                 out = scene.accum_dfr_direct(
-                    states=dual_states,
-                    grid=grid,
-                    material=material,
-                    wavelength=0.125,
-                    seed=17,
-                    direct_samples=64,
+                    states=dual_states, grid=grid, material=material, wavelength=0.125, seed=17, direct_samples=64
                 )
                 _power, tangent_power = torch.autograd.forward_ad.unpack_dual(out.power)
                 _field_x_re, tangent_field_x_re = torch.autograd.forward_ad.unpack_dual(out.field_x_re)
@@ -1979,9 +1794,7 @@ class MultipathTests(unittest.TestCase):
 
     def test_scene_accum_dfr_chain_backward_reaches_initial_recursive_and_material(self):
         verts = torch.tensor(
-            [[-1.0, -1.0, 10.0], [1.0, -1.0, 10.0], [-1.0, 1.0, 10.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[-1.0, -1.0, 10.0], [1.0, -1.0, 10.0], [-1.0, 1.0, 10.0]], device="cuda", dtype=torch.float32
         )
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene = rt.Scene()
@@ -2054,12 +1867,9 @@ class MultipathTests(unittest.TestCase):
             keller_samples=64,
             max_order=2,
         )
-        upstream_field = torch.arange(
-            1,
-            out.field_x_re.numel() + 1,
-            device="cuda",
-            dtype=torch.float32,
-        ).reshape_as(out.field_x_re)
+        upstream_field = torch.arange(1, out.field_x_re.numel() + 1, device="cuda", dtype=torch.float32).reshape_as(
+            out.field_x_re
+        )
         with (
             mock.patch(
                 "torch.zeros",
@@ -2071,10 +1881,7 @@ class MultipathTests(unittest.TestCase):
             ),
         ):
             field_grads = torch.autograd.grad(
-                out.field_x_re,
-                (edge_pos, rec_edge_pos, gain),
-                grad_outputs=upstream_field,
-                retain_graph=True,
+                out.field_x_re, (edge_pos, rec_edge_pos, gain), grad_outputs=upstream_field, retain_graph=True
             )
         for grad in field_grads:
             self.assertIsNotNone(grad)
@@ -2100,9 +1907,7 @@ class MultipathTests(unittest.TestCase):
 
     def test_scene_accum_dfr_chain_jvp_reaches_power_and_field_x_re(self):
         verts = torch.tensor(
-            [[-1.0, -1.0, 10.0], [1.0, -1.0, 10.0], [-1.0, 1.0, 10.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[-1.0, -1.0, 10.0], [1.0, -1.0, 10.0], [-1.0, 1.0, 10.0]], device="cuda", dtype=torch.float32
         )
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene = rt.Scene()

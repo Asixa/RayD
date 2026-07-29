@@ -31,37 +31,23 @@ struct OptixTraverser {
     unsigned int sbt_offset;
     unsigned int sbt_stride;
     unsigned int miss_index;
-    float miss_t;  ///< Distance the cleared payload reports on a miss / null handle.
+    float miss_t; ///< Distance the cleared payload reports on a miss / null handle.
 
-    __device__ __forceinline__ ::rayd::shared::rt::TriangleHit trace_closest(
-        math::Vec3f origin, math::Vec3f direction, float tmin, float tmax) const {
+    __device__ __forceinline__ ::rayd::shared::rt::TriangleHit trace_closest(math::Vec3f origin, math::Vec3f direction,
+                                                                             float tmin, float tmax) const {
         TriangleHitPayload payload;
         clear_triangle_hit(payload, miss_t);
         if (handle != 0ull) {
-            optixTrace(
-                handle,
-                make_float3(origin.x, origin.y, origin.z),
-                make_float3(direction.x, direction.y, direction.z),
-                tmin,
-                tmax,
-                0.0f,
-                255u,
-                ray_flags,
-                sbt_offset,
-                sbt_stride,
-                miss_index,
-                payload.hit,
-                payload.t,
-                payload.bary_u,
-                payload.bary_v,
-                payload.prim,
-                payload.instance);
+            optixTrace(handle, make_float3(origin.x, origin.y, origin.z),
+                       make_float3(direction.x, direction.y, direction.z), tmin, tmax, 0.0f, 255u, ray_flags,
+                       sbt_offset, sbt_stride, miss_index, payload.hit, payload.t, payload.bary_u, payload.bary_v,
+                       payload.prim, payload.instance);
         }
         return decode(payload);
     }
 
-    __device__ __forceinline__ bool trace_occluded(
-        math::Vec3f origin, math::Vec3f direction, float tmin, float tmax) const {
+    __device__ __forceinline__ bool trace_occluded(math::Vec3f origin, math::Vec3f direction, float tmin,
+                                                   float tmax) const {
         return trace_closest(origin, direction, tmin, tmax).hit != 0u;
     }
 
@@ -69,21 +55,22 @@ struct OptixTraverser {
     // OptiX occlusion / first-blocker paths are wired with the P4 Stage B
     // segment-visibility migration. These satisfy rt::is_traverser and fall back
     // to the plain closest cast (ignore list unused) until then.
-    __device__ __forceinline__ bool trace_occluded_ignore(
-        math::Vec3f origin, math::Vec3f direction, float tmin, float tmax,
-        const std::int32_t * /*ignore*/, int /*ignore_count*/) const {
+    __device__ __forceinline__ bool trace_occluded_ignore(math::Vec3f origin, math::Vec3f direction, float tmin,
+                                                          float tmax, const std::int32_t* /*ignore*/,
+                                                          int /*ignore_count*/) const {
         return trace_occluded(origin, direction, tmin, tmax);
     }
 
-    __device__ __forceinline__ ::rayd::shared::rt::TriangleHit trace_first_blocker(
-        math::Vec3f origin, math::Vec3f direction, float tmin, float tmax,
-        const std::int32_t * /*ignore*/, int /*ignore_count*/) const {
+    __device__ __forceinline__ ::rayd::shared::rt::TriangleHit trace_first_blocker(math::Vec3f origin,
+                                                                                   math::Vec3f direction, float tmin,
+                                                                                   float tmax,
+                                                                                   const std::int32_t* /*ignore*/,
+                                                                                   int /*ignore_count*/) const {
         return trace_closest(origin, direction, tmin, tmax);
     }
 
-private:
-    __device__ __forceinline__ ::rayd::shared::rt::TriangleHit decode(
-        const TriangleHitPayload &payload) const {
+  private:
+    __device__ __forceinline__ ::rayd::shared::rt::TriangleHit decode(const TriangleHitPayload& payload) const {
         ::rayd::shared::rt::TriangleHit hit;
         hit.t = __uint_as_float(payload.t);
         hit.bary_u = __uint_as_float(payload.bary_u);

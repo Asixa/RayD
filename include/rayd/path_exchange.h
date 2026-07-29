@@ -102,10 +102,10 @@ struct PathInteractionDerivativeRecord {
 /// Non-owning batch view. Derivative pointers are optional and, when present,
 /// must use the same path/interaction indexing as the primal tables.
 struct PathRecordBatchView {
-    const PathRecord *paths;
-    const PathInteractionRecord *interactions;
-    const PathDerivativeRecord *path_derivatives;
-    const PathInteractionDerivativeRecord *interaction_derivatives;
+    const PathRecord* paths;
+    const PathInteractionRecord* interactions;
+    const PathDerivativeRecord* path_derivatives;
+    const PathInteractionDerivativeRecord* interaction_derivatives;
     std::size_t path_count;
     std::size_t interaction_count;
     PathDerivativeMode derivative_mode;
@@ -125,8 +125,8 @@ static_assert(offsetof(PathRecord, order) == 4);
 static_assert(offsetof(PathRecord, total_length) == 36);
 static_assert(offsetof(PathRecord, field) == 68);
 
-#define RAYD_ASSERT_PATH_RECORD_POD(Type)                                    \
-    static_assert(std::is_standard_layout_v<Type>);                          \
+#define RAYD_ASSERT_PATH_RECORD_POD(Type)                                                                              \
+    static_assert(std::is_standard_layout_v<Type>);                                                                    \
     static_assert(std::is_trivially_copyable_v<Type>)
 
 RAYD_ASSERT_PATH_RECORD_POD(PathVec3f);

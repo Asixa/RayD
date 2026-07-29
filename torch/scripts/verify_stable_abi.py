@@ -16,35 +16,16 @@ TORCH_ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = TORCH_ROOT.parent
 
 
-FORBIDDEN_SOURCE_MARKERS = (
-    "at::",
-    "c10::",
-    "py::",
-    "torch/extension.h",
-    "torch/library.h",
-)
-FORBIDDEN_DEPENDENCIES = (
-    "torch_python",
-    "c10.dll",
-    "c10_cuda.dll",
-    "libc10.so",
-    "libc10_cuda.so",
-    "python3",
-)
-FORBIDDEN_DYNAMIC_SYMBOLS = (
-    "at::",
-    "c10::",
-    "@at@@",
-    "@c10@@",
-)
+FORBIDDEN_SOURCE_MARKERS = ("at::", "c10::", "py::", "torch/extension.h", "torch/library.h")
+FORBIDDEN_DEPENDENCIES = ("torch_python", "c10.dll", "c10_cuda.dll", "libc10.so", "libc10_cuda.so", "python3")
+FORBIDDEN_DYNAMIC_SYMBOLS = ("at::", "c10::", "@at@@", "@c10@@")
 
 
 def verify_sources(source_root: Path) -> None:
     sources = sorted(
         path
         for path in source_root.rglob("*")
-        if path.suffix in {".h", ".hpp", ".cuh", ".cc", ".cpp", ".cu"}
-        and "_stable." in path.name
+        if path.suffix in {".h", ".hpp", ".cuh", ".cc", ".cpp", ".cu"} and "_stable." in path.name
     )
     if not sources:
         raise SystemExit(f"No Stable ABI sources found under {source_root}")
@@ -65,9 +46,7 @@ def dependency_listing(binary: Path) -> str:
         if tool is None:
             program_files = Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
             candidates = sorted(
-                program_files.glob(
-                    "Microsoft Visual Studio/2022/*/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe"
-                ),
+                program_files.glob("Microsoft Visual Studio/2022/*/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe"),
                 reverse=True,
             )
             tool = str(candidates[0]) if candidates else None
@@ -93,9 +72,7 @@ def dynamic_symbol_listing(binary: Path) -> str:
         if tool is None:
             program_files = Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
             candidates = sorted(
-                program_files.glob(
-                    "Microsoft Visual Studio/2022/*/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe"
-                ),
+                program_files.glob("Microsoft Visual Studio/2022/*/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe"),
                 reverse=True,
             )
             tool = str(candidates[0]) if candidates else None
@@ -139,8 +116,7 @@ def verify_input(path: Path) -> None:
             members = [
                 name
                 for name in wheel.namelist()
-                if Path(name).name.startswith("_stable_ops")
-                and Path(name).suffix in {".dll", ".so", ".dylib"}
+                if Path(name).name.startswith("_stable_ops") and Path(name).suffix in {".dll", ".so", ".dylib"}
             ]
             if len(members) != 1:
                 raise SystemExit(f"{path} must contain exactly one Stable ABI library; found {members}")

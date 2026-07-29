@@ -19,6 +19,20 @@ import torch
 
 import rayd.torch as rt
 
+try:
+    from benchmarks.common import (
+        cleanup_drjit as _cleanup_drjit,
+        make_grid_mesh_data as _make_grid_mesh_data,
+        time_build as _time_build,
+    )
+except ImportError:  # pragma: no cover - supports direct script execution.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from benchmarks.common import (
+        cleanup_drjit as _cleanup_drjit,
+        make_grid_mesh_data as _make_grid_mesh_data,
+        time_build as _time_build,
+    )
+
 
 RAYDI_ROOT = Path(r"E:\Code\RayDi")
 
@@ -70,45 +84,7 @@ def _parse_scenario(spec: str) -> Scenario:
     return Scenario(label, mesh_resolution, ray_grid_side)
 
 
-def _make_grid_mesh_data(
-    resolution: int,
-    *,
-    x_offset: float = 0.0,
-    z_offset: float = 0.0,
-) -> dict[str, list[float] | list[int]]:
-    xs: list[float] = []
-    ys: list[float] = []
-    zs: list[float] = []
-    for y in range(resolution + 1):
-        fy = y / resolution
-        for x in range(resolution + 1):
-            fx = x / resolution
-            xs.append(x_offset + fx)
-            ys.append(fy)
-            zs.append(z_offset)
-
-    i0: list[int] = []
-    i1: list[int] = []
-    i2: list[int] = []
-    stride = resolution + 1
-    for y in range(resolution):
-        for x in range(resolution):
-            v00 = y * stride + x
-            v10 = v00 + 1
-            v01 = v00 + stride
-            v11 = v01 + 1
-            i0.extend([v00, v00])
-            i1.extend([v10, v11])
-            i2.extend([v11, v01])
-    return {"x": xs, "y": ys, "z": zs, "i0": i0, "i1": i1, "i2": i2}
-
-
-def _make_ray_data(
-    side: int,
-    *,
-    x_offset: float = 0.0,
-    z_origin: float = -1.0,
-) -> dict[str, list[float]]:
+def _make_ray_data(side: int, *, x_offset: float = 0.0, z_origin: float = -1.0) -> dict[str, list[float]]:
     xs: list[float] = []
     ys: list[float] = []
     zs: list[float] = []
@@ -118,31 +94,15 @@ def _make_ray_data(
             ys.append((iy + 0.5) / side)
             zs.append(z_origin)
     count = len(xs)
-    return {
-        "ox": xs,
-        "oy": ys,
-        "oz": zs,
-        "dx": [0.0] * count,
-        "dy": [0.0] * count,
-        "dz": [1.0] * count,
-    }
+    return {"ox": xs, "oy": ys, "oz": zs, "dx": [0.0] * count, "dy": [0.0] * count, "dz": [1.0] * count}
 
 
 def _summarize(times_s: list[float], query_count: int) -> dict[str, float]:
     avg_s = statistics.fmean(times_s)
-    return {
-        "min_ms": min(times_s) * 1000.0,
-        "avg_ms": avg_s * 1000.0,
-        "qps_m": query_count / avg_s / 1.0e6,
-    }
+    return {"min_ms": min(times_s) * 1000.0, "avg_ms": avg_s * 1000.0, "qps_m": query_count / avg_s / 1.0e6}
 
 
-def _measure(
-    fn: Callable[[], object],
-    sync: Callable[[], None],
-    repeats: int,
-    warmup: int,
-) -> list[float]:
+def _measure(fn: Callable[[], object], sync: Callable[[], None], repeats: int, warmup: int) -> list[float]:
     for _ in range(warmup):
         fn()
         sync()
@@ -153,13 +113,6 @@ def _measure(
         sync()
         times_s.append(time.perf_counter() - start)
     return times_s
-
-
-def _time_build(fn: Callable[[], object], sync: Callable[[], None]) -> tuple[object, float]:
-    start = time.perf_counter()
-    value = fn()
-    sync()
-    return value, (time.perf_counter() - start) * 1000.0
 
 
 def _cleanup_torch() -> None:
@@ -184,14 +137,6 @@ def _load_rayd(source: str, root: Path):
     return rayd, cuda, dr
 
 
-def _cleanup_drjit(dr: Any) -> None:
-    gc.collect()
-    dr.sync_thread()
-    dr.flush_malloc_cache()
-    dr.flush_kernel_cache()
-    dr.sync_thread()
-
-
 def _try_import_mitsuba(variant: str):
     tests_dir = os.path.normcase(os.path.abspath(os.path.dirname(__file__)))
     saved_path = sys.path[:]
@@ -208,37 +153,26 @@ def _try_import_mitsuba(variant: str):
 
 def _torch_mesh(mesh_data: dict[str, list[float] | list[int]]) -> tuple[torch.Tensor, torch.Tensor]:
     verts = torch.tensor(
-        list(zip(mesh_data["x"], mesh_data["y"], mesh_data["z"])),
-        device="cuda",
-        dtype=torch.float32,
+        list(zip(mesh_data["x"], mesh_data["y"], mesh_data["z"])), device="cuda", dtype=torch.float32
     ).contiguous()
     faces = torch.tensor(
-        list(zip(mesh_data["i0"], mesh_data["i1"], mesh_data["i2"])),
-        device="cuda",
-        dtype=torch.int32,
+        list(zip(mesh_data["i0"], mesh_data["i1"], mesh_data["i2"])), device="cuda", dtype=torch.int32
     ).contiguous()
     return verts, faces
 
 
 def _torch_ray(ray_data: dict[str, list[float]]) -> rt.Ray:
     origins = torch.tensor(
-        list(zip(ray_data["ox"], ray_data["oy"], ray_data["oz"])),
-        device="cuda",
-        dtype=torch.float32,
+        list(zip(ray_data["ox"], ray_data["oy"], ray_data["oz"])), device="cuda", dtype=torch.float32
     ).contiguous()
     directions = torch.tensor(
-        list(zip(ray_data["dx"], ray_data["dy"], ray_data["dz"])),
-        device="cuda",
-        dtype=torch.float32,
+        list(zip(ray_data["dx"], ray_data["dy"], ray_data["dz"])), device="cuda", dtype=torch.float32
     ).contiguous()
     return rt.Ray(origins, directions)
 
 
 def _torch_scene(
-    mesh_data: dict[str, list[float] | list[int]],
-    *,
-    dynamic: bool,
-    edges_enabled: bool,
+    mesh_data: dict[str, list[float] | list[int]], *, dynamic: bool, edges_enabled: bool
 ) -> tuple[rt.Scene, int, float]:
     verts, faces = _torch_mesh(mesh_data)
     scene = rt.Scene()
@@ -366,13 +300,7 @@ def _rayd_ray(rayd: Any, cuda: Any, ray_data: dict[str, list[float]]) -> Any:
 
 
 def _rayd_scene(
-    rayd: Any,
-    cuda: Any,
-    dr: Any,
-    mesh_data: dict[str, list[float] | list[int]],
-    *,
-    dynamic: bool,
-    edges_enabled: bool,
+    rayd: Any, cuda: Any, dr: Any, mesh_data: dict[str, list[float] | list[int]], *, dynamic: bool, edges_enabled: bool
 ) -> tuple[Any, int, float]:
     mesh = rayd.Mesh(
         cuda.Array3f(mesh_data["x"], mesh_data["y"], mesh_data["z"]),
@@ -399,14 +327,7 @@ def _rayd_forward_performance(
     repeats: int,
     warmup: int,
 ) -> dict[str, Any]:
-    scene, mesh_id, build_ms = _rayd_scene(
-        rayd,
-        cuda,
-        dr,
-        mesh_data,
-        dynamic=dynamic,
-        edges_enabled=edges_enabled,
-    )
+    scene, mesh_id, build_ms = _rayd_scene(rayd, cuda, dr, mesh_data, dynamic=dynamic, edges_enabled=edges_enabled)
     rays = _rayd_ray(rayd, cuda, ray_data)
     updated_rays = _rayd_ray(rayd, cuda, updated_ray_data)
     base_positions = cuda.Array3f(mesh_data["x"], mesh_data["y"], mesh_data["z"])
@@ -514,9 +435,7 @@ def _rayd_backward_performance(
             # A static scene owns one reusable geometry graph. Default Dr.Jit
             # traversal destroys its edges during warmup, which would make the
             # timed iterations benchmark an empty/zero-gradient backward.
-            traversal_flags = (
-                dr.ADFlag.Default if dynamic else dr.ADFlag.ClearInterior
-            )
+            traversal_flags = dr.ADFlag.Default if dynamic else dr.ADFlag.ClearInterior
             dr.traverse(dr.ADMode.Backward, flags=traversal_flags)
             gradient = dr.grad(current_positions)
             dr.eval(gradient)
@@ -528,28 +447,18 @@ def _rayd_backward_performance(
     performance: dict[str, dict[str, float]] = {}
     for mode in ("vjp_full", "vjp_reduced"):
         run = make_run(mode)
-        performance[mode] = _summarize(
-            _measure(run, dr.sync_thread, repeats, warmup),
-            query_count,
-        )
+        performance[mode] = _summarize(_measure(run, dr.sync_thread, repeats, warmup), query_count)
         gradient = run()
         dr.sync_thread()
         if not dr.any(dr.abs(gradient) > 0, axis=None):
-            raise RuntimeError(
-                f"RayD Dr.Jit {mode} produced an all-zero vertex gradient after timing."
-            )
+            raise RuntimeError(f"RayD Dr.Jit {mode} produced an all-zero vertex gradient after timing.")
 
-    return {
-        "build_ms": build_ms,
-        "performance": performance,
-    }
+    return {"build_ms": build_ms, "performance": performance}
 
 
 def _torch_positions(mesh_data: dict[str, list[float] | list[int]], *, requires_grad: bool) -> torch.Tensor:
     value = torch.tensor(
-        list(zip(mesh_data["x"], mesh_data["y"], mesh_data["z"])),
-        device="cuda",
-        dtype=torch.float32,
+        list(zip(mesh_data["x"], mesh_data["y"], mesh_data["z"])), device="cuda", dtype=torch.float32
     ).contiguous()
     value.requires_grad_(requires_grad)
     return value
@@ -610,14 +519,8 @@ def _rayd_torch_loss_backward_performance(
         return wrapped_t
 
     wrapped: dict[str, tuple[Callable[[torch.Tensor], torch.Tensor], Callable[[torch.Tensor], torch.Tensor]]] = {
-        "vjp_full": (
-            make_wrapped(rays, rayd.RayFlags.All),
-            make_wrapped(updated_rays, rayd.RayFlags.All),
-        ),
-        "vjp_reduced": (
-            make_wrapped(rays, flags_none),
-            make_wrapped(updated_rays, flags_none),
-        ),
+        "vjp_full": (make_wrapped(rays, rayd.RayFlags.All), make_wrapped(updated_rays, rayd.RayFlags.All)),
+        "vjp_reduced": (make_wrapped(rays, flags_none), make_wrapped(updated_rays, flags_none)),
     }
 
     def make_run(mode: str):
@@ -724,8 +627,7 @@ def _mitsuba_forward_performance(
     return {
         "build_ms": build_ms,
         "performance": {
-            mode: _summarize(_measure(make_run(mode), dr.sync_thread, repeats, warmup), query_count)
-            for mode in modes
+            mode: _summarize(_measure(make_run(mode), dr.sync_thread, repeats, warmup), query_count) for mode in modes
         },
     }
 
@@ -777,30 +679,20 @@ def _mitsuba_backward_performance(
         its = scene.ray_intersect(current_rays)
         dr.set_grad(its.t, current_weights)
         dr.enqueue(dr.ADMode.Backward, its.t)
-        traversal_flags = (
-            dr.ADFlag.Default if dynamic else dr.ADFlag.ClearInterior
-        )
+        traversal_flags = dr.ADFlag.Default if dynamic else dr.ADFlag.ClearInterior
         dr.traverse(dr.ADMode.Backward, flags=traversal_flags)
         gradient = dr.grad(current_positions)
         dr.eval(gradient)
         return gradient
 
     query_count = len(updated_ray_data["ox"] if dynamic else ray_data["ox"])
-    performance = _summarize(
-        _measure(run, dr.sync_thread, repeats, warmup),
-        query_count,
-    )
+    performance = _summarize(_measure(run, dr.sync_thread, repeats, warmup), query_count)
     gradient = run()
     dr.sync_thread()
     if not dr.any(dr.abs(gradient) > 0, axis=None):
-        raise RuntimeError(
-            "Mitsuba vjp_full produced an all-zero vertex gradient after timing."
-        )
+        raise RuntimeError("Mitsuba vjp_full produced an all-zero vertex gradient after timing.")
 
-    return {
-        "build_ms": build_ms,
-        "performance": {"vjp_full": performance},
-    }
+    return {"build_ms": build_ms, "performance": {"vjp_full": performance}}
 
 
 def _mitsuba_torch_loss_backward_performance(
@@ -842,14 +734,8 @@ def _mitsuba_torch_loss_backward_performance(
         return wrapped_t
 
     wrapped: dict[str, tuple[Callable[[torch.Tensor], torch.Tensor], Callable[[torch.Tensor], torch.Tensor]]] = {
-        "vjp_full": (
-            make_wrapped(rays, reduced=False),
-            make_wrapped(updated_rays, reduced=False),
-        ),
-        "vjp_reduced": (
-            make_wrapped(rays, reduced=True),
-            make_wrapped(updated_rays, reduced=True),
-        ),
+        "vjp_full": (make_wrapped(rays, reduced=False), make_wrapped(updated_rays, reduced=False)),
+        "vjp_reduced": (make_wrapped(rays, reduced=True), make_wrapped(updated_rays, reduced=True)),
     }
 
     def make_run(mode: str):
@@ -1201,10 +1087,7 @@ def main() -> None:
         description="RayD latest-style intersection stress benchmark with RayD Torch and Mitsuba backends."
     )
     parser.add_argument(
-        "--backends",
-        nargs="+",
-        default=["torch", "rayd", "mitsuba"],
-        choices=["torch", "rayd", "mitsuba"],
+        "--backends", nargs="+", default=["torch", "rayd", "mitsuba"], choices=["torch", "rayd", "mitsuba"]
     )
     parser.add_argument("--scenario", action="append", default=[])
     parser.add_argument("--mesh-resolution", type=int, default=64)

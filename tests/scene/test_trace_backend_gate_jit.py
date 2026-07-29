@@ -33,9 +33,7 @@ if str(ROOT) not in sys.path:
 # for why it resolves from here under both documented invocations.
 from tests.golden import scenes as scene_defs  # noqa: E402
 
-EDGE_BASELINE = (
-    ROOT / "tests" / "golden" / "baselines" / "optix" / "edge_queries.json"
-)
+EDGE_BASELINE = ROOT / "tests" / "golden" / "baselines" / "optix" / "edge_queries.json"
 
 
 def _run_json(script: str, disable_optix: bool = False, timeout: int = 300):
@@ -56,10 +54,7 @@ def _run_json(script: str, disable_optix: bool = False, timeout: int = 300):
     )
     if result.returncode != 0:
         raise AssertionError(
-            "Subprocess failed.\n"
-            f"Return code: {result.returncode}\n"
-            f"STDOUT:\n{result.stdout}\n"
-            f"STDERR:\n{result.stderr}"
+            f"Subprocess failed.\nReturn code: {result.returncode}\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
         )
     lines = [line for line in result.stdout.splitlines() if line.strip()]
     if not lines:
@@ -174,8 +169,7 @@ class TraceBackendGateBlockedTests(unittest.TestCase):
 
     def test_optix_available_reports_false(self):
         data = _run_json(
-            "import json, rayd.drjit as rd; "
-            'print(json.dumps({"optix_available": rd.optix_available()}))',
+            'import json, rayd.drjit as rd; print(json.dumps({"optix_available": rd.optix_available()}))',
             disable_optix=True,
         )
         self.assertIs(data["optix_available"], False)
@@ -194,9 +188,7 @@ class TraceBackendGateBlockedTests(unittest.TestCase):
                 expected = baseline[name]["discrete"]
                 for field, value in produced.items():
                     self.assertEqual(
-                        value,
-                        expected[field],
-                        f"discrete field {field!r} of {name!r} drifted vs OptiX baseline",
+                        value, expected[field], f"discrete field {field!r} of {name!r} drifted vs OptiX baseline"
                     )
 
     def test_auto_capabilities_set_device_and_explicit_optix_errors(self):
@@ -328,10 +320,7 @@ class TraceBackendGateAvailableTests(unittest.TestCase):
     """OptiX present (normal environment)."""
 
     def test_optix_available_reports_true(self):
-        data = _run_json(
-            "import json, rayd.drjit as rd; "
-            'print(json.dumps({"optix_available": rd.optix_available()}))'
-        )
+        data = _run_json('import json, rayd.drjit as rd; print(json.dumps({"optix_available": rd.optix_available()}))')
         self.assertIs(data["optix_available"], True)
 
     def test_default_scene_reports_optix_trace_backend(self):

@@ -12,15 +12,13 @@
 namespace rayd {
 
 /// Keep only the lanes where \p active is true, packed contiguously.
-template <typename ArrayD, typename Mask_>
-DRJIT_INLINE ArrayD compressD(const ArrayD &array, const Mask_ &active) {
+template <typename ArrayD, typename Mask_> DRJIT_INLINE ArrayD compressD(const ArrayD& array, const Mask_& active) {
     auto idx = compress(active);
     return gather<ArrayD>(array, idx);
 }
 
 /// Number of lanes (the batch width) of a scalar or vector Dr.Jit array.
-template <typename ArrayD>
-DRJIT_INLINE size_t slices(const ArrayD &cuda_array) {
+template <typename ArrayD> DRJIT_INLINE size_t slices(const ArrayD& cuda_array) {
     if constexpr (depth_v<ArrayD> == 1) {
         return cuda_array.size();
     } else {
@@ -30,8 +28,7 @@ DRJIT_INLINE size_t slices(const ArrayD &cuda_array) {
 
 /// Copy each component of an n-wide device array into the matching host vector.
 template <typename T, size_t n, bool async = false>
-DRJIT_INLINE void copy_cuda_array(const Array<CUDAArray<T>, n> &cuda_array,
-                                  std::array<std::vector<T>, n> &cpu_array) {
+DRJIT_INLINE void copy_cuda_array(const Array<CUDAArray<T>, n>& cuda_array, std::array<std::vector<T>, n>& cpu_array) {
     size_t m = slices<Array<CUDAArray<T>, n>>(cuda_array);
     for (size_t i = 0; i < n; ++i) {
         cpu_array[i].resize(m);
@@ -41,19 +38,15 @@ DRJIT_INLINE void copy_cuda_array(const Array<CUDAArray<T>, n> &cuda_array,
 
 /// Interpolate a 3D attribute over a triangle in edge-vector form: p0 + s*e1 + t*e2.
 template <bool Detached>
-DRJIT_INLINE Vector3fT<Detached> bilinear(const Vector3fT<Detached> &p0,
-                                          const Vector3fT<Detached> &e1,
-                                          const Vector3fT<Detached> &e2,
-                                          const Vector2fT<Detached> &st) {
+DRJIT_INLINE Vector3fT<Detached> bilinear(const Vector3fT<Detached>& p0, const Vector3fT<Detached>& e1,
+                                          const Vector3fT<Detached>& e2, const Vector2fT<Detached>& st) {
     return fmadd(e1, st.x(), fmadd(e2, st.y(), p0));
 }
 
 /// Interpolate a 2D attribute over a triangle in edge-vector form: p0 + s*e1 + t*e2.
 template <bool Detached>
-DRJIT_INLINE Vector2fT<Detached> bilinear2(const Vector2fT<Detached> &p0,
-                                           const Vector2fT<Detached> &e1,
-                                           const Vector2fT<Detached> &e2,
-                                           const Vector2fT<Detached> &st) {
+DRJIT_INLINE Vector2fT<Detached> bilinear2(const Vector2fT<Detached>& p0, const Vector2fT<Detached>& e1,
+                                           const Vector2fT<Detached>& e2, const Vector2fT<Detached>& st) {
     return fmadd(e1, st.x(), fmadd(e2, st.y(), p0));
 }
 
@@ -66,10 +59,8 @@ DRJIT_INLINE Vector2fT<Detached> bilinear2(const Vector2fT<Detached> &p0,
 /// \param ray  RayAD batch to test.
 /// \return Pair of (barycentric (u, v), hit distance t); t is Infinity on degenerate triangles.
 template <bool Detached>
-DRJIT_INLINE auto ray_intersect_triangle(const Vector3fT<Detached> &p0,
-                                         const Vector3fT<Detached> &e1,
-                                         const Vector3fT<Detached> &e2,
-                                         const RayT<Detached> &ray) {
+DRJIT_INLINE auto ray_intersect_triangle(const Vector3fT<Detached>& p0, const Vector3fT<Detached>& e1,
+                                         const Vector3fT<Detached>& e2, const RayT<Detached>& ray) {
     Vector3fT<Detached> h = cross(ray.d, e2);
     FloatT<Detached> a = dot(e1, h);
     MaskT<Detached> valid = neq(a, 0.f);
@@ -87,8 +78,7 @@ DRJIT_INLINE auto ray_intersect_triangle(const Vector3fT<Detached> &p0,
 }
 
 /// Clamp a value to the unit interval [0, 1].
-template <typename Float_>
-DRJIT_INLINE Float_ clamp01(const Float_ &value) {
+template <typename Float_> DRJIT_INLINE Float_ clamp01(const Float_& value) {
     return maximum(minimum(value, Float_(1.f)), Float_(0.f));
 }
 
@@ -96,14 +86,13 @@ DRJIT_INLINE Float_ clamp01(const Float_ &value) {
 ///
 /// \return Tuple of (segment parameter in [0, 1], closest point, squared distance).
 template <bool Detached>
-DRJIT_INLINE auto closest_point_on_segment(const Vector3fT<Detached> &point,
-                                           const Vector3fT<Detached> &p0,
-                                           const Vector3fT<Detached> &e1) {
+DRJIT_INLINE auto closest_point_on_segment(const Vector3fT<Detached>& point, const Vector3fT<Detached>& p0,
+                                           const Vector3fT<Detached>& e1) {
     const FloatT<Detached> edge_length_sq = squared_norm(e1);
     const MaskT<Detached> valid_edge = edge_length_sq > Epsilon;
     const FloatT<Detached> safe_edge_length_sq = select(valid_edge, edge_length_sq, FloatT<Detached>(1.f));
     const FloatT<Detached> edge_t =
-        select(valid_edge, clamp01< FloatT<Detached> >(dot(point - p0, e1) / safe_edge_length_sq), FloatT<Detached>(0.f));
+        select(valid_edge, clamp01<FloatT<Detached>>(dot(point - p0, e1) / safe_edge_length_sq), FloatT<Detached>(0.f));
     const Vector3fT<Detached> edge_point = fmadd(e1, edge_t, p0);
     const FloatT<Detached> distance_sq = squared_norm(point - edge_point);
     return std::make_tuple(edge_t, edge_point, distance_sq);
@@ -120,10 +109,9 @@ DRJIT_INLINE auto closest_point_on_segment(const Vector3fT<Detached> &point,
 /// \return Tuple of (query_t, query_point, edge_t, edge_point, squared distance),
 ///         where the parameters lie in [0, 1] along their respective segments.
 template <bool Detached>
-DRJIT_INLINE auto closest_segment_segment(const Vector3fT<Detached> &query_origin,
-                                          const Vector3fT<Detached> &query_edge,
-                                          const Vector3fT<Detached> &edge_origin,
-                                          const Vector3fT<Detached> &edge_vector) {
+DRJIT_INLINE auto closest_segment_segment(const Vector3fT<Detached>& query_origin,
+                                          const Vector3fT<Detached>& query_edge, const Vector3fT<Detached>& edge_origin,
+                                          const Vector3fT<Detached>& edge_vector) {
     const Vector3fT<Detached> w0 = query_origin - edge_origin;
     const Vector3fT<Detached> query_end = query_origin + query_edge;
     const Vector3fT<Detached> edge_end = edge_origin + edge_vector;
@@ -141,9 +129,7 @@ DRJIT_INLINE auto closest_segment_segment(const Vector3fT<Detached> &query_origi
     Vector3fT<Detached> best_query_point = query_origin;
     Vector3fT<Detached> best_edge_point = edge_origin;
 
-    auto update = [&](const MaskT<Detached> &mask,
-                      const FloatT<Detached> &query_t,
-                      const FloatT<Detached> &edge_t) {
+    auto update = [&](const MaskT<Detached>& mask, const FloatT<Detached>& query_t, const FloatT<Detached>& edge_t) {
         const Vector3fT<Detached> query_point = fmadd(query_edge, query_t, query_origin);
         const Vector3fT<Detached> edge_point = fmadd(edge_vector, edge_t, edge_origin);
         const FloatT<Detached> distance_sq = squared_norm(query_point - edge_point);
@@ -159,7 +145,8 @@ DRJIT_INLINE auto closest_segment_segment(const Vector3fT<Detached> &query_origi
         FloatT<Detached> edge_t;
         Vector3fT<Detached> edge_point;
         FloatT<Detached> distance_sq;
-        std::tie(edge_t, edge_point, distance_sq) = closest_point_on_segment<Detached>(query_origin, edge_origin, edge_vector);
+        std::tie(edge_t, edge_point, distance_sq) =
+            closest_point_on_segment<Detached>(query_origin, edge_origin, edge_vector);
         DRJIT_MARK_USED(distance_sq);
         update(full<MaskT<Detached>>(true, slices(query_origin)), FloatT<Detached>(0.f), edge_t);
     }
@@ -168,7 +155,8 @@ DRJIT_INLINE auto closest_segment_segment(const Vector3fT<Detached> &query_origi
         FloatT<Detached> edge_t;
         Vector3fT<Detached> edge_point;
         FloatT<Detached> distance_sq;
-        std::tie(edge_t, edge_point, distance_sq) = closest_point_on_segment<Detached>(query_end, edge_origin, edge_vector);
+        std::tie(edge_t, edge_point, distance_sq) =
+            closest_point_on_segment<Detached>(query_end, edge_origin, edge_vector);
         DRJIT_MARK_USED(edge_point);
         DRJIT_MARK_USED(distance_sq);
         update(full<MaskT<Detached>>(true, slices(query_origin)), FloatT<Detached>(1.f), edge_t);
@@ -178,7 +166,8 @@ DRJIT_INLINE auto closest_segment_segment(const Vector3fT<Detached> &query_origi
         FloatT<Detached> query_t;
         Vector3fT<Detached> query_point;
         FloatT<Detached> distance_sq;
-        std::tie(query_t, query_point, distance_sq) = closest_point_on_segment<Detached>(edge_origin, query_origin, query_edge);
+        std::tie(query_t, query_point, distance_sq) =
+            closest_point_on_segment<Detached>(edge_origin, query_origin, query_edge);
         DRJIT_MARK_USED(query_point);
         DRJIT_MARK_USED(distance_sq);
         update(full<MaskT<Detached>>(true, slices(query_origin)), query_t, FloatT<Detached>(0.f));
@@ -188,20 +177,19 @@ DRJIT_INLINE auto closest_segment_segment(const Vector3fT<Detached> &query_origi
         FloatT<Detached> query_t;
         Vector3fT<Detached> query_point;
         FloatT<Detached> distance_sq;
-        std::tie(query_t, query_point, distance_sq) = closest_point_on_segment<Detached>(edge_end, query_origin, query_edge);
+        std::tie(query_t, query_point, distance_sq) =
+            closest_point_on_segment<Detached>(edge_end, query_origin, query_edge);
         DRJIT_MARK_USED(query_point);
         DRJIT_MARK_USED(distance_sq);
         update(full<MaskT<Detached>>(true, slices(query_origin)), query_t, FloatT<Detached>(1.f));
     }
 
-    const MaskT<Detached> interior =
-        (a > Epsilon) && (c > Epsilon) && (abs(det) > Epsilon);
+    const MaskT<Detached> interior = (a > Epsilon) && (c > Epsilon) && (abs(det) > Epsilon);
     const FloatT<Detached> safe_det = select(interior, det, FloatT<Detached>(1.f));
     const FloatT<Detached> query_t_line = (b * e - c * d) / safe_det;
     const FloatT<Detached> edge_t_line = (a * e - b * d) / safe_det;
     update(interior && query_t_line >= 0.f && query_t_line <= 1.f && edge_t_line >= 0.f && edge_t_line <= 1.f,
-           query_t_line,
-           edge_t_line);
+           query_t_line, edge_t_line);
 
     return std::make_tuple(best_query_t, best_query_point, best_edge_t, best_edge_point, best_distance_sq);
 }
@@ -213,10 +201,8 @@ DRJIT_INLINE auto closest_segment_segment(const Vector3fT<Detached> &query_origi
 ///
 /// \return Tuple of (ray_t >= 0, ray_point, edge_t in [0, 1], edge_point, squared distance).
 template <bool Detached>
-DRJIT_INLINE auto closest_ray_segment(const Vector3fT<Detached> &ray_origin,
-                                      const Vector3fT<Detached> &ray_direction,
-                                      const Vector3fT<Detached> &edge_origin,
-                                      const Vector3fT<Detached> &edge_vector) {
+DRJIT_INLINE auto closest_ray_segment(const Vector3fT<Detached>& ray_origin, const Vector3fT<Detached>& ray_direction,
+                                      const Vector3fT<Detached>& edge_origin, const Vector3fT<Detached>& edge_vector) {
     const Vector3fT<Detached> w0 = ray_origin - edge_origin;
     const Vector3fT<Detached> edge_end = edge_origin + edge_vector;
 
@@ -233,9 +219,7 @@ DRJIT_INLINE auto closest_ray_segment(const Vector3fT<Detached> &ray_origin,
     Vector3fT<Detached> best_query_point = ray_origin;
     Vector3fT<Detached> best_edge_point = edge_origin;
 
-    auto update = [&](const MaskT<Detached> &mask,
-                      const FloatT<Detached> &query_t,
-                      const FloatT<Detached> &edge_t) {
+    auto update = [&](const MaskT<Detached>& mask, const FloatT<Detached>& query_t, const FloatT<Detached>& edge_t) {
         const Vector3fT<Detached> query_point = fmadd(ray_direction, query_t, ray_origin);
         const Vector3fT<Detached> edge_point = fmadd(edge_vector, edge_t, edge_origin);
         const FloatT<Detached> distance_sq = squared_norm(query_point - edge_point);
@@ -251,7 +235,8 @@ DRJIT_INLINE auto closest_ray_segment(const Vector3fT<Detached> &ray_origin,
         FloatT<Detached> edge_t;
         Vector3fT<Detached> edge_point;
         FloatT<Detached> distance_sq;
-        std::tie(edge_t, edge_point, distance_sq) = closest_point_on_segment<Detached>(ray_origin, edge_origin, edge_vector);
+        std::tie(edge_t, edge_point, distance_sq) =
+            closest_point_on_segment<Detached>(ray_origin, edge_origin, edge_vector);
         DRJIT_MARK_USED(edge_point);
         DRJIT_MARK_USED(distance_sq);
         update(full<MaskT<Detached>>(true, slices(ray_origin)), FloatT<Detached>(0.f), edge_t);
@@ -266,45 +251,36 @@ DRJIT_INLINE auto closest_ray_segment(const Vector3fT<Detached> &ray_origin,
            select(valid_ray, maximum((b - d) / safe_a, FloatT<Detached>(0.f)), FloatT<Detached>(0.f)),
            FloatT<Detached>(1.f));
 
-    const MaskT<Detached> interior =
-        valid_ray && (c > Epsilon) && (abs(det) > Epsilon);
+    const MaskT<Detached> interior = valid_ray && (c > Epsilon) && (abs(det) > Epsilon);
     const FloatT<Detached> safe_det = select(interior, det, FloatT<Detached>(1.f));
     const FloatT<Detached> query_t_line = (b * e - c * d) / safe_det;
     const FloatT<Detached> edge_t_line = (a * e - b * d) / safe_det;
-    update(interior && query_t_line >= 0.f && edge_t_line >= 0.f && edge_t_line <= 1.f,
-           query_t_line,
-           edge_t_line);
+    update(interior && query_t_line >= 0.f && edge_t_line >= 0.f && edge_t_line <= 1.f, query_t_line, edge_t_line);
 
     return std::make_tuple(best_query_t, best_query_point, best_edge_t, best_edge_point, best_distance_sq);
 }
 
 /// Squared distance from \p point to an axis-aligned box; zero when inside.
 template <typename Float_>
-DRJIT_INLINE auto point_aabb_distance_sq(const Array<Float_, 3> &point,
-                                         const Array<Float_, 3> &bbox_min,
-                                         const Array<Float_, 3> &bbox_max) {
+DRJIT_INLINE auto point_aabb_distance_sq(const Array<Float_, 3>& point, const Array<Float_, 3>& bbox_min,
+                                         const Array<Float_, 3>& bbox_max) {
     const Array<Float_, 3> clamped = maximum(minimum(point, bbox_max), bbox_min);
     return squared_norm(point - clamped);
 }
 
 /// Conservative lower bound on the squared distance from a ray to an AABB (BVH pruning).
 template <typename Float_>
-DRJIT_INLINE auto ray_aabb_lower_bound_sq(const Array<Float_, 3> &origin,
-                                          const Array<Float_, 3> &direction,
-                                          const Array<Float_, 3> &bbox_min,
-                                          const Array<Float_, 3> &bbox_max);
+DRJIT_INLINE auto ray_aabb_lower_bound_sq(const Array<Float_, 3>& origin, const Array<Float_, 3>& direction,
+                                          const Array<Float_, 3>& bbox_min, const Array<Float_, 3>& bbox_max);
 
 /// Lower bound on the squared distance from an infinite line to an AABB, via the
 /// box's bounding sphere; conservative and cheap, used to prune BVH branches.
 template <typename Float_>
-DRJIT_INLINE auto line_aabb_sphere_lower_bound_sq(const Array<Float_, 3> &origin,
-                                                  const Array<Float_, 3> &direction,
-                                                  const Array<Float_, 3> &bbox_min,
-                                                  const Array<Float_, 3> &bbox_max) {
+DRJIT_INLINE auto line_aabb_sphere_lower_bound_sq(const Array<Float_, 3>& origin, const Array<Float_, 3>& direction,
+                                                  const Array<Float_, 3>& bbox_min, const Array<Float_, 3>& bbox_max) {
     const Float_ direction_length_sq = squared_norm(direction);
     const mask_t<Float_> valid_direction = direction_length_sq > Epsilon;
-    const Float_ safe_direction_length_sq =
-        select(valid_direction, direction_length_sq, Float_(1.f));
+    const Float_ safe_direction_length_sq = select(valid_direction, direction_length_sq, Float_(1.f));
 
     const Array<Float_, 3> bbox_center = (bbox_min + bbox_max) * Float_(0.5f);
     const Array<Float_, 3> half_extent = (bbox_max - bbox_min) * Float_(0.5f);
@@ -318,10 +294,8 @@ DRJIT_INLINE auto line_aabb_sphere_lower_bound_sq(const Array<Float_, 3> &origin
 
 /// Conservative lower bound on the squared distance from a finite segment to an AABB.
 template <typename Float_>
-DRJIT_INLINE auto segment_aabb_lower_bound_sq(const Array<Float_, 3> &origin,
-                                              const Array<Float_, 3> &segment,
-                                              const Array<Float_, 3> &bbox_min,
-                                              const Array<Float_, 3> &bbox_max) {
+DRJIT_INLINE auto segment_aabb_lower_bound_sq(const Array<Float_, 3>& origin, const Array<Float_, 3>& segment,
+                                              const Array<Float_, 3>& bbox_min, const Array<Float_, 3>& bbox_max) {
     const Array<Float_, 3> segment_end = origin + segment;
     const Array<Float_, 3> path_min = minimum(origin, segment_end);
     const Array<Float_, 3> path_max = maximum(origin, segment_end);
@@ -333,16 +307,11 @@ DRJIT_INLINE auto segment_aabb_lower_bound_sq(const Array<Float_, 3> &origin,
 }
 
 template <typename Float_>
-DRJIT_INLINE auto ray_aabb_lower_bound_sq(const Array<Float_, 3> &origin,
-                                          const Array<Float_, 3> &direction,
-                                          const Array<Float_, 3> &bbox_min,
-                                          const Array<Float_, 3> &bbox_max) {
+DRJIT_INLINE auto ray_aabb_lower_bound_sq(const Array<Float_, 3>& origin, const Array<Float_, 3>& direction,
+                                          const Array<Float_, 3>& bbox_min, const Array<Float_, 3>& bbox_max) {
     using Mask_ = mask_t<Float_>;
 
-    auto axis_distance = [](const Float_ &o,
-                            const Float_ &d,
-                            const Float_ &axis_min,
-                            const Float_ &axis_max) {
+    auto axis_distance = [](const Float_& o, const Float_& d, const Float_& axis_min, const Float_& axis_max) {
         const Mask_ positive = d > Epsilon;
         const Mask_ negative = d < -Epsilon;
         const Mask_ stationary = !(positive || negative);
@@ -350,9 +319,7 @@ DRJIT_INLINE auto ray_aabb_lower_bound_sq(const Array<Float_, 3> &origin,
         Float_ delta = zeros<Float_>(slices(o));
         delta = select(positive, maximum(o - axis_max, Float_(0.f)), delta);
         delta = select(negative, maximum(axis_min - o, Float_(0.f)), delta);
-        delta = select(stationary,
-                       maximum(axis_min - o, Float_(0.f)) + maximum(o - axis_max, Float_(0.f)),
-                       delta);
+        delta = select(stationary, maximum(axis_min - o, Float_(0.f)) + maximum(o - axis_max, Float_(0.f)), delta);
         return delta;
     };
 

@@ -28,8 +28,7 @@ struct DfrPathOptions {
 
 /// Compact native diffraction path output. Arrays are allocated to `capacity`;
 /// the first `count[0]` entries are valid compact paths.
-template <typename Float_>
-struct DfrPathsData {
+template <typename Float_> struct DfrPathsData {
     static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
 
     using ComplexArray = drjit::Complex<Float_>;
@@ -54,22 +53,8 @@ struct DfrPathsData {
     Vec3f p1 = zeros<Vec3f>(1);
     Vec3f p2 = zeros<Vec3f>(1);
 
-    DRJIT_STRUCT(DfrPathsData,
-                 count,
-                 valid,
-                 tx_id,
-                 rx_id,
-                 order,
-                 edge0,
-                 edge1,
-                 edge2,
-                 delay,
-                 field_x,
-                 field_y,
-                 field_z,
-                 p0,
-                 p1,
-                 p2)
+    DRJIT_STRUCT(DfrPathsData, count, valid, tx_id, rx_id, order, edge0, edge1, edge2, delay, field_x, field_y, field_z,
+                 p0, p1, p2)
 };
 
 } // namespace rayd

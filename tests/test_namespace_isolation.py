@@ -13,13 +13,7 @@ CONTRACT = json.loads((ROOT / "contracts" / "operations.json").read_text())
 
 
 def run_script(script):
-    return subprocess.run(
-        [sys.executable, "-c", script],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    return subprocess.run([sys.executable, "-c", script], cwd=ROOT, text=True, capture_output=True, check=False)
 
 
 class NamespaceIsolationTests(unittest.TestCase):
@@ -36,8 +30,8 @@ class NamespaceIsolationTests(unittest.TestCase):
 import importlib
 a = importlib.import_module({order[0]!r})
 b = importlib.import_module({order[1]!r})
-assert a.backend_capabilities()["backend"] == {order[0].split('.')[-1]!r}
-assert b.backend_capabilities()["backend"] == {order[1].split('.')[-1]!r}
+assert a.backend_capabilities()["backend"] == {order[0].split(".")[-1]!r}
+assert b.backend_capabilities()["backend"] == {order[1].split(".")[-1]!r}
 """
             result = run_script(script)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

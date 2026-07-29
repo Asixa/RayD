@@ -56,16 +56,16 @@ class Share3ScenePackingTests(unittest.TestCase):
             self.assertIn(f"struct {struct_name}", header)
             self.assertIn(f"RAYD_SHARED_SCENE_ASSERT_POD({struct_name})", header)
         for field in (
-            "const float *mesh_vertices;",
-            "const std::int32_t *mesh_faces;",
+            "const float* mesh_vertices;",
+            "const std::int32_t* mesh_faces;",
             "std::int32_t vertex_count;",
             "std::int32_t face_count;",
             "std::int32_t vertex_offset;",
             "std::int32_t face_offset;",
-            "float *global_vertices;",
-            "std::int32_t *global_faces;",
-            "const float *mesh_tangent;",
-            "float *global_tangent;",
+            "float* global_vertices;",
+            "std::int32_t* global_faces;",
+            "const float* mesh_tangent;",
+            "float* global_tangent;",
         ):
             self.assertIn(field, header)
 

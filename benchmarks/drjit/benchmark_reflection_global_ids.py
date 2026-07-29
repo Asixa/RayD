@@ -14,40 +14,34 @@ THIS_FILE = Path(__file__).resolve()
 TESTS_DIR = os.path.normcase(str(THIS_FILE.parent))
 REPO_ROOT = THIS_FILE.parents[2]
 CWD = os.path.normcase(os.path.abspath(os.getcwd()))
-sys.path = [
-    entry
-    for entry in sys.path
-    if os.path.normcase(os.path.abspath(entry or CWD)) != TESTS_DIR
-]
+sys.path = [entry for entry in sys.path if os.path.normcase(os.path.abspath(entry or CWD)) != TESTS_DIR]
 sys.path.insert(0, str(REPO_ROOT))
 
 import drjit as dr
 import drjit.cuda
 import rayd.drjit as rd
 
+from benchmarks.common import summarize_samples_ms as summarize
+
 
 def make_wall_mesh() -> rd.Mesh:
     return rd.Mesh(
-        dr.cuda.Array3f([1.0, 1.0, 1.0, 1.0],
-                        [-1.0, 1.0, 1.0, -1.0],
-                        [0.0, 0.0, 2.0, 2.0]),
+        dr.cuda.Array3f([1.0, 1.0, 1.0, 1.0], [-1.0, 1.0, 1.0, -1.0], [0.0, 0.0, 2.0, 2.0]),
         dr.cuda.Array3i([0, 0], [1, 2], [2, 3]),
     )
 
 
 def make_ceiling_mesh() -> rd.Mesh:
     return rd.Mesh(
-        dr.cuda.Array3f([-2.0, 2.0, 2.0, -2.0],
-                        [-2.0, -2.0, 2.0, 2.0],
-                        [2.0, 2.0, 2.0, 2.0]),
+        dr.cuda.Array3f([-2.0, 2.0, 2.0, -2.0], [-2.0, -2.0, 2.0, 2.0], [2.0, 2.0, 2.0, 2.0]),
         dr.cuda.Array3i([0, 0], [1, 2], [2, 3]),
     )
 
 
 def make_rays(ray_count: int) -> rd.Ray:
-    side = max(1, int(ray_count ** 0.5))
+    side = max(1, int(ray_count**0.5))
     count = side * side
-    inv_sqrt2 = 2.0 ** -0.5
+    inv_sqrt2 = 2.0**-0.5
     xs: list[float] = []
     ys: list[float] = []
     zs: list[float] = []
@@ -58,31 +52,11 @@ def make_rays(ray_count: int) -> rd.Ray:
             xs.append(x)
             ys.append(y)
             zs.append(0.5)
-    return rd.Ray(
-        dr.cuda.Array3f(xs, ys, zs),
-        dr.cuda.Array3f([inv_sqrt2] * count, [0.0] * count, [inv_sqrt2] * count),
-    )
-
-
-def summarize(samples_ms: list[float]) -> dict[str, float | list[float]]:
-    ordered = sorted(samples_ms)
-    return {
-        "samples_ms": samples_ms,
-        "min_ms": min(samples_ms),
-        "avg_ms": statistics.fmean(samples_ms),
-        "p50_ms": statistics.median(samples_ms),
-        "p95_ms": ordered[max(0, int(0.95 * len(ordered) + 0.999999) - 1)],
-    }
+    return rd.Ray(dr.cuda.Array3f(xs, ys, zs), dr.cuda.Array3f([inv_sqrt2] * count, [0.0] * count, [inv_sqrt2] * count))
 
 
 def materialize(chain: rd.ReflectionChain) -> None:
-    dr.eval(
-        chain.bounce_count,
-        chain.t,
-        chain.shape_ids,
-        chain.prim_ids,
-        chain.global_prim_ids,
-    )
+    dr.eval(chain.bounce_count, chain.t, chain.shape_ids, chain.prim_ids, chain.global_prim_ids)
 
 
 def main() -> None:

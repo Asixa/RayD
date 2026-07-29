@@ -18,11 +18,7 @@ import rayd.torch as rt
 
 def _triangle_vertices(*, x_offset=0.0, requires_grad=False):
     return torch.tensor(
-        [
-            [-1.0 + x_offset, -1.0, 0.0],
-            [1.0 + x_offset, -1.0, 0.0],
-            [0.0 + x_offset, 1.0, 0.0],
-        ],
+        [[-1.0 + x_offset, -1.0, 0.0], [1.0 + x_offset, -1.0, 0.0], [0.0 + x_offset, 1.0, 0.0]],
         device="cuda",
         dtype=torch.float32,
         requires_grad=requires_grad,
@@ -54,15 +50,9 @@ class F1TorchVisibilityAcceptanceTests(unittest.TestCase):
         self.assertEqual(tuple(empty_result.visible_a.shape), (0,))
         self.assertEqual(tuple(empty_result.visible_b.shape), (0,))
 
-        start = torch.tensor(
-            [[0.0, 0.0, -1.0], [0.0, 0.0, -1.0]], device="cuda"
-        )
-        end_a = torch.tensor(
-            [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]], device="cuda"
-        )
-        end_b = torch.tensor(
-            [[3.0, 3.0, 1.0], [3.0, 3.0, 1.0]], device="cuda"
-        )
+        start = torch.tensor([[0.0, 0.0, -1.0], [0.0, 0.0, -1.0]], device="cuda")
+        end_a = torch.tensor([[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]], device="cuda")
+        end_b = torch.tensor([[3.0, 3.0, 1.0], [3.0, 3.0, 1.0]], device="cuda")
         active = torch.tensor([True, False], device="cuda")
         result = scene.visible_pair(start, end_a, end_b, active=active)
         self.assertEqual(result.visible_a.tolist(), [False, False])
@@ -70,10 +60,7 @@ class F1TorchVisibilityAcceptanceTests(unittest.TestCase):
 
         # Mesh 0 is far away, so the blocker is scene-global primitive 1.
         ignored = scene.visible_pair(
-            start[:1],
-            end_a[:1],
-            end_b[:1],
-            ignore_prim_ids=torch.tensor([[1]], device="cuda", dtype=torch.int32),
+            start[:1], end_a[:1], end_b[:1], ignore_prim_ids=torch.tensor([[1]], device="cuda", dtype=torch.int32)
         )
         self.assertEqual(ignored.visible_a.tolist(), [True])
         self.assertEqual(ignored.visible_b.tolist(), [True])
@@ -87,14 +74,7 @@ class F1TorchVisibilityAcceptanceTests(unittest.TestCase):
         scene, _ = _torch_scene()
         empty_vec = torch.empty((0, 3), device="cuda")
         empty_scalar = torch.empty((0,), device="cuda")
-        empty = scene.visible_edge(
-            empty_vec,
-            empty_vec,
-            empty_vec,
-            empty_scalar,
-            empty_scalar,
-            sample_fractions=(0.0,),
-        )
+        empty = scene.visible_edge(empty_vec, empty_vec, empty_vec, empty_scalar, empty_scalar, sample_fractions=(0.0,))
         self.assertEqual(empty.state_count, 0)
         self.assertEqual(tuple(empty.any_visible.shape), (0,))
 
@@ -114,14 +94,7 @@ class F1TorchVisibilityAcceptanceTests(unittest.TestCase):
         self.assertEqual(inactive.any_visible.tolist(), [False])
 
         same = torch.tensor([[0.25, 0.25, 0.5]], device="cuda")
-        degenerate = scene.visible_edge(
-            same,
-            same,
-            torch.zeros_like(same),
-            edge_t,
-            edge_t,
-            sample_fractions=(0.0,),
-        )
+        degenerate = scene.visible_edge(same, same, torch.zeros_like(same), edge_t, edge_t, sample_fractions=(0.0,))
         self.assertEqual(degenerate.any_visible.tolist(), [True])
 
     def test_visible_chain_empty_inactive_degenerate_ignore_and_blocker_id(self):
@@ -133,9 +106,7 @@ class F1TorchVisibilityAcceptanceTests(unittest.TestCase):
         self.assertEqual(empty.max_segments, 1)
         self.assertEqual(tuple(empty.all_visible.shape), (0,))
 
-        crossing = torch.tensor(
-            [[[0.0, 0.0, -1.0], [0.0, 0.0, 1.0]]], device="cuda"
-        )
+        crossing = torch.tensor([[[0.0, 0.0, -1.0], [0.0, 0.0, 1.0]]], device="cuda")
         length = torch.tensor([1], device="cuda", dtype=torch.int32)
         blocked = scene.visible_chain(crossing, length)
         self.assertEqual(blocked.all_visible.tolist(), [False])
@@ -143,28 +114,18 @@ class F1TorchVisibilityAcceptanceTests(unittest.TestCase):
         self.assertEqual(blocked.first_blocked_prim.tolist(), [1])
 
         ignored = scene.visible_chain(
-            crossing,
-            length,
-            ignore_prim_per_segment=torch.tensor(
-                [[[1]]], device="cuda", dtype=torch.int32
-            ),
+            crossing, length, ignore_prim_per_segment=torch.tensor([[[1]]], device="cuda", dtype=torch.int32)
         )
         self.assertEqual(ignored.all_visible.tolist(), [True])
         self.assertEqual(ignored.first_blocked_segment.tolist(), [-1])
         self.assertEqual(ignored.first_blocked_prim.tolist(), [-1])
 
-        inactive = scene.visible_chain(
-            crossing,
-            length,
-            active=torch.tensor([False], device="cuda"),
-        )
+        inactive = scene.visible_chain(crossing, length, active=torch.tensor([False], device="cuda"))
         self.assertEqual(inactive.all_visible.tolist(), [False])
         self.assertEqual(inactive.first_blocked_segment.tolist(), [-1])
         self.assertEqual(inactive.first_blocked_prim.tolist(), [-1])
 
-        same = torch.tensor(
-            [[[0.0, 0.0, 0.5], [0.0, 0.0, 0.5]]], device="cuda"
-        )
+        same = torch.tensor([[[0.0, 0.0, 0.5], [0.0, 0.0, 0.5]]], device="cuda")
         degenerate = scene.visible_chain(same, length)
         self.assertEqual(degenerate.all_visible.tolist(), [True])
         self.assertEqual(degenerate.first_blocked_segment.tolist(), [-1])
@@ -175,14 +136,7 @@ class F1TorchVisibilityAcceptanceTests(unittest.TestCase):
         geometry = scene.global_geometry()
         self.assertEqual(
             tuple(geometry.__dataclass_fields__),
-            (
-                "vertices",
-                "faces",
-                "face_normal",
-                "shape_id",
-                "local_prim_id",
-                "global_prim_id",
-            ),
+            ("vertices", "faces", "face_normal", "shape_id", "local_prim_id", "global_prim_id"),
         )
         self.assertEqual(tuple(geometry.vertices.shape), (6, 3))
         self.assertEqual(tuple(geometry.faces.shape), (2, 3))
@@ -193,16 +147,12 @@ class F1TorchVisibilityAcceptanceTests(unittest.TestCase):
         self.assertEqual(geometry.faces[0].tolist(), [0, 1, 2])
         self.assertEqual(geometry.faces[1].tolist(), [3, 4, 5])
         torch.testing.assert_close(
-            geometry.face_normal,
-            torch.tensor([[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]], device="cuda"),
+            geometry.face_normal, torch.tensor([[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]], device="cuda")
         )
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA torch is required")
-@unittest.skipUnless(
-    os.environ.get("RAYD_TORCH_RUN_DR_JIT_PARITY") == "1",
-    "cross-backend F1 parity is opt-in",
-)
+@unittest.skipUnless(os.environ.get("RAYD_TORCH_RUN_DR_JIT_PARITY") == "1", "cross-backend F1 parity is opt-in")
 class F1CrossBackendAcceptanceTests(unittest.TestCase):
     def load_backends(self):
         try:
@@ -219,18 +169,8 @@ class F1CrossBackendAcceptanceTests(unittest.TestCase):
         faces = cuda.Array3i([0], [1], [2])
         scene = dr_backend.Scene()
         if two_meshes:
-            scene.add_mesh(
-                dr_backend.Mesh(
-                    cuda.Array3f([9.0, 11.0, 10.0], [-1.0, -1.0, 1.0], [0.0, 0.0, 0.0]),
-                    faces,
-                )
-            )
-        scene.add_mesh(
-            dr_backend.Mesh(
-                cuda.Array3f([-1.0, 1.0, 0.0], [-1.0, -1.0, 1.0], [0.0, 0.0, 0.0]),
-                faces,
-            )
-        )
+            scene.add_mesh(dr_backend.Mesh(cuda.Array3f([9.0, 11.0, 10.0], [-1.0, -1.0, 1.0], [0.0, 0.0, 0.0]), faces))
+        scene.add_mesh(dr_backend.Mesh(cuda.Array3f([-1.0, 1.0, 0.0], [-1.0, -1.0, 1.0], [0.0, 0.0, 0.0]), faces))
         scene.build()
         return scene
 
@@ -252,8 +192,7 @@ class F1CrossBackendAcceptanceTests(unittest.TestCase):
             sample_fractions=(0.0, 0.5, 1.0),
         )
         chain_t = torch_scene.visible_chain(
-            torch.stack((start_t, end_a_t), dim=1),
-            torch.tensor([1], device="cuda", dtype=torch.int32),
+            torch.stack((start_t, end_a_t), dim=1), torch.tensor([1], device="cuda", dtype=torch.int32)
         )
 
         start_d = cuda.Array3f([0.0], [0.0], [-1.0])
@@ -269,35 +208,20 @@ class F1CrossBackendAcceptanceTests(unittest.TestCase):
             [0.0, 0.5, 1.0],
             cuda.Bool([True]),
         )
-        chain_d = drjit_scene.visible_chain(
-            cuda.Array3f([0.0, 0.0], [0.0, 0.0], [-1.0, 1.0]),
-            cuda.Int([1]),
-        )
+        chain_d = drjit_scene.visible_chain(cuda.Array3f([0.0, 0.0], [0.0, 0.0], [-1.0, 1.0]), cuda.Int([1]))
 
         self.assertEqual(pair_t.visible_a.tolist(), [bool(pair_d.visible_a[0])])
         self.assertEqual(pair_t.visible_b.tolist(), [bool(pair_d.visible_b[0])])
         self.assertEqual(axial_t.any_visible.tolist(), [bool(axial_d.any_visible[0])])
         self.assertEqual(chain_t.all_visible.tolist(), [bool(chain_d.all_visible[0])])
-        self.assertEqual(
-            chain_t.first_blocked_prim.tolist(),
-            [int(chain_d.first_blocked_prim[0])],
-        )
+        self.assertEqual(chain_t.first_blocked_prim.tolist(), [int(chain_d.first_blocked_prim[0])])
 
         geometry_t = torch_scene.global_geometry()
         geometry_d = drjit_scene.global_geometry()
         self.assertEqual(geometry_t.shape_id.tolist(), [int(v) for v in geometry_d.shape_id])
-        self.assertEqual(
-            geometry_t.local_prim_id.tolist(),
-            [int(v) for v in geometry_d.local_prim_id],
-        )
-        self.assertEqual(
-            geometry_t.global_prim_id.tolist(),
-            [int(v) for v in geometry_d.global_prim_id],
-        )
-        faces_d = [
-            [int(geometry_d.faces[axis][face]) for axis in range(3)]
-            for face in range(2)
-        ]
+        self.assertEqual(geometry_t.local_prim_id.tolist(), [int(v) for v in geometry_d.local_prim_id])
+        self.assertEqual(geometry_t.global_prim_id.tolist(), [int(v) for v in geometry_d.global_prim_id])
+        faces_d = [[int(geometry_d.faces[axis][face]) for axis in range(3)] for face in range(2)]
         self.assertEqual(geometry_t.faces.tolist(), faces_d)
 
     def test_topk_fixed_winner_forward_vjp_jvp_parity(self):
@@ -306,12 +230,7 @@ class F1CrossBackendAcceptanceTests(unittest.TestCase):
         drjit_scene = self.drjit_scene(dr_backend, cuda)
         tangent_values = [0.07, -0.03, 0.05]
 
-        point_t = torch.tensor(
-            [[0.25, -1.2, 0.3]],
-            device="cuda",
-            dtype=torch.float32,
-            requires_grad=True,
-        )
+        point_t = torch.tensor([[0.25, -1.2, 0.3]], device="cuda", dtype=torch.float32, requires_grad=True)
         result_t = torch_scene.nearest_edges(point_t, 2)
         scalar_t = result_t.distances[0, 0] + 0.3 * result_t.distances[0, 1]
         scalar_t.backward()
@@ -323,9 +242,7 @@ class F1CrossBackendAcceptanceTests(unittest.TestCase):
             result = torch_scene.nearest_edges(point, 2)
             return result.distances[:, 0] + 0.3 * result.distances[:, 1]
 
-        _primal_t, jvp_t = torch.func.jvp(
-            torch_topk, (point_t.detach(),), (tangent_t,)
-        )
+        _primal_t, jvp_t = torch.func.jvp(torch_topk, (point_t.detach(),), (tangent_t,))
 
         point_d = ad.Array3f([0.25], [-1.2], [0.3])
         dr.enable_grad(point_d)
@@ -339,17 +256,11 @@ class F1CrossBackendAcceptanceTests(unittest.TestCase):
         dr.enable_grad(point_j)
         result_j = drjit_scene.nearest_edges(point_j, 2)
         weighted_j = result_j.distances * ad.Float([1.0, 0.3])
-        dr.set_grad(
-            point_j,
-            ad.Array3f([tangent_values[0]], [tangent_values[1]], [tangent_values[2]]),
-        )
+        dr.set_grad(point_j, ad.Array3f([tangent_values[0]], [tangent_values[1]], [tangent_values[2]]))
         dr.forward_from(point_j)
         jvp_d = float(dr.sum(dr.grad(weighted_j))[0])
 
-        self.assertEqual(
-            result_t.global_edge_ids[0].tolist(),
-            [int(v) for v in result_d.global_edge_ids],
-        )
+        self.assertEqual(result_t.global_edge_ids[0].tolist(), [int(v) for v in result_d.global_edge_ids])
         self.assertAlmostEqual(float(scalar_t.detach()), float(scalar_d[0]), delta=1.0e-5)
         for actual, expected in zip(grad_t, grad_d):
             self.assertAlmostEqual(actual, expected, delta=5.0e-4)

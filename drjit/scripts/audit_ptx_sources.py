@@ -84,10 +84,9 @@ def drjit_pin() -> str:
     """
     pins = set(re.findall(r'"(drjit==[^"]+)"', PYPROJECT.read_text(encoding="utf-8")))
     if len(pins) != 1:
-        raise SystemExit(
-            f"Expected exactly one distinct drjit pin in {PYPROJECT}, found: "
-            f"{sorted(pins) or 'none'}")
+        raise SystemExit(f"Expected exactly one distinct drjit pin in {PYPROJECT}, found: {sorted(pins) or 'none'}")
     return pins.pop()
+
 
 # The nvcc command line rayd_embed_ptx() uses for every PTX blob. Recorded so an
 # architecture or flag change invalidates the record along with the sources.
@@ -169,15 +168,9 @@ ADOPTION = {
             "src/reflection/accumulation_params_jit.h @2634aa1",
             "include/rayd/reflection/accumulation_algo.h @2634aa1",
         ],
-        "reflection_epc": [
-            "include/rayd/reflection/epc_algo.h @2634aa1",
-        ],
-        "reflection_trace": [
-            "include/rayd/reflection/trace_algo.h @2634aa1",
-        ],
-        "segment_visibility": [
-            "include/rayd/visibility/segment_algo.h @2634aa1",
-        ],
+        "reflection_epc": ["include/rayd/reflection/epc_algo.h @2634aa1"],
+        "reflection_trace": ["include/rayd/reflection/trace_algo.h @2634aa1"],
+        "segment_visibility": ["include/rayd/visibility/segment_algo.h @2634aa1"],
         "surfel_trace": [],
     },
 }
@@ -189,6 +182,7 @@ def _relative(path: Path) -> str:
 
 def _substitute(value: str) -> Path:
     """Resolve a CMake path argument to an absolute path under ROOT."""
+
     def replace(match: re.Match[str]) -> str:
         name = match.group(1)
         if name not in CMAKE_VARIABLES:
@@ -215,7 +209,7 @@ def parse_embed_calls() -> list[dict[str, object]]:
                 call[token.lower()] = tokens[index + 1]
                 index += 2
             elif token == "DEPENDS":
-                call["depends"] = tokens[index + 1:]
+                call["depends"] = tokens[index + 1 :]
                 index = len(tokens)
             else:
                 raise SystemExit(f"Unexpected token '{token}' in rayd_embed_ptx call")
@@ -276,9 +270,7 @@ def _file_sha256(path: Path) -> str:
 
 def module_record(call: dict[str, object]) -> dict[str, object]:
     source = _substitute(str(call["source"]))
-    header = (
-        ROOT / "generated" / "drjit" / "ptx" / str(call["header"])
-    ).resolve()
+    header = (ROOT / "generated" / "drjit" / "ptx" / str(call["header"])).resolve()
     if not source.is_file():
         raise SystemExit(f"Missing PTX source: {source}")
     if not header.is_file():
@@ -309,10 +301,7 @@ def depends_drift() -> dict[str, dict[str, list[str]]]:
         closure = set(record["sources"]) - {record["cu"]}
         declared = {_relative(_substitute(item)) for item in call["depends"]}
         if closure != declared:
-            drift[str(call["name"])] = {
-                "missing": sorted(closure - declared),
-                "extra": sorted(declared - closure),
-            }
+            drift[str(call["name"])] = {"missing": sorted(closure - declared), "extra": sorted(declared - closure)}
     return drift
 
 
@@ -336,7 +325,8 @@ def audit(existing: dict | None = None) -> dict[str, object]:
             pin_unchanged
             and before.get("regeneration_verified")
             and before.get("source_sha256") == record["source_sha256"]
-            and before.get("header_sha256") == record["header_sha256"])
+            and before.get("header_sha256") == record["header_sha256"]
+        )
         modules[name] = record
     return {
         "version": 1,
@@ -360,8 +350,7 @@ def render(existing: dict | None = None) -> str:
 
 def _last_commit(relative: str) -> str:
     result = subprocess.run(
-        ["git", "log", "-1", "--format=%H %cI", "--", relative],
-        cwd=ROOT, capture_output=True, text=True, check=True,
+        ["git", "log", "-1", "--format=%H %cI", "--", relative], cwd=ROOT, capture_output=True, text=True, check=True
     )
     return result.stdout.strip()
 
@@ -383,8 +372,7 @@ def git_drift() -> None:
                 continue
             # Compare as datetimes: %cI carries the committer's UTC offset, and
             # lexical comparison misorders timestamps across differing offsets.
-            if datetime.fromisoformat(entry.split(" ", 1)[1]) \
-                    > datetime.fromisoformat(header_time):
+            if datetime.fromisoformat(entry.split(" ", 1)[1]) > datetime.fromisoformat(header_time):
                 newer.append(f"{relative} @{entry.split(' ', 1)[0][:7]}")
         print(f"{name}: header @{header_commit[:7]} {header_time}")
         for line in newer:
@@ -404,15 +392,12 @@ def mark_verified(output: Path, name: str) -> None:
         raise SystemExit(f"Missing record {output}; run --write first")
     if render(existing) != output.read_text(encoding="utf-8"):
         raise SystemExit(
-            f"{output} is stale; run --check to see why, then --write, "
-            "then re-verify and --mark-verified again")
+            f"{output} is stale; run --check to see why, then --write, then re-verify and --mark-verified again"
+        )
     if name not in existing["modules"]:
-        raise SystemExit(
-            f"Unknown module '{name}'; known: {', '.join(sorted(existing['modules']))}")
+        raise SystemExit(f"Unknown module '{name}'; known: {', '.join(sorted(existing['modules']))}")
     existing["modules"][name]["regeneration_verified"] = True
-    output.write_text(
-        json.dumps(existing, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8", newline="\n")
+    output.write_text(json.dumps(existing, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
     print(f"Marked {name} regeneration_verified=true in {output}")
 
 
@@ -420,13 +405,11 @@ def check(output: Path) -> None:
     expected = render(_load_existing(output))
     if not output.is_file():
         raise SystemExit(
-            f"Missing PTX source-identity record: {output}\n"
-            "Run: python drjit/scripts/audit_ptx_sources.py --write"
+            f"Missing PTX source-identity record: {output}\nRun: python drjit/scripts/audit_ptx_sources.py --write"
         )
     drift = depends_drift()
     if drift:
-        lines = [f"rayd_embed_ptx() DEPENDS no longer matches the include closure "
-                 f"in {_relative(CMAKELISTS)}:"]
+        lines = [f"rayd_embed_ptx() DEPENDS no longer matches the include closure in {_relative(CMAKELISTS)}:"]
         for name, delta in drift.items():
             for item in delta["missing"]:
                 lines.append(f"  {name}: add    {item}")
@@ -440,7 +423,8 @@ def check(output: Path) -> None:
     recorded = json.loads(actual).get("modules", {})
     current = json.loads(expected)["modules"]
     drifted = [
-        name for name, record in current.items()
+        name
+        for name, record in current.items()
         if recorded.get(name, {}).get("source_sha256") != record["source_sha256"]
         or recorded.get(name, {}).get("header_sha256") != record["header_sha256"]
     ]
@@ -457,19 +441,17 @@ def check(output: Path) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Audit committed Dr.Jit PTX source identity")
+    parser = argparse.ArgumentParser(description="Audit committed Dr.Jit PTX source identity")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--check", action="store_true",
-                      help="fail if the record no longer matches the sources")
-    mode.add_argument("--write", action="store_true",
-                      help="rewrite the record from the current sources")
-    mode.add_argument("--git-drift", action="store_true",
-                      help="list closure files committed after their PTX header")
-    mode.add_argument("--mark-verified", metavar="MODULE",
-                      help="attest MODULE's committed header was regenerated and "
-                           "byte-compared against its recorded sources")
+    mode.add_argument("--check", action="store_true", help="fail if the record no longer matches the sources")
+    mode.add_argument("--write", action="store_true", help="rewrite the record from the current sources")
+    mode.add_argument("--git-drift", action="store_true", help="list closure files committed after their PTX header")
+    mode.add_argument(
+        "--mark-verified",
+        metavar="MODULE",
+        help="attest MODULE's committed header was regenerated and byte-compared against its recorded sources",
+    )
     args = parser.parse_args()
     if args.git_drift:
         git_drift()
@@ -480,8 +462,7 @@ def main() -> None:
     if args.mark_verified:
         mark_verified(args.output, args.mark_verified)
         return
-    args.output.write_text(render(_load_existing(args.output)),
-                           encoding="utf-8", newline="\n")
+    args.output.write_text(render(_load_existing(args.output)), encoding="utf-8", newline="\n")
     print(f"Wrote {args.output}")
 
 

@@ -24,19 +24,12 @@ except RuntimeError:
 else:
     raise AssertionError("torch.classes.raydn.Scene is still registered")
 """
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        result = subprocess.run([sys.executable, "-c", script], text=True, capture_output=True, check=False)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def _scene(self):
         verts = torch.tensor(
-            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]], device="cuda", dtype=torch.float32
         )
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene = rt.Scene()

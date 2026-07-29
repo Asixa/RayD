@@ -88,11 +88,7 @@ class Ray:
         if self.o.shape[0] != self.d.shape[0]:
             raise ValueError("Ray.o and Ray.d must have the same batch size.")
         if self.tmax is None:
-            object.__setattr__(
-                self,
-                "tmax",
-                torch.empty((0,), device=self.o.device, dtype=self.o.dtype),
-            )
+            object.__setattr__(self, "tmax", torch.empty((0,), device=self.o.device, dtype=self.o.dtype))
         else:
             _require_float_cuda_tensor(self.tmax, "Ray.tmax", None)
             if self.tmax.ndim != 1 or (self.tmax.numel() != 0 and self.tmax.shape[0] != self.o.shape[0]):
@@ -123,11 +119,7 @@ class Intersection:
 class _LazyIntersection:
     __slots__ = ("_load_t", "_load_full", "_t", "_full")
 
-    def __init__(
-        self,
-        load_t: Callable[[], torch.Tensor],
-        load_full: Callable[[], Intersection],
-    ) -> None:
+    def __init__(self, load_t: Callable[[], torch.Tensor], load_full: Callable[[], Intersection]) -> None:
         self._load_t = load_t
         self._load_full = load_full
         self._t: torch.Tensor | None = None
@@ -309,10 +301,7 @@ class ReflectionChain:
         image_sources: torch.Tensor | None = None,
         prim_ids: torch.Tensor | None = None,
         *,
-        loader: (
-            Callable[[bool], tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor]]
-            | None
-        ) = None,
+        loader: (Callable[[bool], tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor]] | None) = None,
     ) -> None:
         self._valid = valid
         self._t = t

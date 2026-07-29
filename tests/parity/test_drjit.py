@@ -11,9 +11,7 @@ from pathlib import Path
 import torch
 
 
-_CONTRACT = json.loads(
-    (Path(__file__).resolve().parents[2] / "contracts" / "operations.json").read_text()
-)
+_CONTRACT = json.loads((Path(__file__).resolve().parents[2] / "contracts" / "operations.json").read_text())
 _DEFAULT_ABS = _CONTRACT["tolerances"]["default_abs"]
 _FIELD_ABS = _CONTRACT["tolerances"]["field_abs"]
 
@@ -27,11 +25,7 @@ def _load_backends():
 
 
 def _torch_scene(rt):
-    verts = torch.tensor(
-        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-        device="cuda",
-        dtype=torch.float32,
-    )
+    verts = torch.tensor([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device="cuda", dtype=torch.float32)
     faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
     scene = rt.Scene()
     scene.add_mesh(rt.Mesh(verts, faces))
@@ -49,11 +43,7 @@ def _rayd_scene(dr_backend, cuda):
 
 
 def _torch_dfr_scene(rt):
-    verts = torch.tensor(
-        [[-1.0, -1.0, 10.0], [1.0, -1.0, 10.0], [-1.0, 1.0, 10.0]],
-        device="cuda",
-        dtype=torch.float32,
-    )
+    verts = torch.tensor([[-1.0, -1.0, 10.0], [1.0, -1.0, 10.0], [-1.0, 1.0, 10.0]], device="cuda", dtype=torch.float32)
     faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
     scene = rt.Scene()
     scene.add_mesh(rt.Mesh(verts, faces))
@@ -205,11 +195,7 @@ def _rayd_dfr_grid(dr_backend, axis: int = 2, position: float = -1.0):
 
 
 def _torch_suffix_scene(rt):
-    verts = torch.tensor(
-        [[-2.0, 0.0, -2.0], [2.0, 0.0, -2.0], [-2.0, 0.0, 2.0]],
-        device="cuda",
-        dtype=torch.float32,
-    )
+    verts = torch.tensor([[-2.0, 0.0, -2.0], [2.0, 0.0, -2.0], [-2.0, 0.0, 2.0]], device="cuda", dtype=torch.float32)
     faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
     scene = rt.Scene()
     scene.add_mesh(rt.Mesh(verts, faces))
@@ -308,21 +294,36 @@ class DrJitParityTests(unittest.TestCase):
 
     def test_intersect_forward_matches_external_multi_mesh_global_ids(self):
         dr_backend, rt, cuda = _load_backends()
-        verts0 = torch.tensor([[0.0, 0.0, 10.0], [1.0, 0.0, 10.0], [0.0, 1.0, 10.0]], device="cuda", dtype=torch.float32)
+        verts0 = torch.tensor(
+            [[0.0, 0.0, 10.0], [1.0, 0.0, 10.0], [0.0, 1.0, 10.0]], device="cuda", dtype=torch.float32
+        )
         verts1 = torch.tensor([[0.0, 0.0, 2.0], [1.0, 0.0, 2.0], [0.0, 1.0, 2.0]], device="cuda", dtype=torch.float32)
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene_t = rt.Scene()
         scene_t.add_mesh(rt.Mesh(verts0, faces))
         scene_t.add_mesh(rt.Mesh(verts1, faces))
         scene_t.build()
-        ray_t = rt.Ray(torch.tensor([[0.25, 0.25, 0.0]], device="cuda", dtype=torch.float32), torch.tensor([[0.0, 0.0, 1.0]], device="cuda", dtype=torch.float32))
+        ray_t = rt.Ray(
+            torch.tensor([[0.25, 0.25, 0.0]], device="cuda", dtype=torch.float32),
+            torch.tensor([[0.0, 0.0, 1.0]], device="cuda", dtype=torch.float32),
+        )
         out_t = scene_t.intersect(ray_t)
 
         scene_d = dr_backend.Scene()
-        scene_d.add_mesh(dr_backend.Mesh(cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [10.0, 10.0, 10.0]), cuda.Array3i([0], [1], [2])))
-        scene_d.add_mesh(dr_backend.Mesh(cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [2.0, 2.0, 2.0]), cuda.Array3i([0], [1], [2])))
+        scene_d.add_mesh(
+            dr_backend.Mesh(
+                cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [10.0, 10.0, 10.0]), cuda.Array3i([0], [1], [2])
+            )
+        )
+        scene_d.add_mesh(
+            dr_backend.Mesh(
+                cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [2.0, 2.0, 2.0]), cuda.Array3i([0], [1], [2])
+            )
+        )
         scene_d.build()
-        out_d = scene_d.intersect(dr_backend.Ray(cuda.Array3f([0.25], [0.25], [0.0]), cuda.Array3f([0.0], [0.0], [1.0])))
+        out_d = scene_d.intersect(
+            dr_backend.Ray(cuda.Array3f([0.25], [0.25], [0.0]), cuda.Array3f([0.0], [0.0], [1.0]))
+        )
 
         self.assertAlmostEqual(float(out_t.t[0].item()), float(out_d.t[0]), delta=_DEFAULT_ABS)
         self.assertEqual(int(out_t.shape_id[0].item()), int(out_d.shape_id[0]))
@@ -413,12 +414,7 @@ class DrJitParityTests(unittest.TestCase):
             cell_area=4.0,
         )
         out_t = scene_t.accum_dfr_direct(
-            states=states_t,
-            grid=grid_t,
-            material=material_t,
-            wavelength=0.125,
-            seed=17,
-            direct_samples=64,
+            states=states_t, grid=grid_t, material=material_t, wavelength=0.125, seed=17, direct_samples=64
         )
 
         scene_d = _rayd_dfr_scene(dr_backend, cuda)
@@ -456,8 +452,12 @@ class DrJitParityTests(unittest.TestCase):
 
         self.assertEqual(out_t.grid_cell_count, int(out_d.grid_cell_count))
         self.assertAlmostEqual(float(out_t.power.flatten()[0].item()), float(out_d.power[0]), delta=_FIELD_ABS)
-        self.assertAlmostEqual(float(out_t.field_x_re.flatten()[0].item()), float(out_d.field_x.real[0]), delta=_FIELD_ABS)
-        self.assertAlmostEqual(float(out_t.field_x_im.flatten()[0].item()), float(out_d.field_x.imag[0]), delta=_FIELD_ABS)
+        self.assertAlmostEqual(
+            float(out_t.field_x_re.flatten()[0].item()), float(out_d.field_x.real[0]), delta=_FIELD_ABS
+        )
+        self.assertAlmostEqual(
+            float(out_t.field_x_im.flatten()[0].item()), float(out_d.field_x.imag[0]), delta=_FIELD_ABS
+        )
         self.assertEqual(int(out_t.direct_count.flatten()[0].item()), int(out_d.direct_count[0]))
         self.assertEqual(int(out_t.keller_count.flatten()[0].item()), int(out_d.keller_count[0]))
 
@@ -521,8 +521,12 @@ class DrJitParityTests(unittest.TestCase):
 
         self.assertEqual(out_t.grid_cell_count, int(out_d.grid_cell_count))
         self.assertAlmostEqual(float(out_t.power.flatten()[0].item()), float(out_d.power[0]), delta=_FIELD_ABS)
-        self.assertAlmostEqual(float(out_t.field_x_re.flatten()[0].item()), float(out_d.field_x.real[0]), delta=_FIELD_ABS)
-        self.assertAlmostEqual(float(out_t.field_x_im.flatten()[0].item()), float(out_d.field_x.imag[0]), delta=_FIELD_ABS)
+        self.assertAlmostEqual(
+            float(out_t.field_x_re.flatten()[0].item()), float(out_d.field_x.real[0]), delta=_FIELD_ABS
+        )
+        self.assertAlmostEqual(
+            float(out_t.field_x_im.flatten()[0].item()), float(out_d.field_x.imag[0]), delta=_FIELD_ABS
+        )
         self.assertEqual(int(out_t.direct_count.flatten()[0].item()), int(out_d.direct_count[0]))
         self.assertEqual(int(out_t.keller_count.flatten()[0].item()), int(out_d.keller_count[0]))
 
@@ -690,6 +694,10 @@ class DrJitParityTests(unittest.TestCase):
         )
         dr.eval(out_d.direct_field_x.real, out_d.direct_field_x.imag, out_d.direct_count)
 
-        self.assertAlmostEqual(float(out_t.direct_field_x_re.flatten()[0].item()), float(out_d.direct_field_x.real[0]), delta=_FIELD_ABS)
-        self.assertAlmostEqual(float(out_t.direct_field_x_im.flatten()[0].item()), float(out_d.direct_field_x.imag[0]), delta=_FIELD_ABS)
+        self.assertAlmostEqual(
+            float(out_t.direct_field_x_re.flatten()[0].item()), float(out_d.direct_field_x.real[0]), delta=_FIELD_ABS
+        )
+        self.assertAlmostEqual(
+            float(out_t.direct_field_x_im.flatten()[0].item()), float(out_d.direct_field_x.imag[0]), delta=_FIELD_ABS
+        )
         self.assertEqual(int(out_t.direct_count.flatten()[0].item()), int(out_d.direct_count[0]))

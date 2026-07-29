@@ -42,19 +42,16 @@ namespace ad = rayd::torch::field_transport_ad;
 
 using Dual = field::Dual;
 
-__device__ __forceinline__ field::float3a load3f(
-    const float* values, int64_t index) {
+__device__ __forceinline__ field::float3a load3f(const float* values, int64_t index) {
     const int64_t base = index * 3;
     return field::make_f3(values[base], values[base + 1], values[base + 2]);
 }
 
-__device__ __forceinline__ c10::complex<float> to_c10(
-    field::Complex value) {
+__device__ __forceinline__ c10::complex<float> to_c10(field::Complex value) {
     return c10::complex<float>(value.re, value.im);
 }
 
-__device__ __forceinline__ field::Complex from_c10(
-    c10::complex<float> value) {
+__device__ __forceinline__ field::Complex from_c10(c10::complex<float> value) {
     return field::cplx(value.real(), value.imag());
 }
 
@@ -64,10 +61,8 @@ int launch_blocks(int64_t count) {
 
 at::Tensor zero_scalar(const at::TensorOptions& options) {
     auto tensor = at::empty({1}, options);
-    cudaStream_t stream =
-        at::cuda::getCurrentCUDAStream(tensor.get_device()).stream();
-    C10_CUDA_CHECK(cudaMemsetAsync(
-        tensor.data_ptr(), 0, tensor.element_size(), stream));
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream(tensor.get_device()).stream();
+    C10_CUDA_CHECK(cudaMemsetAsync(tensor.data_ptr(), 0, tensor.element_size(), stream));
     return tensor;
 }
 
@@ -131,8 +126,12 @@ __device__ __forceinline__ WedgeRowSeeds wedge_seeds_zero() {
     WedgeRowSeeds seeds;
     seeds.source = field::f3_zero();
     seeds.target = field::f3_zero();
-    seeds.eps0 = 0.f; seeds.sigma0 = 0.f; seeds.gain0 = 0.f;
-    seeds.eps1 = 0.f; seeds.sigma1 = 0.f; seeds.gain1 = 0.f;
+    seeds.eps0 = 0.f;
+    seeds.sigma0 = 0.f;
+    seeds.gain0 = 0.f;
+    seeds.eps1 = 0.f;
+    seeds.sigma1 = 0.f;
+    seeds.gain1 = 0.f;
     seeds.frequency = 0.f;
     seeds.v0 = field::f3_zero();
     seeds.v1 = field::f3_zero();
@@ -142,17 +141,13 @@ __device__ __forceinline__ WedgeRowSeeds wedge_seeds_zero() {
 }
 // acos on the templated scalar via atan2 (utd has no acos shim); equals
 // ::acosf to float rounding on [-1, 1].
-template <typename T>
-__device__ __forceinline__ T wedge_acos(T x) {
+template <typename T> __device__ __forceinline__ T wedge_acos(T x) {
     return field::atan2f(field::sqrtf(field::fmaxf(1.0f - x * x, T(0.f))), x);
 }
 
 // Primal part of a templated vector (identity for float).
-template <typename T>
-__device__ __forceinline__ field::float3a primal3(field::Vec3T<T> v) {
-    return field::make_f3(
-        field::scalar_value(v.x), field::scalar_value(v.y),
-        field::scalar_value(v.z));
+template <typename T> __device__ __forceinline__ field::float3a primal3(field::Vec3T<T> v) {
+    return field::make_f3(field::scalar_value(v.x), field::scalar_value(v.y), field::scalar_value(v.z));
 }
 
 // Differentiable edge tables rebuilt from the winner vertices. The frozen
@@ -161,20 +156,18 @@ __device__ __forceinline__ field::float3a primal3(field::Vec3T<T> v) {
 // values; the derivative flows through the aligned smooth normal. Mirrors
 // diffraction_edge_geometry_kernel (kernels/diffraction.cu) row math; edit
 // the discovery kernel and this rebuild TOGETHER.
-template <typename T>
-struct WedgeEdgeTables {
+template <typename T> struct WedgeEdgeTables {
     field::Vec3T<T> edge_pos;
     field::Vec3T<T> edge_dir;
     T t_min;
     T t_max;
     field::Vec3T<T> n0;
     field::Vec3T<T> n1;
-    T wedge_n;  // exterior_angle / pi
+    T wedge_n; // exterior_angle / pi
 };
 
 template <typename T>
-__device__ WedgeEdgeTables<T> wedge_edge_tables_from_vertices(
-    const WedgeRowInputs& in, const WedgeRowSeeds& seeds) {
+__device__ WedgeEdgeTables<T> wedge_edge_tables_from_vertices(const WedgeRowInputs& in, const WedgeRowSeeds& seeds) {
     WedgeEdgeTables<T> tables;
     const field::Vec3T<T> v0 = seeded3<T>(in.v0, seeds.v0);
     const field::Vec3T<T> v1 = seeded3<T>(in.v1, seeds.v1);
@@ -186,55 +179,47 @@ __device__ WedgeEdgeTables<T> wedge_edge_tables_from_vertices(
     tables.t_max = 0.5f * length;
 
     const field::Vec3T<T> opp0 = seeded3<T>(in.opp0, seeds.opp0);
-    const field::Vec3T<T> candidate_a = field::safe_normalize(
-        field::f3_cross(vector, field::f3_sub(opp0, v0)),
-        field::v3_const<T>(0.f, 0.f, 1.f));
+    const field::Vec3T<T> candidate_a =
+        field::safe_normalize(field::f3_cross(vector, field::f3_sub(opp0, v0)), field::v3_const<T>(0.f, 0.f, 1.f));
     field::Vec3T<T> pick0 = candidate_a;
     field::Vec3T<T> pick1 = candidate_a;
     if (!in.edge_boundary) {
         const field::Vec3T<T> opp1 = seeded3<T>(in.opp1, seeds.opp1);
-        const field::Vec3T<T> candidate_b = field::safe_normalize(
-            field::f3_cross(vector, field::f3_sub(opp1, v0)),
-            field::v3_const<T>(0.f, 0.f, 1.f));
+        const field::Vec3T<T> candidate_b =
+            field::safe_normalize(field::f3_cross(vector, field::f3_sub(opp1, v0)), field::v3_const<T>(0.f, 0.f, 1.f));
         // Frozen plane assignment: match each candidate to the discovery
         // table slot it is (anti)parallel to (primal values only).
         const field::float3a a_val = primal3<T>(candidate_a);
-        const bool a_is_n0 =
-            ::fabsf(field::f3_dot(a_val, in.n0)) >=
-            ::fabsf(field::f3_dot(a_val, in.n1));
+        const bool a_is_n0 = ::fabsf(field::f3_dot(a_val, in.n0)) >= ::fabsf(field::f3_dot(a_val, in.n1));
         pick0 = a_is_n0 ? candidate_a : candidate_b;
         pick1 = a_is_n0 ? candidate_b : candidate_a;
     }
     // Frozen sign alignment against the discovery normals.
-    const float sign0 =
-        field::f3_dot(primal3<T>(pick0), in.n0) < 0.f ? -1.f : 1.f;
+    const float sign0 = field::f3_dot(primal3<T>(pick0), in.n0) < 0.f ? -1.f : 1.f;
     tables.n0 = field::f3_mul(pick0, sign0);
     if (in.edge_boundary) {
         tables.n1 = field::f3_neg(tables.n0);
         tables.wedge_n = T(2.f);
     } else {
-        const float sign1 =
-            field::f3_dot(primal3<T>(pick1), in.n1) < 0.f ? -1.f : 1.f;
+        const float sign1 = field::f3_dot(primal3<T>(pick1), in.n1) < 0.f ? -1.f : 1.f;
         tables.n1 = field::f3_mul(pick1, sign1);
-        const T neg_dot = field::fminf(
-            field::fmaxf(-field::f3_dot(tables.n0, tables.n1), T(-1.f)), T(1.f));
+        const T neg_dot = field::fminf(field::fmaxf(-field::f3_dot(tables.n0, tables.n1), T(-1.f)), T(1.f));
         const T exterior = 2.0f * field::UTD_PI - wedge_acos(neg_dot);
         tables.wedge_n = exterior * (1.0f / field::UTD_PI);
     }
     return tables;
 }
 
-template <typename T>
-struct WedgeRowOutputs {
-    field::Complex3T<T> field_vector;  // includes the sqrt(tx_power) scale
-    field::Vec3T<T> direction;         // arrival from the clamped edge point
+template <typename T> struct WedgeRowOutputs {
+    field::Complex3T<T> field_vector; // includes the sqrt(tx_power) scale
+    field::Vec3T<T> direction;        // arrival from the clamped edge point
 };
 
 // RayD's face_material_params: absent faces keep the default material and
 // present = 0 (the pair then treats the face operator as zero).
 template <typename T>
-__device__ __forceinline__ field::FaceMaterialParamsT<T> wedge_face_material(
-    bool valid, T eps, T sigma, float mu, T gain) {
+__device__ __forceinline__ field::FaceMaterialParamsT<T> wedge_face_material(bool valid, T eps, T sigma, float mu,
+                                                                             T gain) {
     if (!valid) {
         return {T(1.f), T(1.f), T(0.f), T(1.f), 1.f, 0.f};
     }
@@ -242,21 +227,18 @@ __device__ __forceinline__ field::FaceMaterialParamsT<T> wedge_face_material(
 }
 
 template <typename T>
-__device__ WedgeRowOutputs<T> wedge_row_eval(
-    const WedgeRowInputs& in, const WedgeRowSeeds& seeds) {
+__device__ WedgeRowOutputs<T> wedge_row_eval(const WedgeRowInputs& in, const WedgeRowSeeds& seeds) {
     const field::Vec3T<T> source = seeded3<T>(in.source, seeds.source);
     const field::Vec3T<T> target = seeded3<T>(in.target, seeds.target);
     const T frequency = seeded<T>(in.frequency, seeds.frequency);
-    const T wave_number =
-        2.0f * field::UTD_PI * frequency / transport::kSpeedOfLight;
+    const T wave_number = 2.0f * field::UTD_PI * frequency / transport::kSpeedOfLight;
 
     const field::float3a zero3 = field::f3_zero();
     field::PairInputsT<T> pair{};
     T edge_t_min;
     T edge_t_max;
     if (in.has_vertices) {
-        const WedgeEdgeTables<T> tables =
-            wedge_edge_tables_from_vertices<T>(in, seeds);
+        const WedgeEdgeTables<T> tables = wedge_edge_tables_from_vertices<T>(in, seeds);
         pair.edgePos = tables.edge_pos;
         pair.edgeDir = tables.edge_dir;
         pair.n0 = tables.n0;
@@ -283,14 +265,12 @@ __device__ WedgeRowOutputs<T> wedge_row_eval(
     // internally, so the kernel must not precompute them. 0 = hard GO step
     // (bit-identical to the pre-ADR-017 twin).
     pair.isbTaperWidthScale = in.isb_taper_width_scale;
-    pair.face0Material = wedge_face_material(
-        in.valid0, seeded<T>(in.eps0, seeds.eps0),
-        seeded<T>(in.sigma0, seeds.sigma0), in.mu0,
-        seeded<T>(in.gain0, seeds.gain0));
-    pair.face1Material = wedge_face_material(
-        in.valid1, seeded<T>(in.eps1, seeds.eps1),
-        seeded<T>(in.sigma1, seeds.sigma1), in.mu1,
-        seeded<T>(in.gain1, seeds.gain1));
+    pair.face0Material =
+        wedge_face_material(in.valid0, seeded<T>(in.eps0, seeds.eps0), seeded<T>(in.sigma0, seeds.sigma0), in.mu0,
+                            seeded<T>(in.gain0, seeds.gain0));
+    pair.face1Material =
+        wedge_face_material(in.valid1, seeded<T>(in.eps1, seeds.eps1), seeded<T>(in.sigma1, seeds.sigma1), in.mu1,
+                            seeded<T>(in.gain1, seeds.gain1));
 
     field::MaterialParamsT<T> mat{};
     mat.useFresnel = 1;
@@ -306,56 +286,29 @@ __device__ WedgeRowOutputs<T> wedge_row_eval(
     mat.txPolZ = T(1.f);
 
     WedgeRowOutputs<T> out;
-    const field::Complex3T<T> vec =
-        field::compute_pair_vector_contribution(pair, target, wave_number, mat);
+    const field::Complex3T<T> vec = field::compute_pair_vector_contribution(pair, target, wave_number, mat);
     const T amplitude = sqrtf(T(fmaxf(in.tx_power, 0.f)));
     out.field_vector = field::c3_scale_real(vec, amplitude);
 
     // Arrival direction from the clamped stationary point (the export's p0).
-    const field::Vec3T<T> edge_hat = field::safe_normalize(
-        pair.edgeDir, field::v3_const<T>(0.f, 0.f, 1.f));
+    const field::Vec3T<T> edge_hat = field::safe_normalize(pair.edgeDir, field::v3_const<T>(0.f, 0.f, 1.f));
     const T edge_length = edge_t_max - edge_t_min;
-    const field::Vec3T<T> edge_origin = field::f3_add(
-        pair.edgePos, field::f3_mul(edge_hat, edge_t_min));
-    const T parameter = field::first_order_diffraction_parameter(
-        source, target, edge_origin, edge_hat);
+    const field::Vec3T<T> edge_origin = field::f3_add(pair.edgePos, field::f3_mul(edge_hat, edge_t_min));
+    const T parameter = field::first_order_diffraction_parameter(source, target, edge_origin, edge_hat);
     const T clamped = field::fminf(field::fmaxf(parameter, T(0.f)), edge_length);
-    const field::Vec3T<T> point = field::f3_add(
-        edge_origin, field::f3_mul(edge_hat, clamped));
-    out.direction = field::safe_normalize(
-        field::f3_sub(target, point), field::v3_const<T>(0.f, 0.f, 1.f));
+    const field::Vec3T<T> point = field::f3_add(edge_origin, field::f3_mul(edge_hat, clamped));
+    out.direction = field::safe_normalize(field::f3_sub(target, point), field::v3_const<T>(0.f, 0.f, 1.f));
     return out;
 }
 
-__device__ __forceinline__ WedgeRowInputs load_wedge_row(
-    int64_t index,
-    const float* source,
-    const float* target,
-    const float* edge_position,
-    const float* edge_direction,
-    const float* edge_t_min,
-    const float* edge_t_max,
-    const float* edge_n0,
-    const float* edge_n1,
-    const float* exterior_angle,
-    const bool* face0_valid,
-    const float* face0_eps_r,
-    const float* face0_sigma_e,
-    const float* face0_mu_r,
-    const float* face0_gain,
-    const bool* face1_valid,
-    const float* face1_eps_r,
-    const float* face1_sigma_e,
-    const float* face1_mu_r,
-    const float* face1_gain,
-    const float* tx_power,
-    float frequency_hz,
-    const float* vertex_v0,
-    const float* vertex_v1,
-    const float* vertex_opp0,
-    const float* vertex_opp1,
-    const bool* edge_boundary,
-    float isb_taper_width) {
+__device__ __forceinline__ WedgeRowInputs
+load_wedge_row(int64_t index, const float* source, const float* target, const float* edge_position,
+               const float* edge_direction, const float* edge_t_min, const float* edge_t_max, const float* edge_n0,
+               const float* edge_n1, const float* exterior_angle, const bool* face0_valid, const float* face0_eps_r,
+               const float* face0_sigma_e, const float* face0_mu_r, const float* face0_gain, const bool* face1_valid,
+               const float* face1_eps_r, const float* face1_sigma_e, const float* face1_mu_r, const float* face1_gain,
+               const float* tx_power, float frequency_hz, const float* vertex_v0, const float* vertex_v1,
+               const float* vertex_opp0, const float* vertex_opp1, const bool* edge_boundary, float isb_taper_width) {
     WedgeRowInputs in;
     in.source = load3f(source, index);
     in.target = load3f(target, index);
@@ -396,36 +349,24 @@ __device__ __forceinline__ WedgeRowInputs load_wedge_row(
     return in;
 }
 
-#define WEDGE_ROW_PARAMS                                                      \
-    const bool* valid, const float* source, const float* target,              \
-        const float* edge_position,                                           \
-        const float* edge_direction, const float* edge_t_min,                 \
-        const float* edge_t_max, const float* edge_n0, const float* edge_n1,  \
-        const float* exterior_angle, const bool* face0_valid,                 \
-        const float* face0_eps_r, const float* face0_sigma_e,                 \
-        const float* face0_mu_r, const float* face0_gain,                     \
-        const bool* face1_valid, const float* face1_eps_r,                    \
-        const float* face1_sigma_e, const float* face1_mu_r,                  \
-        const float* face1_gain, const float* tx_power, float frequency_hz,   \
-        const float* vertex_v0, const float* vertex_v1,                       \
-        const float* vertex_opp0, const float* vertex_opp1,                   \
-        const bool* edge_boundary, float isb_taper_width
+#define WEDGE_ROW_PARAMS                                                                                               \
+    const bool *valid, const float *source, const float *target, const float *edge_position,                           \
+        const float *edge_direction, const float *edge_t_min, const float *edge_t_max, const float *edge_n0,           \
+        const float *edge_n1, const float *exterior_angle, const bool *face0_valid, const float *face0_eps_r,          \
+        const float *face0_sigma_e, const float *face0_mu_r, const float *face0_gain, const bool *face1_valid,         \
+        const float *face1_eps_r, const float *face1_sigma_e, const float *face1_mu_r, const float *face1_gain,        \
+        const float *tx_power, float frequency_hz, const float *vertex_v0, const float *vertex_v1,                     \
+        const float *vertex_opp0, const float *vertex_opp1, const bool *edge_boundary, float isb_taper_width
 
-#define WEDGE_ROW_ARGS(index)                                                 \
-    index, source, target, edge_position, edge_direction, edge_t_min,         \
-        edge_t_max, edge_n0, edge_n1, exterior_angle, face0_valid,            \
-        face0_eps_r, face0_sigma_e, face0_mu_r, face0_gain, face1_valid,      \
-        face1_eps_r, face1_sigma_e, face1_mu_r, face1_gain, tx_power,         \
-        frequency_hz, vertex_v0, vertex_v1, vertex_opp0, vertex_opp1,         \
-        edge_boundary, isb_taper_width
+#define WEDGE_ROW_ARGS(index)                                                                                          \
+    index, source, target, edge_position, edge_direction, edge_t_min, edge_t_max, edge_n0, edge_n1, exterior_angle,    \
+        face0_valid, face0_eps_r, face0_sigma_e, face0_mu_r, face0_gain, face1_valid, face1_eps_r, face1_sigma_e,      \
+        face1_mu_r, face1_gain, tx_power, frequency_hz, vertex_v0, vertex_v1, vertex_opp0, vertex_opp1, edge_boundary, \
+        isb_taper_width
 
-__global__ void diffraction_wedge_forward_kernel(
-    int64_t count,
-    WEDGE_ROW_PARAMS,
-    c10::complex<float>* field_vector,
-    float* direction) {
-    for (int64_t index = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-         index < count;
+__global__ void diffraction_wedge_forward_kernel(int64_t count, WEDGE_ROW_PARAMS, c10::complex<float>* field_vector,
+                                                 float* direction) {
+    for (int64_t index = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x; index < count;
          index += static_cast<int64_t>(blockDim.x) * gridDim.x) {
         const int64_t base = index * 3;
         if (!valid[index]) {
@@ -438,8 +379,7 @@ __global__ void diffraction_wedge_forward_kernel(
             continue;
         }
         const WedgeRowInputs in = load_wedge_row(WEDGE_ROW_ARGS(index));
-        const WedgeRowOutputs<float> out =
-            wedge_row_eval<float>(in, wedge_seeds_zero());
+        const WedgeRowOutputs<float> out = wedge_row_eval<float>(in, wedge_seeds_zero());
         field_vector[base] = to_c10(out.field_vector.x);
         field_vector[base + 1] = to_c10(out.field_vector.y);
         field_vector[base + 2] = to_c10(out.field_vector.z);
@@ -449,11 +389,8 @@ __global__ void diffraction_wedge_forward_kernel(
     }
 }
 
-__device__ __forceinline__ float wedge_contract(
-    int64_t index,
-    const c10::complex<float>* grad_field_vector,
-    const float* grad_direction,
-    const WedgeRowOutputs<Dual>& out) {
+__device__ __forceinline__ float wedge_contract(int64_t index, const c10::complex<float>* grad_field_vector,
+                                                const float* grad_direction, const WedgeRowOutputs<Dual>& out) {
     float acc = 0.f;
     const int64_t base = index * 3;
     if (grad_field_vector != nullptr) {
@@ -471,25 +408,11 @@ __device__ __forceinline__ float wedge_contract(
 }
 
 __global__ void diffraction_wedge_backward_kernel(
-    int64_t count,
-    WEDGE_ROW_PARAMS,
-    const c10::complex<float>* grad_field_vector,
-    const float* grad_direction,
-    float* grad_source,
-    float* grad_target,
-    float* grad_face0_eps_r,
-    float* grad_face0_sigma_e,
-    float* grad_face0_gain,
-    float* grad_face1_eps_r,
-    float* grad_face1_sigma_e,
-    float* grad_face1_gain,
-    float* grad_frequency,
-    float* grad_vertex_v0,
-    float* grad_vertex_v1,
-    float* grad_vertex_opp0,
-    float* grad_vertex_opp1) {
-    for (int64_t index = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-         index < count;
+    int64_t count, WEDGE_ROW_PARAMS, const c10::complex<float>* grad_field_vector, const float* grad_direction,
+    float* grad_source, float* grad_target, float* grad_face0_eps_r, float* grad_face0_sigma_e, float* grad_face0_gain,
+    float* grad_face1_eps_r, float* grad_face1_sigma_e, float* grad_face1_gain, float* grad_frequency,
+    float* grad_vertex_v0, float* grad_vertex_v1, float* grad_vertex_opp0, float* grad_vertex_opp1) {
+    for (int64_t index = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x; index < count;
          index += static_cast<int64_t>(blockDim.x) * gridDim.x) {
         const int64_t base = index * 3;
         if (!valid[index]) {
@@ -504,12 +427,8 @@ __global__ void diffraction_wedge_backward_kernel(
                 grad_target[base + 2] = 0.0F;
             }
             float* scalar_gradients[6] = {
-                grad_face0_eps_r,
-                grad_face0_sigma_e,
-                grad_face0_gain,
-                grad_face1_eps_r,
-                grad_face1_sigma_e,
-                grad_face1_gain,
+                grad_face0_eps_r, grad_face0_sigma_e, grad_face0_gain,
+                grad_face1_eps_r, grad_face1_sigma_e, grad_face1_gain,
             };
             for (float* gradient : scalar_gradients) {
                 if (gradient != nullptr)
@@ -538,8 +457,7 @@ __global__ void diffraction_wedge_backward_kernel(
                 *slots[axis] = 1.f;
                 const WedgeRowOutputs<Dual> out = wedge_row_eval<Dual>(in, seeds);
                 *slots[axis] = 0.f;
-                grad_source[base + axis] = wedge_contract(
-                    index, grad_field_vector, grad_direction, out);
+                grad_source[base + axis] = wedge_contract(index, grad_field_vector, grad_direction, out);
             }
         }
         if (grad_target != nullptr) {
@@ -548,8 +466,7 @@ __global__ void diffraction_wedge_backward_kernel(
                 *slots[axis] = 1.f;
                 const WedgeRowOutputs<Dual> out = wedge_row_eval<Dual>(in, seeds);
                 *slots[axis] = 0.f;
-                grad_target[base + axis] = wedge_contract(
-                    index, grad_field_vector, grad_direction, out);
+                grad_target[base + axis] = wedge_contract(index, grad_field_vector, grad_direction, out);
             }
         }
         if (grad_vertex_v0 != nullptr) {
@@ -571,11 +488,10 @@ __global__ void diffraction_wedge_backward_kernel(
                 };
                 for (int axis = 0; axis < 3; ++axis) {
                     *components[axis] = 1.f;
-                    const WedgeRowOutputs<Dual> out =
-                        wedge_row_eval<Dual>(in, seeds);
+                    const WedgeRowOutputs<Dual> out = wedge_row_eval<Dual>(in, seeds);
                     *components[axis] = 0.f;
-                    vertex_slots[slot].grad[base + axis] = wedge_contract(
-                        index, grad_field_vector, grad_direction, out);
+                    vertex_slots[slot].grad[base + axis] =
+                        wedge_contract(index, grad_field_vector, grad_direction, out);
                 }
             }
         }
@@ -584,12 +500,8 @@ __global__ void diffraction_wedge_backward_kernel(
             float* grad;
         };
         MaterialSlot material_slots[6] = {
-            {&seeds.eps0, grad_face0_eps_r},
-            {&seeds.sigma0, grad_face0_sigma_e},
-            {&seeds.gain0, grad_face0_gain},
-            {&seeds.eps1, grad_face1_eps_r},
-            {&seeds.sigma1, grad_face1_sigma_e},
-            {&seeds.gain1, grad_face1_gain},
+            {&seeds.eps0, grad_face0_eps_r}, {&seeds.sigma0, grad_face0_sigma_e}, {&seeds.gain0, grad_face0_gain},
+            {&seeds.eps1, grad_face1_eps_r}, {&seeds.sigma1, grad_face1_sigma_e}, {&seeds.gain1, grad_face1_gain},
         };
         for (int slot = 0; slot < 6; ++slot) {
             if (material_slots[slot].grad == nullptr)
@@ -597,39 +509,26 @@ __global__ void diffraction_wedge_backward_kernel(
             *material_slots[slot].seed = 1.f;
             const WedgeRowOutputs<Dual> out = wedge_row_eval<Dual>(in, seeds);
             *material_slots[slot].seed = 0.f;
-            material_slots[slot].grad[index] = wedge_contract(
-                index, grad_field_vector, grad_direction, out);
+            material_slots[slot].grad[index] = wedge_contract(index, grad_field_vector, grad_direction, out);
         }
         if (grad_frequency != nullptr) {
             seeds.frequency = 1.f;
             const WedgeRowOutputs<Dual> out = wedge_row_eval<Dual>(in, seeds);
             seeds.frequency = 0.f;
-            atomicAdd(grad_frequency, wedge_contract(
-                index, grad_field_vector, grad_direction, out));
+            atomicAdd(grad_frequency, wedge_contract(index, grad_field_vector, grad_direction, out));
         }
     }
 }
 
-__global__ void diffraction_wedge_jvp_kernel(
-    int64_t count,
-    WEDGE_ROW_PARAMS,
-    const float* tangent_source,
-    const float* tangent_target,
-    const float* tangent_face0_eps_r,
-    const float* tangent_face0_sigma_e,
-    const float* tangent_face0_gain,
-    const float* tangent_face1_eps_r,
-    const float* tangent_face1_sigma_e,
-    const float* tangent_face1_gain,
-    float tangent_frequency,
-    const float* tangent_vertex_v0,
-    const float* tangent_vertex_v1,
-    const float* tangent_vertex_opp0,
-    const float* tangent_vertex_opp1,
-    c10::complex<float>* tangent_field_vector,
-    float* tangent_direction) {
-    for (int64_t index = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-         index < count;
+__global__ void diffraction_wedge_jvp_kernel(int64_t count, WEDGE_ROW_PARAMS, const float* tangent_source,
+                                             const float* tangent_target, const float* tangent_face0_eps_r,
+                                             const float* tangent_face0_sigma_e, const float* tangent_face0_gain,
+                                             const float* tangent_face1_eps_r, const float* tangent_face1_sigma_e,
+                                             const float* tangent_face1_gain, float tangent_frequency,
+                                             const float* tangent_vertex_v0, const float* tangent_vertex_v1,
+                                             const float* tangent_vertex_opp0, const float* tangent_vertex_opp1,
+                                             c10::complex<float>* tangent_field_vector, float* tangent_direction) {
+    for (int64_t index = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x; index < count;
          index += static_cast<int64_t>(blockDim.x) * gridDim.x) {
         const int64_t base = index * 3;
         if (!valid[index]) {
@@ -679,19 +578,11 @@ __global__ void diffraction_wedge_jvp_kernel(
     }
 }
 
-void require_same_device(
-    const at::Tensor& tensor,
-    const at::Tensor& reference,
-    const char* name) {
-    TORCH_CHECK(
-        tensor.get_device() == reference.get_device(),
-        name, " must share the primal device");
+void require_same_device(const at::Tensor& tensor, const at::Tensor& reference, const char* name) {
+    TORCH_CHECK(tensor.get_device() == reference.get_device(), name, " must share the primal device");
 }
 
-void require_rows(
-    const at::Tensor& tensor,
-    int64_t count,
-    const char* name) {
+void require_rows(const at::Tensor& tensor, int64_t count, const char* name) {
     TORCH_CHECK(tensor.size(0) == count, name, " must match source rows");
 }
 
@@ -706,45 +597,39 @@ void check_wedge_primal(const rayd::torch::DiffractionWedgeRequest& request) {
     require_rows(request.valid, count, "valid");
     require_same_device(request.valid, request.source, "valid");
     for (const auto& named :
-         std::array<std::pair<const at::Tensor*, const char*>, 5>{{
-             {&request.target, "target"},
-             {&request.edge_position, "edge_position"},
-             {&request.edge_direction, "edge_direction"},
-             {&request.edge_n0, "edge_n0"},
-             {&request.edge_n1, "edge_n1"}}}) {
+         std::array<std::pair<const at::Tensor*, const char*>, 5>{{{&request.target, "target"},
+                                                                   {&request.edge_position, "edge_position"},
+                                                                   {&request.edge_direction, "edge_direction"},
+                                                                   {&request.edge_n0, "edge_n0"},
+                                                                   {&request.edge_n1, "edge_n1"}}}) {
         require_vec3f(*named.first, named.second);
         require_rows(*named.first, count, named.second);
         require_same_device(*named.first, request.source, named.second);
     }
     for (const auto& named :
-         std::array<std::pair<const at::Tensor*, const char*>, 12>{{
-             {&request.edge_t_min, "edge_t_min"},
-             {&request.edge_t_max, "edge_t_max"},
-             {&request.exterior_angle, "exterior_angle"},
-             {&request.face0_eps_r, "face0_eps_r"},
-             {&request.face0_sigma_e, "face0_sigma_e"},
-             {&request.face0_mu_r, "face0_mu_r"},
-             {&request.face0_gain, "face0_gain"},
-             {&request.face1_eps_r, "face1_eps_r"},
-             {&request.face1_sigma_e, "face1_sigma_e"},
-             {&request.face1_mu_r, "face1_mu_r"},
-             {&request.face1_gain, "face1_gain"},
-             {&request.tx_power, "tx_power"}}}) {
+         std::array<std::pair<const at::Tensor*, const char*>, 12>{{{&request.edge_t_min, "edge_t_min"},
+                                                                    {&request.edge_t_max, "edge_t_max"},
+                                                                    {&request.exterior_angle, "exterior_angle"},
+                                                                    {&request.face0_eps_r, "face0_eps_r"},
+                                                                    {&request.face0_sigma_e, "face0_sigma_e"},
+                                                                    {&request.face0_mu_r, "face0_mu_r"},
+                                                                    {&request.face0_gain, "face0_gain"},
+                                                                    {&request.face1_eps_r, "face1_eps_r"},
+                                                                    {&request.face1_sigma_e, "face1_sigma_e"},
+                                                                    {&request.face1_mu_r, "face1_mu_r"},
+                                                                    {&request.face1_gain, "face1_gain"},
+                                                                    {&request.tx_power, "tx_power"}}}) {
         require_scalar_f(*named.first, named.second);
         require_rows(*named.first, count, named.second);
         require_same_device(*named.first, request.source, named.second);
     }
-    for (const auto& named :
-         std::array<std::pair<const at::Tensor*, const char*>, 2>{{
-             {&request.face0_valid, "face0_valid"},
-             {&request.face1_valid, "face1_valid"}}}) {
+    for (const auto& named : std::array<std::pair<const at::Tensor*, const char*>, 2>{
+             {{&request.face0_valid, "face0_valid"}, {&request.face1_valid, "face1_valid"}}}) {
         require_mask(*named.first, named.second);
         require_rows(*named.first, count, named.second);
         require_same_device(*named.first, request.source, named.second);
     }
-    TORCH_CHECK(
-        request.frequency_hz > 0.0,
-        "frequency_hz must be positive");
+    TORCH_CHECK(request.frequency_hz > 0.0, "frequency_hz must be positive");
 }
 
 struct WedgeVertexArgs {
@@ -755,50 +640,35 @@ struct WedgeVertexArgs {
     const at::Tensor* boundary = nullptr;
 };
 
-WedgeVertexArgs resolve_wedge_vertices(
-    const rayd::torch::DiffractionWedgeRequest& request) {
-    const bool any = request.vertex_v0.has_value() ||
-        request.vertex_v1.has_value() || request.vertex_opp0.has_value() ||
-        request.vertex_opp1.has_value() || request.edge_boundary.has_value();
+WedgeVertexArgs resolve_wedge_vertices(const rayd::torch::DiffractionWedgeRequest& request) {
+    const bool any = request.vertex_v0.has_value() || request.vertex_v1.has_value() ||
+                     request.vertex_opp0.has_value() || request.vertex_opp1.has_value() ||
+                     request.edge_boundary.has_value();
     if (!any)
         return {};
-    TORCH_CHECK(
-        request.vertex_v0.has_value() && request.vertex_v1.has_value() &&
-            request.vertex_opp0.has_value() &&
-            request.vertex_opp1.has_value() &&
-            request.edge_boundary.has_value(),
-        "wedge vertex inputs must be supplied together");
+    TORCH_CHECK(request.vertex_v0.has_value() && request.vertex_v1.has_value() && request.vertex_opp0.has_value() &&
+                    request.vertex_opp1.has_value() && request.edge_boundary.has_value(),
+                "wedge vertex inputs must be supplied together");
 
     const int64_t count = request.source.size(0);
     for (const auto& named :
-         std::array<std::pair<const at::Tensor*, const char*>, 4>{{
-             {&*request.vertex_v0, "vertex_v0"},
-             {&*request.vertex_v1, "vertex_v1"},
-             {&*request.vertex_opp0, "vertex_opp0"},
-             {&*request.vertex_opp1, "vertex_opp1"}}}) {
+         std::array<std::pair<const at::Tensor*, const char*>, 4>{{{&*request.vertex_v0, "vertex_v0"},
+                                                                   {&*request.vertex_v1, "vertex_v1"},
+                                                                   {&*request.vertex_opp0, "vertex_opp0"},
+                                                                   {&*request.vertex_opp1, "vertex_opp1"}}}) {
         rayd::torch_backend::require_vec3f(*named.first, named.second);
         require_rows(*named.first, count, named.second);
         require_same_device(*named.first, request.source, named.second);
     }
-    rayd::torch_backend::require_mask(
-        *request.edge_boundary, "edge_boundary");
+    rayd::torch_backend::require_mask(*request.edge_boundary, "edge_boundary");
     require_rows(*request.edge_boundary, count, "edge_boundary");
-    require_same_device(
-        *request.edge_boundary, request.source, "edge_boundary");
-    return {
-        &*request.vertex_v0,
-        &*request.vertex_v1,
-        &*request.vertex_opp0,
-        &*request.vertex_opp1,
-        &*request.edge_boundary};
+    require_same_device(*request.edge_boundary, request.source, "edge_boundary");
+    return {&*request.vertex_v0, &*request.vertex_v1, &*request.vertex_opp0, &*request.vertex_opp1,
+            &*request.edge_boundary};
 }
 
-const at::Tensor* optional_tensor(
-    const std::optional<at::Tensor>& value,
-    const char* name,
-    at::ScalarType dtype,
-    at::IntArrayRef sizes,
-    const at::Tensor& reference) {
+const at::Tensor* optional_tensor(const std::optional<at::Tensor>& value, const char* name, at::ScalarType dtype,
+                                  at::IntArrayRef sizes, const at::Tensor& reference) {
     if (!value.has_value())
         return nullptr;
     rayd::torch_backend::require_cuda(*value, name);
@@ -809,85 +679,59 @@ const at::Tensor* optional_tensor(
     return &*value;
 }
 
-template <typename T>
-const T* opt_ptr(const at::Tensor* tensor) {
+template <typename T> const T* opt_ptr(const at::Tensor* tensor) {
     return tensor == nullptr ? nullptr : tensor->data_ptr<T>();
 }
 
-template <typename T>
-T* opt_mut_ptr(at::Tensor* tensor) {
+template <typename T> T* opt_mut_ptr(at::Tensor* tensor) {
     return tensor == nullptr ? nullptr : tensor->data_ptr<T>();
 }
 
 } // namespace
 
-#define WEDGE_HOST_ARGS                                                       \
-    primal.valid.data_ptr<bool>(), primal.source.data_ptr<float>(),           \
-        primal.target.data_ptr<float>(),                                      \
-        primal.edge_position.data_ptr<float>(),                               \
-        primal.edge_direction.data_ptr<float>(),                              \
-        primal.edge_t_min.data_ptr<float>(),                                  \
-        primal.edge_t_max.data_ptr<float>(), primal.edge_n0.data_ptr<float>(), \
-        primal.edge_n1.data_ptr<float>(),                                     \
-        primal.exterior_angle.data_ptr<float>(),                              \
-        primal.face0_valid.data_ptr<bool>(),                                  \
-        primal.face0_eps_r.data_ptr<float>(),                                 \
-        primal.face0_sigma_e.data_ptr<float>(),                               \
-        primal.face0_mu_r.data_ptr<float>(),                                  \
-        primal.face0_gain.data_ptr<float>(),                                  \
-        primal.face1_valid.data_ptr<bool>(),                                  \
-        primal.face1_eps_r.data_ptr<float>(),                                 \
-        primal.face1_sigma_e.data_ptr<float>(),                               \
-        primal.face1_mu_r.data_ptr<float>(),                                  \
-        primal.face1_gain.data_ptr<float>(), primal.tx_power.data_ptr<float>(), \
-        static_cast<float>(primal.frequency_hz),                              \
-        opt_ptr<float>(vertex_args.v0), opt_ptr<float>(vertex_args.v1),       \
-        opt_ptr<float>(vertex_args.opp0), opt_ptr<float>(vertex_args.opp1),   \
-        opt_ptr<bool>(vertex_args.boundary),                                  \
+#define WEDGE_HOST_ARGS                                                                                                \
+    primal.valid.data_ptr<bool>(), primal.source.data_ptr<float>(), primal.target.data_ptr<float>(),                   \
+        primal.edge_position.data_ptr<float>(), primal.edge_direction.data_ptr<float>(),                               \
+        primal.edge_t_min.data_ptr<float>(), primal.edge_t_max.data_ptr<float>(), primal.edge_n0.data_ptr<float>(),    \
+        primal.edge_n1.data_ptr<float>(), primal.exterior_angle.data_ptr<float>(),                                     \
+        primal.face0_valid.data_ptr<bool>(), primal.face0_eps_r.data_ptr<float>(),                                     \
+        primal.face0_sigma_e.data_ptr<float>(), primal.face0_mu_r.data_ptr<float>(),                                   \
+        primal.face0_gain.data_ptr<float>(), primal.face1_valid.data_ptr<bool>(),                                      \
+        primal.face1_eps_r.data_ptr<float>(), primal.face1_sigma_e.data_ptr<float>(),                                  \
+        primal.face1_mu_r.data_ptr<float>(), primal.face1_gain.data_ptr<float>(), primal.tx_power.data_ptr<float>(),   \
+        static_cast<float>(primal.frequency_hz), opt_ptr<float>(vertex_args.v0), opt_ptr<float>(vertex_args.v1),       \
+        opt_ptr<float>(vertex_args.opp0), opt_ptr<float>(vertex_args.opp1), opt_ptr<bool>(vertex_args.boundary),       \
         static_cast<float>(primal.isb_boundary_taper_width)
 
-rayd::torch::DiffractionWedgeResult rayd::torch::field_diffraction_wedge(
-    const DiffractionWedgeRequest& primal) {
+rayd::torch::DiffractionWedgeResult rayd::torch::field_diffraction_wedge(const DiffractionWedgeRequest& primal) {
     check_wedge_primal(primal);
     const WedgeVertexArgs vertex_args = resolve_wedge_vertices(primal);
-    const c10::cuda::CUDAGuard guard(
-        static_cast<int>(primal.source.get_device()));
+    const c10::cuda::CUDAGuard guard(static_cast<int>(primal.source.get_device()));
     const int64_t count = primal.source.size(0);
-    auto field_vector = at::empty(
-        {count, 3}, primal.source.options().dtype(at::kComplexFloat));
+    auto field_vector = at::empty({count, 3}, primal.source.options().dtype(at::kComplexFloat));
     auto direction = at::empty({count, 3}, primal.source.options());
     if (count > 0) {
-        cudaStream_t stream = at::cuda::getCurrentCUDAStream(
-            primal.source.get_device()).stream();
-        diffraction_wedge_forward_kernel<<<
-            launch_blocks(count), kBlockSize, 0, stream>>>(
-                count,
-                WEDGE_HOST_ARGS,
-                field_vector.data_ptr<c10::complex<float>>(),
-                direction.data_ptr<float>());
+        cudaStream_t stream = at::cuda::getCurrentCUDAStream(primal.source.get_device()).stream();
+        diffraction_wedge_forward_kernel<<<launch_blocks(count), kBlockSize, 0, stream>>>(
+            count, WEDGE_HOST_ARGS, field_vector.data_ptr<c10::complex<float>>(), direction.data_ptr<float>());
         C10_CUDA_KERNEL_LAUNCH_CHECK();
     }
     return {field_vector, direction};
 }
 
-rayd::torch::DiffractionWedgeBackwardResult
-rayd::torch::field_diffraction_wedge_backward(
+rayd::torch::DiffractionWedgeBackwardResult rayd::torch::field_diffraction_wedge_backward(
     const DiffractionWedgeBackwardRequest& request) {
     const auto& primal = request.primal;
     check_wedge_primal(primal);
     const WedgeVertexArgs vertex_args = resolve_wedge_vertices(primal);
-    TORCH_CHECK(
-        !request.need_grad_vertices || vertex_args.v0 != nullptr,
-        "vertex gradients require the wedge vertex inputs");
-    const c10::cuda::CUDAGuard guard(
-        static_cast<int>(primal.source.get_device()));
+    TORCH_CHECK(!request.need_grad_vertices || vertex_args.v0 != nullptr,
+                "vertex gradients require the wedge vertex inputs");
+    const c10::cuda::CUDAGuard guard(static_cast<int>(primal.source.get_device()));
     const int64_t count = primal.source.size(0);
-    const at::Tensor* g_field = optional_tensor(
-        request.grad_field_vector, "grad_field_vector", at::kComplexFloat,
-        {count, 3}, primal.source);
-    const at::Tensor* g_direction = optional_tensor(
-        request.grad_direction, "grad_direction", at::kFloat,
-        {count, 3}, primal.source);
+    const at::Tensor* g_field =
+        optional_tensor(request.grad_field_vector, "grad_field_vector", at::kComplexFloat, {count, 3}, primal.source);
+    const at::Tensor* g_direction =
+        optional_tensor(request.grad_direction, "grad_direction", at::kFloat, {count, 3}, primal.source);
 
     const auto options = primal.source.options();
     at::Tensor grad_source, grad_target;
@@ -897,8 +741,7 @@ rayd::torch::field_diffraction_wedge_backward(
     at::Tensor grad_vertices[4];
     at::Tensor* grad_source_ptr = nullptr;
     at::Tensor* grad_target_ptr = nullptr;
-    at::Tensor* material_ptrs[6] = {
-        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+    at::Tensor* material_ptrs[6] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     at::Tensor* grad_frequency_ptr = nullptr;
     at::Tensor* grad_vertex_ptrs[4] = {nullptr, nullptr, nullptr, nullptr};
     if (request.need_grad_geometry) {
@@ -932,27 +775,16 @@ rayd::torch::field_diffraction_wedge_backward(
         }
     }
     if (count > 0 && (g_field != nullptr || g_direction != nullptr)) {
-        cudaStream_t stream = at::cuda::getCurrentCUDAStream(
-            primal.source.get_device()).stream();
-        diffraction_wedge_backward_kernel<<<
-            launch_blocks(count), kBlockSize, 0, stream>>>(
-                count,
-                WEDGE_HOST_ARGS,
-                opt_ptr<c10::complex<float>>(g_field),
-                opt_ptr<float>(g_direction),
-                opt_mut_ptr<float>(grad_source_ptr),
-                opt_mut_ptr<float>(grad_target_ptr),
-                opt_mut_ptr<float>(material_ptrs[0]),
-                opt_mut_ptr<float>(material_ptrs[1]),
-                opt_mut_ptr<float>(material_ptrs[2]),
-                opt_mut_ptr<float>(material_ptrs[3]),
-                opt_mut_ptr<float>(material_ptrs[4]),
-                opt_mut_ptr<float>(material_ptrs[5]),
-                opt_mut_ptr<float>(grad_frequency_ptr),
-                opt_mut_ptr<float>(grad_vertex_ptrs[0]),
-                opt_mut_ptr<float>(grad_vertex_ptrs[1]),
-                opt_mut_ptr<float>(grad_vertex_ptrs[2]),
-                opt_mut_ptr<float>(grad_vertex_ptrs[3]));
+        cudaStream_t stream = at::cuda::getCurrentCUDAStream(primal.source.get_device()).stream();
+        diffraction_wedge_backward_kernel<<<launch_blocks(count), kBlockSize, 0, stream>>>(
+            count, WEDGE_HOST_ARGS, opt_ptr<c10::complex<float>>(g_field), opt_ptr<float>(g_direction),
+            opt_mut_ptr<float>(grad_source_ptr), opt_mut_ptr<float>(grad_target_ptr),
+            opt_mut_ptr<float>(material_ptrs[0]), opt_mut_ptr<float>(material_ptrs[1]),
+            opt_mut_ptr<float>(material_ptrs[2]), opt_mut_ptr<float>(material_ptrs[3]),
+            opt_mut_ptr<float>(material_ptrs[4]), opt_mut_ptr<float>(material_ptrs[5]),
+            opt_mut_ptr<float>(grad_frequency_ptr), opt_mut_ptr<float>(grad_vertex_ptrs[0]),
+            opt_mut_ptr<float>(grad_vertex_ptrs[1]), opt_mut_ptr<float>(grad_vertex_ptrs[2]),
+            opt_mut_ptr<float>(grad_vertex_ptrs[3]));
         C10_CUDA_KERNEL_LAUNCH_CHECK();
     } else {
         for (at::Tensor* tensor : {grad_source_ptr, grad_target_ptr}) {
@@ -969,109 +801,66 @@ rayd::torch::field_diffraction_wedge_backward(
         }
     }
 
-    return {
-        grad_source_ptr ? std::optional<at::Tensor>(grad_source) : std::nullopt,
-        grad_target_ptr ? std::optional<at::Tensor>(grad_target) : std::nullopt,
-        material_ptrs[0]
-            ? std::optional<at::Tensor>(grad_face0_eps) : std::nullopt,
-        material_ptrs[1]
-            ? std::optional<at::Tensor>(grad_face0_sigma) : std::nullopt,
-        material_ptrs[2]
-            ? std::optional<at::Tensor>(grad_face0_gain) : std::nullopt,
-        material_ptrs[3]
-            ? std::optional<at::Tensor>(grad_face1_eps) : std::nullopt,
-        material_ptrs[4]
-            ? std::optional<at::Tensor>(grad_face1_sigma) : std::nullopt,
-        material_ptrs[5]
-            ? std::optional<at::Tensor>(grad_face1_gain) : std::nullopt,
-        grad_frequency_ptr
-            ? std::optional<at::Tensor>(grad_frequency) : std::nullopt,
-        grad_vertex_ptrs[0]
-            ? std::optional<at::Tensor>(grad_vertices[0]) : std::nullopt,
-        grad_vertex_ptrs[1]
-            ? std::optional<at::Tensor>(grad_vertices[1]) : std::nullopt,
-        grad_vertex_ptrs[2]
-            ? std::optional<at::Tensor>(grad_vertices[2]) : std::nullopt,
-        grad_vertex_ptrs[3]
-            ? std::optional<at::Tensor>(grad_vertices[3]) : std::nullopt};
+    return {grad_source_ptr ? std::optional<at::Tensor>(grad_source) : std::nullopt,
+            grad_target_ptr ? std::optional<at::Tensor>(grad_target) : std::nullopt,
+            material_ptrs[0] ? std::optional<at::Tensor>(grad_face0_eps) : std::nullopt,
+            material_ptrs[1] ? std::optional<at::Tensor>(grad_face0_sigma) : std::nullopt,
+            material_ptrs[2] ? std::optional<at::Tensor>(grad_face0_gain) : std::nullopt,
+            material_ptrs[3] ? std::optional<at::Tensor>(grad_face1_eps) : std::nullopt,
+            material_ptrs[4] ? std::optional<at::Tensor>(grad_face1_sigma) : std::nullopt,
+            material_ptrs[5] ? std::optional<at::Tensor>(grad_face1_gain) : std::nullopt,
+            grad_frequency_ptr ? std::optional<at::Tensor>(grad_frequency) : std::nullopt,
+            grad_vertex_ptrs[0] ? std::optional<at::Tensor>(grad_vertices[0]) : std::nullopt,
+            grad_vertex_ptrs[1] ? std::optional<at::Tensor>(grad_vertices[1]) : std::nullopt,
+            grad_vertex_ptrs[2] ? std::optional<at::Tensor>(grad_vertices[2]) : std::nullopt,
+            grad_vertex_ptrs[3] ? std::optional<at::Tensor>(grad_vertices[3]) : std::nullopt};
 }
 
-rayd::torch::DiffractionWedgeJvpResult
-rayd::torch::field_diffraction_wedge_jvp(
+rayd::torch::DiffractionWedgeJvpResult rayd::torch::field_diffraction_wedge_jvp(
     const DiffractionWedgeJvpRequest& request) {
     const auto& primal = request.primal;
     check_wedge_primal(primal);
     const WedgeVertexArgs vertex_args = resolve_wedge_vertices(primal);
-    const c10::cuda::CUDAGuard guard(
-        static_cast<int>(primal.source.get_device()));
+    const c10::cuda::CUDAGuard guard(static_cast<int>(primal.source.get_device()));
     const int64_t count = primal.source.size(0);
-    const at::Tensor* t_source = optional_tensor(
-        request.tangent_source, "tangent_source", at::kFloat,
-        {count, 3}, primal.source);
-    const at::Tensor* t_target = optional_tensor(
-        request.tangent_target, "tangent_target", at::kFloat,
-        {count, 3}, primal.source);
-    const at::Tensor* t_f0_eps = optional_tensor(
-        request.tangent_face0_eps_r, "tangent_face0_eps_r", at::kFloat,
-        {count}, primal.source);
-    const at::Tensor* t_f0_sigma = optional_tensor(
-        request.tangent_face0_sigma_e, "tangent_face0_sigma_e", at::kFloat,
-        {count}, primal.source);
-    const at::Tensor* t_f0_gain = optional_tensor(
-        request.tangent_face0_gain, "tangent_face0_gain", at::kFloat,
-        {count}, primal.source);
-    const at::Tensor* t_f1_eps = optional_tensor(
-        request.tangent_face1_eps_r, "tangent_face1_eps_r", at::kFloat,
-        {count}, primal.source);
-    const at::Tensor* t_f1_sigma = optional_tensor(
-        request.tangent_face1_sigma_e, "tangent_face1_sigma_e", at::kFloat,
-        {count}, primal.source);
-    const at::Tensor* t_f1_gain = optional_tensor(
-        request.tangent_face1_gain, "tangent_face1_gain", at::kFloat,
-        {count}, primal.source);
-    const at::Tensor* t_v0 = optional_tensor(
-        request.tangent_vertex_v0, "tangent_vertex_v0", at::kFloat,
-        {count, 3}, primal.source);
-    const at::Tensor* t_v1 = optional_tensor(
-        request.tangent_vertex_v1, "tangent_vertex_v1", at::kFloat,
-        {count, 3}, primal.source);
-    const at::Tensor* t_opp0 = optional_tensor(
-        request.tangent_vertex_opp0, "tangent_vertex_opp0", at::kFloat,
-        {count, 3}, primal.source);
-    const at::Tensor* t_opp1 = optional_tensor(
-        request.tangent_vertex_opp1, "tangent_vertex_opp1", at::kFloat,
-        {count, 3}, primal.source);
-    TORCH_CHECK(
-        (t_v0 == nullptr && t_v1 == nullptr && t_opp0 == nullptr &&
-         t_opp1 == nullptr) || vertex_args.v0 != nullptr,
-        "vertex tangents require the wedge vertex inputs");
+    const at::Tensor* t_source =
+        optional_tensor(request.tangent_source, "tangent_source", at::kFloat, {count, 3}, primal.source);
+    const at::Tensor* t_target =
+        optional_tensor(request.tangent_target, "tangent_target", at::kFloat, {count, 3}, primal.source);
+    const at::Tensor* t_f0_eps =
+        optional_tensor(request.tangent_face0_eps_r, "tangent_face0_eps_r", at::kFloat, {count}, primal.source);
+    const at::Tensor* t_f0_sigma =
+        optional_tensor(request.tangent_face0_sigma_e, "tangent_face0_sigma_e", at::kFloat, {count}, primal.source);
+    const at::Tensor* t_f0_gain =
+        optional_tensor(request.tangent_face0_gain, "tangent_face0_gain", at::kFloat, {count}, primal.source);
+    const at::Tensor* t_f1_eps =
+        optional_tensor(request.tangent_face1_eps_r, "tangent_face1_eps_r", at::kFloat, {count}, primal.source);
+    const at::Tensor* t_f1_sigma =
+        optional_tensor(request.tangent_face1_sigma_e, "tangent_face1_sigma_e", at::kFloat, {count}, primal.source);
+    const at::Tensor* t_f1_gain =
+        optional_tensor(request.tangent_face1_gain, "tangent_face1_gain", at::kFloat, {count}, primal.source);
+    const at::Tensor* t_v0 =
+        optional_tensor(request.tangent_vertex_v0, "tangent_vertex_v0", at::kFloat, {count, 3}, primal.source);
+    const at::Tensor* t_v1 =
+        optional_tensor(request.tangent_vertex_v1, "tangent_vertex_v1", at::kFloat, {count, 3}, primal.source);
+    const at::Tensor* t_opp0 =
+        optional_tensor(request.tangent_vertex_opp0, "tangent_vertex_opp0", at::kFloat, {count, 3}, primal.source);
+    const at::Tensor* t_opp1 =
+        optional_tensor(request.tangent_vertex_opp1, "tangent_vertex_opp1", at::kFloat, {count, 3}, primal.source);
+    TORCH_CHECK((t_v0 == nullptr && t_v1 == nullptr && t_opp0 == nullptr && t_opp1 == nullptr) ||
+                    vertex_args.v0 != nullptr,
+                "vertex tangents require the wedge vertex inputs");
 
-    auto tangent_field_vector = at::empty(
-        {count, 3}, primal.source.options().dtype(at::kComplexFloat));
-    auto tangent_direction = at::empty(
-        {count, 3}, primal.source.options());
+    auto tangent_field_vector = at::empty({count, 3}, primal.source.options().dtype(at::kComplexFloat));
+    auto tangent_direction = at::empty({count, 3}, primal.source.options());
     if (count > 0) {
-        cudaStream_t stream = at::cuda::getCurrentCUDAStream(
-            primal.source.get_device()).stream();
-        diffraction_wedge_jvp_kernel<<<
-            launch_blocks(count), kBlockSize, 0, stream>>>(
-                count,
-                WEDGE_HOST_ARGS,
-                opt_ptr<float>(t_source),
-                opt_ptr<float>(t_target),
-                opt_ptr<float>(t_f0_eps),
-                opt_ptr<float>(t_f0_sigma),
-                opt_ptr<float>(t_f0_gain),
-                opt_ptr<float>(t_f1_eps),
-                opt_ptr<float>(t_f1_sigma),
-                opt_ptr<float>(t_f1_gain),
-                static_cast<float>(request.tangent_frequency),
-                opt_ptr<float>(t_v0),
-                opt_ptr<float>(t_v1),
-                opt_ptr<float>(t_opp0),
-                opt_ptr<float>(t_opp1),
-                tangent_field_vector.data_ptr<c10::complex<float>>(),
-                tangent_direction.data_ptr<float>());
+        cudaStream_t stream = at::cuda::getCurrentCUDAStream(primal.source.get_device()).stream();
+        diffraction_wedge_jvp_kernel<<<launch_blocks(count), kBlockSize, 0, stream>>>(
+            count, WEDGE_HOST_ARGS, opt_ptr<float>(t_source), opt_ptr<float>(t_target), opt_ptr<float>(t_f0_eps),
+            opt_ptr<float>(t_f0_sigma), opt_ptr<float>(t_f0_gain), opt_ptr<float>(t_f1_eps), opt_ptr<float>(t_f1_sigma),
+            opt_ptr<float>(t_f1_gain), static_cast<float>(request.tangent_frequency), opt_ptr<float>(t_v0),
+            opt_ptr<float>(t_v1), opt_ptr<float>(t_opp0), opt_ptr<float>(t_opp1),
+            tangent_field_vector.data_ptr<c10::complex<float>>(), tangent_direction.data_ptr<float>());
         C10_CUDA_KERNEL_LAUNCH_CHECK();
     }
     return {tangent_field_vector, tangent_direction};

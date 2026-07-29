@@ -37,7 +37,7 @@ struct LayerStackResult {
     at::Tensor cap_t_tm;
 };
 
-LayerStackResult em_layer_stack_eval(const LayerStackRequest &request);
+LayerStackResult em_layer_stack_eval(const LayerStackRequest& request);
 
 struct LayerStackBackwardRequest {
     LayerStackRequest primal;
@@ -55,8 +55,7 @@ struct LayerStackBackwardResult {
     at::Tensor grad_frequency;
 };
 
-LayerStackBackwardResult em_layer_stack_backward(
-    const LayerStackBackwardRequest &request);
+LayerStackBackwardResult em_layer_stack_backward(const LayerStackBackwardRequest& request);
 
 struct LayerStackJvpRequest {
     LayerStackRequest primal;
@@ -67,7 +66,7 @@ struct LayerStackJvpRequest {
     double tangent_frequency = 0.0;
 };
 
-LayerStackResult em_layer_stack_jvp(const LayerStackJvpRequest &request);
+LayerStackResult em_layer_stack_jvp(const LayerStackJvpRequest& request);
 
 struct TransmissionSequenceRequest {
     at::Tensor path_valid;
@@ -99,8 +98,7 @@ struct TransmissionSequenceResult {
     at::Tensor direction;
 };
 
-TransmissionSequenceResult field_transmission_sequence(
-    const TransmissionSequenceRequest &request);
+TransmissionSequenceResult field_transmission_sequence(const TransmissionSequenceRequest& request);
 
 struct TransmissionSequenceBackwardRequest {
     TransmissionSequenceRequest primal;
@@ -129,7 +127,7 @@ struct TransmissionSequenceBackwardResult {
 };
 
 TransmissionSequenceBackwardResult field_transmission_sequence_backward(
-    const TransmissionSequenceBackwardRequest &request);
+    const TransmissionSequenceBackwardRequest& request);
 
 struct TransmissionSequenceJvpRequest {
     TransmissionSequenceRequest primal;
@@ -152,7 +150,6 @@ struct TransmissionSequenceJvpResult {
     at::Tensor delay_s;
 };
 
-TransmissionSequenceJvpResult field_transmission_sequence_jvp(
-    const TransmissionSequenceJvpRequest &request);
+TransmissionSequenceJvpResult field_transmission_sequence_jvp(const TransmissionSequenceJvpRequest& request);
 
 } // namespace rayd::torch

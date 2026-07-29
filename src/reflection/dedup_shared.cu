@@ -27,11 +27,9 @@ __global__ void reflection_dedup_build_keys_kernel(ReflectionDedupBuildKeysParam
     for (int bounce = 0; bounce < bounce_count; ++bounce) {
         const int shape_id = params.shape_ids[base + bounce];
         const int local_prim = params.prim_ids[base + bounce];
-        const int face_offset =
-            (shape_id >= 0 && shape_id < params.mesh_count) ? params.face_offsets[shape_id] : 0;
+        const int face_offset = (shape_id >= 0 && shape_id < params.mesh_count) ? params.face_offsets[shape_id] : 0;
         int global_prim = face_offset + local_prim;
-        if (params.canonical_table != nullptr &&
-            global_prim >= 0 && global_prim < params.canonical_table_size) {
+        if (params.canonical_table != nullptr && global_prim >= 0 && global_prim < params.canonical_table_size) {
             const int mapped = params.canonical_table[global_prim];
             if (mapped >= 0)
                 global_prim = mapped;
@@ -43,10 +41,8 @@ __global__ void reflection_dedup_build_keys_kernel(ReflectionDedupBuildKeysParam
     params.out_keys[i] = hash;
 }
 
-__global__ void reflection_dedup_mark_boundaries_kernel(
-    int ray_count,
-    const std::uint64_t *sorted_keys,
-    std::int32_t *out_boundary_flags) {
+__global__ void reflection_dedup_mark_boundaries_kernel(int ray_count, const std::uint64_t* sorted_keys,
+                                                        std::int32_t* out_boundary_flags) {
     const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
     if (i >= ray_count)
         return;
@@ -57,10 +53,8 @@ __global__ void reflection_dedup_mark_boundaries_kernel(
     out_boundary_flags[i] = (i == 0 || sorted_keys[i] != sorted_keys[i - 1]) ? 1 : 0;
 }
 
-__global__ void reflection_dedup_zero_base_ids_kernel(
-    int ray_count,
-    const std::uint64_t *sorted_keys,
-    std::int32_t *inout_ids) {
+__global__ void reflection_dedup_zero_base_ids_kernel(int ray_count, const std::uint64_t* sorted_keys,
+                                                      std::int32_t* inout_ids) {
     const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
     if (i < ray_count && sorted_keys[i] != UINT64_MAX)
         inout_ids[i] -= 1;
@@ -84,8 +78,7 @@ __global__ void reflection_dedup_sub_cluster_kernel(ReflectionDedupSubClusterPar
     const int qx = __float2int_rn(params.image_x[last_slot] * inv_tolerance);
     const int qy = __float2int_rn(params.image_y[last_slot] * inv_tolerance);
     const int qz = __float2int_rn(params.image_z[last_slot] * inv_tolerance);
-    const std::uint32_t spatial =
-        static_cast<std::uint32_t>(qx * 73856093u ^ qy * 19349663u ^ qz * 83492791u);
+    const std::uint32_t spatial = static_cast<std::uint32_t>(qx * 73856093u ^ qy * 19349663u ^ qz * 83492791u);
     params.out_cluster_keys[i] =
         (static_cast<std::uint64_t>(static_cast<std::uint32_t>(params.hash_group_ids[i])) << 32) |
         static_cast<std::uint64_t>(spatial);
@@ -134,64 +127,45 @@ int block_count(int count) {
 
 } // namespace
 
-void launch_reflection_dedup_build_keys(const ReflectionDedupBuildKeysParams &params) {
+void launch_reflection_dedup_build_keys(const ReflectionDedupBuildKeysParams& params) {
     if (params.ray_count == 0)
         return;
-    reflection_dedup_build_keys_kernel<<<block_count(params.ray_count), kBlockSize, 0, params.stream>>>(
-        params);
+    reflection_dedup_build_keys_kernel<<<block_count(params.ray_count), kBlockSize, 0, params.stream>>>(params);
 }
 
-void launch_reflection_dedup_mark_boundaries(
-    std::int32_t ray_count,
-    const std::uint64_t *sorted_keys,
-    std::int32_t *out_boundary_flags,
-    cudaStream_t stream) {
+void launch_reflection_dedup_mark_boundaries(std::int32_t ray_count, const std::uint64_t* sorted_keys,
+                                             std::int32_t* out_boundary_flags, cudaStream_t stream) {
     if (ray_count == 0)
         return;
-    reflection_dedup_mark_boundaries_kernel<<<block_count(ray_count), kBlockSize, 0, stream>>>(
-        ray_count, sorted_keys, out_boundary_flags);
+    reflection_dedup_mark_boundaries_kernel<<<block_count(ray_count), kBlockSize, 0, stream>>>(ray_count, sorted_keys,
+                                                                                               out_boundary_flags);
 }
 
-void launch_reflection_dedup_zero_base_ids(
-    std::int32_t ray_count,
-    const std::uint64_t *sorted_keys,
-    std::int32_t *inout_ids,
-    cudaStream_t stream) {
+void launch_reflection_dedup_zero_base_ids(std::int32_t ray_count, const std::uint64_t* sorted_keys,
+                                           std::int32_t* inout_ids, cudaStream_t stream) {
     if (ray_count == 0)
         return;
-    reflection_dedup_zero_base_ids_kernel<<<block_count(ray_count), kBlockSize, 0, stream>>>(
-        ray_count, sorted_keys, inout_ids);
+    reflection_dedup_zero_base_ids_kernel<<<block_count(ray_count), kBlockSize, 0, stream>>>(ray_count, sorted_keys,
+                                                                                             inout_ids);
 }
 
-void launch_reflection_dedup_sub_cluster(const ReflectionDedupSubClusterParams &params) {
+void launch_reflection_dedup_sub_cluster(const ReflectionDedupSubClusterParams& params) {
     if (params.ray_count == 0)
         return;
-    reflection_dedup_sub_cluster_kernel<<<block_count(params.ray_count), kBlockSize, 0, params.stream>>>(
-        params);
+    reflection_dedup_sub_cluster_kernel<<<block_count(params.ray_count), kBlockSize, 0, params.stream>>>(params);
 }
 
-void launch_reflection_dedup_compact(const ReflectionDedupCompactParams &params) {
+void launch_reflection_dedup_compact(const ReflectionDedupCompactParams& params) {
     if (params.ray_count == 0)
         return;
     reflection_dedup_compact_kernel<<<block_count(params.ray_count), kBlockSize, 0, params.stream>>>(params);
 }
 
-ReflectionDedupSequenceStatus launch_reflection_dedup_sequence(
-    const ReflectionDedupSequenceParams &params) {
-    launch_reflection_dedup_build_keys({
-        params.ray_count,
-        params.max_bounces,
-        params.bounce_count,
-        params.shape_ids,
-        params.prim_ids,
-        params.face_offsets,
-        params.mesh_count,
-        params.canonical_table,
-        params.canonical_table_size,
-        params.keys_in,
-        params.ray_indices_in,
-        params.stream
-    });
+ReflectionDedupSequenceStatus launch_reflection_dedup_sequence(const ReflectionDedupSequenceParams& params) {
+    launch_reflection_dedup_build_keys({params.ray_count, params.max_bounces, params.bounce_count, params.shape_ids,
+                                        params.prim_ids, params.face_offsets, params.mesh_count, params.canonical_table,
+                                        params.canonical_table_size, params.keys_in, params.ray_indices_in,
+                                        params.stream});
     cudaError_t error = cudaGetLastError();
     if (error != cudaSuccess)
         return {error, ReflectionDedupSequenceStep::kBuildKeys};
@@ -200,8 +174,7 @@ ReflectionDedupSequenceStatus launch_reflection_dedup_sequence(
     if (error != cudaSuccess)
         return {error, ReflectionDedupSequenceStep::kFirstSort};
 
-    launch_reflection_dedup_mark_boundaries(
-        params.ray_count, params.keys_out, params.boundary_flags, params.stream);
+    launch_reflection_dedup_mark_boundaries(params.ray_count, params.keys_out, params.boundary_flags, params.stream);
     error = cudaGetLastError();
     if (error != cudaSuccess)
         return {error, ReflectionDedupSequenceStep::kFirstBoundaries};
@@ -210,27 +183,15 @@ ReflectionDedupSequenceStatus launch_reflection_dedup_sequence(
     if (error != cudaSuccess)
         return {error, ReflectionDedupSequenceStep::kFirstScan};
 
-    launch_reflection_dedup_zero_base_ids(
-        params.ray_count, params.keys_out, params.hash_group_ids, params.stream);
+    launch_reflection_dedup_zero_base_ids(params.ray_count, params.keys_out, params.hash_group_ids, params.stream);
     error = cudaGetLastError();
     if (error != cudaSuccess)
         return {error, ReflectionDedupSequenceStep::kFirstZeroBase};
 
-    launch_reflection_dedup_sub_cluster({
-        params.ray_count,
-        params.max_bounces,
-        params.keys_out,
-        params.ray_indices_out,
-        params.hash_group_ids,
-        params.bounce_count,
-        params.raw_image_x,
-        params.raw_image_y,
-        params.raw_image_z,
-        params.image_source_tolerance,
-        params.cluster_keys_in,
-        params.cluster_ray_indices_in,
-        params.stream
-    });
+    launch_reflection_dedup_sub_cluster({params.ray_count, params.max_bounces, params.keys_out, params.ray_indices_out,
+                                         params.hash_group_ids, params.bounce_count, params.raw_image_x,
+                                         params.raw_image_y, params.raw_image_z, params.image_source_tolerance,
+                                         params.cluster_keys_in, params.cluster_ray_indices_in, params.stream});
     error = cudaGetLastError();
     if (error != cudaSuccess)
         return {error, ReflectionDedupSequenceStep::kSubCluster};
@@ -239,8 +200,8 @@ ReflectionDedupSequenceStatus launch_reflection_dedup_sequence(
     if (error != cudaSuccess)
         return {error, ReflectionDedupSequenceStep::kSecondSort};
 
-    launch_reflection_dedup_mark_boundaries(
-        params.ray_count, params.cluster_keys_out, params.boundary_flags, params.stream);
+    launch_reflection_dedup_mark_boundaries(params.ray_count, params.cluster_keys_out, params.boundary_flags,
+                                            params.stream);
     error = cudaGetLastError();
     if (error != cudaSuccess)
         return {error, ReflectionDedupSequenceStep::kSecondBoundaries};
@@ -249,53 +210,51 @@ ReflectionDedupSequenceStatus launch_reflection_dedup_sequence(
     if (error != cudaSuccess)
         return {error, ReflectionDedupSequenceStep::kSecondScan};
 
-    launch_reflection_dedup_zero_base_ids(
-        params.ray_count, params.cluster_keys_out, params.unique_path_ids, params.stream);
+    launch_reflection_dedup_zero_base_ids(params.ray_count, params.cluster_keys_out, params.unique_path_ids,
+                                          params.stream);
     error = cudaGetLastError();
     if (error != cudaSuccess)
         return {error, ReflectionDedupSequenceStep::kSecondZeroBase};
 
-    launch_reflection_dedup_compact({
-        params.ray_count,
-        params.max_bounces,
-        params.cluster_keys_out,
-        params.cluster_ray_indices_out,
-        params.unique_path_ids,
-        params.bounce_count,
-        params.shape_ids,
-        params.prim_ids,
-        params.raw_t,
-        params.raw_bary_u,
-        params.raw_bary_v,
-        params.raw_hit_x,
-        params.raw_hit_y,
-        params.raw_hit_z,
-        params.raw_norm_x,
-        params.raw_norm_y,
-        params.raw_norm_z,
-        params.raw_image_x,
-        params.raw_image_y,
-        params.raw_image_z,
-        params.out_unique_count,
-        params.out_bounce_count,
-        params.out_shape_ids,
-        params.out_prim_ids,
-        params.out_t,
-        params.out_bary_u,
-        params.out_bary_v,
-        params.out_hit_x,
-        params.out_hit_y,
-        params.out_hit_z,
-        params.out_norm_x,
-        params.out_norm_y,
-        params.out_norm_z,
-        params.out_image_x,
-        params.out_image_y,
-        params.out_image_z,
-        params.out_discovery_count,
-        params.out_representative_ray_index,
-        params.stream
-    });
+    launch_reflection_dedup_compact({params.ray_count,
+                                     params.max_bounces,
+                                     params.cluster_keys_out,
+                                     params.cluster_ray_indices_out,
+                                     params.unique_path_ids,
+                                     params.bounce_count,
+                                     params.shape_ids,
+                                     params.prim_ids,
+                                     params.raw_t,
+                                     params.raw_bary_u,
+                                     params.raw_bary_v,
+                                     params.raw_hit_x,
+                                     params.raw_hit_y,
+                                     params.raw_hit_z,
+                                     params.raw_norm_x,
+                                     params.raw_norm_y,
+                                     params.raw_norm_z,
+                                     params.raw_image_x,
+                                     params.raw_image_y,
+                                     params.raw_image_z,
+                                     params.out_unique_count,
+                                     params.out_bounce_count,
+                                     params.out_shape_ids,
+                                     params.out_prim_ids,
+                                     params.out_t,
+                                     params.out_bary_u,
+                                     params.out_bary_v,
+                                     params.out_hit_x,
+                                     params.out_hit_y,
+                                     params.out_hit_z,
+                                     params.out_norm_x,
+                                     params.out_norm_y,
+                                     params.out_norm_z,
+                                     params.out_image_x,
+                                     params.out_image_y,
+                                     params.out_image_z,
+                                     params.out_discovery_count,
+                                     params.out_representative_ray_index,
+                                     params.stream});
     error = cudaGetLastError();
     if (error != cudaSuccess)
         return {error, ReflectionDedupSequenceStep::kCompact};

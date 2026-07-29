@@ -68,21 +68,9 @@ _ALIASES = {
             "stability": "deprecated",
             "summary": "Compatibility alias only; unrelated to the removed HLBVH experiment.",
         },
-        "mixed": {
-            "canonical": "optix_drjit",
-            "stability": "deprecated",
-            "summary": "Legacy compatibility alias.",
-        },
-        "optix_ray": {
-            "canonical": "optix_drjit",
-            "stability": "deprecated",
-            "summary": "Legacy compatibility alias.",
-        },
-        "ray_optix": {
-            "canonical": "optix_drjit",
-            "stability": "deprecated",
-            "summary": "Legacy compatibility alias.",
-        },
+        "mixed": {"canonical": "optix_drjit", "stability": "deprecated", "summary": "Legacy compatibility alias."},
+        "optix_ray": {"canonical": "optix_drjit", "stability": "deprecated", "summary": "Legacy compatibility alias."},
+        "ray_optix": {"canonical": "optix_drjit", "stability": "deprecated", "summary": "Legacy compatibility alias."},
     }
 }
 

@@ -16,11 +16,7 @@ _THIS_FILE = Path(__file__).resolve()
 _TESTS_DIR = os.path.normcase(str(_THIS_FILE.parent))
 _REPO_ROOT = os.path.normcase(str(_THIS_FILE.parents[2]))
 _CWD = os.path.normcase(os.path.abspath(os.getcwd()))
-sys.path = [
-    entry
-    for entry in sys.path
-    if os.path.normcase(os.path.abspath(entry or _CWD)) != _TESTS_DIR
-]
+sys.path = [entry for entry in sys.path if os.path.normcase(os.path.abspath(entry or _CWD)) != _TESTS_DIR]
 sys.path.insert(0, str(_THIS_FILE.parent.parent))
 import rayd.drjit as rd
 
@@ -51,10 +47,7 @@ def make_grid_mesh(resolution: int) -> rd.Mesh:
             i1.extend([v10, v11])
             i2.extend([v11, v01])
 
-    return rd.Mesh(
-        dr.cuda.Array3f(xs, ys, zs),
-        dr.cuda.Array3i(i0, i1, i2),
-    )
+    return rd.Mesh(dr.cuda.Array3f(xs, ys, zs), dr.cuda.Array3i(i0, i1, i2))
 
 
 def make_ray_grid(side: int, z_origin: float = -1.0) -> rd.Ray:
@@ -67,14 +60,7 @@ def make_ray_grid(side: int, z_origin: float = -1.0) -> rd.Ray:
             ys.append((iy + 0.5) / side)
             zs.append(z_origin)
 
-    return rd.Ray(
-        dr.cuda.Array3f(xs, ys, zs),
-        dr.cuda.Array3f(
-            [0.0] * len(xs),
-            [0.0] * len(xs),
-            [1.0] * len(xs),
-        ),
-    )
+    return rd.Ray(dr.cuda.Array3f(xs, ys, zs), dr.cuda.Array3f([0.0] * len(xs), [0.0] * len(xs), [1.0] * len(xs)))
 
 
 def make_sync_positions(resolution: int, amplitude: float) -> dr.cuda.Array3f:
@@ -102,11 +88,7 @@ def summarize_kernel_history(history: list[dict[str, Any]]) -> dict[str, Any]:
         key = str(entry["type"])
         type_histogram[key] = type_histogram.get(key, 0) + 1
 
-    top_by_exec = sorted(
-        history,
-        key=lambda entry: float(entry.get("execution_time", 0.0)),
-        reverse=True,
-    )[:8]
+    top_by_exec = sorted(history, key=lambda entry: float(entry.get("execution_time", 0.0)), reverse=True)[:8]
 
     return {
         "jit_kernel_count": len(history),
@@ -198,10 +180,7 @@ def source_audit() -> dict[str, Any]:
             ],
         },
         "trace_reflections": {
-            "explicit_eval_sync_pairs": [
-                "src/scene/scene.cpp:1412",
-                "src/scene/scene.cpp:1422",
-            ],
+            "explicit_eval_sync_pairs": ["src/scene/scene.cpp:1412", "src/scene/scene.cpp:1422"],
             "native_launch_notes": [
                 "trace_reflections() performs one native optixLaunch() per call in OptixLaunchPipeline::launch_impl() in src/multipath/pipelines.cpp.",
                 "With deduplicate=true, reflection_dedup_gpu() adds native CUDA work in src/multipath/reflection_dedup.cu.",
@@ -233,22 +212,15 @@ def main() -> None:
     build_summary, _ = profile_stage("build", scene.build)
 
     sync_summary, _ = profile_stage(
-        "sync",
-        lambda: (
-            scene.update_mesh_vertices(mesh_id, updated_positions),
-            scene.sync(),
-            scene.last_sync_profile,
-        ),
+        "sync", lambda: (scene.update_mesh_vertices(mesh_id, updated_positions), scene.sync(), scene.last_sync_profile)
     )
 
     trace_cold_summary, _ = profile_stage(
-        "trace_reflections_cold_call_only",
-        lambda: scene.trace_reflections(rays, args.max_bounces, True, False),
+        "trace_reflections_cold_call_only", lambda: scene.trace_reflections(rays, args.max_bounces, True, False)
     )
 
     trace_hot_summary, _ = profile_stage(
-        "trace_reflections_hot_call_only",
-        lambda: scene.trace_reflections(rays, args.max_bounces, True, False),
+        "trace_reflections_hot_call_only", lambda: scene.trace_reflections(rays, args.max_bounces, True, False)
     )
 
     trace_hot_materialized_summary, trace_result = profile_stage(
@@ -289,10 +261,7 @@ def main() -> None:
             "updated_edges": scene.last_sync_profile.updated_edges,
             "total_ms": scene.last_sync_profile.total_ms,
         },
-        "trace_result": {
-            "ray_count": trace_result.ray_count,
-            "max_bounces": trace_result.max_bounces,
-        },
+        "trace_result": {"ray_count": trace_result.ray_count, "max_bounces": trace_result.max_bounces},
     }
 
     text = json.dumps(payload, indent=2)

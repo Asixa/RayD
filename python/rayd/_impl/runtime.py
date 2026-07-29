@@ -44,9 +44,7 @@ _STABLE_REQUIRED = (
 
 
 def _stable_registered() -> bool:
-    return all(
-        hasattr(torch.ops.rayd_torch_stable, name) for name in _STABLE_REQUIRED
-    )
+    return all(hasattr(torch.ops.rayd_torch_stable, name) for name in _STABLE_REQUIRED)
 
 
 def _load_stable() -> tuple[bool, Exception | None]:
@@ -65,9 +63,7 @@ def _load_stable() -> tuple[bool, Exception | None]:
         if _stable_registered():
             return True, None
         if first_error is None:
-            first_error = RuntimeError(
-                f"Stable ABI operators were not registered by {path}"
-            )
+            first_error = RuntimeError(f"Stable ABI operators were not registered by {path}")
     return False, first_error or FileNotFoundError(
         f"RayD stable ABI library {_library_name('_stable_ops')} was not found"
     )
@@ -79,8 +75,7 @@ _STABLE_AVAILABLE, _STABLE_LOAD_ERROR = _load_stable()
 def _stable_ops():
     if not _STABLE_AVAILABLE:
         raise RuntimeError(
-            "RayD Torch stable ABI operators are unavailable: "
-            f"{_library_name('_stable_ops')} did not load."
+            f"RayD Torch stable ABI operators are unavailable: {_library_name('_stable_ops')} did not load."
         ) from _STABLE_LOAD_ERROR
     return torch.ops.rayd_torch_stable
 
@@ -127,12 +122,13 @@ def _load_legacy() -> tuple[bool, Exception | None, Path | None]:
         if _registered():
             return True, None, path
         if first_error is None:
-            first_error = RuntimeError(
-                f"Legacy dispatcher registrations were not provided by {path}"
-            )
-    return False, first_error or FileNotFoundError(
-        f"RayD legacy dispatcher library {_library_name('_legacy_ops')} was not found"
-    ), None
+            first_error = RuntimeError(f"Legacy dispatcher registrations were not provided by {path}")
+    return (
+        False,
+        first_error
+        or FileNotFoundError(f"RayD legacy dispatcher library {_library_name('_legacy_ops')} was not found"),
+        None,
+    )
 
 
 # Stable loads before legacy; both precede every operation facade.
@@ -153,19 +149,12 @@ C = _extension if NATIVE_AVAILABLE else None
 EXTENSION_IMPORT_ERROR = None if NATIVE_AVAILABLE else LOAD_ERROR
 
 
-def _fake_intersect_forward_tape_h(
-    scene_handle, vertices, ray_o, ray_d, ray_tmax
-):
+def _fake_intersect_forward_tape_h(scene_handle, vertices, ray_o, ray_d, ray_tmax):
     count = ray_o.shape[0]
-    return (
-        ray_o.new_empty((count,)),
-        ray_o.new_empty((count,), dtype=torch.int32),
-    )
+    return (ray_o.new_empty((count,)), ray_o.new_empty((count,), dtype=torch.int32))
 
 
-def _fake_intersect_backward_t_h(
-    scene_handle, vertices, ray_o, ray_d, tape_prim_id, grad_t
-):
+def _fake_intersect_backward_t_h(scene_handle, vertices, ray_o, ray_d, tape_prim_id, grad_t):
     return vertices.new_empty(vertices.shape)
 
 
@@ -181,30 +170,15 @@ def _backward(ctx, grad_t, _grad_tape_prim_id):
     grad_vertices = (
         torch.zeros_like(vertices)
         if grad_t is None
-        else torch.ops.rayd_torch.intersect_backward_t_h(
-            ctx.scene_handle,
-            vertices,
-            ray_o,
-            ray_d,
-            tape_prim_id,
-            grad_t,
-        )
+        else torch.ops.rayd_torch.intersect_backward_t_h(ctx.scene_handle, vertices, ray_o, ray_d, tape_prim_id, grad_t)
     )
     return None, grad_vertices, None, None, None
 
 
 def _register_compile_support() -> None:
-    torch.library.register_fake("rayd_torch::intersect_forward_tape_h")(
-        _fake_intersect_forward_tape_h
-    )
-    torch.library.register_fake("rayd_torch::intersect_backward_t_h")(
-        _fake_intersect_backward_t_h
-    )
-    torch.library.register_autograd(
-        "rayd_torch::intersect_forward_tape_h",
-        _backward,
-        setup_context=_setup_context,
-    )
+    torch.library.register_fake("rayd_torch::intersect_forward_tape_h")(_fake_intersect_forward_tape_h)
+    torch.library.register_fake("rayd_torch::intersect_backward_t_h")(_fake_intersect_backward_t_h)
+    torch.library.register_autograd("rayd_torch::intersect_forward_tape_h", _backward, setup_context=_setup_context)
 
 
 if NATIVE_AVAILABLE:
@@ -261,24 +235,20 @@ def _normalize_devices(devices: Sequence[int]) -> list[int]:
     """Validate `devices` against the visible CUDA devices, preserving order."""
     if isinstance(devices, (int, str, torch.device)):
         raise TypeError(
-            "warm_up_devices() expects a sequence of device indices; "
-            f"pass [{devices!r}] instead of {devices!r}."
+            f"warm_up_devices() expects a sequence of device indices; pass [{devices!r}] instead of {devices!r}."
         )
 
     indices: list[int] = []
     for device in devices:
         if isinstance(device, torch.device):
             if device.type != "cuda":
-                raise ValueError(
-                    f"warm_up_devices() only warms CUDA devices, got {device!r}."
-                )
+                raise ValueError(f"warm_up_devices() only warms CUDA devices, got {device!r}.")
             index = 0 if device.index is None else device.index
         elif isinstance(device, int) and not isinstance(device, bool):
             index = device
         else:
             raise TypeError(
-                "warm_up_devices() device entries must be int or torch.device, "
-                f"got {type(device).__name__}."
+                f"warm_up_devices() device entries must be int or torch.device, got {type(device).__name__}."
             )
         indices.append(index)
 
@@ -288,36 +258,28 @@ def _normalize_devices(devices: Sequence[int]) -> list[int]:
     duplicates = sorted({index for index in indices if indices.count(index) > 1})
     if duplicates:
         raise ValueError(
-            f"warm_up_devices() received duplicate devices {duplicates}; "
-            "each device is warmed exactly once."
+            f"warm_up_devices() received duplicate devices {duplicates}; each device is warmed exactly once."
         )
 
     if not torch.cuda.is_available():
-        raise RuntimeError(
-            "warm_up_devices() needs CUDA, but torch.cuda.is_available() is False."
-        )
+        raise RuntimeError("warm_up_devices() needs CUDA, but torch.cuda.is_available() is False.")
     count = torch.cuda.device_count()
     for index in indices:
         if index < 0 or index >= count:
             raise ValueError(
-                f"warm_up_devices() got device index {index}, but only "
-                f"{count} CUDA device(s) are visible."
+                f"warm_up_devices() got device index {index}, but only {count} CUDA device(s) are visible."
             )
     return indices
 
 
 def _normalize_ops(ops: Sequence[str]) -> tuple[str, ...]:
     if isinstance(ops, str):
-        raise TypeError(
-            "warm_up_devices() expects a sequence of op names; "
-            f"pass ({ops!r},) instead of {ops!r}."
-        )
+        raise TypeError(f"warm_up_devices() expects a sequence of op names; pass ({ops!r},) instead of {ops!r}.")
     names = tuple(ops)
     for name in names:
         if name not in _SUPPORTED_OPS:
             raise ValueError(
-                f"warm_up_devices() cannot warm unknown op {name!r}; "
-                f"supported ops are {sorted(_SUPPORTED_OPS)}."
+                f"warm_up_devices() cannot warm unknown op {name!r}; supported ops are {sorted(_SUPPORTED_OPS)}."
             )
     return names
 
@@ -385,11 +347,7 @@ def _warm_up_device(index: int, ops: tuple[str, ...]) -> float:
     return time.perf_counter() - start
 
 
-def warm_up_devices(
-    devices: Sequence[int],
-    *,
-    ops: Sequence[str] = DEFAULT_OPS,
-) -> dict[int, float]:
+def warm_up_devices(devices: Sequence[int], *, ops: Sequence[str] = DEFAULT_OPS) -> dict[int, float]:
     """Pre-link the OptiX pipelines for `ops` on every device in `devices`.
 
     Returns wall time in seconds per device index, in the order given. Each
@@ -406,13 +364,8 @@ def warm_up_devices(
     # every worker thread at once.
     torch.cuda.init()
 
-    with ThreadPoolExecutor(
-        max_workers=len(indices), thread_name_prefix="rayd-warmup"
-    ) as pool:
-        futures = {
-            index: pool.submit(_warm_up_device, index, op_names)
-            for index in indices
-        }
+    with ThreadPoolExecutor(max_workers=len(indices), thread_name_prefix="rayd-warmup") as pool:
+        futures = {index: pool.submit(_warm_up_device, index, op_names) for index in indices}
         elapsed: dict[int, float] = {}
         failures: list[tuple[int, BaseException]] = []
         for index, future in futures.items():

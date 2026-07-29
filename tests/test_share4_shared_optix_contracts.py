@@ -44,8 +44,15 @@ class Share4SharedOptixContractsTests(unittest.TestCase):
     def test_shared_trace_superset_preserves_backend_specific_optional_fields(self):
         source = (REFLECTION / "trace_params.h").read_text(encoding="utf-8")
         for field in (
-            "tri_p0_x", "tri_p0_packed", "ray_ox", "ray_o_aos", "out_bary_u",
-            "out_bary", "output_layout", "out_valid", "out_trailing_origin_z",
+            "tri_p0_x",
+            "tri_p0_packed",
+            "ray_ox",
+            "ray_o_aos",
+            "out_bary_u",
+            "out_bary",
+            "output_layout",
+            "out_valid",
+            "out_trailing_origin_z",
         ):
             self.assertRegex(source, rf"\b{field}\b")
 
@@ -56,19 +63,19 @@ class Share4SharedOptixContractsTests(unittest.TestCase):
     def test_device_programs_have_one_shared_implementation(self):
         helper = (REFLECTION / "optix_hit.h").read_text(encoding="utf-8")
         for symbol in (
-            "TriangleHitPayload", "VisibilityPayload", "clear_triangle_hit",
-            "set_triangle_hit_payload", "choose_nearest_hit",
+            "TriangleHitPayload",
+            "VisibilityPayload",
+            "clear_triangle_hit",
+            "set_triangle_hit_payload",
+            "choose_nearest_hit",
         ):
             self.assertIn(symbol, helper)
 
-        primitive_id = (
-            ROOT / "include/rayd/rt/optix_primitive_id.h"
-        ).read_text(encoding="utf-8")
+        primitive_id = (ROOT / "include/rayd/rt/optix_primitive_id.h").read_text(encoding="utf-8")
         self.assertIn("global_primitive_id", primitive_id)
         self.assertIn("rayd/rt/optix_primitive_id.h", helper)
         self.assertIn(
-            "rayd/rt/optix_primitive_id.h",
-            (VISIBILITY / "segment_optix_device.cuh").read_text(encoding="utf-8"),
+            "rayd/rt/optix_primitive_id.h", (VISIBILITY / "segment_optix_device.cuh").read_text(encoding="utf-8")
         )
 
         shared_programs = (
@@ -123,20 +130,28 @@ class Share4SharedOptixContractsTests(unittest.TestCase):
     def test_ptx_builds_depend_on_shared_device_programs(self):
         drjit_cmake = (ROOT / "drjit/CMakeLists.txt").read_text(encoding="utf-8")
         torch_cmake = (ROOT / "torch/CMakeLists.txt").read_text(encoding="utf-8")
-        for header in (
-            "trace_optix_device.cuh",
-            "epc_optix_device.cuh",
-            "segment_optix_device.cuh",
-        ):
+        for header in ("trace_optix_device.cuh", "epc_optix_device.cuh", "segment_optix_device.cuh"):
             self.assertGreaterEqual(drjit_cmake.count(header), 1)
             self.assertGreaterEqual(torch_cmake.count(header), 1)
 
     def test_shared_headers_do_not_take_host_pipeline_ownership(self):
-        paths = tuple(REFLECTION.glob("*.h")) + tuple(REFLECTION.glob("*.cuh")) + tuple(VISIBILITY.glob("*.h")) + tuple(VISIBILITY.glob("*.cuh"))
+        paths = (
+            tuple(REFLECTION.glob("*.h"))
+            + tuple(REFLECTION.glob("*.cuh"))
+            + tuple(VISIBILITY.glob("*.h"))
+            + tuple(VISIBILITY.glob("*.cuh"))
+        )
         source = "\n".join(path.read_text(encoding="utf-8") for path in paths)
         for forbidden in (
-            "OptixPipeline", "OptixModule", "OptixProgramGroup", "optixPipelineCreate",
-            "cudaMalloc", "cudaFree", "cudaDeviceSynchronize", "at::Tensor", "CudaBuffer",
+            "OptixPipeline",
+            "OptixModule",
+            "OptixProgramGroup",
+            "optixPipelineCreate",
+            "cudaMalloc",
+            "cudaFree",
+            "cudaDeviceSynchronize",
+            "at::Tensor",
+            "CudaBuffer",
         ):
             self.assertNotIn(forbidden, source)
 

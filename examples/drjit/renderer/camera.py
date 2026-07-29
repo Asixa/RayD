@@ -99,6 +99,5 @@ class ExampleCamera:
         safe_z = dr.maximum(point[2], EPSILON)
         tan_half = self._tan_half_fov
         return dr.cuda.ad.Array2f(
-            0.5 - 0.5 * (point[0] / safe_z) / tan_half,
-            0.5 - 0.5 * self._aspect * (point[1] / safe_z) / tan_half,
+            0.5 - 0.5 * (point[0] / safe_z) / tan_half, 0.5 - 0.5 * self._aspect * (point[1] / safe_z) / tan_half
         )

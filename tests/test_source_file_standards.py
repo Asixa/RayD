@@ -16,9 +16,7 @@ NATIVE_SUFFIXES = MAINTAINED_SUFFIXES - {".py", ".pyi"}
 
 
 def tracked_files() -> list[Path]:
-    result = subprocess.run(
-        ["git", "ls-files", "-z"], cwd=ROOT, check=True, capture_output=True
-    )
+    result = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, check=True, capture_output=True)
     paths = []
     for raw in result.stdout.split(b"\0"):
         if not raw:

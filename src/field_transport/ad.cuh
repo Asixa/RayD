@@ -64,7 +64,9 @@ struct DualC {
     utd::Complex d;
 };
 
-__device__ __forceinline__ DualF df_const(float value) { return {value, 0.0f}; }
+__device__ __forceinline__ DualF df_const(float value) {
+    return {value, 0.0f};
+}
 
 __device__ __forceinline__ DualC dc_const(utd::Complex value) {
     return {value, utd::cplx_zero()};
@@ -83,9 +85,7 @@ __device__ __forceinline__ DualC dc_sub(DualC a, DualC b) {
 }
 
 __device__ __forceinline__ DualC dc_mul(DualC a, DualC b) {
-    return {
-        utd::cplx_mul(a.v, b.v),
-        utd::cplx_add(utd::cplx_mul(a.d, b.v), utd::cplx_mul(a.v, b.d))};
+    return {utd::cplx_mul(a.v, b.v), utd::cplx_add(utd::cplx_mul(a.d, b.v), utd::cplx_mul(a.v, b.d))};
 }
 
 __device__ __forceinline__ DualC dc_mul_real(DualC a, float b) {
@@ -93,10 +93,7 @@ __device__ __forceinline__ DualC dc_mul_real(DualC a, float b) {
 }
 
 __device__ __forceinline__ DualC dc_mul_dualreal(DualC a, DualF b) {
-    return {
-        utd::cplx_mul_real(a.v, b.v),
-        utd::cplx_add(
-            utd::cplx_mul_real(a.d, b.v), utd::cplx_mul_real(a.v, b.d))};
+    return {utd::cplx_mul_real(a.v, b.v), utd::cplx_add(utd::cplx_mul_real(a.d, b.v), utd::cplx_mul_real(a.v, b.d))};
 }
 
 // Dual of utd::cplx_div (denominator regularized with +UTD_EPS). The
@@ -107,11 +104,9 @@ __device__ __forceinline__ DualC dc_div_utd(DualC a, DualC b) {
     DualC out;
     out.v = utd::cplx_div(a.v, b.v);
     const float d_denom = 2.0f * (b.v.re * b.d.re + b.v.im * b.d.im);
-    const utd::Complex d_num = utd::cplx_add(
-        utd::cplx_mul(a.d, utd::cplx_conj(b.v)),
-        utd::cplx_mul(a.v, utd::cplx_conj(b.d)));
-    out.d = utd::cplx_div_real(
-        utd::cplx_sub(d_num, utd::cplx_mul_real(out.v, d_denom)), denom);
+    const utd::Complex d_num =
+        utd::cplx_add(utd::cplx_mul(a.d, utd::cplx_conj(b.v)), utd::cplx_mul(a.v, utd::cplx_conj(b.d)));
+    out.d = utd::cplx_div_real(utd::cplx_sub(d_num, utd::cplx_mul_real(out.v, d_denom)), denom);
     return out;
 }
 
@@ -123,13 +118,10 @@ __device__ __forceinline__ DualC dc_div_em(DualC a, DualC b) {
     const float denom = fmaxf(mag2, 1.0e-30f);
     DualC out;
     out.v = em::c_div(a.v, b.v);
-    const float d_denom =
-        mag2 > 1.0e-30f ? 2.0f * (b.v.re * b.d.re + b.v.im * b.d.im) : 0.0f;
-    const utd::Complex d_num = utd::cplx_add(
-        utd::cplx_mul(a.d, utd::cplx_conj(b.v)),
-        utd::cplx_mul(a.v, utd::cplx_conj(b.d)));
-    out.d = utd::cplx_div_real(
-        utd::cplx_sub(d_num, utd::cplx_mul_real(out.v, d_denom)), denom);
+    const float d_denom = mag2 > 1.0e-30f ? 2.0f * (b.v.re * b.d.re + b.v.im * b.d.im) : 0.0f;
+    const utd::Complex d_num =
+        utd::cplx_add(utd::cplx_mul(a.d, utd::cplx_conj(b.v)), utd::cplx_mul(a.v, utd::cplx_conj(b.d)));
+    out.d = utd::cplx_div_real(utd::cplx_sub(d_num, utd::cplx_mul_real(out.v, d_denom)), denom);
     return out;
 }
 
@@ -167,12 +159,10 @@ __device__ __forceinline__ DualC dc_exp_neg_2i(DualC q) {
     sincosf(2.0f * q.v.re, &sine, &cosine);
     DualC out;
     out.v = utd::cplx(amplitude * cosine, -amplitude * sine);
-    const float d_amplitude =
-        exponent < 80.0f ? amplitude * 2.0f * q.d.im : 0.0f;
+    const float d_amplitude = exponent < 80.0f ? amplitude * 2.0f * q.d.im : 0.0f;
     const float d_theta = 2.0f * q.d.re;
-    out.d = utd::cplx(
-        d_amplitude * cosine - amplitude * sine * d_theta,
-        -(d_amplitude * sine + amplitude * cosine * d_theta));
+    out.d = utd::cplx(d_amplitude * cosine - amplitude * sine * d_theta,
+                      -(d_amplitude * sine + amplitude * cosine * d_theta));
     return out;
 }
 
@@ -199,34 +189,19 @@ __device__ __forceinline__ float d_fabsf(float x, float dx) {
     return 0.0f;
 }
 
-__device__ __forceinline__ void slab_fresnel_dual(
-    float cos_theta,
-    float eps_r,
-    float sigma_e,
-    float mu_r,
-    float gain,
-    float thickness,
-    float frequency_hz,
-    float d_cos_theta,
-    float d_eps,
-    float d_sigma,
-    float d_gain,
-    float d_thickness,
-    float d_frequency,
-    DualC& r_te,
-    DualC& r_tm) {
+__device__ __forceinline__ void slab_fresnel_dual(float cos_theta, float eps_r, float sigma_e, float mu_r, float gain,
+                                                  float thickness, float frequency_hz, float d_cos_theta, float d_eps,
+                                                  float d_sigma, float d_gain, float d_thickness, float d_frequency,
+                                                  DualC& r_te, DualC& r_tm) {
     const float omega_raw = 2.0f * utd::UTD_PI * frequency_hz;
     const float omega = fmaxf(omega_raw, utd::UTD_SMALL_EPS);
-    const float d_omega =
-        omega_raw > utd::UTD_SMALL_EPS ? 2.0f * utd::UTD_PI * d_frequency : 0.0f;
+    const float d_omega = omega_raw > utd::UTD_SMALL_EPS ? 2.0f * utd::UTD_PI * d_frequency : 0.0f;
     const float wavelength = transport::kSpeedOfLight / frequency_hz;
-    const float d_wavelength =
-        -transport::kSpeedOfLight / (frequency_hz * frequency_hz) * d_frequency;
+    const float d_wavelength = -transport::kSpeedOfLight / (frequency_hz * frequency_hz) * d_frequency;
     const float ct_abs = fabsf(cos_theta);
     const float d_ct_abs = d_fabsf(cos_theta, d_cos_theta);
     const float ct = fminf(fmaxf(ct_abs, utd::UTD_SMALL_EPS), 1.0f);
-    const float d_ct =
-        (ct_abs >= utd::UTD_SMALL_EPS && ct_abs <= 1.0f) ? d_ct_abs : 0.0f;
+    const float d_ct = (ct_abs >= utd::UTD_SMALL_EPS && ct_abs <= 1.0f) ? d_ct_abs : 0.0f;
     const float sin2_raw = 1.0f - ct * ct;
     const float sin2 = fmaxf(0.0f, sin2_raw);
     const float d_sin2 = sin2_raw >= 0.0f ? -2.0f * ct * d_ct : 0.0f;
@@ -235,45 +210,33 @@ __device__ __forceinline__ void slab_fresnel_dual(
     const float sigma_clamped = fmaxf(sigma_e, 0.0f);
     const float d_sigma_clamped = sigma_e >= 0.0f ? d_sigma : 0.0f;
     const float eta_im = -sigma_clamped / (omega * utd::UTD_EPSILON_0);
-    const float d_eta_im =
-        (-d_sigma_clamped / omega + sigma_clamped * d_omega / (omega * omega)) /
-        utd::UTD_EPSILON_0;
+    const float d_eta_im = (-d_sigma_clamped / omega + sigma_clamped * d_omega / (omega * omega)) / utd::UTD_EPSILON_0;
     const DualC eta = dc_make(eps_clamped, eta_im, d_eps_clamped, d_eta_im);
     const float mu = fmaxf(mu_r, utd::UTD_SMALL_EPS);
-    const DualC root = dc_sqrt_utd(dc_sub(
-        dc_mul_real(eta, mu), dc_make(sin2, 0.0f, d_sin2, 0.0f)));
+    const DualC root = dc_sqrt_utd(dc_sub(dc_mul_real(eta, mu), dc_make(sin2, 0.0f, d_sin2, 0.0f)));
     const DualC mu_ct = dc_make(mu * ct, 0.0f, mu * d_ct, 0.0f);
     const DualC eta_ct = dc_mul_dualreal(eta, {ct, d_ct});
-    const DualC interface_te = dc_div_utd(
-        dc_sub(mu_ct, root), dc_add(mu_ct, root));
-    const DualC interface_tm = dc_div_utd(
-        dc_sub(eta_ct, root), dc_add(eta_ct, root));
+    const DualC interface_te = dc_div_utd(dc_sub(mu_ct, root), dc_add(mu_ct, root));
+    const DualC interface_tm = dc_div_utd(dc_sub(eta_ct, root), dc_add(eta_ct, root));
     const float thickness_clamped = fmaxf(thickness, 0.0f);
     const float d_thickness_clamped = thickness >= 0.0f ? d_thickness : 0.0f;
     const float wavelength_clamped = fmaxf(wavelength, utd::UTD_SMALL_EPS);
-    const float d_wavelength_clamped =
-        wavelength > utd::UTD_SMALL_EPS ? d_wavelength : 0.0f;
-    const float q_scale =
-        2.0f * utd::UTD_PI * thickness_clamped / wavelength_clamped;
+    const float d_wavelength_clamped = wavelength > utd::UTD_SMALL_EPS ? d_wavelength : 0.0f;
+    const float q_scale = 2.0f * utd::UTD_PI * thickness_clamped / wavelength_clamped;
     const float d_q_scale = 2.0f * utd::UTD_PI *
-                            (d_thickness_clamped * wavelength_clamped -
-                             thickness_clamped * d_wavelength_clamped) /
+                            (d_thickness_clamped * wavelength_clamped - thickness_clamped * d_wavelength_clamped) /
                             (wavelength_clamped * wavelength_clamped);
     const DualC q = dc_mul_dualreal(root, {q_scale, d_q_scale});
     const DualC phase = dc_exp_neg_2i(q);
     const DualC one = dc_const(utd::cplx(1.0f, 0.0f));
     const DualC numerator = dc_sub(one, phase);
     const DualF gain_dual = {gain, d_gain};
-    r_te = dc_mul_dualreal(
-        dc_div_utd(
-            dc_mul(interface_te, numerator),
-            dc_sub(one, dc_mul(dc_mul(interface_te, interface_te), phase))),
-        gain_dual);
-    r_tm = dc_mul_dualreal(
-        dc_div_utd(
-            dc_mul(interface_tm, numerator),
-            dc_sub(one, dc_mul(dc_mul(interface_tm, interface_tm), phase))),
-        gain_dual);
+    r_te = dc_mul_dualreal(dc_div_utd(dc_mul(interface_te, numerator),
+                                      dc_sub(one, dc_mul(dc_mul(interface_te, interface_te), phase))),
+                           gain_dual);
+    r_tm = dc_mul_dualreal(dc_div_utd(dc_mul(interface_tm, numerator),
+                                      dc_sub(one, dc_mul(dc_mul(interface_tm, interface_tm), phase))),
+                           gain_dual);
 }
 
 // ---------------------------------------------------------------------------
@@ -292,17 +255,12 @@ struct LayerSeed {
 
 struct DualMedium {
     DualC eps_abs;
-    utd::Complex mu_abs;  // constant this phase
+    utd::Complex mu_abs; // constant this phase
     DualC k;
 };
 
-__device__ __forceinline__ DualMedium make_medium_dual(
-    float eps_r,
-    float sigma_e,
-    float mu_r,
-    DualF omega,
-    float d_eps,
-    float d_sigma) {
+__device__ __forceinline__ DualMedium make_medium_dual(float eps_r, float sigma_e, float mu_r, DualF omega, float d_eps,
+                                                       float d_sigma) {
     DualMedium medium;
     const float safe_omega = fmaxf(omega.v, utd::UTD_SMALL_EPS);
     const float d_safe_omega = omega.v > utd::UTD_SMALL_EPS ? omega.d : 0.0f;
@@ -310,17 +268,12 @@ __device__ __forceinline__ DualMedium make_medium_dual(
     const float d_eps_clamped = eps_r > utd::UTD_SMALL_EPS ? d_eps : 0.0f;
     const float sigma_clamped = fmaxf(sigma_e, 0.0f);
     const float d_sigma_clamped = sigma_e >= 0.0f ? d_sigma : 0.0f;
-    medium.eps_abs = dc_make(
-        em::kVacuumPermittivity * eps_clamped,
-        -sigma_clamped / safe_omega,
-        em::kVacuumPermittivity * d_eps_clamped,
-        -d_sigma_clamped / safe_omega +
-            sigma_clamped * d_safe_omega / (safe_omega * safe_omega));
-    medium.mu_abs = utd::cplx(
-        em::kVacuumPermeability * fmaxf(mu_r, utd::UTD_SMALL_EPS), 0.0f);
-    medium.k = dc_mul_dualreal(
-        dc_sqrt_passive(dc_mul(medium.eps_abs, dc_const(medium.mu_abs))),
-        {safe_omega, d_safe_omega});
+    medium.eps_abs = dc_make(em::kVacuumPermittivity * eps_clamped, -sigma_clamped / safe_omega,
+                             em::kVacuumPermittivity * d_eps_clamped,
+                             -d_sigma_clamped / safe_omega + sigma_clamped * d_safe_omega / (safe_omega * safe_omega));
+    medium.mu_abs = utd::cplx(em::kVacuumPermeability * fmaxf(mu_r, utd::UTD_SMALL_EPS), 0.0f);
+    medium.k =
+        dc_mul_dualreal(dc_sqrt_passive(dc_mul(medium.eps_abs, dc_const(medium.mu_abs))), {safe_omega, d_safe_omega});
     return medium;
 }
 
@@ -331,12 +284,10 @@ __device__ __forceinline__ DualMedium make_medium_dual(
 // k_par^2 tangent stays finite; routing the tangent through k_par produced
 // 0 * inf = NaN cos_theta gradients at exactly-normal rays).
 __device__ __forceinline__ DualC dc_kz_from_kpar2(DualC k, DualF k_par2) {
-    return dc_sqrt_passive(dc_sub(
-        dc_mul(k, k), dc_make(k_par2.v, 0.0f, k_par2.d, 0.0f)));
+    return dc_sqrt_passive(dc_sub(dc_mul(k, k), dc_make(k_par2.v, 0.0f, k_par2.d, 0.0f)));
 }
 
-__device__ __forceinline__ DualC dc_admittance(
-    const DualMedium& medium, DualC k_z, DualF omega, int pol) {
+__device__ __forceinline__ DualC dc_admittance(const DualMedium& medium, DualC k_z, DualF omega, int pol) {
     if (pol == em::kPolTE) {
         const DualC mu_omega = dc_mul_dualreal(dc_const(medium.mu_abs), omega);
         return dc_div_em(k_z, mu_omega);
@@ -365,23 +316,18 @@ __device__ __forceinline__ DualInterfaceRT dc_interface_rt(DualC y1, DualC y2) {
 // exponent == -0.0) the subgradient follows the pass-through side of the
 // fminf (gate with <=, mirroring the fmaxf >= convention above) so the decay
 // derivative survives exactly where the tests/ad oracle differentiates it.
-__device__ __forceinline__ DualC dc_layer_one_way_phase(
-    DualC k_z, DualF thickness_m) {
+__device__ __forceinline__ DualC dc_layer_one_way_phase(DualC k_z, DualF thickness_m) {
     const float exponent = k_z.v.im * thickness_m.v;
     const float amplitude = expf(fminf(exponent, 0.0f));
     const float d_exponent = k_z.d.im * thickness_m.v + k_z.v.im * thickness_m.d;
     const float d_amplitude = exponent <= 0.0f ? amplitude * d_exponent : 0.0f;
-    const utd::Complex phasor = em::c_exp_neg_j(
-        static_cast<double>(k_z.v.re) * static_cast<double>(thickness_m.v));
+    const utd::Complex phasor = em::c_exp_neg_j(static_cast<double>(k_z.v.re) * static_cast<double>(thickness_m.v));
     const float d_theta = k_z.d.re * thickness_m.v + k_z.v.re * thickness_m.d;
     // phasor = (cos t, -sin t); d/dt = (sin t and cos t read off the primal).
-    const utd::Complex d_phasor = utd::cplx(
-        phasor.im * d_theta, -phasor.re * d_theta);
+    const utd::Complex d_phasor = utd::cplx(phasor.im * d_theta, -phasor.re * d_theta);
     DualC out;
     out.v = utd::cplx_mul_real(phasor, amplitude);
-    out.d = utd::cplx_add(
-        utd::cplx_mul_real(d_phasor, amplitude),
-        utd::cplx_mul_real(phasor, d_amplitude));
+    out.d = utd::cplx_add(utd::cplx_mul_real(d_phasor, amplitude), utd::cplx_mul_real(phasor, d_amplitude));
     return out;
 }
 
@@ -396,23 +342,15 @@ struct DualStackRT {
 };
 
 template <typename SeedFn>
-__device__ __forceinline__ DualStackRT stack_rt_dual(
-    float cos_theta_i,
-    const em::LayerView& layers,
-    float frequency_hz,
-    float d_cos_theta,
-    float d_frequency,
-    int pol,
-    SeedFn&& seed) {
+__device__ __forceinline__ DualStackRT stack_rt_dual(float cos_theta_i, const em::LayerView& layers, float frequency_hz,
+                                                     float d_cos_theta, float d_frequency, int pol, SeedFn&& seed) {
     const float omega_raw = 2.0f * utd::UTD_PI * frequency_hz;
-    const DualF omega = {
-        fmaxf(omega_raw, utd::UTD_SMALL_EPS),
-        omega_raw > utd::UTD_SMALL_EPS ? 2.0f * utd::UTD_PI * d_frequency : 0.0f};
+    const DualF omega = {fmaxf(omega_raw, utd::UTD_SMALL_EPS),
+                         omega_raw > utd::UTD_SMALL_EPS ? 2.0f * utd::UTD_PI * d_frequency : 0.0f};
     const float ct_abs = fabsf(cos_theta_i);
     const float d_ct_abs = d_fabsf(cos_theta_i, d_cos_theta);
     const float ct = fminf(fmaxf(ct_abs, utd::UTD_SMALL_EPS), 1.0f);
-    const float d_ct =
-        (ct_abs >= utd::UTD_SMALL_EPS && ct_abs <= 1.0f) ? d_ct_abs : 0.0f;
+    const float d_ct = (ct_abs >= utd::UTD_SMALL_EPS && ct_abs <= 1.0f) ? d_ct_abs : 0.0f;
     const float sin2_raw = 1.0f - ct * ct;
     const float sin2 = fmaxf(0.0f, sin2_raw);
     const float d_sin2 = sin2_raw >= 0.0f ? -2.0f * ct * d_ct : 0.0f;
@@ -426,11 +364,8 @@ __device__ __forceinline__ DualStackRT stack_rt_dual(
     const float d_k_entry = omega.d / em::kSpeedOfLight;
     const float sin_theta = sqrtf(sin2);
     const float k_par_value = k_entry * sin_theta;
-    const DualF k_par2 = {
-        k_par_value * k_par_value,
-        2.0f * k_entry * d_k_entry * sin2 + k_entry * k_entry * d_sin2};
-    const DualC kz_entry = dc_make(
-        k_entry * ct, 0.0f, d_k_entry * ct + k_entry * d_ct, 0.0f);
+    const DualF k_par2 = {k_par_value * k_par_value, 2.0f * k_entry * d_k_entry * sin2 + k_entry * k_entry * d_sin2};
+    const DualC kz_entry = dc_make(k_entry * ct, 0.0f, d_k_entry * ct + k_entry * d_ct, 0.0f);
     DualMedium entry;
     entry.eps_abs = dc_const(utd::cplx(em::kVacuumPermittivity, 0.0f));
     entry.mu_abs = utd::cplx(em::kVacuumPermeability, 0.0f);
@@ -451,13 +386,8 @@ __device__ __forceinline__ DualStackRT stack_rt_dual(
 
     const int last = offset + count - 1;
     const LayerSeed last_seed = seed(last);
-    DualMedium below = make_medium_dual(
-        layers.layer_eps_r[last],
-        layers.layer_sigma_e[last],
-        layers.layer_mu_r[last],
-        omega,
-        last_seed.d_eps,
-        last_seed.d_sigma);
+    DualMedium below = make_medium_dual(layers.layer_eps_r[last], layers.layer_sigma_e[last], layers.layer_mu_r[last],
+                                        omega, last_seed.d_eps, last_seed.d_sigma);
     DualC kz_below = dc_kz_from_kpar2(below.k, k_par2);
     DualC y_below = dc_admittance(below, kz_below, omega, pol);
     const DualInterfaceRT exit_interface = dc_interface_rt(y_below, y_exit);
@@ -468,9 +398,7 @@ __device__ __forceinline__ DualStackRT stack_rt_dual(
         const int slot = offset + layer;
         const LayerSeed slot_seed = seed(slot);
         const float thickness_raw = layers.layer_thickness_m[slot];
-        const DualF thickness = {
-            fmaxf(thickness_raw, 0.0f),
-            thickness_raw >= 0.0f ? slot_seed.d_thickness : 0.0f};
+        const DualF thickness = {fmaxf(thickness_raw, 0.0f), thickness_raw >= 0.0f ? slot_seed.d_thickness : 0.0f};
         const DualC phase = dc_layer_one_way_phase(kz_below, thickness);
         const DualC phase2 = dc_mul(phase, phase);
 
@@ -479,13 +407,9 @@ __device__ __forceinline__ DualStackRT stack_rt_dual(
         if (layer > 0) {
             const int above_slot = slot - 1;
             const LayerSeed above_seed = seed(above_slot);
-            const DualMedium above = make_medium_dual(
-                layers.layer_eps_r[above_slot],
-                layers.layer_sigma_e[above_slot],
-                layers.layer_mu_r[above_slot],
-                omega,
-                above_seed.d_eps,
-                above_seed.d_sigma);
+            const DualMedium above =
+                make_medium_dual(layers.layer_eps_r[above_slot], layers.layer_sigma_e[above_slot],
+                                 layers.layer_mu_r[above_slot], omega, above_seed.d_eps, above_seed.d_sigma);
             kz_above = dc_kz_from_kpar2(above.k, k_par2);
             y_above = dc_admittance(above, kz_above, omega, pol);
         } else {
@@ -494,8 +418,7 @@ __device__ __forceinline__ DualStackRT stack_rt_dual(
         }
         const DualInterfaceRT top = dc_interface_rt(y_above, y_below);
         const DualC loop = dc_mul(phase2, r_total);
-        const DualC denom = dc_add(
-            dc_const(utd::cplx(1.0f, 0.0f)), dc_mul(top.r, loop));
+        const DualC denom = dc_add(dc_const(utd::cplx(1.0f, 0.0f)), dc_mul(top.r, loop));
         r_total = dc_div_em(dc_add(top.r, loop), denom);
         t_total = dc_div_em(dc_mul(top.t, dc_mul(phase, t_total)), denom);
 
@@ -509,19 +432,15 @@ __device__ __forceinline__ DualStackRT stack_rt_dual(
     // pass-through subgradient on the >= side; the flux is a ratio of the
     // same admittance for the v1 vacuum surround, so its derivative cancels
     // exactly on the unclamped branch).
-    out.cap_r = {
-        r_total.v.re * r_total.v.re + r_total.v.im * r_total.v.im,
-        2.0f * (r_total.v.re * r_total.d.re + r_total.v.im * r_total.d.im)};
+    out.cap_r = {r_total.v.re * r_total.v.re + r_total.v.im * r_total.v.im,
+                 2.0f * (r_total.v.re * r_total.d.re + r_total.v.im * r_total.d.im)};
     const float y_floor = utd::UTD_SMALL_EPS * 1.0e-6f;
     const float y_entry_re = fmaxf(y_entry.v.re, y_floor);
     const float d_y_entry_re = y_entry.v.re >= y_floor ? y_entry.d.re : 0.0f;
     const float flux = y_exit.v.re / y_entry_re;
-    const float d_flux =
-        (y_exit.d.re * y_entry_re - y_exit.v.re * d_y_entry_re) /
-        (y_entry_re * y_entry_re);
+    const float d_flux = (y_exit.d.re * y_entry_re - y_exit.v.re * d_y_entry_re) / (y_entry_re * y_entry_re);
     const float t_abs2 = t_total.v.re * t_total.v.re + t_total.v.im * t_total.v.im;
-    const float d_t_abs2 =
-        2.0f * (t_total.v.re * t_total.d.re + t_total.v.im * t_total.d.im);
+    const float d_t_abs2 = 2.0f * (t_total.v.re * t_total.d.re + t_total.v.im * t_total.d.im);
     out.cap_t = {flux * t_abs2, d_flux * t_abs2 + flux * d_t_abs2};
     return out;
 }
@@ -533,8 +452,7 @@ __device__ __forceinline__ DualStackRT stack_rt_dual(
 // both precisions share one clamping contract.
 // ---------------------------------------------------------------------------
 
-template <typename T>
-using Vec3 = vmath::Vec3<T>;
+template <typename T> using Vec3 = vmath::Vec3<T>;
 
 constexpr float kSpeedOfLight = transport::kSpeedOfLight;
 
@@ -546,35 +464,25 @@ constexpr float kSpeedOfLight = transport::kSpeedOfLight;
 // (the fmod phase reduction has unit slope, so the raw wave number drives
 // the phase term; the amplitude term follows the clamp_min(EPS) subgradient
 // convention of the tests/ad oracle).
-template <typename T>
-struct FreeSpaceEval {
+template <typename T> struct FreeSpaceEval {
     Vec3<T> direction;
     Vec3<T> tx_axis;
     Vec3<T> rx_axis;
     T distance;
-    T amplitude_scale;      // sqrt(max(tx_power, 0))
-    T projection;           // dot(tx_axis, rx_axis)
-    c10::complex<T> carrier;        // P = exp(-j k d) / (2 k d)
-    c10::complex<T> carrier_dfreq;  // dP/df
-    c10::complex<T> carrier_ddist;  // dP/dd
+    T amplitude_scale;             // sqrt(max(tx_power, 0))
+    T projection;                  // dot(tx_axis, rx_axis)
+    c10::complex<T> carrier;       // P = exp(-j k d) / (2 k d)
+    c10::complex<T> carrier_dfreq; // dP/df
+    c10::complex<T> carrier_ddist; // dP/dd
 };
 
 template <typename T>
-__device__ __forceinline__ FreeSpaceEval<T> free_space_eval(
-    Vec3<T> source,
-    Vec3<T> target,
-    Vec3<T> tx_polarization,
-    Vec3<T> rx_polarization,
-    T tx_power,
-    T frequency_hz) {
+__device__ __forceinline__ FreeSpaceEval<T> free_space_eval(Vec3<T> source, Vec3<T> target, Vec3<T> tx_polarization,
+                                                            Vec3<T> rx_polarization, T tx_power, T frequency_hz) {
     FreeSpaceEval<T> out;
     const Vec3<T> offset = vmath::subtract(target, source);
     out.distance = vmath::length(offset);
-    out.direction = vmath::safe_normalize(
-        offset,
-        Vec3<T>{T(0), T(0), T(1)},
-        T(utd::UTD_SMALL_EPS),
-        T(utd::UTD_EPS));
+    out.direction = vmath::safe_normalize(offset, Vec3<T>{T(0), T(0), T(1)}, T(utd::UTD_SMALL_EPS), T(utd::UTD_EPS));
     // F1: the exported field is the unnormalized transverse projection of the
     // transmit polarization (short-dipole sin(theta) weight); the receiver
     // scalar is p_rx . E, so the rx axis is the same unnormalized projection.
@@ -582,26 +490,18 @@ __device__ __forceinline__ FreeSpaceEval<T> free_space_eval(
     out.rx_axis = vmath::transverse_project(out.direction, rx_polarization);
     out.amplitude_scale = sqrt(tx_power > T(0) ? tx_power : T(0));
     out.projection = vmath::dot(out.tx_axis, out.rx_axis);
-    const T wave_number =
-        T(2.0 * 3.14159265358979323846) * frequency_hz / T(kSpeedOfLight);
-    const T k_clamped =
-        wave_number > T(utd::UTD_SMALL_EPS) ? wave_number : T(utd::UTD_SMALL_EPS);
-    const T d_clamped =
-        out.distance > T(utd::UTD_EPS) ? out.distance : T(utd::UTD_EPS);
+    const T wave_number = T(2.0 * 3.14159265358979323846) * frequency_hz / T(kSpeedOfLight);
+    const T k_clamped = wave_number > T(utd::UTD_SMALL_EPS) ? wave_number : T(utd::UTD_SMALL_EPS);
+    const T d_clamped = out.distance > T(utd::UTD_EPS) ? out.distance : T(utd::UTD_EPS);
     const T amplitude = T(1) / (T(2) * k_clamped * d_clamped);
-    const double phase_full = static_cast<double>(wave_number) *
-                              static_cast<double>(out.distance);
+    const double phase_full = static_cast<double>(wave_number) * static_cast<double>(out.distance);
     const double phase = -fmod(phase_full, 6.283185307179586476925287);
     const T phase_t = static_cast<T>(phase);
-    out.carrier = c10::complex<T>(
-        amplitude * cos(phase_t), amplitude * sin(phase_t));
+    out.carrier = c10::complex<T>(amplitude * cos(phase_t), amplitude * sin(phase_t));
     // dP/dk = P * (-1/k - j d); dk/df = 2 pi / c (clamps inactive for f > 0).
-    const c10::complex<T> dlog(
-        -T(1) / k_clamped, -out.distance);
-    out.carrier_dfreq = out.carrier * dlog *
-                        (T(2.0 * 3.14159265358979323846) / T(kSpeedOfLight));
-    const T amplitude_gate =
-        out.distance >= T(utd::UTD_EPS) ? T(1) / d_clamped : T(0);
+    const c10::complex<T> dlog(-T(1) / k_clamped, -out.distance);
+    out.carrier_dfreq = out.carrier * dlog * (T(2.0 * 3.14159265358979323846) / T(kSpeedOfLight));
+    const T amplitude_gate = out.distance >= T(utd::UTD_EPS) ? T(1) / d_clamped : T(0);
     const c10::complex<T> dlog_dist(-amplitude_gate, -wave_number);
     out.carrier_ddist = out.carrier * dlog_dist;
     return out;
@@ -614,27 +514,22 @@ __device__ __forceinline__ FreeSpaceEval<T> free_space_eval(
 // primal branch; length subgradients vanish at zero like torch's vector_norm.
 // ---------------------------------------------------------------------------
 
-
-template <typename T>
-struct DualV3 {
+template <typename T> struct DualV3 {
     Vec3<T> v;
     Vec3<T> d;
 };
 
-template <typename T>
-__device__ __forceinline__ DualV3<T> dv3_const(Vec3<T> value) {
+template <typename T> __device__ __forceinline__ DualV3<T> dv3_const(Vec3<T> value) {
     return {value, {T(0), T(0), T(0)}};
 }
 
-template <typename T>
-__device__ __forceinline__ DualV3<T> dv3_sub(DualV3<T> a, DualV3<T> b) {
+template <typename T> __device__ __forceinline__ DualV3<T> dv3_sub(DualV3<T> a, DualV3<T> b) {
     return {vmath::subtract(a.v, b.v), vmath::subtract(a.d, b.d)};
 }
 
 // Dual of v3_length: d|v| = (v . dv)/|v| on the positive branch, zero at the
 // origin (the primal takes the max(., 0) zero branch there).
-template <typename T>
-__device__ __forceinline__ T dual_v3_length(DualV3<T> a, T& d_length) {
+template <typename T> __device__ __forceinline__ T dual_v3_length(DualV3<T> a, T& d_length) {
     const T sq = vmath::dot(a.v, a.v);
     const T length = sqrt(sq > T(0) ? sq : T(0));
     d_length = sq > T(0) ? vmath::dot(a.v, a.d) / length : T(0);
@@ -643,9 +538,7 @@ __device__ __forceinline__ T dual_v3_length(DualV3<T> a, T& d_length) {
 
 // Dual of v3_safe_normalize: u = v/(n + EPS) on the main branch, otherwise
 // the same map on the alternate. d u = dv * s - v * (v . dv) * s^2 / n.
-template <typename T>
-__device__ __forceinline__ DualV3<T> dual_v3_safe_normalize(
-    DualV3<T> v, DualV3<T> alternate) {
+template <typename T> __device__ __forceinline__ DualV3<T> dual_v3_safe_normalize(DualV3<T> v, DualV3<T> alternate) {
     const T n = vmath::length(v.v);
     const bool main_branch = n > T(utd::UTD_SMALL_EPS);
     const DualV3<T>& active = main_branch ? v : alternate;
@@ -655,8 +548,7 @@ __device__ __forceinline__ DualV3<T> dual_v3_safe_normalize(
     out.v = vmath::scale(active.v, s);
     if (an > T(0)) {
         const T dn = vmath::dot(active.v, active.d) / an;
-        out.d = vmath::subtract(
-            vmath::scale(active.d, s), vmath::scale(active.v, dn * s * s));
+        out.d = vmath::subtract(vmath::scale(active.d, s), vmath::scale(active.v, dn * s * s));
     } else {
         out.d = {T(0), T(0), T(0)};
     }
@@ -667,29 +559,23 @@ __device__ __forceinline__ DualV3<T> dual_v3_safe_normalize(
 // polarizations are constants of the differentiation). The discrete
 // alternate-axis pick |dir.z| < 0.9 is frozen.
 template <typename T>
-__device__ __forceinline__ DualV3<T> dual_v3_stable_perp_basis(
-    DualV3<T> ray_dir, Vec3<T> preferred) {
+__device__ __forceinline__ DualV3<T> dual_v3_stable_perp_basis(DualV3<T> ray_dir, Vec3<T> preferred) {
     const T proj_dot = vmath::dot(preferred, ray_dir.v);
     const T d_proj_dot = vmath::dot(preferred, ray_dir.d);
     DualV3<T> proj;
     proj.v = vmath::subtract(preferred, vmath::scale(ray_dir.v, proj_dot));
-    proj.d = vmath::negate(vmath::add(
-        vmath::scale(ray_dir.d, proj_dot), vmath::scale(ray_dir.v, d_proj_dot)));
-    const Vec3<T> alt_axis = (fabs(ray_dir.v.z) < T(0.9))
-                                 ? Vec3<T>{T(0), T(0), T(1)}
-                                 : Vec3<T>{T(0), T(1), T(0)};
+    proj.d = vmath::negate(vmath::add(vmath::scale(ray_dir.d, proj_dot), vmath::scale(ray_dir.v, d_proj_dot)));
+    const Vec3<T> alt_axis = (fabs(ray_dir.v.z) < T(0.9)) ? Vec3<T>{T(0), T(0), T(1)} : Vec3<T>{T(0), T(1), T(0)};
     const T alt_dot = vmath::dot(alt_axis, ray_dir.v);
     const T d_alt_dot = vmath::dot(alt_axis, ray_dir.d);
     DualV3<T> alt_proj;
     alt_proj.v = vmath::subtract(alt_axis, vmath::scale(ray_dir.v, alt_dot));
-    alt_proj.d = vmath::negate(vmath::add(
-        vmath::scale(ray_dir.d, alt_dot), vmath::scale(ray_dir.v, d_alt_dot)));
+    alt_proj.d = vmath::negate(vmath::add(vmath::scale(ray_dir.d, alt_dot), vmath::scale(ray_dir.v, d_alt_dot)));
     return dual_v3_safe_normalize(proj, alt_proj);
 }
 
 // Adjoint of v3_length into g_v (gate matches dual_v3_length).
-template <typename T>
-__device__ __forceinline__ void adj_v3_length(Vec3<T> v, T g_length, Vec3<T>& g_v) {
+template <typename T> __device__ __forceinline__ void adj_v3_length(Vec3<T> v, T g_length, Vec3<T>& g_v) {
     const T sq = vmath::dot(v, v);
     if (!(sq > T(0)))
         return;
@@ -699,23 +585,20 @@ __device__ __forceinline__ void adj_v3_length(Vec3<T> v, T g_length, Vec3<T>& g_
 
 // Adjoint of the active v3_safe_normalize branch (mirror of
 // utd::adj_normalize_branch on Vec3<T>).
-template <typename T>
-__device__ __forceinline__ void adj_v3_normalize_branch(
-    Vec3<T> v, Vec3<T> g_out, Vec3<T>& g_v) {
+template <typename T> __device__ __forceinline__ void adj_v3_normalize_branch(Vec3<T> v, Vec3<T> g_out, Vec3<T>& g_v) {
     const T sq = vmath::dot(v, v);
     const T n = sqrt(sq > T(0) ? sq : T(0));
     if (!(n > T(0)))
         return;
     const T denom = n + T(utd::UTD_EPS);
     const T dg = vmath::dot(g_out, v);
-    g_v = vmath::add(
-        g_v,
-        vmath::subtract(vmath::scale(g_out, T(1) / denom), vmath::scale(v, dg / (n * denom * denom))));
+    g_v =
+        vmath::add(g_v, vmath::subtract(vmath::scale(g_out, T(1) / denom), vmath::scale(v, dg / (n * denom * denom))));
 }
 
 template <typename T>
-__device__ __forceinline__ void adj_v3_safe_normalize(
-    Vec3<T> v, Vec3<T> alternate, Vec3<T> g_out, Vec3<T>& g_v, Vec3<T>& g_alternate) {
+__device__ __forceinline__ void adj_v3_safe_normalize(Vec3<T> v, Vec3<T> alternate, Vec3<T> g_out, Vec3<T>& g_v,
+                                                      Vec3<T>& g_alternate) {
     if (vmath::length(v) > T(utd::UTD_SMALL_EPS)) {
         adj_v3_normalize_branch(v, g_out, g_v);
     } else {
@@ -726,13 +609,11 @@ __device__ __forceinline__ void adj_v3_safe_normalize(
 // Adjoint of v3_stable_perp_basis into the ray direction (preferred axis is
 // fixed; its cotangent is discarded by the callers).
 template <typename T>
-__device__ __forceinline__ void adj_v3_stable_perp_basis(
-    Vec3<T> ray_dir, Vec3<T> preferred, Vec3<T> g_out, Vec3<T>& g_ray_dir) {
+__device__ __forceinline__ void adj_v3_stable_perp_basis(Vec3<T> ray_dir, Vec3<T> preferred, Vec3<T> g_out,
+                                                         Vec3<T>& g_ray_dir) {
     const T proj_dot = vmath::dot(preferred, ray_dir);
     const Vec3<T> proj = vmath::subtract(preferred, vmath::scale(ray_dir, proj_dot));
-    const Vec3<T> alt_axis = (fabs(ray_dir.z) < T(0.9))
-                                 ? Vec3<T>{T(0), T(0), T(1)}
-                                 : Vec3<T>{T(0), T(1), T(0)};
+    const Vec3<T> alt_axis = (fabs(ray_dir.z) < T(0.9)) ? Vec3<T>{T(0), T(0), T(1)} : Vec3<T>{T(0), T(1), T(0)};
     const T alt_dot = vmath::dot(alt_axis, ray_dir);
     const Vec3<T> alt_proj = vmath::subtract(alt_axis, vmath::scale(ray_dir, alt_dot));
     Vec3<T> g_proj = {T(0), T(0), T(0)};
@@ -750,22 +631,20 @@ __device__ __forceinline__ void adj_v3_stable_perp_basis(
 // differentiation): the proj branch of dual_v3_stable_perp_basis with the
 // safe_normalize removed.
 template <typename T>
-__device__ __forceinline__ DualV3<T> dual_v3_transverse_project(
-    DualV3<T> ray_dir, Vec3<T> preferred) {
+__device__ __forceinline__ DualV3<T> dual_v3_transverse_project(DualV3<T> ray_dir, Vec3<T> preferred) {
     const T proj_dot = vmath::dot(preferred, ray_dir.v);
     const T d_proj_dot = vmath::dot(preferred, ray_dir.d);
     DualV3<T> out;
     out.v = vmath::subtract(preferred, vmath::scale(ray_dir.v, proj_dot));
-    out.d = vmath::negate(vmath::add(
-        vmath::scale(ray_dir.d, proj_dot), vmath::scale(ray_dir.v, d_proj_dot)));
+    out.d = vmath::negate(vmath::add(vmath::scale(ray_dir.d, proj_dot), vmath::scale(ray_dir.v, d_proj_dot)));
     return out;
 }
 
 // Adjoint of v3_transverse_project into the ray direction:
 //   g_dir += -(preferred . ray_dir) g_out - (g_out . ray_dir) preferred.
 template <typename T>
-__device__ __forceinline__ void adj_v3_transverse_project(
-    Vec3<T> ray_dir, Vec3<T> preferred, Vec3<T> g_out, Vec3<T>& g_ray_dir) {
+__device__ __forceinline__ void adj_v3_transverse_project(Vec3<T> ray_dir, Vec3<T> preferred, Vec3<T> g_out,
+                                                          Vec3<T>& g_ray_dir) {
     const T proj_dot = vmath::dot(preferred, ray_dir);
     g_ray_dir = vmath::subtract(g_ray_dir, vmath::scale(g_out, proj_dot));
     g_ray_dir = vmath::subtract(g_ray_dir, vmath::scale(preferred, vmath::dot(g_out, ray_dir)));
@@ -802,15 +681,11 @@ __device__ __forceinline__ DualF3 df3_neg(DualF3 a) {
 }
 
 __device__ __forceinline__ DualF3 df3_cross(DualF3 a, DualF3 b) {
-    return {
-        utd::f3_cross(a.v, b.v),
-        utd::f3_add(utd::f3_cross(a.d, b.v), utd::f3_cross(a.v, b.d))};
+    return {utd::f3_cross(a.v, b.v), utd::f3_add(utd::f3_cross(a.d, b.v), utd::f3_cross(a.v, b.d))};
 }
 
 __device__ __forceinline__ DualF df3_dot(DualF3 a, DualF3 b) {
-    return {
-        utd::f3_dot(a.v, b.v),
-        utd::f3_dot(a.d, b.v) + utd::f3_dot(a.v, b.d)};
+    return {utd::f3_dot(a.v, b.v), utd::f3_dot(a.d, b.v) + utd::f3_dot(a.v, b.d)};
 }
 
 // Dual of utd::safe_length (sqrt of the clamped square; zero tangent at the
@@ -822,8 +697,7 @@ __device__ __forceinline__ DualF dual_safe_length(DualF3 a) {
 }
 
 // Adjoint of utd::safe_length (same zero-at-origin subgradient).
-__device__ __forceinline__ void adj_safe_length(
-    utd::float3a v, float g_length, utd::float3a& g_v) {
+__device__ __forceinline__ void adj_safe_length(utd::float3a v, float g_length, utd::float3a& g_v) {
     const float sq = utd::f3_dot(v, v);
     if (!(sq > 0.0f))
         return;
@@ -841,9 +715,7 @@ __device__ __forceinline__ DualF3 dual_safe_normalize(DualF3 v, DualF3 alternate
     out.v = utd::f3_div(active.v, denom);
     if (an > 0.0f) {
         const float dn = utd::f3_dot(active.v, active.d) / an;
-        out.d = utd::f3_sub(
-            utd::f3_div(active.d, denom),
-            utd::f3_mul(active.v, dn / (denom * denom)));
+        out.d = utd::f3_sub(utd::f3_div(active.d, denom), utd::f3_mul(active.v, dn / (denom * denom)));
     } else {
         out.d = utd::f3_zero();
     }
@@ -852,26 +724,18 @@ __device__ __forceinline__ DualF3 dual_safe_normalize(DualF3 v, DualF3 alternate
 
 // Dual of utd::stable_perp_basis (both arguments may carry tangents; the
 // discrete alternate-axis pick is frozen).
-__device__ __forceinline__ DualF3 dual_stable_perp_basis(
-    DualF3 ray_dir, DualF3 preferred) {
+__device__ __forceinline__ DualF3 dual_stable_perp_basis(DualF3 ray_dir, DualF3 preferred) {
     const DualF proj_dot = df3_dot(preferred, ray_dir);
-    const DualF3 proj = {
-        utd::f3_sub(preferred.v, utd::f3_mul(ray_dir.v, proj_dot.v)),
-        utd::f3_sub(
-            preferred.d,
-            utd::f3_add(
-                utd::f3_mul(ray_dir.d, proj_dot.v),
-                utd::f3_mul(ray_dir.v, proj_dot.d)))};
-    const utd::float3a alt_axis = (fabsf(ray_dir.v.z) < 0.9f)
-                                      ? utd::make_f3(0.0f, 0.0f, 1.0f)
-                                      : utd::make_f3(0.0f, 1.0f, 0.0f);
+    const DualF3 proj = {utd::f3_sub(preferred.v, utd::f3_mul(ray_dir.v, proj_dot.v)),
+                         utd::f3_sub(preferred.d, utd::f3_add(utd::f3_mul(ray_dir.d, proj_dot.v),
+                                                              utd::f3_mul(ray_dir.v, proj_dot.d)))};
+    const utd::float3a alt_axis =
+        (fabsf(ray_dir.v.z) < 0.9f) ? utd::make_f3(0.0f, 0.0f, 1.0f) : utd::make_f3(0.0f, 1.0f, 0.0f);
     const float alt_dot = utd::f3_dot(alt_axis, ray_dir.v);
     const float d_alt_dot = utd::f3_dot(alt_axis, ray_dir.d);
-    const DualF3 alt_proj = {
-        utd::f3_sub(alt_axis, utd::f3_mul(ray_dir.v, alt_dot)),
-        utd::f3_neg(utd::f3_add(
-            utd::f3_mul(ray_dir.d, alt_dot),
-            utd::f3_mul(ray_dir.v, d_alt_dot)))};
+    const DualF3 alt_proj = {utd::f3_sub(alt_axis, utd::f3_mul(ray_dir.v, alt_dot)),
+                             utd::f3_neg(
+                                 utd::f3_add(utd::f3_mul(ray_dir.d, alt_dot), utd::f3_mul(ray_dir.v, d_alt_dot)))};
     return dual_safe_normalize(proj, alt_proj);
 }
 
@@ -879,30 +743,21 @@ __device__ __forceinline__ DualF3 dual_stable_perp_basis(
 // TX/RX FIELD axis carries the sin(theta) dipole weight; the primal is
 // utd::project_to_wedge_plane(preferred, ray_dir). Zero at the axial null is
 // correct physics (no fallback axis).
-__device__ __forceinline__ DualF3 dual_transverse_project(
-    DualF3 ray_dir, DualF3 preferred) {
+__device__ __forceinline__ DualF3 dual_transverse_project(DualF3 ray_dir, DualF3 preferred) {
     const DualF proj_dot = df3_dot(preferred, ray_dir);
-    return DualF3{
-        utd::f3_sub(preferred.v, utd::f3_mul(ray_dir.v, proj_dot.v)),
-        utd::f3_sub(
-            preferred.d,
-            utd::f3_add(
-                utd::f3_mul(ray_dir.d, proj_dot.v),
-                utd::f3_mul(ray_dir.v, proj_dot.d)))};
+    return DualF3{utd::f3_sub(preferred.v, utd::f3_mul(ray_dir.v, proj_dot.v)),
+                  utd::f3_sub(preferred.d,
+                              utd::f3_add(utd::f3_mul(ray_dir.d, proj_dot.v), utd::f3_mul(ray_dir.v, proj_dot.d)))};
 }
 
 // Adjoint of the float3a transverse projection into ray_dir and preferred
 // (callers discard the preferred cotangent; the polarization is fixed).
-__device__ __forceinline__ void adj_transverse_project(
-    utd::float3a ray_dir, utd::float3a preferred, utd::float3a g_out,
-    utd::float3a& g_ray_dir, utd::float3a& g_preferred) {
+__device__ __forceinline__ void adj_transverse_project(utd::float3a ray_dir, utd::float3a preferred, utd::float3a g_out,
+                                                       utd::float3a& g_ray_dir, utd::float3a& g_preferred) {
     const float proj_dot = utd::f3_dot(preferred, ray_dir);
     g_ray_dir = utd::f3_sub(g_ray_dir, utd::f3_mul(g_out, proj_dot));
-    g_ray_dir = utd::f3_sub(
-        g_ray_dir, utd::f3_mul(preferred, utd::f3_dot(g_out, ray_dir)));
-    g_preferred = utd::f3_add(
-        g_preferred,
-        utd::f3_sub(g_out, utd::f3_mul(ray_dir, utd::f3_dot(g_out, ray_dir))));
+    g_ray_dir = utd::f3_sub(g_ray_dir, utd::f3_mul(preferred, utd::f3_dot(g_out, ray_dir)));
+    g_preferred = utd::f3_add(g_preferred, utd::f3_sub(g_out, utd::f3_mul(ray_dir, utd::f3_dot(g_out, ray_dir))));
 }
 
 // ---------------------------------------------------------------------------
@@ -920,9 +775,7 @@ struct DualReflectFrame {
     DualF cos_theta;
 };
 
-__device__ __forceinline__ DualReflectFrame dual_reflect_frame(
-    DualF3 incident_direction,
-    DualF3 normal) {
+__device__ __forceinline__ DualReflectFrame dual_reflect_frame(DualF3 incident_direction, DualF3 normal) {
     DualReflectFrame frame;
     const DualF3 e_z = df3_const(utd::make_f3(0.0f, 0.0f, 1.0f));
     frame.incident = dual_safe_normalize(incident_direction, e_z);
@@ -931,25 +784,16 @@ __device__ __forceinline__ DualReflectFrame dual_reflect_frame(
     if (flip)
         oriented = df3_neg(oriented);
     const DualF dot_in = df3_dot(frame.incident, oriented);
-    const DualF3 reflect_raw = {
-        utd::f3_sub(
-            frame.incident.v, utd::f3_mul(oriented.v, 2.0f * dot_in.v)),
-        utd::f3_sub(
-            frame.incident.d,
-            utd::f3_add(
-                utd::f3_mul(oriented.d, 2.0f * dot_in.v),
-                utd::f3_mul(oriented.v, 2.0f * dot_in.d)))};
-    frame.reflected_direction = dual_safe_normalize(
-        reflect_raw, df3_neg(frame.incident));
+    const DualF3 reflect_raw = {utd::f3_sub(frame.incident.v, utd::f3_mul(oriented.v, 2.0f * dot_in.v)),
+                                utd::f3_sub(frame.incident.d, utd::f3_add(utd::f3_mul(oriented.d, 2.0f * dot_in.v),
+                                                                          utd::f3_mul(oriented.v, 2.0f * dot_in.d)))};
+    frame.reflected_direction = dual_safe_normalize(reflect_raw, df3_neg(frame.incident));
     const DualF3 s_raw = df3_cross(oriented, frame.incident);
-    frame.s_axis = dual_safe_normalize(
-        s_raw, dual_stable_perp_basis(frame.incident, oriented));
-    frame.p_in = dual_safe_normalize(
-        df3_cross(frame.s_axis, frame.incident),
-        dual_stable_perp_basis(frame.incident, frame.s_axis));
-    frame.p_out = dual_safe_normalize(
-        df3_cross(frame.s_axis, frame.reflected_direction),
-        dual_stable_perp_basis(frame.reflected_direction, frame.s_axis));
+    frame.s_axis = dual_safe_normalize(s_raw, dual_stable_perp_basis(frame.incident, oriented));
+    frame.p_in = dual_safe_normalize(df3_cross(frame.s_axis, frame.incident),
+                                     dual_stable_perp_basis(frame.incident, frame.s_axis));
+    frame.p_out = dual_safe_normalize(df3_cross(frame.s_axis, frame.reflected_direction),
+                                      dual_stable_perp_basis(frame.reflected_direction, frame.s_axis));
     frame.cos_theta = {fabsf(dot_in.v), d_fabsf(dot_in.v, dot_in.d)};
     return frame;
 }
@@ -959,16 +803,10 @@ __device__ __forceinline__ DualReflectFrame dual_reflect_frame(
 // the results accumulate into the cotangents of the (already normalized)
 // incident direction argument and the raw interaction normal. Intermediates
 // are recomputed exactly like the primal so every branch matches.
-__device__ __forceinline__ void adj_reflect_frame(
-    utd::float3a incident_direction,
-    utd::float3a normal,
-    utd::float3a g_s_axis,
-    utd::float3a g_p_in,
-    utd::float3a g_p_out,
-    utd::float3a g_reflected,
-    float g_cos_theta,
-    utd::float3a& g_incident_direction,
-    utd::float3a& g_normal) {
+__device__ __forceinline__ void adj_reflect_frame(utd::float3a incident_direction, utd::float3a normal,
+                                                  utd::float3a g_s_axis, utd::float3a g_p_in, utd::float3a g_p_out,
+                                                  utd::float3a g_reflected, float g_cos_theta,
+                                                  utd::float3a& g_incident_direction, utd::float3a& g_normal) {
     const utd::float3a e_z = utd::make_f3(0.0f, 0.0f, 1.0f);
     // Primal replay (mirrors transport::reflect_frame).
     const utd::float3a incident = utd::safe_normalize(incident_direction, e_z);
@@ -976,10 +814,8 @@ __device__ __forceinline__ void adj_reflect_frame(
     const bool flip = utd::f3_dot(incident, n_unit) > 0.0f;
     const utd::float3a oriented = flip ? utd::f3_neg(n_unit) : n_unit;
     const float dot_in = utd::f3_dot(incident, oriented);
-    const utd::float3a reflect_raw = utd::f3_sub(
-        incident, utd::f3_mul(oriented, 2.0f * dot_in));
-    const utd::float3a reflected = utd::safe_normalize(
-        reflect_raw, utd::f3_neg(incident));
+    const utd::float3a reflect_raw = utd::f3_sub(incident, utd::f3_mul(oriented, 2.0f * dot_in));
+    const utd::float3a reflected = utd::safe_normalize(reflect_raw, utd::f3_neg(incident));
     const utd::float3a s_raw = utd::f3_cross(oriented, incident);
     const utd::float3a s_alt = utd::stable_perp_basis(incident, oriented);
     const utd::float3a s_axis = utd::safe_normalize(s_raw, s_alt);
@@ -995,21 +831,16 @@ __device__ __forceinline__ void adj_reflect_frame(
     {
         utd::float3a g_raw = utd::f3_zero();
         utd::float3a g_alt = utd::f3_zero();
-        utd::adj_safe_normalize(
-            p_out_raw, utd::stable_perp_basis(reflected, s_axis), g_p_out,
-            g_raw, g_alt);
+        utd::adj_safe_normalize(p_out_raw, utd::stable_perp_basis(reflected, s_axis), g_p_out, g_raw, g_alt);
         g_s_total = utd::f3_add(g_s_total, utd::f3_cross(reflected, g_raw));
-        g_reflected_total = utd::f3_add(
-            g_reflected_total, utd::f3_cross(g_raw, s_axis));
+        g_reflected_total = utd::f3_add(g_reflected_total, utd::f3_cross(g_raw, s_axis));
         utd::adj_stable_perp_basis(reflected, s_axis, g_alt, g_reflected_total, g_s_total);
     }
     // p_in = safe_normalize(s x incident, stable_perp_basis(incident, s)).
     {
         utd::float3a g_raw = utd::f3_zero();
         utd::float3a g_alt = utd::f3_zero();
-        utd::adj_safe_normalize(
-            p_in_raw, utd::stable_perp_basis(incident, s_axis), g_p_in,
-            g_raw, g_alt);
+        utd::adj_safe_normalize(p_in_raw, utd::stable_perp_basis(incident, s_axis), g_p_in, g_raw, g_alt);
         g_s_total = utd::f3_add(g_s_total, utd::f3_cross(incident, g_raw));
         g_incident = utd::f3_add(g_incident, utd::f3_cross(g_raw, s_axis));
         utd::adj_stable_perp_basis(incident, s_axis, g_alt, g_incident, g_s_total);
@@ -1029,9 +860,7 @@ __device__ __forceinline__ void adj_reflect_frame(
     {
         utd::float3a g_raw = utd::f3_zero();
         utd::float3a g_neg_incident = utd::f3_zero();
-        utd::adj_safe_normalize(
-            reflect_raw, utd::f3_neg(incident), g_reflected_total,
-            g_raw, g_neg_incident);
+        utd::adj_safe_normalize(reflect_raw, utd::f3_neg(incident), g_reflected_total, g_raw, g_neg_incident);
         g_incident = utd::f3_sub(g_incident, g_neg_incident);
         g_incident = utd::f3_add(g_incident, g_raw);
         g_oriented = utd::f3_sub(g_oriented, utd::f3_mul(g_raw, 2.0f * dot_in));
@@ -1050,8 +879,7 @@ __device__ __forceinline__ void adj_reflect_frame(
     // n_unit = safe_normalize(normal, e_z); incident = safe_normalize(arg, e_z).
     utd::float3a g_dump = utd::f3_zero();
     utd::adj_safe_normalize(normal, e_z, g_n_unit, g_normal, g_dump);
-    utd::adj_safe_normalize(
-        incident_direction, e_z, g_incident, g_incident_direction, g_dump);
+    utd::adj_safe_normalize(incident_direction, e_z, g_incident, g_incident_direction, g_dump);
 }
 
 // ---------------------------------------------------------------------------
@@ -1064,9 +892,7 @@ struct DualWallFrame {
     DualF cos_theta;
 };
 
-__device__ __forceinline__ DualWallFrame dual_wall_frame(
-    DualF3 direction,
-    DualF3 raw_normal) {
+__device__ __forceinline__ DualWallFrame dual_wall_frame(DualF3 direction, DualF3 raw_normal) {
     const DualF3 e_z = df3_const(utd::make_f3(0.0f, 0.0f, 1.0f));
     DualF3 normal = dual_safe_normalize(raw_normal, e_z);
     if (utd::f3_dot(direction.v, normal.v) > 0.0f)
@@ -1076,27 +902,19 @@ __device__ __forceinline__ DualWallFrame dual_wall_frame(
     const float ct_abs = fabsf(dot.v);
     const float d_ct_abs = d_fabsf(dot.v, dot.d);
     frame.cos_theta.v = fminf(fmaxf(ct_abs, utd::UTD_SMALL_EPS), 1.0f);
-    frame.cos_theta.d =
-        (ct_abs >= utd::UTD_SMALL_EPS && ct_abs <= 1.0f) ? d_ct_abs : 0.0f;
+    frame.cos_theta.d = (ct_abs >= utd::UTD_SMALL_EPS && ct_abs <= 1.0f) ? d_ct_abs : 0.0f;
     const DualF3 s_raw = df3_cross(normal, direction);
-    frame.s_axis = dual_safe_normalize(
-        s_raw, dual_stable_perp_basis(direction, normal));
-    frame.p_axis = dual_safe_normalize(
-        df3_cross(frame.s_axis, direction),
-        dual_stable_perp_basis(direction, frame.s_axis));
+    frame.s_axis = dual_safe_normalize(s_raw, dual_stable_perp_basis(direction, normal));
+    frame.p_axis =
+        dual_safe_normalize(df3_cross(frame.s_axis, direction), dual_stable_perp_basis(direction, frame.s_axis));
     return frame;
 }
 
 // Reverse-mode adjoint of transport::wall_frame into the ray direction and
 // the raw wall normal.
-__device__ __forceinline__ void adj_wall_frame(
-    utd::float3a direction,
-    utd::float3a raw_normal,
-    utd::float3a g_s_axis,
-    utd::float3a g_p_axis,
-    float g_cos_theta,
-    utd::float3a& g_direction,
-    utd::float3a& g_raw_normal) {
+__device__ __forceinline__ void adj_wall_frame(utd::float3a direction, utd::float3a raw_normal, utd::float3a g_s_axis,
+                                               utd::float3a g_p_axis, float g_cos_theta, utd::float3a& g_direction,
+                                               utd::float3a& g_raw_normal) {
     const utd::float3a e_z = utd::make_f3(0.0f, 0.0f, 1.0f);
     // Primal replay (mirrors transport::wall_frame).
     const utd::float3a n_unit = utd::safe_normalize(raw_normal, e_z);
@@ -1116,9 +934,7 @@ __device__ __forceinline__ void adj_wall_frame(
     {
         utd::float3a g_raw = utd::f3_zero();
         utd::float3a g_alt = utd::f3_zero();
-        utd::adj_safe_normalize(
-            p_raw, utd::stable_perp_basis(direction, s_axis), g_p_axis,
-            g_raw, g_alt);
+        utd::adj_safe_normalize(p_raw, utd::stable_perp_basis(direction, s_axis), g_p_axis, g_raw, g_alt);
         g_s_total = utd::f3_add(g_s_total, utd::f3_cross(direction, g_raw));
         g_direction = utd::f3_add(g_direction, utd::f3_cross(g_raw, s_axis));
         utd::adj_stable_perp_basis(direction, s_axis, g_alt, g_direction, g_s_total);
@@ -1185,17 +1001,13 @@ __device__ __forceinline__ DualLC dlc_sub(DualLC a, DualLC b) {
 }
 
 __device__ __forceinline__ DualLC dlc_mul(DualLC a, DualLC b) {
-    return {
-        transport::legacy_mul(a.v, b.v),
-        transport::legacy_add(
-            transport::legacy_mul(a.d, b.v), transport::legacy_mul(a.v, b.d))};
+    return {transport::legacy_mul(a.v, b.v),
+            transport::legacy_add(transport::legacy_mul(a.d, b.v), transport::legacy_mul(a.v, b.d))};
 }
 
 __device__ __forceinline__ DualLC dlc_scale_dual(DualLC a, DualF s) {
-    return {
-        transport::legacy_scale(a.v, s.v),
-        transport::legacy_add(
-            transport::legacy_scale(a.d, s.v), transport::legacy_scale(a.v, s.d))};
+    return {transport::legacy_scale(a.v, s.v),
+            transport::legacy_add(transport::legacy_scale(a.d, s.v), transport::legacy_scale(a.v, s.d))};
 }
 
 // Dual of legacy_div (denominator floored at 1e-30; the floored branch keeps
@@ -1205,14 +1017,10 @@ __device__ __forceinline__ DualLC dlc_div(DualLC a, DualLC b) {
     const float denom = fmaxf(mag2, 1.0e-30f);
     DualLC out;
     out.v = transport::legacy_div(a.v, b.v);
-    const float d_denom =
-        mag2 > 1.0e-30f ? 2.0f * (b.v.re * b.d.re + b.v.im * b.d.im) : 0.0f;
-    const transport::LegacySlabComplex d_num = transport::legacy_add(
-        transport::legacy_mul(a.d, {b.v.re, -b.v.im}),
-        transport::legacy_mul(a.v, {b.d.re, -b.d.im}));
-    out.d = {
-        (d_num.re - out.v.re * d_denom) / denom,
-        (d_num.im - out.v.im * d_denom) / denom};
+    const float d_denom = mag2 > 1.0e-30f ? 2.0f * (b.v.re * b.d.re + b.v.im * b.d.im) : 0.0f;
+    const transport::LegacySlabComplex d_num = transport::legacy_add(transport::legacy_mul(a.d, {b.v.re, -b.v.im}),
+                                                                     transport::legacy_mul(a.v, {b.d.re, -b.d.im}));
+    out.d = {(d_num.re - out.v.re * d_denom) / denom, (d_num.im - out.v.im * d_denom) / denom};
     return out;
 }
 
@@ -1229,9 +1037,8 @@ __device__ __forceinline__ DualLC dlc_sqrt(DualLC a) {
     }
     const float two_w_mag2 = 4.0f * w_mag2;
     // dz / (2 w) = dz * conj(2 w) / |2 w|^2, written on real pairs.
-    out.d = {
-        (a.d.re * 2.0f * out.v.re + a.d.im * 2.0f * out.v.im) / two_w_mag2,
-        (a.d.im * 2.0f * out.v.re - a.d.re * 2.0f * out.v.im) / two_w_mag2};
+    out.d = {(a.d.re * 2.0f * out.v.re + a.d.im * 2.0f * out.v.im) / two_w_mag2,
+             (a.d.im * 2.0f * out.v.re - a.d.re * 2.0f * out.v.im) / two_w_mag2};
     return out;
 }
 
@@ -1245,78 +1052,53 @@ __device__ __forceinline__ DualLC dlc_exp_neg_2i(DualLC q) {
     sincosf(2.0f * q.v.re, &sine, &cosine);
     DualLC out;
     out.v = {amplitude * cosine, -amplitude * sine};
-    const float d_amplitude =
-        exponent < 80.0f ? amplitude * 2.0f * q.d.im : 0.0f;
+    const float d_amplitude = exponent < 80.0f ? amplitude * 2.0f * q.d.im : 0.0f;
     const float d_theta = 2.0f * q.d.re;
-    out.d = {
-        d_amplitude * cosine - amplitude * sine * d_theta,
-        -(d_amplitude * sine + amplitude * cosine * d_theta)};
+    out.d = {d_amplitude * cosine - amplitude * sine * d_theta, -(d_amplitude * sine + amplitude * cosine * d_theta)};
     return out;
 }
 
 // Tangent seeds: d_eps / d_sigma / d_gain / d_thickness / d_wavelength.
 // Outputs are utd-complex duals so the callers can reuse adj_dot.
-__device__ __forceinline__ void legacy_slab_fresnel_dual(
-    float cos_theta,
-    float eps_r,
-    float sigma_e,
-    float gain,
-    float thickness,
-    float wavelength,
-    float d_eps,
-    float d_sigma,
-    float d_gain,
-    float d_thickness,
-    float d_wavelength,
-    DualC& r_te,
-    DualC& r_tm) {
+__device__ __forceinline__ void legacy_slab_fresnel_dual(float cos_theta, float eps_r, float sigma_e, float gain,
+                                                         float thickness, float wavelength, float d_eps, float d_sigma,
+                                                         float d_gain, float d_thickness, float d_wavelength,
+                                                         DualC& r_te, DualC& r_tm) {
     const float wavelength_clamped = fmaxf(wavelength, utd::UTD_SMALL_EPS);
-    const float d_wavelength_clamped =
-        wavelength > utd::UTD_SMALL_EPS ? d_wavelength : 0.0f;
-    const float omega = 2.0f * utd::UTD_PI * transport::kSpeedOfLight /
-                        wavelength_clamped;
+    const float d_wavelength_clamped = wavelength > utd::UTD_SMALL_EPS ? d_wavelength : 0.0f;
+    const float omega = 2.0f * utd::UTD_PI * transport::kSpeedOfLight / wavelength_clamped;
     const float d_omega = -omega * d_wavelength_clamped / wavelength_clamped;
     const float eps_clamped = fmaxf(eps_r, utd::UTD_SMALL_EPS);
     const float d_eps_clamped = eps_r > utd::UTD_SMALL_EPS ? d_eps : 0.0f;
     const float sigma_clamped = fmaxf(sigma_e, 0.0f);
     const float d_sigma_clamped = sigma_e >= 0.0f ? d_sigma : 0.0f;
     const float eta_im = -sigma_clamped / (omega * utd::UTD_EPSILON_0);
-    const float d_eta_im =
-        (-d_sigma_clamped / omega + sigma_clamped * d_omega / (omega * omega)) /
-        utd::UTD_EPSILON_0;
+    const float d_eta_im = (-d_sigma_clamped / omega + sigma_clamped * d_omega / (omega * omega)) / utd::UTD_EPSILON_0;
     const DualLC eta = dlc_make(eps_clamped, eta_im, d_eps_clamped, d_eta_im);
     const float ct = fminf(fmaxf(fabsf(cos_theta), utd::UTD_SMALL_EPS), 1.0f);
     const float sin2 = fmaxf(0.0f, 1.0f - ct * ct);
     const DualLC root = dlc_sqrt(dlc_sub(eta, dlc_const(sin2, 0.0f)));
     const DualLC ct_complex = dlc_const(ct, 0.0f);
     const DualLC eta_ct = dlc_scale_dual(eta, {ct, 0.0f});
-    const DualLC interface_te = dlc_div(
-        dlc_sub(ct_complex, root), dlc_add(ct_complex, root));
-    const DualLC interface_tm = dlc_div(
-        dlc_sub(eta_ct, root), dlc_add(eta_ct, root));
+    const DualLC interface_te = dlc_div(dlc_sub(ct_complex, root), dlc_add(ct_complex, root));
+    const DualLC interface_tm = dlc_div(dlc_sub(eta_ct, root), dlc_add(eta_ct, root));
     const float thickness_clamped = fmaxf(thickness, 0.0f);
     const float d_thickness_clamped = thickness >= 0.0f ? d_thickness : 0.0f;
-    const float q_scale = 2.0f * utd::UTD_PI * thickness_clamped /
-                          wavelength_clamped;
+    const float q_scale = 2.0f * utd::UTD_PI * thickness_clamped / wavelength_clamped;
     const float d_q_scale = 2.0f * utd::UTD_PI *
-                            (d_thickness_clamped * wavelength_clamped -
-                             thickness_clamped * d_wavelength_clamped) /
+                            (d_thickness_clamped * wavelength_clamped - thickness_clamped * d_wavelength_clamped) /
                             (wavelength_clamped * wavelength_clamped);
     const DualLC q = dlc_scale_dual(root, {q_scale, d_q_scale});
     const DualLC phase = dlc_exp_neg_2i(q);
     const DualLC one = dlc_const(1.0f, 0.0f);
     const DualLC numerator = dlc_sub(one, phase);
     const DualF gain_dual = {gain, d_gain};
-    const DualLC result_te = dlc_scale_dual(
-        dlc_div(
-            dlc_mul(interface_te, numerator),
-            dlc_sub(one, dlc_mul(dlc_mul(interface_te, interface_te), phase))),
-        gain_dual);
-    const DualLC result_tm = dlc_scale_dual(
-        dlc_div(
-            dlc_mul(interface_tm, numerator),
-            dlc_sub(one, dlc_mul(dlc_mul(interface_tm, interface_tm), phase))),
-        gain_dual);
+    const DualLC result_te = dlc_scale_dual(dlc_div(dlc_mul(interface_te, numerator),
+                                                    dlc_sub(one, dlc_mul(dlc_mul(interface_te, interface_te), phase))),
+                                            gain_dual);
+    const DualLC result_tm = dlc_scale_dual(dlc_div(dlc_mul(interface_tm, numerator),
+                                                    dlc_sub(one, dlc_mul(dlc_mul(interface_tm, interface_tm), phase))),
+                                            gain_dual);
     r_te = dc_make(result_te.v.re, result_te.v.im, result_te.d.re, result_te.d.im);
     r_tm = dc_make(result_tm.v.re, result_tm.v.im, result_tm.d.re, result_tm.d.im);
 }
@@ -1335,49 +1117,32 @@ __device__ __forceinline__ utd::ComplexT<utd::Dual> dual_cplx_from(DualC value) 
 
 // Scalar/vector seeding that collapses to the plain value for the float
 // (forward) instantiation and carries the tangent for the Dual one.
-template <typename T>
-__device__ __forceinline__ T seeded(float value, float tangent);
-template <>
-__device__ __forceinline__ float seeded<float>(float value, float) {
+template <typename T> __device__ __forceinline__ T seeded(float value, float tangent);
+template <> __device__ __forceinline__ float seeded<float>(float value, float) {
     return value;
 }
-template <>
-__device__ __forceinline__ utd::Dual seeded<utd::Dual>(float value, float tangent) {
+template <> __device__ __forceinline__ utd::Dual seeded<utd::Dual>(float value, float tangent) {
     return {value, tangent};
 }
 
-template <typename T>
-__device__ __forceinline__ utd::Vec3T<T> seeded3(
-    utd::float3a value, utd::float3a tangent) {
-    return {
-        seeded<T>(value.x, tangent.x),
-        seeded<T>(value.y, tangent.y),
-        seeded<T>(value.z, tangent.z)};
+template <typename T> __device__ __forceinline__ utd::Vec3T<T> seeded3(utd::float3a value, utd::float3a tangent) {
+    return {seeded<T>(value.x, tangent.x), seeded<T>(value.y, tangent.y), seeded<T>(value.z, tangent.z)};
 }
 
-template <typename T>
-__device__ __forceinline__ utd::Vec3T<T> const3(utd::float3a value) {
+template <typename T> __device__ __forceinline__ utd::Vec3T<T> const3(utd::float3a value) {
     return {T(value.x), T(value.y), T(value.z)};
 }
 
 // Slab Fresnel with RayD dual scalars: forwards to the validated AD-1
 // slab_fresnel_dual (single source of truth for the finite-slab response).
-__device__ __forceinline__ void slab_fresnel_dual_rd(
-    utd::Dual cos_theta,
-    utd::Dual eps_r,
-    utd::Dual sigma_e,
-    float mu_r,
-    utd::Dual gain,
-    utd::Dual thickness,
-    utd::Dual frequency,
-    utd::ComplexT<utd::Dual>& r_te,
-    utd::ComplexT<utd::Dual>& r_tm) {
+__device__ __forceinline__ void slab_fresnel_dual_rd(utd::Dual cos_theta, utd::Dual eps_r, utd::Dual sigma_e,
+                                                     float mu_r, utd::Dual gain, utd::Dual thickness,
+                                                     utd::Dual frequency, utd::ComplexT<utd::Dual>& r_te,
+                                                     utd::ComplexT<utd::Dual>& r_tm) {
     DualC te;
     DualC tm;
-    slab_fresnel_dual(
-        cos_theta.v, eps_r.v, sigma_e.v, mu_r, gain.v, thickness.v, frequency.v,
-        cos_theta.d, eps_r.d, sigma_e.d, gain.d, thickness.d, frequency.d,
-        te, tm);
+    slab_fresnel_dual(cos_theta.v, eps_r.v, sigma_e.v, mu_r, gain.v, thickness.v, frequency.v, cos_theta.d, eps_r.d,
+                      sigma_e.d, gain.d, thickness.d, frequency.d, te, tm);
     r_te = dual_cplx_from(te);
     r_tm = dual_cplx_from(tm);
 }
@@ -1386,23 +1151,13 @@ __device__ __forceinline__ void slab_fresnel_dual_rd(
 // RayD templates, Fresnel from slab_fresnel_dual). Edit the primal operator
 // and this mirror TOGETHER.
 __device__ __forceinline__ utd::JonesOperatorT<utd::Dual> slab_face_operator_dual(
-    utd::Dual cos_theta,
-    utd::Dual eps_r,
-    utd::Dual sigma_e,
-    float mu_r,
-    utd::Dual gain,
-    utd::Dual thickness,
-    utd::Dual frequency,
-    utd::Vec3T<utd::Dual> normal,
-    utd::Vec3T<utd::Dual> in_direction,
-    utd::Vec3T<utd::Dual> out_direction,
-    utd::Basis3T<utd::Dual> in_edge,
-    utd::Basis3T<utd::Dual> out_edge) {
+    utd::Dual cos_theta, utd::Dual eps_r, utd::Dual sigma_e, float mu_r, utd::Dual gain, utd::Dual thickness,
+    utd::Dual frequency, utd::Vec3T<utd::Dual> normal, utd::Vec3T<utd::Dual> in_direction,
+    utd::Vec3T<utd::Dual> out_direction, utd::Basis3T<utd::Dual> in_edge, utd::Basis3T<utd::Dual> out_edge) {
     using Dual = utd::Dual;
     utd::ComplexT<Dual> r_te;
     utd::ComplexT<Dual> r_tm;
-    slab_fresnel_dual_rd(
-        cos_theta, eps_r, sigma_e, mu_r, gain, thickness, frequency, r_te, r_tm);
+    slab_fresnel_dual_rd(cos_theta, eps_r, sigma_e, mu_r, gain, thickness, frequency, r_te, r_tm);
     const utd::JonesOperatorT<Dual> diagonal = {
         r_te,
         utd::cplx_zero<Dual>(),
@@ -1412,15 +1167,11 @@ __device__ __forceinline__ utd::JonesOperatorT<utd::Dual> slab_face_operator_dua
     const utd::Vec3T<Dual> face_in = utd::f3_cross(normal, in_direction);
     const utd::Vec3T<Dual> raw_out = utd::f3_cross(normal, out_direction);
     const utd::Vec3T<Dual> reference = utd::stable_perp_basis(out_direction, face_in);
-    const utd::Vec3T<Dual> face_out = utd::f3_dot(raw_out, reference) < 0.0f
-                                          ? utd::f3_neg(raw_out)
-                                          : raw_out;
-    const utd::Basis3T<Dual> input_basis = utd::basis_from_first_vector(
-        in_direction,
-        face_in,
-        utd::stable_perp_basis(in_direction, utd::v3_const<Dual>(0, 0, 1)));
-    const utd::Basis3T<Dual> output_basis = utd::basis_from_first_vector(
-        out_direction, face_out, reference);
+    const utd::Vec3T<Dual> face_out = utd::f3_dot(raw_out, reference) < 0.0f ? utd::f3_neg(raw_out) : raw_out;
+    const utd::Basis3T<Dual> input_basis =
+        utd::basis_from_first_vector(in_direction, face_in,
+                                     utd::stable_perp_basis(in_direction, utd::v3_const<Dual>(0, 0, 1)));
+    const utd::Basis3T<Dual> output_basis = utd::basis_from_first_vector(out_direction, face_out, reference);
     return utd::jop_in_basis(diagonal, input_basis, output_basis, in_edge, out_edge);
 }
 
@@ -1428,35 +1179,23 @@ __device__ __forceinline__ utd::JonesOperatorT<utd::Dual> slab_face_operator_dua
 // cotangents (field_vector, coefficient, path_field, path_gain). The scalar
 // chain is coefficient = <value, rx_axis>, path_field = coefficient * a,
 // path_gain = |path_field|^2 with a = sqrt(max(tx_power, 0)).
-__device__ __forceinline__ utd::Complex3 fold_output_cotangents(
-    const c10::complex<float>* grad_field_vector,
-    const c10::complex<float>* grad_coefficient,
-    const c10::complex<float>* grad_path_field,
-    const float* grad_path_gain,
-    int64_t index,
-    utd::float3a rx_axis,
-    utd::Complex path_field_value,
-    float amplitude_scale,
-    utd::Complex& g_scalar_out) {
+__device__ __forceinline__ utd::Complex3 fold_output_cotangents(const c10::complex<float>* grad_field_vector,
+                                                                const c10::complex<float>* grad_coefficient,
+                                                                const c10::complex<float>* grad_path_field,
+                                                                const float* grad_path_gain, int64_t index,
+                                                                utd::float3a rx_axis, utd::Complex path_field_value,
+                                                                float amplitude_scale, utd::Complex& g_scalar_out) {
     utd::Complex g_scalar = utd::cplx_zero();
     if (grad_coefficient != nullptr)
-        g_scalar = utd::cplx_add(
-            g_scalar,
-            utd::cplx(
-                grad_coefficient[index].real(), grad_coefficient[index].imag()));
+        g_scalar = utd::cplx_add(g_scalar, utd::cplx(grad_coefficient[index].real(), grad_coefficient[index].imag()));
     if (grad_path_field != nullptr)
-        g_scalar = utd::cplx_add(
-            g_scalar,
-            utd::cplx_mul_real(
-                utd::cplx(
-                    grad_path_field[index].real(), grad_path_field[index].imag()),
-                amplitude_scale));
+        g_scalar =
+            utd::cplx_add(g_scalar,
+                          utd::cplx_mul_real(utd::cplx(grad_path_field[index].real(), grad_path_field[index].imag()),
+                                             amplitude_scale));
     if (grad_path_gain != nullptr) {
         const float g_gain = grad_path_gain[index];
-        g_scalar = utd::cplx_add(
-            g_scalar,
-            utd::cplx_mul_real(
-                path_field_value, 2.0f * g_gain * amplitude_scale));
+        g_scalar = utd::cplx_add(g_scalar, utd::cplx_mul_real(path_field_value, 2.0f * g_gain * amplitude_scale));
     }
     g_scalar_out = g_scalar;
     utd::Complex3 g_value = utd::c3_zero();
@@ -1478,38 +1217,23 @@ __device__ __forceinline__ utd::Complex3 fold_output_cotangents(
 // Forward-mode dual of the shared scalar output chain. Writes the six
 // differentiable output tangents; d_rx_axis and d_length carry geometry.
 __device__ __forceinline__ void write_output_tangents(
-    int64_t index,
-    utd::Complex3 value,
-    utd::Complex3 d_value,
-    utd::float3a rx_axis,
-    utd::float3a d_rx_axis,
-    float amplitude_scale,
-    float d_length,
-    c10::complex<float>* t_field_vector,
-    c10::complex<float>* t_coefficient,
-    c10::complex<float>* t_path_field,
-    float* t_path_gain,
-    float* t_path_length,
-    float* t_delay) {
+    int64_t index, utd::Complex3 value, utd::Complex3 d_value, utd::float3a rx_axis, utd::float3a d_rx_axis,
+    float amplitude_scale, float d_length, c10::complex<float>* t_field_vector, c10::complex<float>* t_coefficient,
+    c10::complex<float>* t_path_field, float* t_path_gain, float* t_path_length, float* t_delay) {
     const int64_t base = index * 3;
     t_field_vector[base] = c10::complex<float>(d_value.x.re, d_value.x.im);
     t_field_vector[base + 1] = c10::complex<float>(d_value.y.re, d_value.y.im);
     t_field_vector[base + 2] = c10::complex<float>(d_value.z.re, d_value.z.im);
     const utd::Complex scalar = transport::complex3_dot_real(value, rx_axis);
-    const utd::Complex d_scalar = utd::cplx_add(
-        transport::complex3_dot_real(d_value, rx_axis),
-        transport::complex3_dot_real(value, d_rx_axis));
+    const utd::Complex d_scalar =
+        utd::cplx_add(transport::complex3_dot_real(d_value, rx_axis), transport::complex3_dot_real(value, d_rx_axis));
     t_coefficient[index] = c10::complex<float>(d_scalar.re, d_scalar.im);
-    const utd::Complex path_field =
-        utd::cplx_mul_real(scalar, amplitude_scale);
-    const utd::Complex d_path_field =
-        utd::cplx_mul_real(d_scalar, amplitude_scale);
-    t_path_field[index] =
-        c10::complex<float>(d_path_field.re, d_path_field.im);
-    t_path_gain[index] = 2.0f *
-        (path_field.re * d_path_field.re + path_field.im * d_path_field.im);
+    const utd::Complex path_field = utd::cplx_mul_real(scalar, amplitude_scale);
+    const utd::Complex d_path_field = utd::cplx_mul_real(d_scalar, amplitude_scale);
+    t_path_field[index] = c10::complex<float>(d_path_field.re, d_path_field.im);
+    t_path_gain[index] = 2.0f * (path_field.re * d_path_field.re + path_field.im * d_path_field.im);
     t_path_length[index] = d_length;
     t_delay[index] = d_length / transport::kSpeedOfLight;
 }
 
-}  // namespace rayd::torch::field_transport_ad
+} // namespace rayd::torch::field_transport_ad

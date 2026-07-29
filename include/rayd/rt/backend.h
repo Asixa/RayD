@@ -15,20 +15,11 @@ namespace rayd::shared::rt {
 // Which triangle traversal backend a scene resolves to. `Auto` is a request that
 // is resolved at construction to a concrete kind; `None` means no triangle trace
 // backend was built (edge-only scenes, or a machine without the OptiX driver).
-enum class TraceBackendKind : std::uint8_t {
-    Auto,
-    Optix,
-    Cuda,
-    Embree,
-    None
-};
+enum class TraceBackendKind : std::uint8_t { Auto, Optix, Cuda, Embree, None };
 
 // The integration axis (§4.2): whether a backend folds into a Dr.Jit symbolic
 // megakernel or runs as an eager native batch dispatch.
-enum class IntegrationMode : std::uint8_t {
-    JitSymbolic,
-    EagerNative
-};
+enum class IntegrationMode : std::uint8_t { JitSymbolic, EagerNative };
 
 // Static capability report for a trace backend. All flags default to false so a
 // backend only advertises what it actually supports.
@@ -40,8 +31,8 @@ struct TraceCapabilities {
     bool instancing = false;
     bool refit = false;
     bool compaction = false;
-    bool device_callable = false;  ///< Traverser can inline the trace on-device.
-    bool jit_symbolic = false;     ///< Can fold into a Dr.Jit megakernel (axis two).
+    bool device_callable = false; ///< Traverser can inline the trace on-device.
+    bool jit_symbolic = false;    ///< Can fold into a Dr.Jit megakernel (axis two).
     bool fused_multipath = false;
     bool cpu = false;
 };

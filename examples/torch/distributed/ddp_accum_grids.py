@@ -46,15 +46,7 @@ LANE_ALIGNMENT = 32
 
 # The grids that make up the accumulation result. Reduced field by field so the
 # script says exactly what crosses the interconnect.
-FLOAT_GRIDS = (
-    "power",
-    "field_x_re",
-    "field_x_im",
-    "field_y_re",
-    "field_y_im",
-    "field_z_re",
-    "field_z_im",
-)
+FLOAT_GRIDS = ("power", "field_x_re", "field_x_im", "field_y_re", "field_y_im", "field_z_re", "field_z_im")
 COUNT_GRIDS = (
     "direct_count",
     "keller_count",
@@ -72,20 +64,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--samples",
         type=int,
         default=1 << 20,
-        help="global Monte-Carlo sample count, rounded up to a whole number of "
-        "warps per rank",
+        help="global Monte-Carlo sample count, rounded up to a whole number of warps per rank",
     )
     parser.add_argument("--resolution", type=int, default=8, help="grid resolution")
     parser.add_argument("--seed", type=int, default=7, help="Monte-Carlo seed")
-    parser.add_argument(
-        "--out", type=str, default=None, help="rank 0 writes the merged grids here"
-    )
+    parser.add_argument("--out", type=str, default=None, help="rank 0 writes the merged grids here")
     parser.add_argument(
         "--timeout",
         type=float,
         default=600.0,
-        help="collective timeout in seconds; a dead peer fails the run instead "
-        "of hanging it",
+        help="collective timeout in seconds; a dead peer fails the run instead of hanging it",
     )
     return parser.parse_args(argv)
 
@@ -121,11 +109,7 @@ def build_fixture(device: torch.device, resolution: int):
     """
     import rayd.torch as rt
 
-    vertices = torch.tensor(
-        [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
-        device=device,
-        dtype=torch.float32,
-    )
+    vertices = torch.tensor([[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]], device=device, dtype=torch.float32)
     faces = torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32)
     scene = rt.Scene()
     scene.add_mesh(rt.Mesh(vertices, faces))
@@ -158,9 +142,7 @@ def build_fixture(device: torch.device, resolution: int):
         gain=torch.ones((1,), device=device, dtype=torch.float32),
         valid=torch.ones((1,), device=device, dtype=torch.bool),
     )
-    grid = rt.DfrGrid(
-        axis=2, position=0.0, resolution0=resolution, resolution1=resolution
-    )
+    grid = rt.DfrGrid(axis=2, position=0.0, resolution0=resolution, resolution1=resolution)
     return scene, states, material, grid
 
 
@@ -205,29 +187,14 @@ def run(args: argparse.Namespace, rank: int, world_size: int, device) -> None:
     total = resolve_total_samples(args.samples, world_size)
     begin, count = lane_window(total, rank, world_size)
     scene, states, material, grid = build_fixture(device, args.resolution)
-    print(
-        f"rank={rank} device={device} total_samples={total} "
-        f"lane_offset={begin} lane_count={count}",
-        flush=True,
-    )
+    print(f"rank={rank} device={device} total_samples={total} lane_offset={begin} lane_count={count}", flush=True)
 
-    accum = accumulate(
-        scene,
-        states,
-        material,
-        grid,
-        total=total,
-        seed=args.seed,
-        begin=begin,
-        count=count,
-    )
+    accum = accumulate(scene, states, material, grid, total=total, seed=args.seed, begin=begin, count=count)
     local = float(accum.power.double().sum())
     grids = merged_grids(accum)
 
     print(
-        f"rank={rank} local_power_sum={local!r} "
-        f"merged_power_sum={float(grids['power'].double().sum())!r}",
-        flush=True,
+        f"rank={rank} local_power_sum={local!r} merged_power_sum={float(grids['power'].double().sum())!r}", flush=True
     )
     print(f"rank={rank} merged_direct_count={int(grids['direct_count'].sum())}", flush=True)
     print(f"rank={rank} merged_grid_checksum={checksum(grids)!r}", flush=True)
@@ -268,11 +235,7 @@ def main(argv: list[str] | None = None) -> int:
 
     torch.cuda.set_device(local_rank)
     device = torch.device("cuda", local_rank)
-    dist.init_process_group(
-        backend="nccl",
-        timeout=datetime.timedelta(seconds=args.timeout),
-        device_id=device,
-    )
+    dist.init_process_group(backend="nccl", timeout=datetime.timedelta(seconds=args.timeout), device_id=device)
     try:
         run(args, rank, world_size, device)
         dist.barrier()

@@ -14,36 +14,35 @@ namespace rayd::torch_backend {
 
 namespace {
 
-const bool *optional_bool_ptr(const at::Tensor &active) {
+const bool* optional_bool_ptr(const at::Tensor& active) {
     if (!active.defined() || active.numel() == 0)
         return nullptr;
     return active.data_ptr<bool>();
 }
 
-void zero_float_tensor_async(const at::Tensor &tensor, cudaStream_t stream) {
+void zero_float_tensor_async(const at::Tensor& tensor, cudaStream_t stream) {
     if (tensor.defined() && tensor.numel() > 0) {
         cudaMemsetAsync(tensor.data_ptr<float>(), 0, static_cast<size_t>(tensor.numel()) * sizeof(float), stream);
     }
 }
 
-int64_t optional_stride(const at::Tensor *tensor, int64_t dim) {
+int64_t optional_stride(const at::Tensor* tensor, int64_t dim) {
     if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0 || tensor->dim() <= dim)
         return 0;
     return tensor->stride(dim);
 }
 
-__device__ float read_scalar_or_zero(const float *base, int64_t index, int64_t stride0) {
+__device__ float read_scalar_or_zero(const float* base, int64_t index, int64_t stride0) {
     return base == nullptr ? 0.f : base[index * stride0];
 }
 
-__device__ float3 read_vec3_or_zero(const float *base, int64_t index, int64_t stride0, int64_t stride1) {
+__device__ float3 read_vec3_or_zero(const float* base, int64_t index, int64_t stride0, int64_t stride1) {
     return base == nullptr ? make_float3(0.f, 0.f, 0.f)
-                           : make_float3(base[index * stride0 + 0 * stride1],
-                                         base[index * stride0 + 1 * stride1],
+                           : make_float3(base[index * stride0 + 0 * stride1], base[index * stride0 + 1 * stride1],
                                          base[index * stride0 + 2 * stride1]);
 }
 
-__device__ void write_vec3_or_skip(float *base, int64_t index, float3 value) {
+__device__ void write_vec3_or_skip(float* base, int64_t index, float3 value) {
     if (base == nullptr)
         return;
     base[index * 3 + 0] = value.x;
@@ -60,10 +59,7 @@ __device__ float3 solve_columns(float3 c0, float3 c1, float3 c2, float3 rhs) {
     if (fabsf(determinant) < 1e-12f)
         determinant = copysignf(1e-12f, determinant == 0.f ? 1.f : determinant);
     const float inv_det = 1.f / determinant;
-    return make_float3(
-        det3(rhs, c1, c2) * inv_det,
-        det3(c0, rhs, c2) * inv_det,
-        det3(c0, c1, rhs) * inv_det);
+    return make_float3(det3(rhs, c1, c2) * inv_det, det3(c0, rhs, c2) * inv_det, det3(c0, c1, rhs) * inv_det);
 }
 
 __device__ float3 solve_transpose_columns(float3 c0, float3 c1, float3 c2, float3 rhs) {
@@ -73,7 +69,7 @@ __device__ float3 solve_transpose_columns(float3 c0, float3 c1, float3 c2, float
     return solve_columns(r0, r1, r2, rhs);
 }
 
-__device__ float3 bary3_from_tape(const float *tape_bary, int tape_bary_width, int64_t ray_idx) {
+__device__ float3 bary3_from_tape(const float* tape_bary, int tape_bary_width, int64_t ray_idx) {
     if (tape_bary_width == 2) {
         const float u = tape_bary[ray_idx * 2 + 0];
         const float v = tape_bary[ray_idx * 2 + 1];
@@ -94,45 +90,40 @@ __device__ int64_t state_vec3_index(int64_t bounce, int64_t ray_idx, int64_t ray
     return (bounce * ray_count + ray_idx) * 3;
 }
 
-__device__ float3 read_ray_vec3(const float *base, int64_t ray_idx) {
+__device__ float3 read_ray_vec3(const float* base, int64_t ray_idx) {
     return make_f3(base + ray_idx * 3);
 }
 
-__device__ float3 read_ray_bounce_vec3(const float *base, int64_t ray_idx, int64_t bounce, int64_t max_bounces) {
+__device__ float3 read_ray_bounce_vec3(const float* base, int64_t ray_idx, int64_t bounce, int64_t max_bounces) {
     return make_f3(base + ray_bounce_vec3_index(ray_idx, bounce, max_bounces));
 }
 
-__device__ void write_ray_vec3(float *base, int64_t ray_idx, float3 value) {
+__device__ void write_ray_vec3(float* base, int64_t ray_idx, float3 value) {
     base[ray_idx * 3 + 0] = value.x;
     base[ray_idx * 3 + 1] = value.y;
     base[ray_idx * 3 + 2] = value.z;
 }
 
-__device__ void write_ray_bounce_vec3(float *base, int64_t ray_idx, int64_t bounce, int64_t max_bounces, float3 value) {
+__device__ void write_ray_bounce_vec3(float* base, int64_t ray_idx, int64_t bounce, int64_t max_bounces, float3 value) {
     const int64_t idx = ray_bounce_vec3_index(ray_idx, bounce, max_bounces);
     base[idx + 0] = value.x;
     base[idx + 1] = value.y;
     base[idx + 2] = value.z;
 }
 
-__device__ float3 read_state_vec3(const float *base, int64_t bounce, int64_t ray_idx, int64_t ray_count) {
+__device__ float3 read_state_vec3(const float* base, int64_t bounce, int64_t ray_idx, int64_t ray_count) {
     return make_f3(base + state_vec3_index(bounce, ray_idx, ray_count));
 }
 
-__device__ void write_state_vec3(float *base, int64_t bounce, int64_t ray_idx, int64_t ray_count, float3 value) {
+__device__ void write_state_vec3(float* base, int64_t bounce, int64_t ray_idx, int64_t ray_count, float3 value) {
     const int64_t idx = state_vec3_index(bounce, ray_idx, ray_count);
     base[idx + 0] = value.x;
     base[idx + 1] = value.y;
     base[idx + 2] = value.z;
 }
 
-__device__ float read_grad_t_or_zero(
-    const float *base,
-    int grad_dim,
-    int64_t stride0,
-    int64_t stride1,
-    int64_t ray_idx,
-    int64_t bounce) {
+__device__ float read_grad_t_or_zero(const float* base, int grad_dim, int64_t stride0, int64_t stride1, int64_t ray_idx,
+                                     int64_t bounce) {
     if (base == nullptr)
         return 0.f;
     if (grad_dim <= 1)
@@ -140,20 +131,15 @@ __device__ float read_grad_t_or_zero(
     return base[ray_idx * stride0 + bounce * stride1];
 }
 
-__device__ float3 read_grad_image_or_zero(
-    const float *base,
-    int64_t stride0,
-    int64_t stride1,
-    int64_t stride2,
-    int64_t ray_idx,
-    int64_t bounce) {
+__device__ float3 read_grad_image_or_zero(const float* base, int64_t stride0, int64_t stride1, int64_t stride2,
+                                          int64_t ray_idx, int64_t bounce) {
     return base == nullptr ? make_float3(0.f, 0.f, 0.f)
                            : make_float3(base[ray_idx * stride0 + bounce * stride1 + 0 * stride2],
                                          base[ray_idx * stride0 + bounce * stride1 + 1 * stride2],
                                          base[ray_idx * stride0 + bounce * stride1 + 2 * stride2]);
 }
 
-__device__ float3 normal_from_edges(float3 e1, float3 e2, float *length_out) {
+__device__ float3 normal_from_edges(float3 e1, float3 e2, float* length_out) {
     const float3 q = cross3(e1, e2);
     const float length = sqrtf(fmaxf(dot3(q, q), 1e-20f));
     if (length_out != nullptr)
@@ -168,17 +154,12 @@ __device__ float3 normal_jvp(float3 e1, float3 e2, float3 de1, float3 de2) {
     return mul3(1.f / length, sub3(dq, mul3(dot3(n, dq), n)));
 }
 
-__global__ void reflection_chain_state_kernel(
-    const float *__restrict__ ray_o,
-    const float *__restrict__ ray_d,
-    const float *__restrict__ tape_hit_points,
-    const float *__restrict__ tape_normals,
-    const float *__restrict__ image_sources,
-    int64_t ray_count,
-    int64_t max_bounces,
-    float *__restrict__ origins,
-    float *__restrict__ directions,
-    float *__restrict__ image_states) {
+__global__ void reflection_chain_state_kernel(const float* __restrict__ ray_o, const float* __restrict__ ray_d,
+                                              const float* __restrict__ tape_hit_points,
+                                              const float* __restrict__ tape_normals,
+                                              const float* __restrict__ image_sources, int64_t ray_count,
+                                              int64_t max_bounces, float* __restrict__ origins,
+                                              float* __restrict__ directions, float* __restrict__ image_states) {
     const int ray_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (ray_idx >= ray_count)
         return;
@@ -203,31 +184,14 @@ __global__ void reflection_chain_state_kernel(
 }
 
 __global__ void reflection_chain_backward_kernel(
-    const float *__restrict__ vertices,
-    const int *__restrict__ faces,
-    const bool *__restrict__ active,
-    const int *__restrict__ tape_prim_id,
-    const float *__restrict__ tape_bary,
-    int tape_bary_width,
-    const float *__restrict__ tape_hit_points,
-    const float *__restrict__ tape_normals,
-    const float *__restrict__ origins,
-    const float *__restrict__ directions,
-    const float *__restrict__ image_states,
-    const float *__restrict__ grad_t,
-    int grad_t_dim,
-    int64_t grad_t_stride0,
-    int64_t grad_t_stride1,
-    const float *__restrict__ grad_image_sources,
-    int64_t grad_image_stride0,
-    int64_t grad_image_stride1,
-    int64_t grad_image_stride2,
-    int64_t ray_count,
-    int64_t max_bounces,
-    float *__restrict__ grad_vertices,
-    float *__restrict__ grad_ray_o,
-    float *__restrict__ grad_ray_d,
-    float *__restrict__ grad_ray_tmax) {
+    const float* __restrict__ vertices, const int* __restrict__ faces, const bool* __restrict__ active,
+    const int* __restrict__ tape_prim_id, const float* __restrict__ tape_bary, int tape_bary_width,
+    const float* __restrict__ tape_hit_points, const float* __restrict__ tape_normals,
+    const float* __restrict__ origins, const float* __restrict__ directions, const float* __restrict__ image_states,
+    const float* __restrict__ grad_t, int grad_t_dim, int64_t grad_t_stride0, int64_t grad_t_stride1,
+    const float* __restrict__ grad_image_sources, int64_t grad_image_stride0, int64_t grad_image_stride1,
+    int64_t grad_image_stride2, int64_t ray_count, int64_t max_bounces, float* __restrict__ grad_vertices,
+    float* __restrict__ grad_ray_o, float* __restrict__ grad_ray_d, float* __restrict__ grad_ray_tmax) {
     const int ray_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (ray_idx >= ray_count)
         return;
@@ -257,34 +221,25 @@ __global__ void reflection_chain_backward_kernel(
         const float3 origin = read_state_vec3(origins, bounce, ray_idx, ray_count);
         const float3 image_before = read_state_vec3(image_states, bounce, ray_idx, ray_count);
 
-        const float3 grad_image_out = add3(
-            read_grad_image_or_zero(
-                grad_image_sources,
-                grad_image_stride0,
-                grad_image_stride1,
-                grad_image_stride2,
-                ray_idx,
-                bounce),
-            grad_image_next);
+        const float3 grad_image_out =
+            add3(read_grad_image_or_zero(grad_image_sources, grad_image_stride0, grad_image_stride1, grad_image_stride2,
+                                         ray_idx, bounce),
+                 grad_image_next);
         const float3 image_delta = sub3(image_before, hit);
         const float image_dist = dot3(image_delta, normal);
         const float image_gdotn = dot3(grad_image_out, normal);
         const float3 grad_image_prev = sub3(grad_image_out, mul3(2.f * image_gdotn, normal));
 
         float3 grad_p = mul3(2.f * image_gdotn, normal);
-        float3 grad_signed_n =
-            mul3(-2.f, add3(mul3(image_gdotn, image_delta), mul3(image_dist, grad_image_out)));
+        float3 grad_signed_n = mul3(-2.f, add3(mul3(image_gdotn, image_delta), mul3(image_dist, grad_image_out)));
 
         grad_p = add3(grad_p, grad_origin_next);
-        const float3 grad_reflected =
-            add3(grad_direction_next, mul3(static_cast<float>(kRayBias), grad_origin_next));
+        const float3 grad_reflected = add3(grad_direction_next, mul3(static_cast<float>(kRayBias), grad_origin_next));
         const float dir_dot_n = dot3(direction, normal);
         const float refl_gdotn = dot3(grad_reflected, normal);
-        const float3 grad_direction_current =
-            sub3(grad_reflected, mul3(2.f * refl_gdotn, normal));
-        grad_signed_n = sub3(
-            grad_signed_n,
-            mul3(2.f, add3(mul3(refl_gdotn, direction), mul3(dir_dot_n, grad_reflected))));
+        const float3 grad_direction_current = sub3(grad_reflected, mul3(2.f * refl_gdotn, normal));
+        grad_signed_n =
+            sub3(grad_signed_n, mul3(2.f, add3(mul3(refl_gdotn, direction), mul3(dir_dot_n, grad_reflected))));
 
         const int i0 = faces[prim_id * 3 + 0];
         const int i1 = faces[prim_id * 3 + 1];
@@ -302,9 +257,7 @@ __global__ void reflection_chain_backward_kernel(
         float3 g_vertices1 = make_float3(0.f, 0.f, 0.f);
         float3 g_vertices2 = make_float3(0.f, 0.f, 0.f);
         const float normal_length = sqrtf(fmaxf(dot3(cross3(e1, e2), cross3(e1, e2)), 1e-20f));
-        const float3 gq = mul3(
-            1.f / normal_length,
-            sub3(grad_raw_n, mul3(dot3(raw_normal, grad_raw_n), raw_normal)));
+        const float3 gq = mul3(1.f / normal_length, sub3(grad_raw_n, mul3(dot3(raw_normal, grad_raw_n), raw_normal)));
         const float3 ge1_normal = cross3(e2, gq);
         const float3 ge2_normal = cross3(gq, e1);
         g_vertices0 = sub3(g_vertices0, add3(ge1_normal, ge2_normal));
@@ -314,13 +267,7 @@ __global__ void reflection_chain_backward_kernel(
         const float3 d = direction;
         const float3 c0 = mul3(-1.f, d);
         const float3 bary = bary3_from_tape(tape_bary + rb * tape_bary_width, tape_bary_width, 0);
-        const float gt = read_grad_t_or_zero(
-            grad_t,
-            grad_t_dim,
-            grad_t_stride0,
-            grad_t_stride1,
-            ray_idx,
-            bounce);
+        const float gt = read_grad_t_or_zero(grad_t, grad_t_dim, grad_t_stride0, grad_t_stride1, ray_idx, bounce);
         const float t_bar_from_p = dot3(grad_p, d);
         float3 grad_ray_o_hit = grad_p;
         const float3 gy = make_float3(gt + t_bar_from_p, 0.f, 0.f);
@@ -346,40 +293,22 @@ __global__ void reflection_chain_backward_kernel(
 }
 
 __global__ void reflection_chain_jvp_kernel(
-    const float *__restrict__ vertices,
-    const int *__restrict__ faces,
-    const float *__restrict__ ray_o,
-    const float *__restrict__ ray_d,
-    const bool *__restrict__ active,
-    const int *__restrict__ tape_prim_id,
-    const float *__restrict__ tape_bary,
-    int tape_bary_width,
-    const float *__restrict__ tape_hit_points,
-    const float *__restrict__ tape_normals,
-    const float *__restrict__ tangent_vertices,
-    int64_t tangent_vertices_stride0,
-    int64_t tangent_vertices_stride1,
-    const float *__restrict__ tangent_ray_o,
-    int64_t tangent_ray_o_stride0,
-    int64_t tangent_ray_o_stride1,
-    const float *__restrict__ tangent_ray_d,
-    int64_t tangent_ray_d_stride0,
-    int64_t tangent_ray_d_stride1,
-    const float *__restrict__ image_sources,
-    int64_t ray_count,
-    int64_t max_bounces,
-    float *__restrict__ tangent_t,
-    float *__restrict__ tangent_image_sources) {
+    const float* __restrict__ vertices, const int* __restrict__ faces, const float* __restrict__ ray_o,
+    const float* __restrict__ ray_d, const bool* __restrict__ active, const int* __restrict__ tape_prim_id,
+    const float* __restrict__ tape_bary, int tape_bary_width, const float* __restrict__ tape_hit_points,
+    const float* __restrict__ tape_normals, const float* __restrict__ tangent_vertices,
+    int64_t tangent_vertices_stride0, int64_t tangent_vertices_stride1, const float* __restrict__ tangent_ray_o,
+    int64_t tangent_ray_o_stride0, int64_t tangent_ray_o_stride1, const float* __restrict__ tangent_ray_d,
+    int64_t tangent_ray_d_stride0, int64_t tangent_ray_d_stride1, const float* __restrict__ image_sources,
+    int64_t ray_count, int64_t max_bounces, float* __restrict__ tangent_t, float* __restrict__ tangent_image_sources) {
     const int ray_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (ray_idx >= ray_count)
         return;
 
     float3 origin = read_ray_vec3(ray_o, ray_idx);
     float3 direction = read_ray_vec3(ray_d, ray_idx);
-    float3 tangent_origin =
-        read_vec3_or_zero(tangent_ray_o, ray_idx, tangent_ray_o_stride0, tangent_ray_o_stride1);
-    float3 tangent_direction =
-        read_vec3_or_zero(tangent_ray_d, ray_idx, tangent_ray_d_stride0, tangent_ray_d_stride1);
+    float3 tangent_origin = read_vec3_or_zero(tangent_ray_o, ray_idx, tangent_ray_o_stride0, tangent_ray_o_stride1);
+    float3 tangent_direction = read_vec3_or_zero(tangent_ray_d, ray_idx, tangent_ray_d_stride0, tangent_ray_d_stride1);
     float3 image_state = origin;
     float3 tangent_image_state = tangent_origin;
 
@@ -411,17 +340,9 @@ __global__ void reflection_chain_jvp_kernel(
             const float3 de1 = sub3(dv1, dv0);
             const float3 de2 = sub3(dv2, dv0);
             const float3 bary = bary3_from_tape(tape_bary + rb * tape_bary_width, tape_bary_width, 0);
-            const float solved_t = solve_columns(
-                                      mul3(-1.f, direction),
-                                      e1,
-                                      e2,
-                                      sub3(origin, v0))
-                                      .x;
-            const float3 vertex_tangent =
-                add3(add3(mul3(bary.x, dv0), mul3(bary.y, dv1)), mul3(bary.z, dv2));
-            const float3 rhs = sub3(
-                add3(tangent_origin, mul3(solved_t, tangent_direction)),
-                vertex_tangent);
+            const float solved_t = solve_columns(mul3(-1.f, direction), e1, e2, sub3(origin, v0)).x;
+            const float3 vertex_tangent = add3(add3(mul3(bary.x, dv0), mul3(bary.y, dv1)), mul3(bary.z, dv2));
+            const float3 rhs = sub3(add3(tangent_origin, mul3(solved_t, tangent_direction)), vertex_tangent);
             const float3 dy = solve_columns(mul3(-1.f, direction), e1, e2, rhs);
             tangent_hit_t = dy.x;
             tangent_hit = add3(tangent_origin, add3(mul3(dy.x, direction), mul3(solved_t, tangent_direction)));
@@ -434,8 +355,7 @@ __global__ void reflection_chain_jvp_kernel(
         const float3 image_delta = sub3(image_state, hit);
         const float3 tangent_image_delta = sub3(tangent_image_state, tangent_hit);
         const float image_dist = dot3(image_delta, normal);
-        const float tangent_image_dist =
-            dot3(tangent_image_delta, normal) + dot3(image_delta, tangent_normal);
+        const float tangent_image_dist = dot3(tangent_image_delta, normal) + dot3(image_delta, tangent_normal);
         const float3 next_image_state = sub3(image_state, mul3(2.f * image_dist, normal));
         float3 next_tangent_image_state =
             sub3(tangent_image_state,
@@ -443,23 +363,15 @@ __global__ void reflection_chain_jvp_kernel(
         if (!active_b) {
             next_tangent_image_state = make_float3(0.f, 0.f, 0.f);
         }
-        write_ray_bounce_vec3(
-            tangent_image_sources,
-            ray_idx,
-            bounce,
-            max_bounces,
-            next_tangent_image_state);
+        write_ray_bounce_vec3(tangent_image_sources, ray_idx, bounce, max_bounces, next_tangent_image_state);
 
         const float dir_dot_n = dot3(direction, normal);
-        const float tangent_dir_dot_n =
-            dot3(tangent_direction, normal) + dot3(direction, tangent_normal);
+        const float tangent_dir_dot_n = dot3(tangent_direction, normal) + dot3(direction, tangent_normal);
         const float3 next_direction = sub3(direction, mul3(2.f * dir_dot_n, normal));
         float3 next_tangent_direction =
-            sub3(tangent_direction,
-                 mul3(2.f, add3(mul3(tangent_dir_dot_n, normal), mul3(dir_dot_n, tangent_normal))));
+            sub3(tangent_direction, mul3(2.f, add3(mul3(tangent_dir_dot_n, normal), mul3(dir_dot_n, tangent_normal))));
         const float3 next_origin = add3(hit, mul3(static_cast<float>(kRayBias), next_direction));
-        float3 next_tangent_origin =
-            add3(tangent_hit, mul3(static_cast<float>(kRayBias), next_tangent_direction));
+        float3 next_tangent_origin = add3(tangent_hit, mul3(static_cast<float>(kRayBias), next_tangent_direction));
         if (!active_b) {
             next_tangent_origin = make_float3(0.f, 0.f, 0.f);
             next_tangent_direction = make_float3(0.f, 0.f, 0.f);
@@ -477,26 +389,16 @@ __global__ void reflection_chain_jvp_kernel(
     }
 }
 
-__global__ void refl_epc_backward_kernel(
-    const float *__restrict__ vertices,
-    const int *__restrict__ faces,
-    const float *__restrict__ source,
-    const float *__restrict__ receiver,
-    const bool *__restrict__ active,
-    const int *__restrict__ tape_prim_id,
-    const float *__restrict__ tape_bary,
-    int tape_bary_width,
-    const float *__restrict__ tape_t,
-    const float *__restrict__ grad_field_real,
-    const float *__restrict__ grad_field_imag,
-    const float *__restrict__ grad_path_length,
-    int64_t grad_field_real_stride0,
-    int64_t grad_field_imag_stride0,
-    int64_t grad_path_length_stride0,
-    int64_t ray_count,
-    float *__restrict__ grad_vertices,
-    float *__restrict__ grad_source,
-    float *__restrict__ grad_receiver) {
+__global__ void refl_epc_backward_kernel(const float* __restrict__ vertices, const int* __restrict__ faces,
+                                         const float* __restrict__ source, const float* __restrict__ receiver,
+                                         const bool* __restrict__ active, const int* __restrict__ tape_prim_id,
+                                         const float* __restrict__ tape_bary, int tape_bary_width,
+                                         const float* __restrict__ tape_t, const float* __restrict__ grad_field_real,
+                                         const float* __restrict__ grad_field_imag,
+                                         const float* __restrict__ grad_path_length, int64_t grad_field_real_stride0,
+                                         int64_t grad_field_imag_stride0, int64_t grad_path_length_stride0,
+                                         int64_t ray_count, float* __restrict__ grad_vertices,
+                                         float* __restrict__ grad_source, float* __restrict__ grad_receiver) {
     const int ray_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (ray_idx >= ray_count)
         return;
@@ -515,10 +417,9 @@ __global__ void refl_epc_backward_kernel(
     const float c = cosf(t);
     const float real_dt = -s * inv_denom - c * inv_denom * inv_denom;
     const float imag_dt = c * inv_denom - s * inv_denom * inv_denom;
-    const float gt =
-        read_scalar_or_zero(grad_path_length, ray_idx, grad_path_length_stride0) +
-        read_scalar_or_zero(grad_field_real, ray_idx, grad_field_real_stride0) * real_dt +
-        read_scalar_or_zero(grad_field_imag, ray_idx, grad_field_imag_stride0) * imag_dt;
+    const float gt = read_scalar_or_zero(grad_path_length, ray_idx, grad_path_length_stride0) +
+                     read_scalar_or_zero(grad_field_real, ray_idx, grad_field_real_stride0) * real_dt +
+                     read_scalar_or_zero(grad_field_imag, ray_idx, grad_field_imag_stride0) * imag_dt;
     if (gt == 0.f)
         return;
 
@@ -552,28 +453,14 @@ __global__ void refl_epc_backward_kernel(
 }
 
 __global__ void refl_epc_jvp_kernel(
-    const float *__restrict__ vertices,
-    const int *__restrict__ faces,
-    const float *__restrict__ source,
-    const float *__restrict__ receiver,
-    const bool *__restrict__ active,
-    const int *__restrict__ tape_prim_id,
-    const float *__restrict__ tape_bary,
-    int tape_bary_width,
-    const float *__restrict__ tape_t,
-    const float *__restrict__ tangent_vertices,
-    const float *__restrict__ tangent_source,
-    const float *__restrict__ tangent_receiver,
-    int64_t tangent_vertices_stride0,
-    int64_t tangent_vertices_stride1,
-    int64_t tangent_source_stride0,
-    int64_t tangent_source_stride1,
-    int64_t tangent_receiver_stride0,
-    int64_t tangent_receiver_stride1,
-    int64_t ray_count,
-    float *__restrict__ tangent_field_real,
-    float *__restrict__ tangent_field_imag,
-    float *__restrict__ tangent_path_length) {
+    const float* __restrict__ vertices, const int* __restrict__ faces, const float* __restrict__ source,
+    const float* __restrict__ receiver, const bool* __restrict__ active, const int* __restrict__ tape_prim_id,
+    const float* __restrict__ tape_bary, int tape_bary_width, const float* __restrict__ tape_t,
+    const float* __restrict__ tangent_vertices, const float* __restrict__ tangent_source,
+    const float* __restrict__ tangent_receiver, int64_t tangent_vertices_stride0, int64_t tangent_vertices_stride1,
+    int64_t tangent_source_stride0, int64_t tangent_source_stride1, int64_t tangent_receiver_stride0,
+    int64_t tangent_receiver_stride1, int64_t ray_count, float* __restrict__ tangent_field_real,
+    float* __restrict__ tangent_field_imag, float* __restrict__ tangent_path_length) {
     const int ray_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (ray_idx >= ray_count)
         return;
@@ -602,13 +489,13 @@ __global__ void refl_epc_jvp_kernel(
     const float3 r = make_f3(receiver + ray_idx * 3);
     const float3 d = sub3(r, o);
     const float3 do_t = read_vec3_or_zero(tangent_source, ray_idx, tangent_source_stride0, tangent_source_stride1);
-    const float3 dr_t = read_vec3_or_zero(tangent_receiver, ray_idx, tangent_receiver_stride0, tangent_receiver_stride1);
+    const float3 dr_t =
+        read_vec3_or_zero(tangent_receiver, ray_idx, tangent_receiver_stride0, tangent_receiver_stride1);
     const float3 dd_t = sub3(dr_t, do_t);
     const float3 bary = bary3_from_tape(tape_bary, tape_bary_width, ray_idx);
     const float3 c0 = mul3(-1.f, d);
     const float solved_t = solve_columns(c0, e1, e2, sub3(o, v0)).x;
-    const float3 vertex_tangent =
-        add3(add3(mul3(bary.x, dv0), mul3(bary.y, dv1)), mul3(bary.z, dv2));
+    const float3 vertex_tangent = add3(add3(mul3(bary.x, dv0), mul3(bary.y, dv1)), mul3(bary.z, dv2));
     const float3 rhs = sub3(add3(do_t, mul3(solved_t, dd_t)), vertex_tangent);
     const float tangent_t = solve_columns(c0, e1, e2, rhs).x;
 
@@ -625,32 +512,16 @@ __global__ void refl_epc_jvp_kernel(
 
 } // namespace
 
-ReflectionBackwardOutputs reflection_backward_cuda(
-    const at::Tensor &vertices,
-    const at::Tensor &faces,
-    const at::Tensor &ray_o,
-    const at::Tensor &ray_d,
-    const at::Tensor &ray_tmax,
-    const at::Tensor &active,
-    const at::Tensor &tape_prim_id,
-    const at::Tensor &tape_barycentric,
-    const at::Tensor &grad_t) {
+ReflectionBackwardOutputs reflection_backward_cuda(const at::Tensor& vertices, const at::Tensor& faces,
+                                                   const at::Tensor& ray_o, const at::Tensor& ray_d,
+                                                   const at::Tensor& ray_tmax, const at::Tensor& active,
+                                                   const at::Tensor& tape_prim_id, const at::Tensor& tape_barycentric,
+                                                   const at::Tensor& grad_t) {
     (void)ray_tmax;
     at::Tensor grad_t_flat = grad_t.dim() == 1 ? grad_t : grad_t.select(1, 0);
-    IntersectBackwardOutputs hit_grad = intersect_backward_t_cuda(
-        vertices,
-        faces,
-        ray_o,
-        ray_d,
-        active,
-        tape_prim_id,
-        tape_barycentric,
-        grad_t_flat,
-        grad_t_flat.stride(0),
-        true,
-        true,
-        true,
-        true);
+    IntersectBackwardOutputs hit_grad =
+        intersect_backward_t_cuda(vertices, faces, ray_o, ray_d, active, tape_prim_id, tape_barycentric, grad_t_flat,
+                                  grad_t_flat.stride(0), true, true, true, true);
     return {
         hit_grad.grad_vertices,
         hit_grad.grad_ray_o,
@@ -660,38 +531,19 @@ ReflectionBackwardOutputs reflection_backward_cuda(
 }
 
 ReflectionBackwardOutputs reflection_chain_backward_cuda(
-    const at::Tensor &vertices,
-    const at::Tensor &faces,
-    const at::Tensor &ray_o,
-    const at::Tensor &ray_d,
-    const at::Tensor &ray_tmax,
-    const at::Tensor &active,
-    const at::Tensor &tape_prim_id,
-    const at::Tensor &tape_barycentric,
-    const at::Tensor &tape_hit_points,
-    const at::Tensor &tape_normals,
-    const at::Tensor &image_sources,
-    const at::Tensor *grad_t,
-    const at::Tensor *grad_image_sources) {
+    const at::Tensor& vertices, const at::Tensor& faces, const at::Tensor& ray_o, const at::Tensor& ray_d,
+    const at::Tensor& ray_tmax, const at::Tensor& active, const at::Tensor& tape_prim_id,
+    const at::Tensor& tape_barycentric, const at::Tensor& tape_hit_points, const at::Tensor& tape_normals,
+    const at::Tensor& image_sources, const at::Tensor* grad_t, const at::Tensor* grad_image_sources) {
     (void)ray_tmax;
     const int64_t ray_count = ray_o.size(0);
     const int64_t max_bounces = tape_prim_id.size(1);
     if (max_bounces == 1 && grad_t != nullptr && grad_t->numel() != 0 && grad_image_sources == nullptr) {
         at::Tensor grad_t_flat = grad_t->dim() == 1 ? *grad_t : grad_t->select(1, 0);
-        IntersectBackwardOutputs hit_grad = intersect_backward_t_cuda(
-            vertices,
-            faces,
-            ray_o,
-            ray_d,
-            active,
-            tape_prim_id.select(1, 0),
-            tape_barycentric.select(1, 0),
-            grad_t_flat,
-            grad_t_flat.stride(0),
-            true,
-            true,
-            true,
-            true);
+        IntersectBackwardOutputs hit_grad =
+            intersect_backward_t_cuda(vertices, faces, ray_o, ray_d, active, tape_prim_id.select(1, 0),
+                                      tape_barycentric.select(1, 0), grad_t_flat, grad_t_flat.stride(0), true, true,
+                                      true, true);
         return {
             hit_grad.grad_vertices,
             hit_grad.grad_ray_o,
@@ -716,90 +568,48 @@ ReflectionBackwardOutputs reflection_chain_backward_cuda(
     at::Tensor image_states = at::empty({max_bounces, ray_count, 3}, ray_o.options());
     const int threads = 128;
     const int blocks = static_cast<int>((ray_count + threads - 1) / threads);
-    reflection_chain_state_kernel<<<blocks, threads, 0, stream>>>(
-        ray_o.data_ptr<float>(),
-        ray_d.data_ptr<float>(),
-        tape_hit_points.data_ptr<float>(),
-        tape_normals.data_ptr<float>(),
-        image_sources.data_ptr<float>(),
-        ray_count,
-        max_bounces,
-        origins.data_ptr<float>(),
-        directions.data_ptr<float>(),
-        image_states.data_ptr<float>());
+    reflection_chain_state_kernel<<<blocks, threads, 0, stream>>>(ray_o.data_ptr<float>(), ray_d.data_ptr<float>(),
+                                                                  tape_hit_points.data_ptr<float>(),
+                                                                  tape_normals.data_ptr<float>(),
+                                                                  image_sources.data_ptr<float>(), ray_count,
+                                                                  max_bounces, origins.data_ptr<float>(),
+                                                                  directions.data_ptr<float>(),
+                                                                  image_states.data_ptr<float>());
     reflection_chain_backward_kernel<<<blocks, threads, 0, stream>>>(
-        vertices.data_ptr<float>(),
-        faces.data_ptr<int>(),
-        optional_bool_ptr(active),
-        tape_prim_id.data_ptr<int>(),
-        tape_barycentric.data_ptr<float>(),
-        static_cast<int>(tape_barycentric.size(2)),
-        tape_hit_points.data_ptr<float>(),
-        tape_normals.data_ptr<float>(),
-        origins.data_ptr<float>(),
-        directions.data_ptr<float>(),
-        image_states.data_ptr<float>(),
+        vertices.data_ptr<float>(), faces.data_ptr<int>(), optional_bool_ptr(active), tape_prim_id.data_ptr<int>(),
+        tape_barycentric.data_ptr<float>(), static_cast<int>(tape_barycentric.size(2)),
+        tape_hit_points.data_ptr<float>(), tape_normals.data_ptr<float>(), origins.data_ptr<float>(),
+        directions.data_ptr<float>(), image_states.data_ptr<float>(),
         grad_t == nullptr ? nullptr : grad_t->data_ptr<float>(),
-        grad_t == nullptr ? 0 : static_cast<int>(grad_t->dim()),
-        optional_stride(grad_t, 0),
-        optional_stride(grad_t, 1),
+        grad_t == nullptr ? 0 : static_cast<int>(grad_t->dim()), optional_stride(grad_t, 0), optional_stride(grad_t, 1),
         grad_image_sources == nullptr ? nullptr : grad_image_sources->data_ptr<float>(),
-        optional_stride(grad_image_sources, 0),
-        optional_stride(grad_image_sources, 1),
-        optional_stride(grad_image_sources, 2),
-        ray_count,
-        max_bounces,
-        out.grad_vertices.data_ptr<float>(),
-        out.grad_ray_o.data_ptr<float>(),
-        out.grad_ray_d.data_ptr<float>(),
-        out.grad_ray_tmax.data_ptr<float>());
+        optional_stride(grad_image_sources, 0), optional_stride(grad_image_sources, 1),
+        optional_stride(grad_image_sources, 2), ray_count, max_bounces, out.grad_vertices.data_ptr<float>(),
+        out.grad_ray_o.data_ptr<float>(), out.grad_ray_d.data_ptr<float>(), out.grad_ray_tmax.data_ptr<float>());
     return out;
 }
 
-ReflectionJvpOutputs reflection_jvp_cuda(
-    const at::Tensor &vertices,
-    const at::Tensor &faces,
-    const at::Tensor &ray_o,
-    const at::Tensor &ray_d,
-    const at::Tensor &active,
-    const at::Tensor &tape_prim_id,
-    const at::Tensor &tape_barycentric,
-    const at::Tensor &tangent_vertices,
-    const at::Tensor &tangent_ray_o,
-    const at::Tensor &tangent_ray_d,
-    const at::Tensor &image_sources) {
+ReflectionJvpOutputs reflection_jvp_cuda(const at::Tensor& vertices, const at::Tensor& faces, const at::Tensor& ray_o,
+                                         const at::Tensor& ray_d, const at::Tensor& active,
+                                         const at::Tensor& tape_prim_id, const at::Tensor& tape_barycentric,
+                                         const at::Tensor& tangent_vertices, const at::Tensor& tangent_ray_o,
+                                         const at::Tensor& tangent_ray_d, const at::Tensor& image_sources) {
     const int64_t ray_count = ray_o.size(0);
-    IntersectJvpOutputs hit_jvp = intersect_jvp_cuda(
-        vertices,
-        faces,
-        ray_o,
-        ray_d,
-        active,
-        tape_prim_id,
-        tape_barycentric,
-        tangent_vertices,
-        tangent_ray_o,
-        tangent_ray_d);
+    IntersectJvpOutputs hit_jvp = intersect_jvp_cuda(vertices, faces, ray_o, ray_d, active, tape_prim_id,
+                                                     tape_barycentric, tangent_vertices, tangent_ray_o, tangent_ray_d);
     return {
         hit_jvp.tangent_t.reshape({ray_count, 1}),
         at::zeros_like(image_sources),
     };
 }
 
-ReflectionJvpOutputs reflection_chain_jvp_cuda(
-    const at::Tensor &vertices,
-    const at::Tensor &faces,
-    const at::Tensor &ray_o,
-    const at::Tensor &ray_d,
-    const at::Tensor &active,
-    const at::Tensor &tape_prim_id,
-    const at::Tensor &tape_barycentric,
-    const at::Tensor &tape_hit_points,
-    const at::Tensor &tape_normals,
-    const at::Tensor *tangent_vertices,
-    const at::Tensor *tangent_ray_o,
-    const at::Tensor *tangent_ray_d,
-    const at::Tensor &image_sources) {
+ReflectionJvpOutputs reflection_chain_jvp_cuda(const at::Tensor& vertices, const at::Tensor& faces,
+                                               const at::Tensor& ray_o, const at::Tensor& ray_d,
+                                               const at::Tensor& active, const at::Tensor& tape_prim_id,
+                                               const at::Tensor& tape_barycentric, const at::Tensor& tape_hit_points,
+                                               const at::Tensor& tape_normals, const at::Tensor* tangent_vertices,
+                                               const at::Tensor* tangent_ray_o, const at::Tensor* tangent_ray_d,
+                                               const at::Tensor& image_sources) {
     const int64_t ray_count = ray_o.size(0);
     const int64_t max_bounces = tape_prim_id.size(1);
     ReflectionJvpOutputs out;
@@ -813,48 +623,25 @@ ReflectionJvpOutputs reflection_chain_jvp_cuda(
     const int threads = 128;
     const int blocks = static_cast<int>((ray_count + threads - 1) / threads);
     reflection_chain_jvp_kernel<<<blocks, threads, 0, stream>>>(
-        vertices.data_ptr<float>(),
-        faces.data_ptr<int>(),
-        ray_o.data_ptr<float>(),
-        ray_d.data_ptr<float>(),
-        optional_bool_ptr(active),
-        tape_prim_id.data_ptr<int>(),
-        tape_barycentric.data_ptr<float>(),
-        static_cast<int>(tape_barycentric.size(2)),
-        tape_hit_points.data_ptr<float>(),
-        tape_normals.data_ptr<float>(),
+        vertices.data_ptr<float>(), faces.data_ptr<int>(), ray_o.data_ptr<float>(), ray_d.data_ptr<float>(),
+        optional_bool_ptr(active), tape_prim_id.data_ptr<int>(), tape_barycentric.data_ptr<float>(),
+        static_cast<int>(tape_barycentric.size(2)), tape_hit_points.data_ptr<float>(), tape_normals.data_ptr<float>(),
         tangent_vertices == nullptr ? nullptr : tangent_vertices->data_ptr<float>(),
-        optional_stride(tangent_vertices, 0),
-        optional_stride(tangent_vertices, 1),
-        tangent_ray_o == nullptr ? nullptr : tangent_ray_o->data_ptr<float>(),
-        optional_stride(tangent_ray_o, 0),
-        optional_stride(tangent_ray_o, 1),
-        tangent_ray_d == nullptr ? nullptr : tangent_ray_d->data_ptr<float>(),
-        optional_stride(tangent_ray_d, 0),
-        optional_stride(tangent_ray_d, 1),
-        image_sources.data_ptr<float>(),
-        ray_count,
-        max_bounces,
-        out.tangent_t.data_ptr<float>(),
-        out.tangent_image_sources.data_ptr<float>());
+        optional_stride(tangent_vertices, 0), optional_stride(tangent_vertices, 1),
+        tangent_ray_o == nullptr ? nullptr : tangent_ray_o->data_ptr<float>(), optional_stride(tangent_ray_o, 0),
+        optional_stride(tangent_ray_o, 1), tangent_ray_d == nullptr ? nullptr : tangent_ray_d->data_ptr<float>(),
+        optional_stride(tangent_ray_d, 0), optional_stride(tangent_ray_d, 1), image_sources.data_ptr<float>(),
+        ray_count, max_bounces, out.tangent_t.data_ptr<float>(), out.tangent_image_sources.data_ptr<float>());
     return out;
 }
 
-ReflEpcBackwardOutputs refl_epc_backward_cuda(
-    const at::Tensor &vertices,
-    const at::Tensor &faces,
-    const at::Tensor &source,
-    const at::Tensor &receiver,
-    const at::Tensor &active,
-    const at::Tensor &tape_prim_id,
-    const at::Tensor &tape_barycentric,
-    const at::Tensor &tape_t,
-    const at::Tensor *grad_field_real,
-    const at::Tensor *grad_field_imag,
-    const at::Tensor *grad_path_length,
-    bool need_grad_vertices,
-    bool need_grad_source,
-    bool need_grad_receiver) {
+ReflEpcBackwardOutputs refl_epc_backward_cuda(const at::Tensor& vertices, const at::Tensor& faces,
+                                              const at::Tensor& source, const at::Tensor& receiver,
+                                              const at::Tensor& active, const at::Tensor& tape_prim_id,
+                                              const at::Tensor& tape_barycentric, const at::Tensor& tape_t,
+                                              const at::Tensor* grad_field_real, const at::Tensor* grad_field_imag,
+                                              const at::Tensor* grad_path_length, bool need_grad_vertices,
+                                              bool need_grad_source, bool need_grad_receiver) {
     const int64_t ray_count = source.size(0);
     cudaStream_t stream = at::cuda::getCurrentCUDAStream(vertices.get_device()).stream();
     ReflEpcBackwardOutputs out;
@@ -868,40 +655,24 @@ ReflEpcBackwardOutputs refl_epc_backward_cuda(
     const int threads = 128;
     const int blocks = static_cast<int>((ray_count + threads - 1) / threads);
     refl_epc_backward_kernel<<<blocks, threads, 0, stream>>>(
-        vertices.data_ptr<float>(),
-        faces.data_ptr<int>(),
-        source.data_ptr<float>(),
-        receiver.data_ptr<float>(),
-        optional_bool_ptr(active),
-        tape_prim_id.data_ptr<int>(),
-        tape_barycentric.data_ptr<float>(),
-        static_cast<int>(tape_barycentric.size(1)),
-        tape_t.data_ptr<float>(),
+        vertices.data_ptr<float>(), faces.data_ptr<int>(), source.data_ptr<float>(), receiver.data_ptr<float>(),
+        optional_bool_ptr(active), tape_prim_id.data_ptr<int>(), tape_barycentric.data_ptr<float>(),
+        static_cast<int>(tape_barycentric.size(1)), tape_t.data_ptr<float>(),
         grad_field_real == nullptr ? nullptr : grad_field_real->data_ptr<float>(),
         grad_field_imag == nullptr ? nullptr : grad_field_imag->data_ptr<float>(),
         grad_path_length == nullptr ? nullptr : grad_path_length->data_ptr<float>(),
-        optional_stride(grad_field_real, 0),
-        optional_stride(grad_field_imag, 0),
-        optional_stride(grad_path_length, 0),
-        ray_count,
-        need_grad_vertices ? out.grad_vertices.data_ptr<float>() : nullptr,
+        optional_stride(grad_field_real, 0), optional_stride(grad_field_imag, 0), optional_stride(grad_path_length, 0),
+        ray_count, need_grad_vertices ? out.grad_vertices.data_ptr<float>() : nullptr,
         need_grad_source ? out.grad_source.data_ptr<float>() : nullptr,
         need_grad_receiver ? out.grad_receiver.data_ptr<float>() : nullptr);
     return out;
 }
 
-ReflEpcJvpOutputs refl_epc_jvp_cuda(
-    const at::Tensor &vertices,
-    const at::Tensor &faces,
-    const at::Tensor &source,
-    const at::Tensor &receiver,
-    const at::Tensor &active,
-    const at::Tensor &tape_prim_id,
-    const at::Tensor &tape_barycentric,
-    const at::Tensor &tape_t,
-    const at::Tensor *tangent_vertices,
-    const at::Tensor *tangent_source,
-    const at::Tensor *tangent_receiver) {
+ReflEpcJvpOutputs refl_epc_jvp_cuda(const at::Tensor& vertices, const at::Tensor& faces, const at::Tensor& source,
+                                    const at::Tensor& receiver, const at::Tensor& active,
+                                    const at::Tensor& tape_prim_id, const at::Tensor& tape_barycentric,
+                                    const at::Tensor& tape_t, const at::Tensor* tangent_vertices,
+                                    const at::Tensor* tangent_source, const at::Tensor* tangent_receiver) {
     const int64_t ray_count = source.size(0);
     ReflEpcJvpOutputs out;
     out.tangent_field_real = at::empty({ray_count}, source.options());
@@ -914,33 +685,20 @@ ReflEpcJvpOutputs refl_epc_jvp_cuda(
     const int threads = 128;
     const int blocks = static_cast<int>((ray_count + threads - 1) / threads);
     refl_epc_jvp_kernel<<<blocks, threads, 0, stream>>>(
-        vertices.data_ptr<float>(),
-        faces.data_ptr<int>(),
-        source.data_ptr<float>(),
-        receiver.data_ptr<float>(),
-        optional_bool_ptr(active),
-        tape_prim_id.data_ptr<int>(),
-        tape_barycentric.data_ptr<float>(),
-        static_cast<int>(tape_barycentric.size(1)),
-        tape_t.data_ptr<float>(),
+        vertices.data_ptr<float>(), faces.data_ptr<int>(), source.data_ptr<float>(), receiver.data_ptr<float>(),
+        optional_bool_ptr(active), tape_prim_id.data_ptr<int>(), tape_barycentric.data_ptr<float>(),
+        static_cast<int>(tape_barycentric.size(1)), tape_t.data_ptr<float>(),
         tangent_vertices == nullptr ? nullptr : tangent_vertices->data_ptr<float>(),
         tangent_source == nullptr ? nullptr : tangent_source->data_ptr<float>(),
         tangent_receiver == nullptr ? nullptr : tangent_receiver->data_ptr<float>(),
-        optional_stride(tangent_vertices, 0),
-        optional_stride(tangent_vertices, 1),
-        optional_stride(tangent_source, 0),
-        optional_stride(tangent_source, 1),
-        optional_stride(tangent_receiver, 0),
-        optional_stride(tangent_receiver, 1),
-        ray_count,
-        out.tangent_field_real.data_ptr<float>(),
-        out.tangent_field_imag.data_ptr<float>(),
+        optional_stride(tangent_vertices, 0), optional_stride(tangent_vertices, 1), optional_stride(tangent_source, 0),
+        optional_stride(tangent_source, 1), optional_stride(tangent_receiver, 0), optional_stride(tangent_receiver, 1),
+        ray_count, out.tangent_field_real.data_ptr<float>(), out.tangent_field_imag.data_ptr<float>(),
         out.tangent_path_length.data_ptr<float>());
     return out;
 }
 
 } // namespace rayd::torch_backend
-
 
 // ---- merged from src/reflection/dedup_part.cu ----
 
@@ -957,19 +715,15 @@ ReflEpcJvpOutputs refl_epc_jvp_cuda(
 
 #include <src/runtime/native_compat.h>
 
-
 namespace rayd::torch_backend {
 
 namespace {
 
-template <typename T>
-class CudaBuffer {
-public:
+template <typename T> class CudaBuffer {
+  public:
     CudaBuffer() = default;
 
-    explicit CudaBuffer(size_t count) {
-        allocate(count);
-    }
+    explicit CudaBuffer(size_t count) { allocate(count); }
 
     ~CudaBuffer() {
         if (ptr_ != nullptr) {
@@ -977,16 +731,15 @@ public:
         }
     }
 
-    CudaBuffer(const CudaBuffer &) = delete;
-    CudaBuffer &operator=(const CudaBuffer &) = delete;
+    CudaBuffer(const CudaBuffer&) = delete;
+    CudaBuffer& operator=(const CudaBuffer&) = delete;
 
-    CudaBuffer(CudaBuffer &&other) noexcept
-        : ptr_(other.ptr_), count_(other.count_) {
+    CudaBuffer(CudaBuffer&& other) noexcept : ptr_(other.ptr_), count_(other.count_) {
         other.ptr_ = nullptr;
         other.count_ = 0;
     }
 
-    CudaBuffer &operator=(CudaBuffer &&other) noexcept {
+    CudaBuffer& operator=(CudaBuffer&& other) noexcept {
         if (this != &other) {
             if (ptr_ != nullptr) {
                 cudaFree(ptr_);
@@ -1010,31 +763,28 @@ public:
             return;
         }
 
-        const cudaError_t error =
-            cudaMalloc(reinterpret_cast<void **>(&ptr_), sizeof(T) * count_);
+        const cudaError_t error = cudaMalloc(reinterpret_cast<void**>(&ptr_), sizeof(T) * count_);
         require(error == cudaSuccess,
-                std::string("reflection_dedup_gpu(): cudaMalloc failed: ") +
-                    cudaGetErrorString(error));
+                std::string("reflection_dedup_gpu(): cudaMalloc failed: ") + cudaGetErrorString(error));
     }
 
-    T *get() { return ptr_; }
-    const T *get() const { return ptr_; }
+    T* get() { return ptr_; }
+    const T* get() const { return ptr_; }
 
-private:
-    T *ptr_ = nullptr;
+  private:
+    T* ptr_ = nullptr;
     size_t count_ = 0;
 };
 
-void check_cuda_call(cudaError_t error, const char *message) {
-    require(error == cudaSuccess,
-            std::string(message) + ": " + cudaGetErrorString(error));
+void check_cuda_call(cudaError_t error, const char* message) {
+    require(error == cudaSuccess, std::string(message) + ": " + cudaGetErrorString(error));
 }
 
 // Runs the sort/scan passes the shared sequence delegates back to this
 // backend. Keeping the CUB calls here keeps their template kernels
 // instantiated in this translation unit, exactly as before the sequence
 // orchestration moved to the shared layer.
-cudaError_t run_dedup_pass(const shared::multipath::ReflectionDedupSequenceParams &params,
+cudaError_t run_dedup_pass(const shared::multipath::ReflectionDedupSequenceParams& params,
                            shared::multipath::ReflectionDedupDevicePass pass) {
     using shared::multipath::ReflectionDedupDevicePass;
     size_t sort_temp_bytes = params.sort_temp_bytes;
@@ -1042,48 +792,27 @@ cudaError_t run_dedup_pass(const shared::multipath::ReflectionDedupSequenceParam
     size_t cluster_sort_temp_bytes = params.cluster_sort_temp_bytes;
     switch (pass) {
     case ReflectionDedupDevicePass::kFirstSort:
-        return cub::DeviceRadixSort::SortPairs(params.sort_temp,
-                                               sort_temp_bytes,
-                                               params.keys_in,
-                                               params.keys_out,
-                                               params.ray_indices_in,
-                                               params.ray_indices_out,
-                                               params.ray_count,
-                                               0,
-                                               64,
+        return cub::DeviceRadixSort::SortPairs(params.sort_temp, sort_temp_bytes, params.keys_in, params.keys_out,
+                                               params.ray_indices_in, params.ray_indices_out, params.ray_count, 0, 64,
                                                params.stream);
     case ReflectionDedupDevicePass::kFirstScan:
-        return cub::DeviceScan::InclusiveSum(params.scan_temp,
-                                             scan_temp_bytes,
-                                             params.boundary_flags,
-                                             params.hash_group_ids,
-                                             params.ray_count,
-                                             params.stream);
+        return cub::DeviceScan::InclusiveSum(params.scan_temp, scan_temp_bytes, params.boundary_flags,
+                                             params.hash_group_ids, params.ray_count, params.stream);
     case ReflectionDedupDevicePass::kSecondSort:
-        return cub::DeviceRadixSort::SortPairs(params.cluster_sort_temp,
-                                               cluster_sort_temp_bytes,
-                                               params.cluster_keys_in,
-                                               params.cluster_keys_out,
-                                               params.cluster_ray_indices_in,
-                                               params.cluster_ray_indices_out,
-                                               params.ray_count,
-                                               0,
-                                               64,
-                                               params.stream);
+        return cub::DeviceRadixSort::SortPairs(params.cluster_sort_temp, cluster_sort_temp_bytes,
+                                               params.cluster_keys_in, params.cluster_keys_out,
+                                               params.cluster_ray_indices_in, params.cluster_ray_indices_out,
+                                               params.ray_count, 0, 64, params.stream);
     case ReflectionDedupDevicePass::kSecondScan:
-        return cub::DeviceScan::InclusiveSum(params.scan_temp,
-                                             scan_temp_bytes,
-                                             params.boundary_flags,
-                                             params.unique_path_ids,
-                                             params.ray_count,
-                                             params.stream);
+        return cub::DeviceScan::InclusiveSum(params.scan_temp, scan_temp_bytes, params.boundary_flags,
+                                             params.unique_path_ids, params.ray_count, params.stream);
     }
     return cudaErrorInvalidValue;
 }
 
 // Per-step error strings stay in this backend verbatim; the shared sequence
 // only reports which step produced the failing CUDA result.
-const char *sequence_step_message(shared::multipath::ReflectionDedupSequenceStep step) {
+const char* sequence_step_message(shared::multipath::ReflectionDedupSequenceStep step) {
     using shared::multipath::ReflectionDedupSequenceStep;
     switch (step) {
     case ReflectionDedupSequenceStep::kBuildKeys:
@@ -1114,56 +843,24 @@ const char *sequence_step_message(shared::multipath::ReflectionDedupSequenceStep
     return "reflection_dedup_gpu(): dedup sequence failed";
 }
 
-void check_sequence_status(const shared::multipath::ReflectionDedupSequenceStatus &status) {
+void check_sequence_status(const shared::multipath::ReflectionDedupSequenceStatus& status) {
     check_cuda_call(status.error, sequence_step_message(status.step));
 }
 
 } // namespace
 
-int reflection_dedup_gpu(
-    int device_index,
-    int n_rays,
-    int max_bounces,
-    const int *bounce_count,
-    const int *shape_ids,
-    const int *prim_ids,
-    const float *t,
-    const float *bary_u,
-    const float *bary_v,
-    const float *hit_x,
-    const float *hit_y,
-    const float *hit_z,
-    const float *norm_x,
-    const float *norm_y,
-    const float *norm_z,
-    const float *img_x,
-    const float *img_y,
-    const float *img_z,
-    const int *face_offsets,
-    int n_meshes,
-    const int *canonical_prim_table,
-    int canonical_table_size,
-    float image_source_tolerance,
-    int *out_bounce_count,
-    int *out_shape_ids,
-    int *out_prim_ids,
-    float *out_t,
-    float *out_bary_u,
-    float *out_bary_v,
-    float *out_hit_x,
-    float *out_hit_y,
-    float *out_hit_z,
-    float *out_norm_x,
-    float *out_norm_y,
-    float *out_norm_z,
-    float *out_img_x,
-    float *out_img_y,
-    float *out_img_z,
-    int *out_discovery_count,
-    int *out_representative_ray_index) {
+int reflection_dedup_gpu(int device_index, int n_rays, int max_bounces, const int* bounce_count, const int* shape_ids,
+                         const int* prim_ids, const float* t, const float* bary_u, const float* bary_v,
+                         const float* hit_x, const float* hit_y, const float* hit_z, const float* norm_x,
+                         const float* norm_y, const float* norm_z, const float* img_x, const float* img_y,
+                         const float* img_z, const int* face_offsets, int n_meshes, const int* canonical_prim_table,
+                         int canonical_table_size, float image_source_tolerance, int* out_bounce_count,
+                         int* out_shape_ids, int* out_prim_ids, float* out_t, float* out_bary_u, float* out_bary_v,
+                         float* out_hit_x, float* out_hit_y, float* out_hit_z, float* out_norm_x, float* out_norm_y,
+                         float* out_norm_z, float* out_img_x, float* out_img_y, float* out_img_z,
+                         int* out_discovery_count, int* out_representative_ray_index) {
     require(n_rays >= 0, "reflection_dedup_gpu(): n_rays must be non-negative.");
-    require(max_bounces > 0,
-            "reflection_dedup_gpu(): max_bounces must be positive.");
+    require(max_bounces > 0, "reflection_dedup_gpu(): max_bounces must be positive.");
 
     if (n_rays == 0) {
         return 0;
@@ -1188,98 +885,57 @@ int reflection_dedup_gpu(
     CudaBuffer<int> unique_path_ids(static_cast<size_t>(n_rays));
     CudaBuffer<int> unique_count_device(1);
 
-    check_cuda_call(cudaMemsetAsync(out_discovery_count,
-                                    0,
-                                    sizeof(int) * static_cast<size_t>(n_rays),
-                                    stream),
+    check_cuda_call(cudaMemsetAsync(out_discovery_count, 0, sizeof(int) * static_cast<size_t>(n_rays), stream),
                     "reflection_dedup_gpu(): failed to clear discovery counts");
     audit_cuda_memset_async();
-    check_cuda_call(cudaMemsetAsync(out_representative_ray_index,
-                                    0xFF,
-                                    sizeof(int) * static_cast<size_t>(n_rays),
+    check_cuda_call(cudaMemsetAsync(out_representative_ray_index, 0xFF, sizeof(int) * static_cast<size_t>(n_rays),
                                     stream),
                     "reflection_dedup_gpu(): failed to clear representative indices");
     audit_cuda_memset_async();
-    check_cuda_call(cudaMemsetAsync(unique_count_device.get(),
-                                    0,
-                                    sizeof(int),
-                                    stream),
+    check_cuda_call(cudaMemsetAsync(unique_count_device.get(), 0, sizeof(int), stream),
                     "reflection_dedup_gpu(): failed to clear unique counter");
     audit_cuda_memset_async();
 
     size_t sort_temp_size = 0;
     audit_cub_sort();
-    check_cuda_call(cub::DeviceRadixSort::SortPairs(nullptr,
-                                                    sort_temp_size,
-                                                    keys_in.get(),
-                                                    keys_out.get(),
-                                                    ray_indices_in.get(),
-                                                    ray_indices_out.get(),
-                                                    n_rays,
-                                                    0,
-                                                    64,
-                                                    stream),
+    check_cuda_call(cub::DeviceRadixSort::SortPairs(nullptr, sort_temp_size, keys_in.get(), keys_out.get(),
+                                                    ray_indices_in.get(), ray_indices_out.get(), n_rays, 0, 64, stream),
                     "reflection_dedup_gpu(): failed to size first radix sort");
     CudaBuffer<char> sort_temp(std::max<size_t>(sort_temp_size, 1));
 
     size_t scan_temp_size = 0;
     audit_cub_scan();
-    check_cuda_call(cub::DeviceScan::InclusiveSum(nullptr,
-                                                  scan_temp_size,
-                                                  boundary_flags.get(),
-                                                  hash_group_ids.get(),
-                                                  n_rays,
-                                                  stream),
+    check_cuda_call(cub::DeviceScan::InclusiveSum(nullptr, scan_temp_size, boundary_flags.get(), hash_group_ids.get(),
+                                                  n_rays, stream),
                     "reflection_dedup_gpu(): failed to size first scan");
     CudaBuffer<char> scan_temp(std::max<size_t>(scan_temp_size, 1));
 
     size_t cluster_sort_temp_size = 0;
     audit_cub_sort();
-    check_cuda_call(cub::DeviceRadixSort::SortPairs(nullptr,
-                                                    cluster_sort_temp_size,
-                                                    cluster_keys_in.get(),
-                                                    cluster_keys_out.get(),
-                                                    cluster_ray_indices_in.get(),
-                                                    cluster_ray_indices_out.get(),
-                                                    n_rays,
-                                                    0,
-                                                    64,
-                                                    stream),
+    check_cuda_call(cub::DeviceRadixSort::SortPairs(nullptr, cluster_sort_temp_size, cluster_keys_in.get(),
+                                                    cluster_keys_out.get(), cluster_ray_indices_in.get(),
+                                                    cluster_ray_indices_out.get(), n_rays, 0, 64, stream),
                     "reflection_dedup_gpu(): failed to size second radix sort");
     CudaBuffer<char> cluster_sort_temp(std::max<size_t>(cluster_sort_temp_size, 1));
 
-    audit_cuda_kernel_launch("reflection_dedup_build_keys_kernel",
-                             static_cast<uint32_t>(block_count), 1, 1,
-                             block_size, 1, 1,
-                             static_cast<uint64_t>(n_rays));
+    audit_cuda_kernel_launch("reflection_dedup_build_keys_kernel", static_cast<uint32_t>(block_count), 1, 1, block_size,
+                             1, 1, static_cast<uint64_t>(n_rays));
     audit_cub_sort();
-    audit_cuda_kernel_launch("reflection_dedup_mark_boundaries_kernel",
-                             static_cast<uint32_t>(block_count), 1, 1,
-                             block_size, 1, 1,
-                             static_cast<uint64_t>(n_rays));
+    audit_cuda_kernel_launch("reflection_dedup_mark_boundaries_kernel", static_cast<uint32_t>(block_count), 1, 1,
+                             block_size, 1, 1, static_cast<uint64_t>(n_rays));
     audit_cub_scan();
-    audit_cuda_kernel_launch("reflection_dedup_zero_base_ids_kernel",
-                             static_cast<uint32_t>(block_count), 1, 1,
-                             block_size, 1, 1,
-                             static_cast<uint64_t>(n_rays));
-    audit_cuda_kernel_launch("reflection_dedup_sub_cluster_kernel",
-                             static_cast<uint32_t>(block_count), 1, 1,
-                             block_size, 1, 1,
-                             static_cast<uint64_t>(n_rays));
+    audit_cuda_kernel_launch("reflection_dedup_zero_base_ids_kernel", static_cast<uint32_t>(block_count), 1, 1,
+                             block_size, 1, 1, static_cast<uint64_t>(n_rays));
+    audit_cuda_kernel_launch("reflection_dedup_sub_cluster_kernel", static_cast<uint32_t>(block_count), 1, 1,
+                             block_size, 1, 1, static_cast<uint64_t>(n_rays));
     audit_cub_sort();
-    audit_cuda_kernel_launch("reflection_dedup_mark_boundaries_kernel",
-                             static_cast<uint32_t>(block_count), 1, 1,
-                             block_size, 1, 1,
-                             static_cast<uint64_t>(n_rays));
+    audit_cuda_kernel_launch("reflection_dedup_mark_boundaries_kernel", static_cast<uint32_t>(block_count), 1, 1,
+                             block_size, 1, 1, static_cast<uint64_t>(n_rays));
     audit_cub_scan();
-    audit_cuda_kernel_launch("reflection_dedup_zero_base_ids_kernel",
-                             static_cast<uint32_t>(block_count), 1, 1,
-                             block_size, 1, 1,
-                             static_cast<uint64_t>(n_rays));
-    audit_cuda_kernel_launch("reflection_dedup_compact_kernel",
-                             static_cast<uint32_t>(block_count), 1, 1,
-                             block_size, 1, 1,
-                             static_cast<uint64_t>(n_rays));
+    audit_cuda_kernel_launch("reflection_dedup_zero_base_ids_kernel", static_cast<uint32_t>(block_count), 1, 1,
+                             block_size, 1, 1, static_cast<uint64_t>(n_rays));
+    audit_cuda_kernel_launch("reflection_dedup_compact_kernel", static_cast<uint32_t>(block_count), 1, 1, block_size, 1,
+                             1, static_cast<uint64_t>(n_rays));
 
     shared::multipath::ReflectionDedupSequenceParams sequence{};
     sequence.ray_count = n_rays;
@@ -1345,20 +1001,15 @@ int reflection_dedup_gpu(
 
     int unique_count = 0;
     audit_cuda_memcpy_async();
-    check_cuda_call(cudaMemcpyAsync(&unique_count,
-                                    unique_count_device.get(),
-                                    sizeof(int),
-                                    cudaMemcpyDeviceToHost,
+    check_cuda_call(cudaMemcpyAsync(&unique_count, unique_count_device.get(), sizeof(int), cudaMemcpyDeviceToHost,
                                     stream),
                     "reflection_dedup_gpu(): failed to copy unique count");
     audit_cuda_stream_synchronize();
-    check_cuda_call(cudaStreamSynchronize(stream),
-                    "reflection_dedup_gpu(): failed to finish dedup stream");
+    check_cuda_call(cudaStreamSynchronize(stream), "reflection_dedup_gpu(): failed to finish dedup stream");
     return unique_count;
 }
 
 } // namespace rayd::torch_backend
-
 
 // ---- merged from src/reflection/epc_field_part.cu ----
 
@@ -1375,39 +1026,23 @@ int reflection_dedup_gpu(
 #include <rayd/math.h>
 #include <src/runtime/native_compat.h>
 
-
-
 namespace rayd::torch_backend {
 
 namespace {
 
 constexpr float kReflEps = shared::SmallEpsilon;
 
-static __forceinline__ __device__ bool slot_reflection_coefficients(
-    const ReflEpcFieldParams params,
-    int slot,
-    float cos_theta,
-    Complex &r_te,
-    Complex &r_tm) {
+static __forceinline__ __device__ bool slot_reflection_coefficients(const ReflEpcFieldParams params, int slot,
+                                                                    float cos_theta, Complex& r_te, Complex& r_tm) {
     const float eta_r_value = params.slot_eta_r != nullptr ? params.slot_eta_r[slot] : 1.f;
     const float sigma_value = params.slot_sigma != nullptr ? params.slot_sigma[slot] : 0.f;
     const float gain = params.slot_gain != nullptr ? params.slot_gain[slot] : 1.f;
     const float mu_r_value = params.slot_mu_r != nullptr ? params.slot_mu_r[slot] : 1.f;
-    return shared::field::fresnel_reflection_coefficients(
-        eta_r_value,
-        sigma_value,
-        mu_r_value,
-        gain,
-        params.omega,
-        cos_theta,
-        r_te,
-        r_tm,
-        kReflEps);
+    return shared::field::fresnel_reflection_coefficients(eta_r_value, sigma_value, mu_r_value, gain, params.omega,
+                                                          cos_theta, r_te, r_tm, kReflEps);
 }
 
-static __forceinline__ __device__ void store_zero_field(
-    const ReflEpcFieldParams params,
-    int ray_index) {
+static __forceinline__ __device__ void store_zero_field(const ReflEpcFieldParams params, int ray_index) {
     if (params.out_valid != nullptr) {
         params.out_valid[ray_index] = 0u;
     }
@@ -1488,53 +1123,47 @@ __global__ void reflection_epc_forward_setup_kernel(ReflEpcForwardSetupParams pa
 // writes.
 #define RAYD_REFL_EPC_MAKE3(x, y, z) make_f3(x, y, z)
 #define RAYD_REFL_EPC_EPS kReflEps
-#define RAYD_REFL_EPC_FIELD_PROLOGUE(P, RAY, BASE)                                 \
-    if ((P).out_first_resolved_prim_id != nullptr) {                               \
-        (P).out_first_resolved_prim_id[(RAY)] =                                    \
-            (P).resolved_prim_ids != nullptr ? (P).resolved_prim_ids[(BASE)] : -1; \
-    }                                                                              \
-    if ((P).out_first_trace_prim_id != nullptr) {                                  \
-        (P).out_first_trace_prim_id[(RAY)] =                                       \
-            (P).trace_prim_ids != nullptr ? (P).trace_prim_ids[(BASE)] : -1;       \
+#define RAYD_REFL_EPC_FIELD_PROLOGUE(P, RAY, BASE)                                                                     \
+    if ((P).out_first_resolved_prim_id != nullptr) {                                                                   \
+        (P).out_first_resolved_prim_id[(RAY)] = (P).resolved_prim_ids != nullptr ? (P).resolved_prim_ids[(BASE)] : -1; \
+    }                                                                                                                  \
+    if ((P).out_first_trace_prim_id != nullptr) {                                                                      \
+        (P).out_first_trace_prim_id[(RAY)] = (P).trace_prim_ids != nullptr ? (P).trace_prim_ids[(BASE)] : -1;          \
     }
-#define RAYD_REFL_EPC_LOAD_TX_POLARIZATION(P, RAY)                                 \
-    float3 tx_polarization = make_f3(1.f, 0.f, 0.f);                               \
-    if ((P).tx_pol_x != nullptr) {                                                 \
-        const int tx_pol_index = (P).tx_pol_count == 1 ? 0 : (RAY);                \
-        tx_polarization = make_f3((P).tx_pol_x[tx_pol_index],                      \
-                                  (P).tx_pol_y[tx_pol_index],                      \
-                                  (P).tx_pol_z[tx_pol_index]);                     \
+#define RAYD_REFL_EPC_LOAD_TX_POLARIZATION(P, RAY)                                                                     \
+    float3 tx_polarization = make_f3(1.f, 0.f, 0.f);                                                                   \
+    if ((P).tx_pol_x != nullptr) {                                                                                     \
+        const int tx_pol_index = (P).tx_pol_count == 1 ? 0 : (RAY);                                                    \
+        tx_polarization = make_f3((P).tx_pol_x[tx_pol_index], (P).tx_pol_y[tx_pol_index], (P).tx_pol_z[tx_pol_index]); \
     }
-#define RAYD_REFL_EPC_STORE_FIELD(P, RAY, FIELD)                                   \
-    if ((P).out_valid != nullptr) {                                                \
-        (P).out_valid[(RAY)] = 1u;                                                 \
-    }                                                                              \
-    if ((P).out_field_x_re != nullptr) {                                           \
-        (P).out_field_x_re[(RAY)] = (FIELD).x.re;                                   \
-        (P).out_field_x_im[(RAY)] = (FIELD).x.im;                                   \
-    }                                                                              \
-    if ((P).out_field_y_re != nullptr) {                                           \
-        (P).out_field_y_re[(RAY)] = (FIELD).y.re;                                   \
-        (P).out_field_y_im[(RAY)] = (FIELD).y.im;                                   \
-    }                                                                              \
-    if ((P).out_field_z_re != nullptr) {                                           \
-        (P).out_field_z_re[(RAY)] = (FIELD).z.re;                                   \
-        (P).out_field_z_im[(RAY)] = (FIELD).z.im;                                   \
+#define RAYD_REFL_EPC_STORE_FIELD(P, RAY, FIELD)                                                                       \
+    if ((P).out_valid != nullptr) {                                                                                    \
+        (P).out_valid[(RAY)] = 1u;                                                                                     \
+    }                                                                                                                  \
+    if ((P).out_field_x_re != nullptr) {                                                                               \
+        (P).out_field_x_re[(RAY)] = (FIELD).x.re;                                                                      \
+        (P).out_field_x_im[(RAY)] = (FIELD).x.im;                                                                      \
+    }                                                                                                                  \
+    if ((P).out_field_y_re != nullptr) {                                                                               \
+        (P).out_field_y_re[(RAY)] = (FIELD).y.re;                                                                      \
+        (P).out_field_y_im[(RAY)] = (FIELD).y.im;                                                                      \
+    }                                                                                                                  \
+    if ((P).out_field_z_re != nullptr) {                                                                               \
+        (P).out_field_z_re[(RAY)] = (FIELD).z.re;                                                                      \
+        (P).out_field_z_im[(RAY)] = (FIELD).z.im;                                                                      \
     }
 
 #include <rayd/reflection/epc_field_device.cuh>
 
-void check_cuda_last_error(const char *message) {
+void check_cuda_last_error(const char* message) {
     check_cuda_call(cudaGetLastError(), message);
 }
 
 } // namespace
 
-void reflection_epc_forward_setup_gpu(const ReflEpcForwardSetupParams &params, int device_index) {
-    require(params.n_rays >= 0,
-            "reflection_epc_forward_setup_gpu(): n_rays must be non-negative.");
-    require(params.max_bounces > 0,
-            "reflection_epc_forward_setup_gpu(): max_bounces must be positive.");
+void reflection_epc_forward_setup_gpu(const ReflEpcForwardSetupParams& params, int device_index) {
+    require(params.n_rays >= 0, "reflection_epc_forward_setup_gpu(): n_rays must be non-negative.");
+    require(params.max_bounces > 0, "reflection_epc_forward_setup_gpu(): max_bounces must be positive.");
     if (params.n_rays == 0) {
         return;
     }
@@ -1545,24 +1174,15 @@ void reflection_epc_forward_setup_gpu(const ReflEpcForwardSetupParams &params, i
     const int total = std::max(params.n_rays, slot_count);
     const int block_size = 128;
     const int block_count = (total + block_size - 1) / block_size;
-    audit_cuda_kernel_launch("reflection_epc_forward_setup_kernel",
-                             static_cast<uint32_t>(block_count),
-                             1,
-                             1,
-                             static_cast<uint32_t>(block_size),
-                             1,
-                             1,
-                             static_cast<uint64_t>(total));
+    audit_cuda_kernel_launch("reflection_epc_forward_setup_kernel", static_cast<uint32_t>(block_count), 1, 1,
+                             static_cast<uint32_t>(block_size), 1, 1, static_cast<uint64_t>(total));
     reflection_epc_forward_setup_kernel<<<block_count, block_size, 0, stream>>>(params);
-    check_cuda_last_error(
-        "reflection_epc_forward_setup_gpu(): failed to launch setup kernel");
+    check_cuda_last_error("reflection_epc_forward_setup_gpu(): failed to launch setup kernel");
 }
 
-void reflection_epc_field_gpu(const ReflEpcFieldParams &params, int device_index) {
-    require(params.n_rays >= 0,
-            "reflection_epc_field_gpu(): n_rays must be non-negative.");
-    require(params.max_bounces > 0,
-            "reflection_epc_field_gpu(): max_bounces must be positive.");
+void reflection_epc_field_gpu(const ReflEpcFieldParams& params, int device_index) {
+    require(params.n_rays >= 0, "reflection_epc_field_gpu(): n_rays must be non-negative.");
+    require(params.max_bounces > 0, "reflection_epc_field_gpu(): max_bounces must be positive.");
     if (params.n_rays == 0) {
         return;
     }
@@ -1572,21 +1192,13 @@ void reflection_epc_field_gpu(const ReflEpcFieldParams &params, int device_index
 
     const int block_size = 128;
     const int block_count = (params.n_rays + block_size - 1) / block_size;
-    audit_cuda_kernel_launch("reflection_epc_field_kernel",
-                             static_cast<uint32_t>(block_count),
-                             1,
-                             1,
-                             static_cast<uint32_t>(block_size),
-                             1,
-                             1,
-                             static_cast<uint64_t>(params.n_rays));
+    audit_cuda_kernel_launch("reflection_epc_field_kernel", static_cast<uint32_t>(block_count), 1, 1,
+                             static_cast<uint32_t>(block_size), 1, 1, static_cast<uint64_t>(params.n_rays));
     reflection_epc_field_kernel<<<block_count, block_size, 0, stream>>>(params);
-    check_cuda_last_error(
-        "reflection_epc_field_gpu(): failed to launch field kernel");
+    check_cuda_last_error("reflection_epc_field_gpu(): failed to launch field kernel");
 }
 
 } // namespace rayd::torch_backend
-
 
 // ---- merged from src/reflection/epc_geometry_ad_part.cu ----
 
@@ -1618,50 +1230,42 @@ namespace {
 namespace shared_math = rayd::shared::math;
 namespace shared_reflection = rayd::shared::reflection;
 
-using shared_math::Vec3f;
 using shared::optix::ReflEpcMaxBounces;
+using shared_math::Vec3f;
 
-__device__ Vec3f load_shared_vec3(const float *base, int64_t index) {
-    return shared_math::make_vec3(
-        base[index * 3 + 0], base[index * 3 + 1], base[index * 3 + 2]);
+__device__ Vec3f load_shared_vec3(const float* base, int64_t index) {
+    return shared_math::make_vec3(base[index * 3 + 0], base[index * 3 + 1], base[index * 3 + 2]);
 }
 
-__device__ Vec3f load_strided_vec3_or_zero(
-    const float *base,
-    int64_t index0,
-    int64_t index1,
-    int64_t stride0,
-    int64_t stride1,
-    int64_t stride2) {
+__device__ Vec3f load_strided_vec3_or_zero(const float* base, int64_t index0, int64_t index1, int64_t stride0,
+                                           int64_t stride1, int64_t stride2) {
     if (base == nullptr) {
         return shared_math::make_vec3(0.0f, 0.0f, 0.0f);
     }
     const int64_t offset = index0 * stride0 + index1 * stride1;
-    return shared_math::make_vec3(
-        base[offset], base[offset + stride2], base[offset + 2 * stride2]);
+    return shared_math::make_vec3(base[offset], base[offset + stride2], base[offset + 2 * stride2]);
 }
 
-__device__ void store_vec3(float *base, int64_t index, Vec3f value) {
+__device__ void store_vec3(float* base, int64_t index, Vec3f value) {
     base[index * 3 + 0] = value.x;
     base[index * 3 + 1] = value.y;
     base[index * 3 + 2] = value.z;
 }
 
-__device__ void atomic_add_shared_vec3(float *base, int index, Vec3f value) {
+__device__ void atomic_add_shared_vec3(float* base, int index, Vec3f value) {
     atomicAdd(&base[index * 3 + 0], value.x);
     atomicAdd(&base[index * 3 + 1], value.y);
     atomicAdd(&base[index * 3 + 2], value.z);
 }
 
-int64_t optional_stride_or_zero(const at::Tensor *tensor, int64_t dim) {
-    if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0 ||
-        tensor->dim() <= dim) {
+int64_t optional_stride_or_zero(const at::Tensor* tensor, int64_t dim) {
+    if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0 || tensor->dim() <= dim) {
         return 0;
     }
     return tensor->stride(dim);
 }
 
-const float *optional_data_ptr(const at::Tensor *tensor) {
+const float* optional_data_ptr(const at::Tensor* tensor) {
     if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0) {
         return nullptr;
     }
@@ -1671,18 +1275,10 @@ const float *optional_data_ptr(const at::Tensor *tensor) {
 // Re-solve the frozen-winner chain for one ray and load its plane inputs.
 // Returns false when the row is invalid or the chain guard rejects it (the
 // row then contributes exactly zero, matching the frozen discovery record).
-__device__ bool load_row_chain(
-    const float *source,
-    const float *receiver,
-    const float *plane_points,
-    const float *plane_normals,
-    const bool *valid,
-    const int *bounce_count,
-    int64_t ray_index,
-    int max_bounces,
-    Vec3f *row_plane_points,
-    Vec3f *row_plane_normals,
-    shared_reflection::EpcChain<ReflEpcMaxBounces> &chain) {
+__device__ bool load_row_chain(const float* source, const float* receiver, const float* plane_points,
+                               const float* plane_normals, const bool* valid, const int* bounce_count,
+                               int64_t ray_index, int max_bounces, Vec3f* row_plane_points, Vec3f* row_plane_normals,
+                               shared_reflection::EpcChain<ReflEpcMaxBounces>& chain) {
     if (!valid[ray_index]) {
         return false;
     }
@@ -1695,43 +1291,22 @@ __device__ bool load_row_chain(
         row_plane_points[bounce] = load_shared_vec3(plane_points, base + bounce);
         row_plane_normals[bounce] = load_shared_vec3(plane_normals, base + bounce);
     }
-    return shared_reflection::solve_epc_chain<ReflEpcMaxBounces>(
-        row_plane_points,
-        row_plane_normals,
-        bounces,
-        load_shared_vec3(source, ray_index),
-        load_shared_vec3(receiver, ray_index),
-        chain);
+    return shared_reflection::solve_epc_chain<ReflEpcMaxBounces>(row_plane_points, row_plane_normals, bounces,
+                                                                 load_shared_vec3(source, ray_index),
+                                                                 load_shared_vec3(receiver, ray_index), chain);
 }
 
 __global__ void reflection_epc_paths_backward_kernel(
-    const float *__restrict__ vertices,
-    const int *__restrict__ faces,
-    const float *__restrict__ source,
-    const float *__restrict__ receiver,
-    const int *__restrict__ sequence,
-    const float *__restrict__ plane_points,
-    const float *__restrict__ plane_normals,
-    const bool *__restrict__ valid,
-    const int *__restrict__ bounce_count,
-    const float *__restrict__ grad_points,
-    const float *__restrict__ grad_normals,
-    const float *__restrict__ grad_path_length,
-    int64_t grad_points_stride0,
-    int64_t grad_points_stride1,
-    int64_t grad_points_stride2,
-    int64_t grad_normals_stride0,
-    int64_t grad_normals_stride1,
-    int64_t grad_normals_stride2,
-    int64_t grad_path_length_stride0,
-    int64_t ray_count,
-    int max_bounces,
-    int64_t triangle_count,
-    float *__restrict__ grad_vertices,
-    float *__restrict__ grad_source,
-    float *__restrict__ grad_receiver) {
-    const int64_t ray_index =
-        static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    const float* __restrict__ vertices, const int* __restrict__ faces, const float* __restrict__ source,
+    const float* __restrict__ receiver, const int* __restrict__ sequence, const float* __restrict__ plane_points,
+    const float* __restrict__ plane_normals, const bool* __restrict__ valid, const int* __restrict__ bounce_count,
+    const float* __restrict__ grad_points, const float* __restrict__ grad_normals,
+    const float* __restrict__ grad_path_length, int64_t grad_points_stride0, int64_t grad_points_stride1,
+    int64_t grad_points_stride2, int64_t grad_normals_stride0, int64_t grad_normals_stride1,
+    int64_t grad_normals_stride2, int64_t grad_path_length_stride0, int64_t ray_count, int max_bounces,
+    int64_t triangle_count, float* __restrict__ grad_vertices, float* __restrict__ grad_source,
+    float* __restrict__ grad_receiver) {
+    const int64_t ray_index = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (ray_index >= ray_count) {
         return;
     }
@@ -1746,18 +1321,8 @@ __global__ void reflection_epc_paths_backward_kernel(
     Vec3f row_plane_points[ReflEpcMaxBounces];
     Vec3f row_plane_normals[ReflEpcMaxBounces];
     shared_reflection::EpcChain<ReflEpcMaxBounces> chain;
-    if (!load_row_chain(
-            source,
-            receiver,
-            plane_points,
-            plane_normals,
-            valid,
-            bounce_count,
-            ray_index,
-            max_bounces,
-            row_plane_points,
-            row_plane_normals,
-            chain)) {
+    if (!load_row_chain(source, receiver, plane_points, plane_normals, valid, bounce_count, ray_index, max_bounces,
+                        row_plane_points, row_plane_normals, chain)) {
         return;
     }
     const int bounces = chain.bounces;
@@ -1765,43 +1330,23 @@ __global__ void reflection_epc_paths_backward_kernel(
     Vec3f grad_hits[ReflEpcMaxBounces];
     Vec3f grad_unit_normals[ReflEpcMaxBounces];
     for (int bounce = 0; bounce < bounces; ++bounce) {
-        grad_hits[bounce] = load_strided_vec3_or_zero(
-            grad_points,
-            ray_index,
-            bounce,
-            grad_points_stride0,
-            grad_points_stride1,
-            grad_points_stride2);
-        grad_unit_normals[bounce] = load_strided_vec3_or_zero(
-            grad_normals,
-            ray_index,
-            bounce,
-            grad_normals_stride0,
-            grad_normals_stride1,
-            grad_normals_stride2);
+        grad_hits[bounce] = load_strided_vec3_or_zero(grad_points, ray_index, bounce, grad_points_stride0,
+                                                      grad_points_stride1, grad_points_stride2);
+        grad_unit_normals[bounce] = load_strided_vec3_or_zero(grad_normals, ray_index, bounce, grad_normals_stride0,
+                                                              grad_normals_stride1, grad_normals_stride2);
     }
     const float grad_length =
-        grad_path_length == nullptr
-            ? 0.0f
-            : grad_path_length[ray_index * grad_path_length_stride0];
+        grad_path_length == nullptr ? 0.0f : grad_path_length[ray_index * grad_path_length_stride0];
 
     Vec3f grad_source_row;
     Vec3f grad_receiver_row;
     Vec3f grad_plane_points[ReflEpcMaxBounces];
     Vec3f grad_plane_normals[ReflEpcMaxBounces];
-    shared_reflection::adj_solve_epc_chain<ReflEpcMaxBounces>(
-        chain,
-        row_plane_points,
-        row_plane_normals,
-        load_shared_vec3(source, ray_index),
-        load_shared_vec3(receiver, ray_index),
-        grad_hits,
-        grad_unit_normals,
-        grad_length,
-        grad_source_row,
-        grad_receiver_row,
-        grad_plane_points,
-        grad_plane_normals);
+    shared_reflection::adj_solve_epc_chain<ReflEpcMaxBounces>(chain, row_plane_points, row_plane_normals,
+                                                              load_shared_vec3(source, ray_index),
+                                                              load_shared_vec3(receiver, ray_index), grad_hits,
+                                                              grad_unit_normals, grad_length, grad_source_row,
+                                                              grad_receiver_row, grad_plane_points, grad_plane_normals);
 
     if (grad_source != nullptr) {
         store_vec3(grad_source, ray_index, grad_source_row);
@@ -1831,15 +1376,8 @@ __global__ void reflection_epc_paths_backward_kernel(
         Vec3f grad_v0 = grad_plane_points[bounce];
         Vec3f grad_v1 = zero;
         Vec3f grad_v2 = zero;
-        shared_reflection::adj_face_normal(
-            v0,
-            v1,
-            v2,
-            shared_reflection::face_unit_normal(v0, v1, v2),
-            grad_plane_normals[bounce],
-            grad_v0,
-            grad_v1,
-            grad_v2);
+        shared_reflection::adj_face_normal(v0, v1, v2, shared_reflection::face_unit_normal(v0, v1, v2),
+                                           grad_plane_normals[bounce], grad_v0, grad_v1, grad_v2);
         atomic_add_shared_vec3(grad_vertices, i0, grad_v0);
         atomic_add_shared_vec3(grad_vertices, i1, grad_v1);
         atomic_add_shared_vec3(grad_vertices, i2, grad_v2);
@@ -1847,32 +1385,15 @@ __global__ void reflection_epc_paths_backward_kernel(
 }
 
 __global__ void reflection_epc_paths_jvp_kernel(
-    const float *__restrict__ vertices,
-    const int *__restrict__ faces,
-    const float *__restrict__ source,
-    const float *__restrict__ receiver,
-    const int *__restrict__ sequence,
-    const float *__restrict__ plane_points,
-    const float *__restrict__ plane_normals,
-    const bool *__restrict__ valid,
-    const int *__restrict__ bounce_count,
-    const float *__restrict__ tangent_vertices,
-    const float *__restrict__ tangent_source,
-    const float *__restrict__ tangent_receiver,
-    int64_t tangent_vertices_stride0,
-    int64_t tangent_vertices_stride1,
-    int64_t tangent_source_stride0,
-    int64_t tangent_source_stride1,
-    int64_t tangent_receiver_stride0,
-    int64_t tangent_receiver_stride1,
-    int64_t ray_count,
-    int max_bounces,
-    int64_t triangle_count,
-    float *__restrict__ tangent_points,
-    float *__restrict__ tangent_normals,
-    float *__restrict__ tangent_path_length) {
-    const int64_t ray_index =
-        static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    const float* __restrict__ vertices, const int* __restrict__ faces, const float* __restrict__ source,
+    const float* __restrict__ receiver, const int* __restrict__ sequence, const float* __restrict__ plane_points,
+    const float* __restrict__ plane_normals, const bool* __restrict__ valid, const int* __restrict__ bounce_count,
+    const float* __restrict__ tangent_vertices, const float* __restrict__ tangent_source,
+    const float* __restrict__ tangent_receiver, int64_t tangent_vertices_stride0, int64_t tangent_vertices_stride1,
+    int64_t tangent_source_stride0, int64_t tangent_source_stride1, int64_t tangent_receiver_stride0,
+    int64_t tangent_receiver_stride1, int64_t ray_count, int max_bounces, int64_t triangle_count,
+    float* __restrict__ tangent_points, float* __restrict__ tangent_normals, float* __restrict__ tangent_path_length) {
+    const int64_t ray_index = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (ray_index >= ray_count) {
         return;
     }
@@ -1887,18 +1408,8 @@ __global__ void reflection_epc_paths_jvp_kernel(
     Vec3f row_plane_points[ReflEpcMaxBounces];
     Vec3f row_plane_normals[ReflEpcMaxBounces];
     shared_reflection::EpcChain<ReflEpcMaxBounces> chain;
-    if (!load_row_chain(
-            source,
-            receiver,
-            plane_points,
-            plane_normals,
-            valid,
-            bounce_count,
-            ray_index,
-            max_bounces,
-            row_plane_points,
-            row_plane_normals,
-            chain)) {
+    if (!load_row_chain(source, receiver, plane_points, plane_normals, valid, bounce_count, ray_index, max_bounces,
+                        row_plane_points, row_plane_normals, chain)) {
         return;
     }
     const int bounces = chain.bounces;
@@ -1921,45 +1432,28 @@ __global__ void reflection_epc_paths_jvp_kernel(
         const int i0 = faces[prim * 3 + 0];
         const int i1 = faces[prim * 3 + 1];
         const int i2 = faces[prim * 3 + 2];
-        const Vec3f tangent_v0 = load_strided_vec3_or_zero(
-            tangent_vertices, i0, 0, tangent_vertices_stride0, 0,
-            tangent_vertices_stride1);
-        const Vec3f tangent_v1 = load_strided_vec3_or_zero(
-            tangent_vertices, i1, 0, tangent_vertices_stride0, 0,
-            tangent_vertices_stride1);
-        const Vec3f tangent_v2 = load_strided_vec3_or_zero(
-            tangent_vertices, i2, 0, tangent_vertices_stride0, 0,
-            tangent_vertices_stride1);
+        const Vec3f tangent_v0 =
+            load_strided_vec3_or_zero(tangent_vertices, i0, 0, tangent_vertices_stride0, 0, tangent_vertices_stride1);
+        const Vec3f tangent_v1 =
+            load_strided_vec3_or_zero(tangent_vertices, i1, 0, tangent_vertices_stride0, 0, tangent_vertices_stride1);
+        const Vec3f tangent_v2 =
+            load_strided_vec3_or_zero(tangent_vertices, i2, 0, tangent_vertices_stride0, 0, tangent_vertices_stride1);
         tangent_plane_points[bounce] = tangent_v0;
-        tangent_plane_normals[bounce] = shared_reflection::jvp_face_normal(
-            load_shared_vec3(vertices, i0),
-            load_shared_vec3(vertices, i1),
-            load_shared_vec3(vertices, i2),
-            tangent_v0,
-            tangent_v1,
-            tangent_v2);
+        tangent_plane_normals[bounce] =
+            shared_reflection::jvp_face_normal(load_shared_vec3(vertices, i0), load_shared_vec3(vertices, i1),
+                                               load_shared_vec3(vertices, i2), tangent_v0, tangent_v1, tangent_v2);
     }
 
     Vec3f tangent_hits[ReflEpcMaxBounces];
     Vec3f tangent_unit_normals[ReflEpcMaxBounces];
     float tangent_length = 0.0f;
     shared_reflection::jvp_solve_epc_chain<ReflEpcMaxBounces>(
-        chain,
-        row_plane_points,
-        row_plane_normals,
-        load_shared_vec3(source, ray_index),
+        chain, row_plane_points, row_plane_normals, load_shared_vec3(source, ray_index),
         load_shared_vec3(receiver, ray_index),
-        load_strided_vec3_or_zero(
-            tangent_source, ray_index, 0, tangent_source_stride0, 0,
-            tangent_source_stride1),
-        load_strided_vec3_or_zero(
-            tangent_receiver, ray_index, 0, tangent_receiver_stride0, 0,
-            tangent_receiver_stride1),
-        tangent_plane_points,
-        tangent_plane_normals,
-        tangent_hits,
-        tangent_unit_normals,
-        tangent_length);
+        load_strided_vec3_or_zero(tangent_source, ray_index, 0, tangent_source_stride0, 0, tangent_source_stride1),
+        load_strided_vec3_or_zero(tangent_receiver, ray_index, 0, tangent_receiver_stride0, 0,
+                                  tangent_receiver_stride1),
+        tangent_plane_points, tangent_plane_normals, tangent_hits, tangent_unit_normals, tangent_length);
 
     for (int bounce = 0; bounce < bounces; ++bounce) {
         store_vec3(tangent_points, base + bounce, tangent_hits[bounce]);
@@ -1968,21 +1462,16 @@ __global__ void reflection_epc_paths_jvp_kernel(
     tangent_path_length[ray_index] = tangent_length;
 }
 
-__global__ void scene_face_normals_backward_kernel(
-    const float *__restrict__ vertices,
-    const int *__restrict__ faces,
-    const float *__restrict__ grad_face_normals,
-    int64_t grad_stride0,
-    int64_t grad_stride1,
-    int64_t triangle_count,
-    float *__restrict__ grad_vertices) {
-    const int64_t face_index =
-        static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+__global__ void scene_face_normals_backward_kernel(const float* __restrict__ vertices, const int* __restrict__ faces,
+                                                   const float* __restrict__ grad_face_normals, int64_t grad_stride0,
+                                                   int64_t grad_stride1, int64_t triangle_count,
+                                                   float* __restrict__ grad_vertices) {
+    const int64_t face_index = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (face_index >= triangle_count) {
         return;
     }
-    const Vec3f grad_normal = load_strided_vec3_or_zero(
-        grad_face_normals, face_index, 0, grad_stride0, 0, grad_stride1);
+    const Vec3f grad_normal =
+        load_strided_vec3_or_zero(grad_face_normals, face_index, 0, grad_stride0, 0, grad_stride1);
     if (grad_normal.x == 0.0f && grad_normal.y == 0.0f && grad_normal.z == 0.0f) {
         return;
     }
@@ -1995,30 +1484,18 @@ __global__ void scene_face_normals_backward_kernel(
     Vec3f grad_v0 = shared_math::make_vec3(0.0f, 0.0f, 0.0f);
     Vec3f grad_v1 = shared_math::make_vec3(0.0f, 0.0f, 0.0f);
     Vec3f grad_v2 = shared_math::make_vec3(0.0f, 0.0f, 0.0f);
-    shared_reflection::adj_face_normal(
-        v0,
-        v1,
-        v2,
-        shared_reflection::face_unit_normal(v0, v1, v2),
-        grad_normal,
-        grad_v0,
-        grad_v1,
-        grad_v2);
+    shared_reflection::adj_face_normal(v0, v1, v2, shared_reflection::face_unit_normal(v0, v1, v2), grad_normal,
+                                       grad_v0, grad_v1, grad_v2);
     atomic_add_shared_vec3(grad_vertices, i0, grad_v0);
     atomic_add_shared_vec3(grad_vertices, i1, grad_v1);
     atomic_add_shared_vec3(grad_vertices, i2, grad_v2);
 }
 
-__global__ void scene_face_normals_jvp_kernel(
-    const float *__restrict__ vertices,
-    const int *__restrict__ faces,
-    const float *__restrict__ tangent_vertices,
-    int64_t tangent_stride0,
-    int64_t tangent_stride1,
-    int64_t triangle_count,
-    float *__restrict__ tangent_face_normals) {
-    const int64_t face_index =
-        static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+__global__ void scene_face_normals_jvp_kernel(const float* __restrict__ vertices, const int* __restrict__ faces,
+                                              const float* __restrict__ tangent_vertices, int64_t tangent_stride0,
+                                              int64_t tangent_stride1, int64_t triangle_count,
+                                              float* __restrict__ tangent_face_normals) {
+    const int64_t face_index = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (face_index >= triangle_count) {
         return;
     }
@@ -2026,150 +1503,86 @@ __global__ void scene_face_normals_jvp_kernel(
     const int i1 = faces[face_index * 3 + 1];
     const int i2 = faces[face_index * 3 + 2];
     const Vec3f tangent = shared_reflection::jvp_face_normal(
-        load_shared_vec3(vertices, i0),
-        load_shared_vec3(vertices, i1),
-        load_shared_vec3(vertices, i2),
-        load_strided_vec3_or_zero(
-            tangent_vertices, i0, 0, tangent_stride0, 0, tangent_stride1),
-        load_strided_vec3_or_zero(
-            tangent_vertices, i1, 0, tangent_stride0, 0, tangent_stride1),
-        load_strided_vec3_or_zero(
-            tangent_vertices, i2, 0, tangent_stride0, 0, tangent_stride1));
+        load_shared_vec3(vertices, i0), load_shared_vec3(vertices, i1), load_shared_vec3(vertices, i2),
+        load_strided_vec3_or_zero(tangent_vertices, i0, 0, tangent_stride0, 0, tangent_stride1),
+        load_strided_vec3_or_zero(tangent_vertices, i1, 0, tangent_stride0, 0, tangent_stride1),
+        load_strided_vec3_or_zero(tangent_vertices, i2, 0, tangent_stride0, 0, tangent_stride1));
     store_vec3(tangent_face_normals, face_index, tangent);
 }
 
 } // namespace
 
 ReflEpcPathsBackwardOutputs reflection_epc_paths_backward_cuda(
-    const at::Tensor &vertices,
-    const at::Tensor &faces,
-    const at::Tensor &source,
-    const at::Tensor &receiver,
-    const at::Tensor &sequence,
-    const at::Tensor &plane_points,
-    const at::Tensor &plane_normals,
-    const at::Tensor &valid,
-    const at::Tensor &bounce_count,
-    const at::Tensor *grad_points,
-    const at::Tensor *grad_normals,
-    const at::Tensor *grad_path_length,
-    bool need_grad_vertices,
-    bool need_grad_source,
+    const at::Tensor& vertices, const at::Tensor& faces, const at::Tensor& source, const at::Tensor& receiver,
+    const at::Tensor& sequence, const at::Tensor& plane_points, const at::Tensor& plane_normals,
+    const at::Tensor& valid, const at::Tensor& bounce_count, const at::Tensor* grad_points,
+    const at::Tensor* grad_normals, const at::Tensor* grad_path_length, bool need_grad_vertices, bool need_grad_source,
     bool need_grad_receiver) {
     const int64_t ray_count = source.size(0);
     const int max_bounces = static_cast<int>(sequence.size(1));
-    cudaStream_t stream =
-        at::cuda::getCurrentCUDAStream(vertices.get_device()).stream();
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream(vertices.get_device()).stream();
     ReflEpcPathsBackwardOutputs out;
-    out.grad_vertices = need_grad_vertices
-        ? at::empty(vertices.sizes(), vertices.options())
-        : at::Tensor();
-    out.grad_source =
-        need_grad_source ? at::empty(source.sizes(), source.options()) : at::Tensor();
-    out.grad_receiver = need_grad_receiver
-        ? at::empty(receiver.sizes(), receiver.options())
-        : at::Tensor();
+    out.grad_vertices = need_grad_vertices ? at::empty(vertices.sizes(), vertices.options()) : at::Tensor();
+    out.grad_source = need_grad_source ? at::empty(source.sizes(), source.options()) : at::Tensor();
+    out.grad_receiver = need_grad_receiver ? at::empty(receiver.sizes(), receiver.options()) : at::Tensor();
     zero_float_tensor_async(out.grad_vertices, stream);
-    if (ray_count == 0 ||
-        (!need_grad_vertices && !need_grad_source && !need_grad_receiver)) {
+    if (ray_count == 0 || (!need_grad_vertices && !need_grad_source && !need_grad_receiver)) {
         return out;
     }
 
     const int threads = 128;
     const int blocks = static_cast<int>((ray_count + threads - 1) / threads);
     reflection_epc_paths_backward_kernel<<<blocks, threads, 0, stream>>>(
-        vertices.data_ptr<float>(),
-        faces.data_ptr<int>(),
-        source.data_ptr<float>(),
-        receiver.data_ptr<float>(),
-        sequence.data_ptr<int>(),
-        plane_points.data_ptr<float>(),
-        plane_normals.data_ptr<float>(),
-        valid.data_ptr<bool>(),
-        bounce_count.data_ptr<int>(),
-        optional_data_ptr(grad_points),
-        optional_data_ptr(grad_normals),
-        optional_data_ptr(grad_path_length),
-        optional_stride_or_zero(grad_points, 0),
-        optional_stride_or_zero(grad_points, 1),
-        optional_stride_or_zero(grad_points, 2),
-        optional_stride_or_zero(grad_normals, 0),
-        optional_stride_or_zero(grad_normals, 1),
-        optional_stride_or_zero(grad_normals, 2),
-        optional_stride_or_zero(grad_path_length, 0),
-        ray_count,
-        max_bounces,
-        faces.size(0),
-        need_grad_vertices ? out.grad_vertices.data_ptr<float>() : nullptr,
+        vertices.data_ptr<float>(), faces.data_ptr<int>(), source.data_ptr<float>(), receiver.data_ptr<float>(),
+        sequence.data_ptr<int>(), plane_points.data_ptr<float>(), plane_normals.data_ptr<float>(),
+        valid.data_ptr<bool>(), bounce_count.data_ptr<int>(), optional_data_ptr(grad_points),
+        optional_data_ptr(grad_normals), optional_data_ptr(grad_path_length), optional_stride_or_zero(grad_points, 0),
+        optional_stride_or_zero(grad_points, 1), optional_stride_or_zero(grad_points, 2),
+        optional_stride_or_zero(grad_normals, 0), optional_stride_or_zero(grad_normals, 1),
+        optional_stride_or_zero(grad_normals, 2), optional_stride_or_zero(grad_path_length, 0), ray_count, max_bounces,
+        faces.size(0), need_grad_vertices ? out.grad_vertices.data_ptr<float>() : nullptr,
         need_grad_source ? out.grad_source.data_ptr<float>() : nullptr,
         need_grad_receiver ? out.grad_receiver.data_ptr<float>() : nullptr);
     return out;
 }
 
-ReflEpcPathsJvpOutputs reflection_epc_paths_jvp_cuda(
-    const at::Tensor &vertices,
-    const at::Tensor &faces,
-    const at::Tensor &source,
-    const at::Tensor &receiver,
-    const at::Tensor &sequence,
-    const at::Tensor &plane_points,
-    const at::Tensor &plane_normals,
-    const at::Tensor &valid,
-    const at::Tensor &bounce_count,
-    const at::Tensor *tangent_vertices,
-    const at::Tensor *tangent_source,
-    const at::Tensor *tangent_receiver) {
+ReflEpcPathsJvpOutputs reflection_epc_paths_jvp_cuda(const at::Tensor& vertices, const at::Tensor& faces,
+                                                     const at::Tensor& source, const at::Tensor& receiver,
+                                                     const at::Tensor& sequence, const at::Tensor& plane_points,
+                                                     const at::Tensor& plane_normals, const at::Tensor& valid,
+                                                     const at::Tensor& bounce_count, const at::Tensor* tangent_vertices,
+                                                     const at::Tensor* tangent_source,
+                                                     const at::Tensor* tangent_receiver) {
     const int64_t ray_count = source.size(0);
     const int64_t max_bounces = sequence.size(1);
     ReflEpcPathsJvpOutputs out;
-    out.tangent_points =
-        at::empty({ray_count, max_bounces, 3}, source.options());
-    out.tangent_normals =
-        at::empty({ray_count, max_bounces, 3}, source.options());
+    out.tangent_points = at::empty({ray_count, max_bounces, 3}, source.options());
+    out.tangent_normals = at::empty({ray_count, max_bounces, 3}, source.options());
     out.tangent_path_length = at::empty({ray_count}, source.options());
     if (ray_count == 0) {
         return out;
     }
 
-    cudaStream_t stream =
-        at::cuda::getCurrentCUDAStream(vertices.get_device()).stream();
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream(vertices.get_device()).stream();
     const int threads = 128;
     const int blocks = static_cast<int>((ray_count + threads - 1) / threads);
     reflection_epc_paths_jvp_kernel<<<blocks, threads, 0, stream>>>(
-        vertices.data_ptr<float>(),
-        faces.data_ptr<int>(),
-        source.data_ptr<float>(),
-        receiver.data_ptr<float>(),
-        sequence.data_ptr<int>(),
-        plane_points.data_ptr<float>(),
-        plane_normals.data_ptr<float>(),
-        valid.data_ptr<bool>(),
-        bounce_count.data_ptr<int>(),
-        optional_data_ptr(tangent_vertices),
-        optional_data_ptr(tangent_source),
-        optional_data_ptr(tangent_receiver),
-        optional_stride_or_zero(tangent_vertices, 0),
-        optional_stride_or_zero(tangent_vertices, 1),
-        optional_stride_or_zero(tangent_source, 0),
-        optional_stride_or_zero(tangent_source, 1),
-        optional_stride_or_zero(tangent_receiver, 0),
-        optional_stride_or_zero(tangent_receiver, 1),
-        ray_count,
-        static_cast<int>(max_bounces),
-        faces.size(0),
-        out.tangent_points.data_ptr<float>(),
-        out.tangent_normals.data_ptr<float>(),
-        out.tangent_path_length.data_ptr<float>());
+        vertices.data_ptr<float>(), faces.data_ptr<int>(), source.data_ptr<float>(), receiver.data_ptr<float>(),
+        sequence.data_ptr<int>(), plane_points.data_ptr<float>(), plane_normals.data_ptr<float>(),
+        valid.data_ptr<bool>(), bounce_count.data_ptr<int>(), optional_data_ptr(tangent_vertices),
+        optional_data_ptr(tangent_source), optional_data_ptr(tangent_receiver),
+        optional_stride_or_zero(tangent_vertices, 0), optional_stride_or_zero(tangent_vertices, 1),
+        optional_stride_or_zero(tangent_source, 0), optional_stride_or_zero(tangent_source, 1),
+        optional_stride_or_zero(tangent_receiver, 0), optional_stride_or_zero(tangent_receiver, 1), ray_count,
+        static_cast<int>(max_bounces), faces.size(0), out.tangent_points.data_ptr<float>(),
+        out.tangent_normals.data_ptr<float>(), out.tangent_path_length.data_ptr<float>());
     return out;
 }
 
-at::Tensor scene_face_normals_backward_cuda(
-    const at::Tensor &vertices,
-    const at::Tensor &faces,
-    const at::Tensor &grad_face_normals) {
+at::Tensor scene_face_normals_backward_cuda(const at::Tensor& vertices, const at::Tensor& faces,
+                                            const at::Tensor& grad_face_normals) {
     const int64_t triangle_count = faces.size(0);
-    cudaStream_t stream =
-        at::cuda::getCurrentCUDAStream(vertices.get_device()).stream();
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream(vertices.get_device()).stream();
     at::Tensor grad_vertices = at::empty(vertices.sizes(), vertices.options());
     zero_float_tensor_async(grad_vertices, stream);
     if (triangle_count == 0) {
@@ -2178,45 +1591,35 @@ at::Tensor scene_face_normals_backward_cuda(
 
     const int threads = 128;
     const int blocks = static_cast<int>((triangle_count + threads - 1) / threads);
-    scene_face_normals_backward_kernel<<<blocks, threads, 0, stream>>>(
-        vertices.data_ptr<float>(),
-        faces.data_ptr<int>(),
-        grad_face_normals.data_ptr<float>(),
-        grad_face_normals.stride(0),
-        grad_face_normals.stride(1),
-        triangle_count,
-        grad_vertices.data_ptr<float>());
+    scene_face_normals_backward_kernel<<<blocks, threads, 0, stream>>>(vertices.data_ptr<float>(),
+                                                                       faces.data_ptr<int>(),
+                                                                       grad_face_normals.data_ptr<float>(),
+                                                                       grad_face_normals.stride(0),
+                                                                       grad_face_normals.stride(1), triangle_count,
+                                                                       grad_vertices.data_ptr<float>());
     return grad_vertices;
 }
 
-at::Tensor scene_face_normals_jvp_cuda(
-    const at::Tensor &vertices,
-    const at::Tensor &faces,
-    const at::Tensor &tangent_vertices) {
+at::Tensor scene_face_normals_jvp_cuda(const at::Tensor& vertices, const at::Tensor& faces,
+                                       const at::Tensor& tangent_vertices) {
     const int64_t triangle_count = faces.size(0);
-    at::Tensor tangent_face_normals =
-        at::empty({triangle_count, 3}, vertices.options());
+    at::Tensor tangent_face_normals = at::empty({triangle_count, 3}, vertices.options());
     if (triangle_count == 0) {
         return tangent_face_normals;
     }
 
-    cudaStream_t stream =
-        at::cuda::getCurrentCUDAStream(vertices.get_device()).stream();
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream(vertices.get_device()).stream();
     const int threads = 128;
     const int blocks = static_cast<int>((triangle_count + threads - 1) / threads);
-    scene_face_normals_jvp_kernel<<<blocks, threads, 0, stream>>>(
-        vertices.data_ptr<float>(),
-        faces.data_ptr<int>(),
-        tangent_vertices.data_ptr<float>(),
-        tangent_vertices.stride(0),
-        tangent_vertices.stride(1),
-        triangle_count,
-        tangent_face_normals.data_ptr<float>());
+    scene_face_normals_jvp_kernel<<<blocks, threads, 0, stream>>>(vertices.data_ptr<float>(), faces.data_ptr<int>(),
+                                                                  tangent_vertices.data_ptr<float>(),
+                                                                  tangent_vertices.stride(0),
+                                                                  tangent_vertices.stride(1), triangle_count,
+                                                                  tangent_face_normals.data_ptr<float>());
     return tangent_face_normals;
 }
 
 } // namespace rayd::torch_backend
-
 
 // ---- merged from src/reflection/accum_reduce_part.cu ----
 
@@ -2236,54 +1639,35 @@ namespace rayd::torch_backend {
 
 namespace {
 
-void cuda_check(cudaError_t result, const char *expr) {
+void cuda_check(cudaError_t result, const char* expr) {
     if (result == cudaSuccess)
         return;
-    throw std::runtime_error(
-        std::string("CUDA error in ") + expr + ": " + cudaGetErrorString(result));
+    throw std::runtime_error(std::string("CUDA error in ") + expr + ": " + cudaGetErrorString(result));
 }
 
-void require_i32_count(int64_t count, const char *name) {
+void require_i32_count(int64_t count, const char* name) {
     if (count < 0 || count > static_cast<int64_t>(std::numeric_limits<int>::max())) {
         throw std::runtime_error(std::string(name) + ": count is outside int32 launch range.");
     }
 }
 
 struct AddReflAccumValue {
-    __host__ __device__ ReflAccumStagedValue operator()(
-        ReflAccumStagedValue x,
-        ReflAccumStagedValue y) const {
+    __host__ __device__ ReflAccumStagedValue operator()(ReflAccumStagedValue x, ReflAccumStagedValue y) const {
         ReflAccumStagedValue out;
-        out.a = make_float4(
-            x.a.x + y.a.x,
-            x.a.y + y.a.y,
-            x.a.z + y.a.z,
-            x.a.w + y.a.w);
-        out.b = make_float4(
-            x.b.x + y.b.x,
-            x.b.y + y.b.y,
-            x.b.z + y.b.z,
-            x.b.w + y.b.w);
+        out.a = make_float4(x.a.x + y.a.x, x.a.y + y.a.y, x.a.z + y.a.z, x.a.w + y.a.w);
+        out.b = make_float4(x.b.x + y.b.x, x.b.y + y.b.y, x.b.z + y.b.z, x.b.w + y.b.w);
         return out;
     }
 };
 
 __global__ void scatter_refl_accum_reduced_kernel(
-    const int *__restrict__ num_runs,
-    const int *__restrict__ unique_cells,
-    const ReflAccumStagedValue *__restrict__ reduced_values,
-    float *__restrict__ out_power,
-    float *__restrict__ out_field_x_re,
-    float *__restrict__ out_field_x_im,
-    float *__restrict__ out_field_y_re,
-    float *__restrict__ out_field_y_im,
-    float *__restrict__ out_field_z_re,
-    float *__restrict__ out_field_z_im,
-    int *__restrict__ out_reflection_count) {
+    const int* __restrict__ num_runs, const int* __restrict__ unique_cells,
+    const ReflAccumStagedValue* __restrict__ reduced_values, float* __restrict__ out_power,
+    float* __restrict__ out_field_x_re, float* __restrict__ out_field_x_im, float* __restrict__ out_field_y_re,
+    float* __restrict__ out_field_y_im, float* __restrict__ out_field_z_re, float* __restrict__ out_field_z_im,
+    int* __restrict__ out_reflection_count) {
     const int n = *num_runs;
-    for (int idx = blockIdx.x * blockDim.x + threadIdx.x;
-         idx < n;
-         idx += blockDim.x * gridDim.x) {
+    for (int idx = blockIdx.x * blockDim.x + threadIdx.x; idx < n; idx += blockDim.x * gridDim.x) {
         const int cell = unique_cells[idx];
         if (cell < 0) {
             continue;
@@ -2319,18 +1703,10 @@ __global__ void scatter_refl_accum_reduced_kernel(
 
 } // namespace
 
-void reduce_refl_accum_staged_cuda(
-    int64_t sample_count,
-    const at::Tensor &stage_cell,
-    const at::Tensor &stage_value,
-    at::Tensor &out_power,
-    at::Tensor &out_field_x_re,
-    at::Tensor &out_field_x_im,
-    at::Tensor &out_field_y_re,
-    at::Tensor &out_field_y_im,
-    at::Tensor &out_field_z_re,
-    at::Tensor &out_field_z_im,
-    at::Tensor &out_reflection_count) {
+void reduce_refl_accum_staged_cuda(int64_t sample_count, const at::Tensor& stage_cell, const at::Tensor& stage_value,
+                                   at::Tensor& out_power, at::Tensor& out_field_x_re, at::Tensor& out_field_x_im,
+                                   at::Tensor& out_field_y_re, at::Tensor& out_field_y_im, at::Tensor& out_field_z_re,
+                                   at::Tensor& out_field_z_im, at::Tensor& out_reflection_count) {
     require_i32_count(sample_count, "reduce_refl_accum_staged_cuda(sample_count)");
     if (sample_count == 0) {
         return;
@@ -2345,91 +1721,43 @@ void reduce_refl_accum_staged_cuda(
 
     at::Tensor sorted_cells = at::empty({sample_count}, key_options);
     at::Tensor sorted_values = at::empty({sample_count, 8}, value_options);
-    auto *values_in = reinterpret_cast<ReflAccumStagedValue *>(stage_value.data_ptr<float>());
-    auto *values_sorted =
-        reinterpret_cast<ReflAccumStagedValue *>(sorted_values.data_ptr<float>());
+    auto* values_in = reinterpret_cast<ReflAccumStagedValue*>(stage_value.data_ptr<float>());
+    auto* values_sorted = reinterpret_cast<ReflAccumStagedValue*>(sorted_values.data_ptr<float>());
 
     size_t sort_temp_bytes = 0;
-    cuda_check(
-        cub::DeviceRadixSort::SortPairs(
-            nullptr,
-            sort_temp_bytes,
-            stage_cell.data_ptr<int>(),
-            sorted_cells.data_ptr<int>(),
-            values_in,
-            values_sorted,
-            sample_count_i,
-            0,
-            sizeof(int) * 8,
-            stream),
-        "cub::DeviceRadixSort::SortPairs(refl accum size)");
-    at::Tensor sort_temp = at::empty(
-        {std::max<int64_t>(1, static_cast<int64_t>(sort_temp_bytes))},
-        byte_options);
-    cuda_check(
-        cub::DeviceRadixSort::SortPairs(
-            sort_temp.data_ptr<uint8_t>(),
-            sort_temp_bytes,
-            stage_cell.data_ptr<int>(),
-            sorted_cells.data_ptr<int>(),
-            values_in,
-            values_sorted,
-            sample_count_i,
-            0,
-            sizeof(int) * 8,
-            stream),
-        "cub::DeviceRadixSort::SortPairs(refl accum)");
+    cuda_check(cub::DeviceRadixSort::SortPairs(nullptr, sort_temp_bytes, stage_cell.data_ptr<int>(),
+                                               sorted_cells.data_ptr<int>(), values_in, values_sorted, sample_count_i,
+                                               0, sizeof(int) * 8, stream),
+               "cub::DeviceRadixSort::SortPairs(refl accum size)");
+    at::Tensor sort_temp = at::empty({std::max<int64_t>(1, static_cast<int64_t>(sort_temp_bytes))}, byte_options);
+    cuda_check(cub::DeviceRadixSort::SortPairs(sort_temp.data_ptr<uint8_t>(), sort_temp_bytes,
+                                               stage_cell.data_ptr<int>(), sorted_cells.data_ptr<int>(), values_in,
+                                               values_sorted, sample_count_i, 0, sizeof(int) * 8, stream),
+               "cub::DeviceRadixSort::SortPairs(refl accum)");
 
     at::Tensor unique_cells = at::empty({sample_count}, key_options);
     at::Tensor reduced_values = at::empty({sample_count, 8}, value_options);
     at::Tensor num_runs = at::empty({1}, key_options);
-    auto *reduced_values_ptr =
-        reinterpret_cast<ReflAccumStagedValue *>(reduced_values.data_ptr<float>());
+    auto* reduced_values_ptr = reinterpret_cast<ReflAccumStagedValue*>(reduced_values.data_ptr<float>());
 
     size_t reduce_temp_bytes = 0;
-    cuda_check(
-        cub::DeviceReduce::ReduceByKey(
-            nullptr,
-            reduce_temp_bytes,
-            sorted_cells.data_ptr<int>(),
-            unique_cells.data_ptr<int>(),
-            values_sorted,
-            reduced_values_ptr,
-            num_runs.data_ptr<int>(),
-            AddReflAccumValue{},
-            sample_count_i,
-            stream),
-        "cub::DeviceReduce::ReduceByKey(refl accum size)");
-    at::Tensor reduce_temp = at::empty(
-        {std::max<int64_t>(1, static_cast<int64_t>(reduce_temp_bytes))},
-        byte_options);
-    cuda_check(
-        cub::DeviceReduce::ReduceByKey(
-            reduce_temp.data_ptr<uint8_t>(),
-            reduce_temp_bytes,
-            sorted_cells.data_ptr<int>(),
-            unique_cells.data_ptr<int>(),
-            values_sorted,
-            reduced_values_ptr,
-            num_runs.data_ptr<int>(),
-            AddReflAccumValue{},
-            sample_count_i,
-            stream),
-        "cub::DeviceReduce::ReduceByKey(refl accum)");
+    cuda_check(cub::DeviceReduce::ReduceByKey(nullptr, reduce_temp_bytes, sorted_cells.data_ptr<int>(),
+                                              unique_cells.data_ptr<int>(), values_sorted, reduced_values_ptr,
+                                              num_runs.data_ptr<int>(), AddReflAccumValue{}, sample_count_i, stream),
+               "cub::DeviceReduce::ReduceByKey(refl accum size)");
+    at::Tensor reduce_temp = at::empty({std::max<int64_t>(1, static_cast<int64_t>(reduce_temp_bytes))}, byte_options);
+    cuda_check(cub::DeviceReduce::ReduceByKey(reduce_temp.data_ptr<uint8_t>(), reduce_temp_bytes,
+                                              sorted_cells.data_ptr<int>(), unique_cells.data_ptr<int>(), values_sorted,
+                                              reduced_values_ptr, num_runs.data_ptr<int>(), AddReflAccumValue{},
+                                              sample_count_i, stream),
+               "cub::DeviceReduce::ReduceByKey(refl accum)");
 
     constexpr int block_size = 256;
     const int block_count = static_cast<int>((sample_count + block_size - 1) / block_size);
     scatter_refl_accum_reduced_kernel<<<block_count, block_size, 0, stream>>>(
-        num_runs.data_ptr<int>(),
-        unique_cells.data_ptr<int>(),
-        reduced_values_ptr,
-        out_power.data_ptr<float>(),
-        out_field_x_re.data_ptr<float>(),
-        out_field_x_im.data_ptr<float>(),
-        out_field_y_re.data_ptr<float>(),
-        out_field_y_im.data_ptr<float>(),
-        out_field_z_re.data_ptr<float>(),
-        out_field_z_im.data_ptr<float>(),
+        num_runs.data_ptr<int>(), unique_cells.data_ptr<int>(), reduced_values_ptr, out_power.data_ptr<float>(),
+        out_field_x_re.data_ptr<float>(), out_field_x_im.data_ptr<float>(), out_field_y_re.data_ptr<float>(),
+        out_field_y_im.data_ptr<float>(), out_field_z_re.data_ptr<float>(), out_field_z_im.data_ptr<float>(),
         out_reflection_count.data_ptr<int>());
     cuda_check(cudaGetLastError(), "scatter_refl_accum_reduced_kernel");
 }

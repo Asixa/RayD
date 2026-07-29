@@ -23,21 +23,17 @@ struct VisibilityResult {
     at::Tensor tape_t;
 };
 
-VisibilityResult visibility_forward(
-    const SceneResource &scene,
-    const VisibilityRequest &request);
+VisibilityResult visibility_forward(const SceneResource& scene, const VisibilityRequest& request);
 
-inline constexpr std::array<std::uint32_t, 4>
-    kDiffractionTxAxialEdgeFractionBits = {
-        0x3ca3d70au,
-        0x3eaaaaabu,
-        0x3f2aaaabu,
-        0x3f7ae148u,
-    };
+inline constexpr std::array<std::uint32_t, 4> kDiffractionTxAxialEdgeFractionBits = {
+    0x3ca3d70au,
+    0x3eaaaaabu,
+    0x3f2aaaabu,
+    0x3f7ae148u,
+};
 
 struct AxialEdgeVisibilityConfig {
-    std::array<std::uint32_t, 4> sample_fraction_bits =
-        kDiffractionTxAxialEdgeFractionBits;
+    std::array<std::uint32_t, 4> sample_fraction_bits = kDiffractionTxAxialEdgeFractionBits;
 };
 
 struct AxialEdgeVisibilityRequest {
@@ -54,8 +50,7 @@ struct AxialEdgeVisibilityResult {
     at::Tensor any_visible;
 };
 
-AxialEdgeVisibilityResult axial_edge_visibility_forward(
-    const SceneResource &scene,
-    const AxialEdgeVisibilityRequest &request);
+AxialEdgeVisibilityResult axial_edge_visibility_forward(const SceneResource& scene,
+                                                        const AxialEdgeVisibilityRequest& request);
 
 } // namespace rayd::torch

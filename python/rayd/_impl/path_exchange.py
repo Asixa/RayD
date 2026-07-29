@@ -147,11 +147,7 @@ class PathInteractionDerivative:
     if TYPE_CHECKING:
         # `__post_init__` normalizes any three-component sequence, so the
         # constructor accepts more than the normalized attribute type.
-        def __init__(
-            self,
-            position: Sequence[float] | None = ...,
-            normal: Sequence[float] | None = ...,
-        ) -> None: ...
+        def __init__(self, position: Sequence[float] | None = ..., normal: Sequence[float] | None = ...) -> None: ...
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "position", _vec3(self.position, "derivative position"))
@@ -214,20 +210,13 @@ class PathRecord:
         object.__setattr__(self, "aod", _vec3(self.aod, "aod"))
         object.__setattr__(self, "aoa", _vec3(self.aoa, "aoa"))
         object.__setattr__(self, "field", _complex3(self.field))
-        object.__setattr__(
-            self, "differentiable_fields", PathDerivativeField(self.differentiable_fields)
-        )
+        object.__setattr__(self, "differentiable_fields", PathDerivativeField(self.differentiable_fields))
         object.__setattr__(self, "derivative_mode", PathDerivativeMode(self.derivative_mode))
         object.__setattr__(self, "interaction_derivatives", tuple(self.interaction_derivatives))
         if self.derivative is not None and not isinstance(self.derivative, PathDerivative):
             raise TypeError("derivative must be a PathDerivative record.")
-        if not all(
-            isinstance(item, PathInteractionDerivative)
-            for item in self.interaction_derivatives
-        ):
-            raise TypeError(
-                "interaction_derivatives must contain PathInteractionDerivative records."
-            )
+        if not all(isinstance(item, PathInteractionDerivative) for item in self.interaction_derivatives):
+            raise TypeError("interaction_derivatives must contain PathInteractionDerivative records.")
         if self.order < 0 or self.order != len(self.interactions):
             raise ValueError("order must equal the number of interactions.")
         if self.source_index < -1 or self.receiver_index < -1:
@@ -267,22 +256,15 @@ class PathRecord:
                 if self.derivative is None or getattr(self.derivative, name) is None:
                     raise ValueError(f"missing derivative value for {name}.")
         interaction_bits = self.differentiable_fields & (
-            PathDerivativeField.INTERACTION_POSITION
-            | PathDerivativeField.INTERACTION_NORMAL
+            PathDerivativeField.INTERACTION_POSITION | PathDerivativeField.INTERACTION_NORMAL
         )
         if interaction_bits:
             if len(self.interaction_derivatives) != len(self.interactions):
                 raise ValueError("interaction derivative indexing must match the primal path.")
             for derivative in self.interaction_derivatives:
-                if (
-                    interaction_bits & PathDerivativeField.INTERACTION_POSITION
-                    and derivative.position is None
-                ):
+                if interaction_bits & PathDerivativeField.INTERACTION_POSITION and derivative.position is None:
                     raise ValueError("missing interaction position derivative.")
-                if (
-                    interaction_bits & PathDerivativeField.INTERACTION_NORMAL
-                    and derivative.normal is None
-                ):
+                if interaction_bits & PathDerivativeField.INTERACTION_NORMAL and derivative.normal is None:
                     raise ValueError("missing interaction normal derivative.")
 
     @property
@@ -333,7 +315,9 @@ class PathRecord:
             "aoa": self.aoa,
             "field": self.field,
             "power": self.power,
-            "derivative": None if self.derivative is None else {
+            "derivative": None
+            if self.derivative is None
+            else {
                 "total_length": self.derivative.total_length,
                 "delay": self.derivative.delay,
                 "aod": self.derivative.aod,
@@ -342,8 +326,7 @@ class PathRecord:
                 "power": self.derivative.power,
             },
             "interaction_derivatives": [
-                {"position": item.position, "normal": item.normal}
-                for item in self.interaction_derivatives
+                {"position": item.position, "normal": item.normal} for item in self.interaction_derivatives
             ],
         }
 

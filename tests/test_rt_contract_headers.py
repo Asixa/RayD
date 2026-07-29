@@ -75,10 +75,7 @@ class RtContractHeaderTests(unittest.TestCase):
 
     def test_traverser_triangle_hit_field_order(self):
         header = TRAVERSER.read_text(encoding="utf-8")
-        self.assertEqual(
-            struct_fields(header, "TriangleHit"),
-            ["t", "bary_u", "bary_v", "prim", "instance", "hit"],
-        )
+        self.assertEqual(struct_fields(header, "TriangleHit"), ["t", "bary_u", "bary_v", "prim", "instance", "hit"])
 
     def test_headers_are_host_safe(self):
         for path in (NUMERIC_POLICY, HIT_TYPES, RAY_TYPES):
@@ -123,20 +120,13 @@ class RtContractHeaderTests(unittest.TestCase):
         header = NUMERIC_POLICY.read_text(encoding="utf-8")
         self.assertEqual(
             struct_fields(header, "NumericPolicy"),
-            [
-                "ray_tmin",
-                "shadow_tmin",
-                "endpoint_offset",
-                "parallel_epsilon",
-                "watertight_triangles",
-            ],
+            ["ray_tmin", "shadow_tmin", "endpoint_offset", "parallel_epsilon", "watertight_triangles"],
         )
 
     def test_hit_types_struct_field_order(self):
         header = HIT_TYPES.read_text(encoding="utf-8")
         self.assertEqual(
-            struct_fields(header, "RawHit"),
-            ["t", "bary_u", "bary_v", "global_prim_id", "shape_id", "local_prim_id"],
+            struct_fields(header, "RawHit"), ["t", "bary_u", "bary_v", "global_prim_id", "shape_id", "local_prim_id"]
         )
         self.assertEqual(struct_fields(header, "RawBlocker"), ["global_prim_id"])
         self.assertIn("sizeof(RawHit) == 24", header)
@@ -160,16 +150,7 @@ class RtContractHeaderTests(unittest.TestCase):
         )
         self.assertEqual(
             struct_fields(header, "SegmentBatchView"),
-            [
-                "start_x",
-                "start_y",
-                "start_z",
-                "end_x",
-                "end_y",
-                "end_z",
-                "active",
-                "count",
-            ],
+            ["start_x", "start_y", "start_z", "end_x", "end_y", "end_z", "active", "count"],
         )
 
 

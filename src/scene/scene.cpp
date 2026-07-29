@@ -22,7 +22,7 @@ constexpr int64_t kMeshDynamic = 4;
 constexpr int64_t kTraceBackendShift = 8;
 constexpr int64_t kEdgeBackendShift = 10;
 
-void require_mesh_vertex_tangent(const at::Tensor &tensor, const MeshRecord &mesh, const char *name) {
+void require_mesh_vertex_tangent(const at::Tensor& tensor, const MeshRecord& mesh, const char* name) {
     require_vec3f(tensor, name);
     if (tensor.size(0) != mesh.vertices.size(0)) {
         throw std::runtime_error(std::string(name) + " must match its mesh vertex count.");
@@ -31,14 +31,8 @@ void require_mesh_vertex_tangent(const at::Tensor &tensor, const MeshRecord &mes
 
 } // namespace
 
-MeshRecord integration_mesh_record(
-    at::Tensor vertices,
-    at::Tensor faces,
-    at::Tensor uv,
-    at::Tensor face_uv,
-    at::Tensor to_world_left,
-    at::Tensor to_world_right,
-    int64_t flags) {
+MeshRecord integration_mesh_record(at::Tensor vertices, at::Tensor faces, at::Tensor uv, at::Tensor face_uv,
+                                   at::Tensor to_world_left, at::Tensor to_world_right, int64_t flags) {
     MeshRecord record;
     record.vertices = std::move(vertices);
     record.faces = std::move(faces);
@@ -52,21 +46,15 @@ MeshRecord integration_mesh_record(
     return record;
 }
 
-c10::intrusive_ptr<SceneHandle> create_scene_cache_from_flat(
-    std::vector<at::Tensor> vertices,
-    std::vector<at::Tensor> faces,
-    std::vector<at::Tensor> uv,
-    std::vector<at::Tensor> face_uv,
-    std::vector<at::Tensor> to_world_left,
-    std::vector<at::Tensor> to_world_right,
-    std::vector<int64_t> mesh_flags) {
+c10::intrusive_ptr<SceneHandle> create_scene_cache_from_flat(std::vector<at::Tensor> vertices,
+                                                             std::vector<at::Tensor> faces, std::vector<at::Tensor> uv,
+                                                             std::vector<at::Tensor> face_uv,
+                                                             std::vector<at::Tensor> to_world_left,
+                                                             std::vector<at::Tensor> to_world_right,
+                                                             std::vector<int64_t> mesh_flags) {
     const size_t mesh_count = vertices.size();
-    if (faces.size() != mesh_count ||
-        uv.size() != mesh_count ||
-        face_uv.size() != mesh_count ||
-        to_world_left.size() != mesh_count ||
-        to_world_right.size() != mesh_count ||
-        mesh_flags.size() != mesh_count) {
+    if (faces.size() != mesh_count || uv.size() != mesh_count || face_uv.size() != mesh_count ||
+        to_world_left.size() != mesh_count || to_world_right.size() != mesh_count || mesh_flags.size() != mesh_count) {
         throw std::runtime_error("Scene init lists must have the same length.");
     }
     TraceBackend trace_backend = TraceBackend::Auto;
@@ -74,8 +62,8 @@ c10::intrusive_ptr<SceneHandle> create_scene_cache_from_flat(
     if (!mesh_flags.empty()) {
         const int64_t trace_code = (mesh_flags[0] >> kTraceBackendShift) & 0x3;
         const int64_t edge_code = (mesh_flags[0] >> kEdgeBackendShift) & 0x3;
-        if (trace_code < 0 || trace_code > static_cast<int64_t>(TraceBackend::Cuda) ||
-            edge_code < 0 || edge_code > static_cast<int64_t>(EdgeBackend::Cuda))
+        if (trace_code < 0 || trace_code > static_cast<int64_t>(TraceBackend::Cuda) || edge_code < 0 ||
+            edge_code > static_cast<int64_t>(EdgeBackend::Cuda))
             throw std::runtime_error("Scene received an invalid ray-tracing backend code.");
         trace_backend = static_cast<TraceBackend>(trace_code);
         edge_backend = static_cast<EdgeBackend>(edge_code);
@@ -83,17 +71,11 @@ c10::intrusive_ptr<SceneHandle> create_scene_cache_from_flat(
     std::vector<MeshRecord> meshes;
     meshes.reserve(mesh_count);
     for (size_t i = 0; i < mesh_count; ++i) {
-        meshes.push_back(integration_mesh_record(
-            std::move(vertices[i]),
-            std::move(faces[i]),
-            std::move(uv[i]),
-            std::move(face_uv[i]),
-            std::move(to_world_left[i]),
-            std::move(to_world_right[i]),
-            mesh_flags[i]));
+        meshes.push_back(integration_mesh_record(std::move(vertices[i]), std::move(faces[i]), std::move(uv[i]),
+                                                 std::move(face_uv[i]), std::move(to_world_left[i]),
+                                                 std::move(to_world_right[i]), mesh_flags[i]));
     }
-    auto owner = create_scene_cache(
-        std::move(meshes), trace_backend, edge_backend);
+    auto owner = create_scene_cache(std::move(meshes), trace_backend, edge_backend);
     const int64_t handle = owner->handle;
     register_scene_cache(std::move(owner));
     return c10::make_intrusive<SceneHandle>(handle);
@@ -128,10 +110,9 @@ py::tuple split_scene_vertex_grad_op(int64_t handle, at::Tensor grad_vertices) {
     return result;
 }
 
-std::vector<at::Tensor> split_scene_vertex_grad(
-    c10::intrusive_ptr<SceneHandle> scene_handle,
-    at::Tensor grad_vertices) {
-    SceneCache &scene = get_scene(scene_handle->handle);
+std::vector<at::Tensor> split_scene_vertex_grad(c10::intrusive_ptr<SceneHandle> scene_handle,
+                                                at::Tensor grad_vertices) {
+    SceneCache& scene = get_scene(scene_handle->handle);
     require_vec3f(grad_vertices, "grad_vertices");
     if (grad_vertices.size(0) != scene.global_vertices.size(0)) {
         throw std::runtime_error("grad_vertices must match scene global vertex count.");
@@ -150,7 +131,7 @@ std::vector<at::Tensor> split_scene_vertex_grad(
 
 py::object pack_scene_vertex_tangents_op(int64_t handle, py::args tangent_args) {
     c10::intrusive_ptr<SceneHandle> scene = c10::make_intrusive<SceneHandle>(handle, false);
-    SceneCache &cache = get_scene(handle);
+    SceneCache& cache = get_scene(handle);
     if (static_cast<size_t>(py::len(tangent_args)) != cache.meshes.size()) {
         throw std::runtime_error("pack_scene_vertex_tangents() expects one tangent per mesh.");
     }
@@ -168,15 +149,14 @@ py::object pack_scene_vertex_tangents_op(int64_t handle, py::args tangent_args) 
     return py::cast(packed);
 }
 
-at::Tensor pack_scene_vertex_tangents(
-    c10::intrusive_ptr<SceneHandle> scene_handle,
-    std::vector<c10::optional<at::Tensor>> tangents) {
-    SceneCache &scene = get_scene(scene_handle->handle);
+at::Tensor pack_scene_vertex_tangents(c10::intrusive_ptr<SceneHandle> scene_handle,
+                                      std::vector<c10::optional<at::Tensor>> tangents) {
+    SceneCache& scene = get_scene(scene_handle->handle);
     if (tangents.size() != scene.meshes.size()) {
         throw std::runtime_error("pack_scene_vertex_tangents() expects one tangent per mesh.");
     }
     bool any_tangent = false;
-    for (const c10::optional<at::Tensor> &tangent : tangents) {
+    for (const c10::optional<at::Tensor>& tangent : tangents) {
         if (tangent.has_value() && tangent->defined() && tangent->numel() != 0) {
             any_tangent = true;
             break;
@@ -188,9 +168,9 @@ at::Tensor pack_scene_vertex_tangents(
     at::Tensor global_tangent = at::empty_like(scene.global_vertices);
     int64_t vertex_offset = 0;
     for (size_t mesh_index = 0; mesh_index < scene.meshes.size(); ++mesh_index) {
-        const MeshRecord &mesh = scene.meshes[mesh_index];
+        const MeshRecord& mesh = scene.meshes[mesh_index];
         const int64_t vertex_count = mesh.vertices.size(0);
-        const c10::optional<at::Tensor> &tangent_obj = tangents[mesh_index];
+        const c10::optional<at::Tensor>& tangent_obj = tangents[mesh_index];
         if (!tangent_obj.has_value() || !tangent_obj->defined() || tangent_obj->numel() == 0) {
             zero_global_vertex_tangent_range_cuda(vertex_offset, vertex_count, global_tangent);
         } else {
@@ -208,17 +188,15 @@ at::Tensor pack_scene_vertex_tangents(
 namespace rayd::torch {
 
 class SceneResource::Impl final {
-public:
-    explicit Impl(std::unique_ptr<torch_backend::SceneCache> scene)
-        : scene(std::move(scene)) {}
+  public:
+    explicit Impl(std::unique_ptr<torch_backend::SceneCache> scene) : scene(std::move(scene)) {}
 
     std::unique_ptr<torch_backend::SceneCache> scene;
 };
 
-SceneResource::SceneResource(std::unique_ptr<Impl> impl) noexcept
-    : impl_(std::move(impl)) {}
-SceneResource::SceneResource(SceneResource &&) noexcept = default;
-SceneResource &SceneResource::operator=(SceneResource &&) noexcept = default;
+SceneResource::SceneResource(std::unique_ptr<Impl> impl) noexcept : impl_(std::move(impl)) {}
+SceneResource::SceneResource(SceneResource&&) noexcept = default;
+SceneResource& SceneResource::operator=(SceneResource&&) noexcept = default;
 SceneResource::~SceneResource() noexcept = default;
 
 bool SceneResource::valid() const noexcept {
@@ -229,7 +207,7 @@ int SceneResource::device_index() const {
     return static_cast<int>(detail::IntegrationAccess::scene_cache(*this).device_index);
 }
 
-torch_backend::SceneCache &detail::IntegrationAccess::scene_cache(const SceneResource &scene) {
+torch_backend::SceneCache& detail::IntegrationAccess::scene_cache(const SceneResource& scene) {
     if (!scene.impl_ || !scene.impl_->scene)
         throw std::runtime_error("rayd::torch operation received an invalid SceneResource");
     return *scene.impl_->scene;
@@ -240,7 +218,7 @@ SceneResource create_scene(std::vector<MeshInput> meshes) {
         throw std::runtime_error("rayd::torch::create_scene requires at least one mesh");
     std::vector<torch_backend::MeshRecord> records;
     records.reserve(meshes.size());
-    for (MeshInput &mesh : meshes) {
+    for (MeshInput& mesh : meshes) {
         int64_t flags = 0;
         if (mesh.use_face_normals)
             flags |= 1;
@@ -248,42 +226,27 @@ SceneResource create_scene(std::vector<MeshInput> meshes) {
             flags |= 2;
         if (mesh.dynamic)
             flags |= 4;
-        records.push_back(torch_backend::integration_mesh_record(
-            std::move(mesh.vertices),
-            std::move(mesh.faces),
-            std::move(mesh.uv),
-            std::move(mesh.face_uv),
-            std::move(mesh.to_world_left),
-            std::move(mesh.to_world_right),
-            flags));
+        records.push_back(torch_backend::integration_mesh_record(std::move(mesh.vertices), std::move(mesh.faces),
+                                                                 std::move(mesh.uv), std::move(mesh.face_uv),
+                                                                 std::move(mesh.to_world_left),
+                                                                 std::move(mesh.to_world_right), flags));
     }
     auto owner = torch_backend::create_scene_cache(std::move(records));
     return SceneResource(std::make_unique<SceneResource::Impl>(std::move(owner)));
 }
 
-SceneEdgeRecordsResult scene_edge_records(const SceneResource &scene) {
-    auto &cache = detail::IntegrationAccess::scene_cache(scene);
+SceneEdgeRecordsResult scene_edge_records(const SceneResource& scene) {
+    auto& cache = detail::IntegrationAccess::scene_cache(scene);
     std::vector<at::Tensor> values = torch_backend::scene_edge_records(cache);
     if (values.size() != 12)
         throw std::runtime_error("rayd::torch::scene_edge_records returned an unexpected output count");
     return {
-        values[0],
-        values[1],
-        values[2],
-        values[3],
-        values[4],
-        values[5],
-        values[6],
-        values[7],
-        values[8],
-        values[9],
-        values[10],
-        values[11],
+        values[0], values[1], values[2], values[3], values[4],  values[5],
+        values[6], values[7], values[8], values[9], values[10], values[11],
     };
 }
 
 } // namespace rayd::torch
-
 
 // ---- merged from src/scene/scene_cache_part.cpp ----
 
@@ -320,14 +283,13 @@ std::atomic<int64_t> next_handle{1};
 std::mutex scenes_mutex;
 std::unordered_map<int64_t, std::unique_ptr<SceneCache>> scenes;
 
-void cuda_check(cudaError_t result, const char *expr) {
+void cuda_check(cudaError_t result, const char* expr) {
     if (result == cudaSuccess)
         return;
-    throw std::runtime_error(
-        std::string("CUDA error in ") + expr + ": " + cudaGetErrorString(result));
+    throw std::runtime_error(std::string("CUDA error in ") + expr + ": " + cudaGetErrorString(result));
 }
 
-void require_optional_matrix4(const at::Tensor &tensor, std::string_view name) {
+void require_optional_matrix4(const at::Tensor& tensor, std::string_view name) {
     require_cuda(tensor, name);
     require_contiguous(tensor, name);
     require_dtype(tensor, at::kFloat, name);
@@ -337,23 +299,13 @@ void require_optional_matrix4(const at::Tensor &tensor, std::string_view name) {
         throw std::runtime_error(std::string(name) + " must be empty or have shape (4, 4).");
 }
 
-void compact_accel_if_smaller(
-    OptixDeviceContext optix_context,
-    cudaStream_t stream,
-    at::TensorOptions byte_options,
-    at::Tensor &gas_buffer,
-    OptixTraversableHandle &traversable,
-    const at::Tensor &compacted_size_buffer,
-    const char *name) {
+void compact_accel_if_smaller(OptixDeviceContext optix_context, cudaStream_t stream, at::TensorOptions byte_options,
+                              at::Tensor& gas_buffer, OptixTraversableHandle& traversable,
+                              const at::Tensor& compacted_size_buffer, const char* name) {
     uint64_t compacted_size = 0;
-    cuda_check(
-        cudaMemcpyAsync(
-            &compacted_size,
-            compacted_size_buffer.data_ptr<uint8_t>(),
-            sizeof(uint64_t),
-            cudaMemcpyDeviceToHost,
-            stream),
-        "cudaMemcpyAsync(compacted GAS size)");
+    cuda_check(cudaMemcpyAsync(&compacted_size, compacted_size_buffer.data_ptr<uint8_t>(), sizeof(uint64_t),
+                               cudaMemcpyDeviceToHost, stream),
+               "cudaMemcpyAsync(compacted GAS size)");
     cuda_check(cudaStreamSynchronize(stream), "cudaStreamSynchronize(compacted GAS size)");
     if (compacted_size == 0 || compacted_size >= static_cast<uint64_t>(gas_buffer.numel()))
         return;
@@ -362,45 +314,33 @@ void compact_accel_if_smaller(
     }
 
     at::Tensor source_buffer = gas_buffer;
-    at::Tensor compacted_buffer =
-        at::empty({static_cast<int64_t>(compacted_size)}, byte_options);
+    at::Tensor compacted_buffer = at::empty({static_cast<int64_t>(compacted_size)}, byte_options);
     OptixTraversableHandle compacted_traversable = 0;
-    rayd_torch_OPTIX_CHECK(optixAccelCompact(
-        optix_context,
-        stream,
-        traversable,
-        reinterpret_cast<CUdeviceptr>(compacted_buffer.data_ptr<uint8_t>()),
-        static_cast<size_t>(compacted_size),
-        &compacted_traversable));
+    rayd_torch_OPTIX_CHECK(optixAccelCompact(optix_context, stream, traversable,
+                                             reinterpret_cast<CUdeviceptr>(compacted_buffer.data_ptr<uint8_t>()),
+                                             static_cast<size_t>(compacted_size), &compacted_traversable));
     cuda_check(cudaStreamSynchronize(stream), "cudaStreamSynchronize(GAS compaction)");
     gas_buffer = compacted_buffer;
     traversable = compacted_traversable;
 }
 
-OptixTriangleAccel build_triangle_accel(
-    const MeshRecord &mesh,
-    OptixDeviceContext optix_context,
-    cudaStream_t stream) {
+OptixTriangleAccel build_triangle_accel(const MeshRecord& mesh, OptixDeviceContext optix_context, cudaStream_t stream) {
     OptixTriangleAccel accel;
     accel.vertex_buffer = mesh.vertices.contiguous();
     accel.index_buffer = mesh.faces.contiguous();
 
-    CUdeviceptr vertex_buffer =
-        reinterpret_cast<CUdeviceptr>(accel.vertex_buffer.data_ptr<float>());
-    CUdeviceptr index_buffer =
-        reinterpret_cast<CUdeviceptr>(accel.index_buffer.data_ptr<int>());
+    CUdeviceptr vertex_buffer = reinterpret_cast<CUdeviceptr>(accel.vertex_buffer.data_ptr<float>());
+    CUdeviceptr index_buffer = reinterpret_cast<CUdeviceptr>(accel.index_buffer.data_ptr<int>());
     uint32_t triangle_input_flags = OPTIX_GEOMETRY_FLAG_NONE;
 
     OptixBuildInput build_input = {};
     build_input.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
     build_input.triangleArray.vertexBuffers = &vertex_buffer;
-    build_input.triangleArray.numVertices =
-        static_cast<unsigned int>(accel.vertex_buffer.size(0));
+    build_input.triangleArray.numVertices = static_cast<unsigned int>(accel.vertex_buffer.size(0));
     build_input.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
     build_input.triangleArray.vertexStrideInBytes = sizeof(float) * 3;
     build_input.triangleArray.indexBuffer = index_buffer;
-    build_input.triangleArray.numIndexTriplets =
-        static_cast<unsigned int>(accel.index_buffer.size(0));
+    build_input.triangleArray.numIndexTriplets = static_cast<unsigned int>(accel.index_buffer.size(0));
     build_input.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
     build_input.triangleArray.indexStrideInBytes = sizeof(int) * 3;
     build_input.triangleArray.flags = &triangle_input_flags;
@@ -415,56 +355,38 @@ OptixTriangleAccel build_triangle_accel(
     accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
 
     OptixAccelBufferSizes buffer_sizes = {};
-    rayd_torch_OPTIX_CHECK(optixAccelComputeMemoryUsage(
-        optix_context, &accel_options, &build_input, 1, &buffer_sizes));
+    rayd_torch_OPTIX_CHECK(optixAccelComputeMemoryUsage(optix_context, &accel_options, &build_input, 1, &buffer_sizes));
 
-    at::TensorOptions byte_options =
-        at::TensorOptions().device(mesh.vertices.device()).dtype(at::kByte);
-    accel.gas_temp_buffer =
-        at::empty({static_cast<int64_t>(buffer_sizes.tempSizeInBytes)}, byte_options);
-    accel.gas_buffer =
-        at::empty({static_cast<int64_t>(buffer_sizes.outputSizeInBytes)}, byte_options);
+    at::TensorOptions byte_options = at::TensorOptions().device(mesh.vertices.device()).dtype(at::kByte);
+    accel.gas_temp_buffer = at::empty({static_cast<int64_t>(buffer_sizes.tempSizeInBytes)}, byte_options);
+    accel.gas_buffer = at::empty({static_cast<int64_t>(buffer_sizes.outputSizeInBytes)}, byte_options);
     at::Tensor compacted_size_buffer;
     OptixAccelEmitDesc compacted_size_emit = {};
-    OptixAccelEmitDesc *emit_descs = nullptr;
+    OptixAccelEmitDesc* emit_descs = nullptr;
     unsigned int emit_desc_count = 0;
     if (!mesh.dynamic) {
         compacted_size_buffer = at::empty({static_cast<int64_t>(sizeof(uint64_t))}, byte_options);
         compacted_size_emit.type = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE;
-        compacted_size_emit.result =
-            reinterpret_cast<CUdeviceptr>(compacted_size_buffer.data_ptr<uint8_t>());
+        compacted_size_emit.result = reinterpret_cast<CUdeviceptr>(compacted_size_buffer.data_ptr<uint8_t>());
         emit_descs = &compacted_size_emit;
         emit_desc_count = 1;
     }
 
-    rayd_torch_OPTIX_CHECK(optixAccelBuild(
-        optix_context,
-        stream,
-        &accel_options,
-        &build_input,
-        1,
-        reinterpret_cast<CUdeviceptr>(accel.gas_temp_buffer.data_ptr<uint8_t>()),
-        buffer_sizes.tempSizeInBytes,
-        reinterpret_cast<CUdeviceptr>(accel.gas_buffer.data_ptr<uint8_t>()),
-        buffer_sizes.outputSizeInBytes,
-        &accel.traversable,
-        emit_descs,
-        emit_desc_count));
+    rayd_torch_OPTIX_CHECK(optixAccelBuild(optix_context, stream, &accel_options, &build_input, 1,
+                                           reinterpret_cast<CUdeviceptr>(accel.gas_temp_buffer.data_ptr<uint8_t>()),
+                                           buffer_sizes.tempSizeInBytes,
+                                           reinterpret_cast<CUdeviceptr>(accel.gas_buffer.data_ptr<uint8_t>()),
+                                           buffer_sizes.outputSizeInBytes, &accel.traversable, emit_descs,
+                                           emit_desc_count));
     if (!mesh.dynamic) {
-        compact_accel_if_smaller(
-            optix_context,
-            stream,
-            byte_options,
-            accel.gas_buffer,
-            accel.traversable,
-            compacted_size_buffer,
-            "build_triangle_accel()");
+        compact_accel_if_smaller(optix_context, stream, byte_options, accel.gas_buffer, accel.traversable,
+                                 compacted_size_buffer, "build_triangle_accel()");
     }
 
     return accel;
 }
 
-void write_identity_instance(OptixInstance &instance, unsigned int instance_id, OptixTraversableHandle traversable) {
+void write_identity_instance(OptixInstance& instance, unsigned int instance_id, OptixTraversableHandle traversable) {
     std::memset(&instance, 0, sizeof(instance));
     instance.transform[0] = 1.0f;
     instance.transform[5] = 1.0f;
@@ -476,33 +398,25 @@ void write_identity_instance(OptixInstance &instance, unsigned int instance_id, 
     instance.traversableHandle = traversable;
 }
 
-void build_triangle_ias(SceneCache &scene, OptixDeviceContext optix_context, cudaStream_t stream) {
+void build_triangle_ias(SceneCache& scene, OptixDeviceContext optix_context, cudaStream_t stream) {
     if (scene.triangle_accels.empty())
         throw std::runtime_error("build_triangle_ias(): missing triangle acceleration structures.");
 
     std::vector<OptixInstance> instances(scene.triangle_accels.size());
     for (size_t mesh_index = 0; mesh_index < scene.triangle_accels.size(); ++mesh_index) {
-        write_identity_instance(
-            instances[mesh_index],
-            static_cast<unsigned int>(mesh_index),
-            scene.triangle_accels[mesh_index].traversable);
+        write_identity_instance(instances[mesh_index], static_cast<unsigned int>(mesh_index),
+                                scene.triangle_accels[mesh_index].traversable);
     }
 
     at::TensorOptions byte_options =
         at::TensorOptions().device(at::Device(at::kCUDA, scene.device_index)).dtype(at::kByte);
     scene.triangle_ias.instance_buffer =
         at::empty({static_cast<int64_t>(sizeof(OptixInstance) * instances.size())}, byte_options);
-    cuda_check(
-        cudaMemcpyAsync(
-            scene.triangle_ias.instance_buffer.data_ptr<uint8_t>(),
-            instances.data(),
-            sizeof(OptixInstance) * instances.size(),
-            cudaMemcpyHostToDevice,
-            stream),
-        "cudaMemcpyAsync(triangle IAS instances)");
+    cuda_check(cudaMemcpyAsync(scene.triangle_ias.instance_buffer.data_ptr<uint8_t>(), instances.data(),
+                               sizeof(OptixInstance) * instances.size(), cudaMemcpyHostToDevice, stream),
+               "cudaMemcpyAsync(triangle IAS instances)");
 
-    CUdeviceptr instance_buffer =
-        reinterpret_cast<CUdeviceptr>(scene.triangle_ias.instance_buffer.data_ptr<uint8_t>());
+    CUdeviceptr instance_buffer = reinterpret_cast<CUdeviceptr>(scene.triangle_ias.instance_buffer.data_ptr<uint8_t>());
     OptixBuildInput build_input = {};
     build_input.type = OPTIX_BUILD_INPUT_TYPE_INSTANCES;
     build_input.instanceArray.instances = instance_buffer;
@@ -514,36 +428,26 @@ void build_triangle_ias(SceneCache &scene, OptixDeviceContext optix_context, cud
     accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
 
     OptixAccelBufferSizes buffer_sizes = {};
-    rayd_torch_OPTIX_CHECK(optixAccelComputeMemoryUsage(
-        optix_context, &accel_options, &build_input, 1, &buffer_sizes));
+    rayd_torch_OPTIX_CHECK(optixAccelComputeMemoryUsage(optix_context, &accel_options, &build_input, 1, &buffer_sizes));
 
-    scene.triangle_ias.ias_temp_buffer =
-        at::empty({static_cast<int64_t>(buffer_sizes.tempSizeInBytes)}, byte_options);
-    scene.triangle_ias.ias_buffer =
-        at::empty({static_cast<int64_t>(buffer_sizes.outputSizeInBytes)}, byte_options);
+    scene.triangle_ias.ias_temp_buffer = at::empty({static_cast<int64_t>(buffer_sizes.tempSizeInBytes)}, byte_options);
+    scene.triangle_ias.ias_buffer = at::empty({static_cast<int64_t>(buffer_sizes.outputSizeInBytes)}, byte_options);
 
-    rayd_torch_OPTIX_CHECK(optixAccelBuild(
-        optix_context,
-        stream,
-        &accel_options,
-        &build_input,
-        1,
-        reinterpret_cast<CUdeviceptr>(scene.triangle_ias.ias_temp_buffer.data_ptr<uint8_t>()),
-        buffer_sizes.tempSizeInBytes,
-        reinterpret_cast<CUdeviceptr>(scene.triangle_ias.ias_buffer.data_ptr<uint8_t>()),
-        buffer_sizes.outputSizeInBytes,
-        &scene.triangle_ias.traversable,
-        nullptr,
-        0));
+    rayd_torch_OPTIX_CHECK(
+        optixAccelBuild(optix_context, stream, &accel_options, &build_input, 1,
+                        reinterpret_cast<CUdeviceptr>(scene.triangle_ias.ias_temp_buffer.data_ptr<uint8_t>()),
+                        buffer_sizes.tempSizeInBytes,
+                        reinterpret_cast<CUdeviceptr>(scene.triangle_ias.ias_buffer.data_ptr<uint8_t>()),
+                        buffer_sizes.outputSizeInBytes, &scene.triangle_ias.traversable, nullptr, 0));
 }
 
-void refresh_global_geometry(SceneCache &scene) {
+void refresh_global_geometry(SceneCache& scene) {
     int64_t vertex_offset = 0;
     int64_t face_offset = 0;
     std::vector<int32_t> face_offsets;
     face_offsets.reserve(scene.meshes.size());
     for (size_t mesh_id = 0; mesh_id < scene.meshes.size(); ++mesh_id) {
-        const MeshRecord &mesh = scene.meshes[mesh_id];
+        const MeshRecord& mesh = scene.meshes[mesh_id];
         if (vertex_offset > static_cast<int64_t>(std::numeric_limits<int32_t>::max()) ||
             face_offset > static_cast<int64_t>(std::numeric_limits<int32_t>::max())) {
             throw std::runtime_error("Scene.build(): geometry exceeds int32 indexing limits.");
@@ -567,29 +471,17 @@ void refresh_global_geometry(SceneCache &scene) {
     scene.face_offsets = at::empty({static_cast<int64_t>(face_offsets.size())}, iopts);
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
-    cuda_check(
-        cudaMemcpyAsync(
-            scene.face_offsets.data_ptr<int>(),
-            face_offsets.data(),
-            sizeof(int32_t) * face_offsets.size(),
-            cudaMemcpyHostToDevice,
-            torch_ctx.stream),
-        "cudaMemcpyAsync(face offsets)");
+    cuda_check(cudaMemcpyAsync(scene.face_offsets.data_ptr<int>(), face_offsets.data(),
+                               sizeof(int32_t) * face_offsets.size(), cudaMemcpyHostToDevice, torch_ctx.stream),
+               "cudaMemcpyAsync(face offsets)");
 
     vertex_offset = 0;
     face_offset = 0;
     for (int32_t mesh_id = 0; mesh_id < static_cast<int32_t>(scene.meshes.size()); ++mesh_id) {
-        const MeshRecord &mesh = scene.meshes[mesh_id];
-        pack_global_geometry_cuda(
-            mesh.vertices,
-            mesh.faces,
-            static_cast<int32_t>(vertex_offset),
-            static_cast<int32_t>(face_offset),
-            mesh_id,
-            scene.global_vertices,
-            scene.global_faces,
-            scene.face_shape_id,
-            scene.face_local_id);
+        const MeshRecord& mesh = scene.meshes[mesh_id];
+        pack_global_geometry_cuda(mesh.vertices, mesh.faces, static_cast<int32_t>(vertex_offset),
+                                  static_cast<int32_t>(face_offset), mesh_id, scene.global_vertices, scene.global_faces,
+                                  scene.face_shape_id, scene.face_local_id);
         vertex_offset += mesh.vertices.size(0);
         face_offset += mesh.faces.size(0);
     }
@@ -611,50 +503,27 @@ void refresh_global_geometry(SceneCache &scene) {
     scene.tri_e1_packed = at::empty({triangle_count, 4}, fopts);
     scene.tri_e2_packed = at::empty({triangle_count, 4}, fopts);
     scene.tri_fn_packed = at::empty({triangle_count, 4}, fopts);
-    compute_triangle_soa_cuda(
-        triangle_count,
-        scene.global_vertices,
-        scene.global_faces,
-        scene.tri_p0_x,
-        scene.tri_p0_y,
-        scene.tri_p0_z,
-        scene.tri_e1_x,
-        scene.tri_e1_y,
-        scene.tri_e1_z,
-        scene.tri_e2_x,
-        scene.tri_e2_y,
-        scene.tri_e2_z,
-        scene.tri_fn_x,
-        scene.tri_fn_y,
-        scene.tri_fn_z,
-        scene.tri_p0_packed,
-        scene.tri_e1_packed,
-        scene.tri_e2_packed,
-        scene.tri_fn_packed);
+    compute_triangle_soa_cuda(triangle_count, scene.global_vertices, scene.global_faces, scene.tri_p0_x, scene.tri_p0_y,
+                              scene.tri_p0_z, scene.tri_e1_x, scene.tri_e1_y, scene.tri_e1_z, scene.tri_e2_x,
+                              scene.tri_e2_y, scene.tri_e2_z, scene.tri_fn_x, scene.tri_fn_y, scene.tri_fn_z,
+                              scene.tri_p0_packed, scene.tri_e1_packed, scene.tri_e2_packed, scene.tri_fn_packed);
 }
 
-void update_triangle_accel(
-    const MeshRecord &mesh,
-    OptixTriangleAccel &accel,
-    OptixDeviceContext optix_context,
-    cudaStream_t stream) {
+void update_triangle_accel(const MeshRecord& mesh, OptixTriangleAccel& accel, OptixDeviceContext optix_context,
+                           cudaStream_t stream) {
     accel.vertex_buffer = mesh.vertices.contiguous();
-    CUdeviceptr vertex_buffer =
-        reinterpret_cast<CUdeviceptr>(accel.vertex_buffer.data_ptr<float>());
-    CUdeviceptr index_buffer =
-        reinterpret_cast<CUdeviceptr>(accel.index_buffer.data_ptr<int>());
+    CUdeviceptr vertex_buffer = reinterpret_cast<CUdeviceptr>(accel.vertex_buffer.data_ptr<float>());
+    CUdeviceptr index_buffer = reinterpret_cast<CUdeviceptr>(accel.index_buffer.data_ptr<int>());
     uint32_t triangle_input_flags = OPTIX_GEOMETRY_FLAG_NONE;
 
     OptixBuildInput build_input = {};
     build_input.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
     build_input.triangleArray.vertexBuffers = &vertex_buffer;
-    build_input.triangleArray.numVertices =
-        static_cast<unsigned int>(accel.vertex_buffer.size(0));
+    build_input.triangleArray.numVertices = static_cast<unsigned int>(accel.vertex_buffer.size(0));
     build_input.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
     build_input.triangleArray.vertexStrideInBytes = sizeof(float) * 3;
     build_input.triangleArray.indexBuffer = index_buffer;
-    build_input.triangleArray.numIndexTriplets =
-        static_cast<unsigned int>(accel.index_buffer.size(0));
+    build_input.triangleArray.numIndexTriplets = static_cast<unsigned int>(accel.index_buffer.size(0));
     build_input.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
     build_input.triangleArray.indexStrideInBytes = sizeof(int) * 3;
     build_input.triangleArray.flags = &triangle_input_flags;
@@ -665,45 +534,34 @@ void update_triangle_accel(
     accel_options.operation = OPTIX_BUILD_OPERATION_UPDATE;
 
     OptixAccelBufferSizes buffer_sizes = {};
-    rayd_torch_OPTIX_CHECK(optixAccelComputeMemoryUsage(
-        optix_context, &accel_options, &build_input, 1, &buffer_sizes));
+    rayd_torch_OPTIX_CHECK(optixAccelComputeMemoryUsage(optix_context, &accel_options, &build_input, 1, &buffer_sizes));
 
-    at::TensorOptions byte_options =
-        at::TensorOptions().device(mesh.vertices.device()).dtype(at::kByte);
+    at::TensorOptions byte_options = at::TensorOptions().device(mesh.vertices.device()).dtype(at::kByte);
     size_t temp_bytes = buffer_sizes.tempUpdateSizeInBytes;
     if (accel.gas_buffer.numel() < static_cast<int64_t>(buffer_sizes.outputSizeInBytes)) {
-        accel.gas_buffer =
-            at::empty({static_cast<int64_t>(buffer_sizes.outputSizeInBytes)}, byte_options);
+        accel.gas_buffer = at::empty({static_cast<int64_t>(buffer_sizes.outputSizeInBytes)}, byte_options);
         accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
         temp_bytes = buffer_sizes.tempSizeInBytes;
     }
     if (accel.gas_temp_buffer.numel() < static_cast<int64_t>(temp_bytes))
         accel.gas_temp_buffer = at::empty({static_cast<int64_t>(temp_bytes)}, byte_options);
 
-    rayd_torch_OPTIX_CHECK(optixAccelBuild(
-        optix_context,
-        stream,
-        &accel_options,
-        &build_input,
-        1,
-        reinterpret_cast<CUdeviceptr>(accel.gas_temp_buffer.data_ptr<uint8_t>()),
-        temp_bytes,
-        reinterpret_cast<CUdeviceptr>(accel.gas_buffer.data_ptr<uint8_t>()),
-        static_cast<size_t>(accel.gas_buffer.numel()),
-        &accel.traversable,
-        nullptr,
-        0));
+    rayd_torch_OPTIX_CHECK(
+        optixAccelBuild(optix_context, stream, &accel_options, &build_input, 1,
+                        reinterpret_cast<CUdeviceptr>(accel.gas_temp_buffer.data_ptr<uint8_t>()), temp_bytes,
+                        reinterpret_cast<CUdeviceptr>(accel.gas_buffer.data_ptr<uint8_t>()),
+                        static_cast<size_t>(accel.gas_buffer.numel()), &accel.traversable, nullptr, 0));
 }
 
-bool scene_has_dynamic_edges(const SceneCache &scene) {
-    for (const MeshRecord &mesh : scene.meshes) {
+bool scene_has_dynamic_edges(const SceneCache& scene) {
+    for (const MeshRecord& mesh : scene.meshes) {
         if (mesh.dynamic && mesh.edges_enabled)
             return true;
     }
     return false;
 }
 
-void build_edge_topology(SceneCache &scene) {
+void build_edge_topology(SceneCache& scene) {
     std::vector<at::Tensor> edge_v0_parts;
     std::vector<at::Tensor> edge_v1_parts;
     std::vector<at::Tensor> edge_face0_parts;
@@ -721,7 +579,7 @@ void build_edge_topology(SceneCache &scene) {
 
     int32_t vertex_offset = 0;
     for (int32_t shape_id = 0; shape_id < static_cast<int32_t>(scene.meshes.size()); ++shape_id) {
-        const MeshRecord &mesh = scene.meshes[shape_id];
+        const MeshRecord& mesh = scene.meshes[shape_id];
         if (mesh.edges_enabled) {
             EdgeTopology topology = build_edge_topology_cuda(mesh.faces, vertex_offset, shape_id);
             if (topology.edge_v0.numel() > 0) {
@@ -739,7 +597,7 @@ void build_edge_topology(SceneCache &scene) {
 
     at::Device device(at::kCUDA, scene.device_index);
     at::TensorOptions iopts = at::TensorOptions().device(device).dtype(at::kInt);
-    auto cat_or_empty = [&](std::vector<at::Tensor> &parts) {
+    auto cat_or_empty = [&](std::vector<at::Tensor>& parts) {
         if (parts.empty())
             return at::empty({0}, iopts);
         return at::cat(parts, 0).contiguous();
@@ -753,8 +611,7 @@ void build_edge_topology(SceneCache &scene) {
     scene.edge_local_id = cat_or_empty(edge_local_id_parts);
 }
 
-std::vector<float> compute_edge_search_radii(
-    const EdgeSearchStats &stats) {
+std::vector<float> compute_edge_search_radii(const EdgeSearchStats& stats) {
     if (!stats.has_edges)
         return {};
 
@@ -788,7 +645,7 @@ std::vector<float> compute_edge_search_radii(
     return unique_radii;
 }
 
-void refresh_edge_soa(SceneCache &scene) {
+void refresh_edge_soa(SceneCache& scene) {
     const int64_t edge_count = scene.edge_v0.size(0);
     at::Device device(at::kCUDA, scene.device_index);
     at::TensorOptions fopts = at::TensorOptions().device(device).dtype(at::kFloat);
@@ -799,24 +656,14 @@ void refresh_edge_soa(SceneCache &scene) {
     scene.edge_e1_y = at::empty({edge_count}, fopts);
     scene.edge_e1_z = at::empty({edge_count}, fopts);
     if (!scene.edge_mask.defined() || scene.edge_mask.numel() != edge_count) {
-        scene.edge_mask = at::ones(
-            {edge_count}, at::TensorOptions().device(device).dtype(at::kByte));
+        scene.edge_mask = at::ones({edge_count}, at::TensorOptions().device(device).dtype(at::kByte));
         scene.edge_mask_version += 1;
     }
-    compute_edge_soa_cuda(
-        edge_count,
-        scene.global_vertices,
-        scene.edge_v0,
-        scene.edge_v1,
-        scene.edge_p0_x,
-        scene.edge_p0_y,
-        scene.edge_p0_z,
-        scene.edge_e1_x,
-        scene.edge_e1_y,
-        scene.edge_e1_z);
+    compute_edge_soa_cuda(edge_count, scene.global_vertices, scene.edge_v0, scene.edge_v1, scene.edge_p0_x,
+                          scene.edge_p0_y, scene.edge_p0_z, scene.edge_e1_x, scene.edge_e1_y, scene.edge_e1_z);
 }
 
-void build_edge_accel(SceneCache &scene, OptixDeviceContext optix_context, cudaStream_t stream) {
+void build_edge_accel(SceneCache& scene, OptixDeviceContext optix_context, cudaStream_t stream) {
     const int64_t edge_count = scene.edge_v0.size(0);
     refresh_edge_soa(scene);
     scene.edge_accels.clear();
@@ -825,14 +672,9 @@ void build_edge_accel(SceneCache &scene, OptixDeviceContext optix_context, cudaS
         return;
     }
 
-    const EdgeSearchStats stats = compute_edge_search_stats_cuda(
-        edge_count,
-        scene.edge_p0_x,
-        scene.edge_p0_y,
-        scene.edge_p0_z,
-        scene.edge_e1_x,
-        scene.edge_e1_y,
-        scene.edge_e1_z);
+    const EdgeSearchStats stats =
+        compute_edge_search_stats_cuda(edge_count, scene.edge_p0_x, scene.edge_p0_y, scene.edge_p0_z, scene.edge_e1_x,
+                                       scene.edge_e1_y, scene.edge_e1_z);
     std::vector<float> radii = compute_edge_search_radii(stats);
     scene.edge_accels.resize(radii.size());
     at::Device device(at::kCUDA, scene.device_index);
@@ -841,22 +683,13 @@ void build_edge_accel(SceneCache &scene, OptixDeviceContext optix_context, cudaS
     const bool compact_static_edges = !scene_has_dynamic_edges(scene);
 
     for (size_t gas_index = 0; gas_index < radii.size(); ++gas_index) {
-        OptixEdgeAccel &accel = scene.edge_accels[gas_index];
+        OptixEdgeAccel& accel = scene.edge_accels[gas_index];
         const float radius = radii[gas_index];
         accel.aabb_buffer = at::empty({edge_count, 6}, float_options);
-        compute_edge_optix_aabbs_cuda(
-            edge_count,
-            scene.edge_p0_x,
-            scene.edge_p0_y,
-            scene.edge_p0_z,
-            scene.edge_e1_x,
-            scene.edge_e1_y,
-            scene.edge_e1_z,
-            radius,
-            accel.aabb_buffer);
+        compute_edge_optix_aabbs_cuda(edge_count, scene.edge_p0_x, scene.edge_p0_y, scene.edge_p0_z, scene.edge_e1_x,
+                                      scene.edge_e1_y, scene.edge_e1_z, radius, accel.aabb_buffer);
 
-        CUdeviceptr aabb_buffer =
-            reinterpret_cast<CUdeviceptr>(accel.aabb_buffer.data_ptr<float>());
+        CUdeviceptr aabb_buffer = reinterpret_cast<CUdeviceptr>(accel.aabb_buffer.data_ptr<float>());
         uint32_t input_flags = OPTIX_GEOMETRY_FLAG_NONE;
         OptixBuildInput build_input = {};
         build_input.type = OPTIX_BUILD_INPUT_TYPE_CUSTOM_PRIMITIVES;
@@ -873,54 +706,38 @@ void build_edge_accel(SceneCache &scene, OptixDeviceContext optix_context, cudaS
         accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
 
         OptixAccelBufferSizes buffer_sizes = {};
-        rayd_torch_OPTIX_CHECK(optixAccelComputeMemoryUsage(
-            optix_context, &accel_options, &build_input, 1, &buffer_sizes));
+        rayd_torch_OPTIX_CHECK(
+            optixAccelComputeMemoryUsage(optix_context, &accel_options, &build_input, 1, &buffer_sizes));
 
-        accel.gas_temp_buffer =
-            at::empty({static_cast<int64_t>(buffer_sizes.tempSizeInBytes)}, byte_options);
-        accel.gas_buffer =
-            at::empty({static_cast<int64_t>(buffer_sizes.outputSizeInBytes)}, byte_options);
+        accel.gas_temp_buffer = at::empty({static_cast<int64_t>(buffer_sizes.tempSizeInBytes)}, byte_options);
+        accel.gas_buffer = at::empty({static_cast<int64_t>(buffer_sizes.outputSizeInBytes)}, byte_options);
         at::Tensor compacted_size_buffer;
         OptixAccelEmitDesc compacted_size_emit = {};
-        OptixAccelEmitDesc *emit_descs = nullptr;
+        OptixAccelEmitDesc* emit_descs = nullptr;
         unsigned int emit_desc_count = 0;
         if (compact_static_edges) {
             compacted_size_buffer = at::empty({static_cast<int64_t>(sizeof(uint64_t))}, byte_options);
             compacted_size_emit.type = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE;
-            compacted_size_emit.result =
-                reinterpret_cast<CUdeviceptr>(compacted_size_buffer.data_ptr<uint8_t>());
+            compacted_size_emit.result = reinterpret_cast<CUdeviceptr>(compacted_size_buffer.data_ptr<uint8_t>());
             emit_descs = &compacted_size_emit;
             emit_desc_count = 1;
         }
-        rayd_torch_OPTIX_CHECK(optixAccelBuild(
-            optix_context,
-            stream,
-            &accel_options,
-            &build_input,
-            1,
-            reinterpret_cast<CUdeviceptr>(accel.gas_temp_buffer.data_ptr<uint8_t>()),
-            buffer_sizes.tempSizeInBytes,
-            reinterpret_cast<CUdeviceptr>(accel.gas_buffer.data_ptr<uint8_t>()),
-            buffer_sizes.outputSizeInBytes,
-            &accel.traversable,
-            emit_descs,
-            emit_desc_count));
+        rayd_torch_OPTIX_CHECK(optixAccelBuild(optix_context, stream, &accel_options, &build_input, 1,
+                                               reinterpret_cast<CUdeviceptr>(accel.gas_temp_buffer.data_ptr<uint8_t>()),
+                                               buffer_sizes.tempSizeInBytes,
+                                               reinterpret_cast<CUdeviceptr>(accel.gas_buffer.data_ptr<uint8_t>()),
+                                               buffer_sizes.outputSizeInBytes, &accel.traversable, emit_descs,
+                                               emit_desc_count));
         if (compact_static_edges) {
-            compact_accel_if_smaller(
-                optix_context,
-                stream,
-                byte_options,
-                accel.gas_buffer,
-                accel.traversable,
-                compacted_size_buffer,
-                "build_edge_accel()");
+            compact_accel_if_smaller(optix_context, stream, byte_options, accel.gas_buffer, accel.traversable,
+                                     compacted_size_buffer, "build_edge_accel()");
         }
         accel.search_radius = radius;
     }
     scene.edge_accel = scene.edge_accels.back();
 }
 
-bool update_edge_accel(SceneCache &scene, OptixDeviceContext optix_context, cudaStream_t stream) {
+bool update_edge_accel(SceneCache& scene, OptixDeviceContext optix_context, cudaStream_t stream) {
     const int64_t edge_count = scene.edge_v0.size(0);
     if (edge_count == 0) {
         scene.edge_accels.clear();
@@ -931,14 +748,9 @@ bool update_edge_accel(SceneCache &scene, OptixDeviceContext optix_context, cuda
         return false;
 
     refresh_edge_soa(scene);
-    const EdgeSearchStats stats = compute_edge_search_stats_cuda(
-        edge_count,
-        scene.edge_p0_x,
-        scene.edge_p0_y,
-        scene.edge_p0_z,
-        scene.edge_e1_x,
-        scene.edge_e1_y,
-        scene.edge_e1_z);
+    const EdgeSearchStats stats =
+        compute_edge_search_stats_cuda(edge_count, scene.edge_p0_x, scene.edge_p0_y, scene.edge_p0_z, scene.edge_e1_x,
+                                       scene.edge_e1_y, scene.edge_e1_z);
     std::vector<float> radii = compute_edge_search_radii(stats);
     if (radii.size() != scene.edge_accels.size())
         return false;
@@ -946,26 +758,16 @@ bool update_edge_accel(SceneCache &scene, OptixDeviceContext optix_context, cuda
     at::Device device(at::kCUDA, scene.device_index);
     at::TensorOptions byte_options = at::TensorOptions().device(device).dtype(at::kByte);
     for (size_t gas_index = 0; gas_index < radii.size(); ++gas_index) {
-        OptixEdgeAccel &accel = scene.edge_accels[gas_index];
-        if (!accel.aabb_buffer.defined() || accel.aabb_buffer.size(0) != edge_count ||
-            !accel.gas_buffer.defined()) {
+        OptixEdgeAccel& accel = scene.edge_accels[gas_index];
+        if (!accel.aabb_buffer.defined() || accel.aabb_buffer.size(0) != edge_count || !accel.gas_buffer.defined()) {
             return false;
         }
 
         const float radius = radii[gas_index];
-        compute_edge_optix_aabbs_cuda(
-            edge_count,
-            scene.edge_p0_x,
-            scene.edge_p0_y,
-            scene.edge_p0_z,
-            scene.edge_e1_x,
-            scene.edge_e1_y,
-            scene.edge_e1_z,
-            radius,
-            accel.aabb_buffer);
+        compute_edge_optix_aabbs_cuda(edge_count, scene.edge_p0_x, scene.edge_p0_y, scene.edge_p0_z, scene.edge_e1_x,
+                                      scene.edge_e1_y, scene.edge_e1_z, radius, accel.aabb_buffer);
 
-        CUdeviceptr aabb_buffer =
-            reinterpret_cast<CUdeviceptr>(accel.aabb_buffer.data_ptr<float>());
+        CUdeviceptr aabb_buffer = reinterpret_cast<CUdeviceptr>(accel.aabb_buffer.data_ptr<float>());
         uint32_t input_flags = OPTIX_GEOMETRY_FLAG_NONE;
         OptixBuildInput build_input = {};
         build_input.type = OPTIX_BUILD_INPUT_TYPE_CUSTOM_PRIMITIVES;
@@ -980,27 +782,19 @@ bool update_edge_accel(SceneCache &scene, OptixDeviceContext optix_context, cuda
         accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
 
         OptixAccelBufferSizes buffer_sizes = {};
-        rayd_torch_OPTIX_CHECK(optixAccelComputeMemoryUsage(
-            optix_context, &accel_options, &build_input, 1, &buffer_sizes));
+        rayd_torch_OPTIX_CHECK(
+            optixAccelComputeMemoryUsage(optix_context, &accel_options, &build_input, 1, &buffer_sizes));
         const size_t temp_bytes = buffer_sizes.tempSizeInBytes;
         if (accel.gas_buffer.numel() < static_cast<int64_t>(buffer_sizes.outputSizeInBytes))
             return false;
         if (accel.gas_temp_buffer.numel() < static_cast<int64_t>(temp_bytes))
             accel.gas_temp_buffer = at::empty({static_cast<int64_t>(temp_bytes)}, byte_options);
 
-        rayd_torch_OPTIX_CHECK(optixAccelBuild(
-            optix_context,
-            stream,
-            &accel_options,
-            &build_input,
-            1,
-            reinterpret_cast<CUdeviceptr>(accel.gas_temp_buffer.data_ptr<uint8_t>()),
-            temp_bytes,
-            reinterpret_cast<CUdeviceptr>(accel.gas_buffer.data_ptr<uint8_t>()),
-            static_cast<size_t>(accel.gas_buffer.numel()),
-            &accel.traversable,
-            nullptr,
-            0));
+        rayd_torch_OPTIX_CHECK(
+            optixAccelBuild(optix_context, stream, &accel_options, &build_input, 1,
+                            reinterpret_cast<CUdeviceptr>(accel.gas_temp_buffer.data_ptr<uint8_t>()), temp_bytes,
+                            reinterpret_cast<CUdeviceptr>(accel.gas_buffer.data_ptr<uint8_t>()),
+                            static_cast<size_t>(accel.gas_buffer.numel()), &accel.traversable, nullptr, 0));
         accel.search_radius = radius;
     }
     scene.edge_accel = scene.edge_accels.back();
@@ -1014,14 +808,11 @@ SceneHandle::~SceneHandle() {
 }
 
 std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes) {
-    return create_scene_cache(
-        std::move(meshes), TraceBackend::Auto, EdgeBackend::Auto);
+    return create_scene_cache(std::move(meshes), TraceBackend::Auto, EdgeBackend::Auto);
 }
 
-std::unique_ptr<SceneCache> create_scene_cache(
-    std::vector<MeshRecord> meshes,
-    TraceBackend requested_trace_backend,
-    EdgeBackend requested_edge_backend) {
+std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes, TraceBackend requested_trace_backend,
+                                               EdgeBackend requested_edge_backend) {
     if (meshes.empty())
         throw std::runtime_error("Scene.build(): at least one mesh is required.");
 
@@ -1030,7 +821,7 @@ std::unique_ptr<SceneCache> create_scene_cache(
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     if (torch_ctx.device_index != device_index)
         throw std::runtime_error("Scene.build(): current CUDA device does not match mesh tensors.");
-    for (const MeshRecord &mesh : meshes) {
+    for (const MeshRecord& mesh : meshes) {
         require_vec3f(mesh.vertices, "mesh.vertices");
         require_vec3i(mesh.faces, "mesh.faces");
         require_optional_matrix4(mesh.to_world_left, "mesh.to_world_left");
@@ -1042,29 +833,27 @@ std::unique_ptr<SceneCache> create_scene_cache(
     }
 
     auto scene_unique = std::make_unique<SceneCache>();
-    SceneCache *scene = scene_unique.get();
+    SceneCache* scene = scene_unique.get();
     scene->handle = next_handle.fetch_add(1);
     scene->device_index = device_index;
     if (requested_trace_backend == TraceBackend::Auto) {
-        scene->trace_backend = optix_context_available(static_cast<int>(device_index))
-            ? TraceBackend::Optix
-            : TraceBackend::Cuda;
+        scene->trace_backend =
+            optix_context_available(static_cast<int>(device_index)) ? TraceBackend::Optix : TraceBackend::Cuda;
     } else {
         scene->trace_backend = requested_trace_backend;
     }
     scene->edge_backend = requested_edge_backend == EdgeBackend::Auto
-        ? (scene->trace_backend == TraceBackend::Optix ? EdgeBackend::Optix : EdgeBackend::Cuda)
-        : requested_edge_backend;
-    OptixDeviceContextEntry *optix_entry = nullptr;
+                              ? (scene->trace_backend == TraceBackend::Optix ? EdgeBackend::Optix : EdgeBackend::Cuda)
+                              : requested_edge_backend;
+    OptixDeviceContextEntry* optix_entry = nullptr;
     if (scene->trace_backend == TraceBackend::Optix || scene->edge_backend == EdgeBackend::Optix)
         optix_entry = &get_optix_context(static_cast<int>(device_index));
     scene->meshes = std::move(meshes);
     refresh_global_geometry(*scene);
     if (scene->trace_backend == TraceBackend::Optix) {
         scene->triangle_accels.reserve(scene->meshes.size());
-        for (const MeshRecord &mesh : scene->meshes)
-            scene->triangle_accels.push_back(
-                build_triangle_accel(mesh, optix_entry->optix_context, torch_ctx.stream));
+        for (const MeshRecord& mesh : scene->meshes)
+            scene->triangle_accels.push_back(build_triangle_accel(mesh, optix_entry->optix_context, torch_ctx.stream));
         build_triangle_ias(*scene, optix_entry->optix_context, torch_ctx.stream);
     } else {
         ensure_custom_triangle_bvh(*scene);
@@ -1112,7 +901,7 @@ void destroy_scene(int64_t handle) {
     }
 }
 
-SceneCache &get_scene(int64_t handle) {
+SceneCache& get_scene(int64_t handle) {
     std::lock_guard<std::mutex> lock(scenes_mutex);
     auto it = scenes.find(handle);
     if (it == scenes.end())
@@ -1141,10 +930,10 @@ std::string scene_edge_backend(int64_t handle) {
 }
 
 void update_mesh_vertices(int64_t handle, int64_t mesh_id, at::Tensor vertices) {
-    SceneCache &scene = get_scene(handle);
+    SceneCache& scene = get_scene(handle);
     if (mesh_id < 0 || mesh_id >= static_cast<int64_t>(scene.meshes.size()))
         throw std::runtime_error("update_mesh_vertices(): invalid mesh id.");
-    MeshRecord &mesh = scene.meshes[mesh_id];
+    MeshRecord& mesh = scene.meshes[mesh_id];
     if (!mesh.dynamic)
         throw std::runtime_error("update_mesh_vertices(): target mesh is not dynamic.");
     require_vec3f(vertices, "vertices");
@@ -1157,26 +946,22 @@ void update_mesh_vertices(int64_t handle, int64_t mesh_id, at::Tensor vertices) 
 }
 
 void sync_scene(int64_t handle) {
-    SceneCache &scene = get_scene(handle);
+    SceneCache& scene = get_scene(handle);
     c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     if (torch_ctx.device_index != scene.device_index)
         throw std::runtime_error("Scene.sync(): current CUDA device does not match scene tensors.");
-    OptixDeviceContextEntry *optix_entry = nullptr;
+    OptixDeviceContextEntry* optix_entry = nullptr;
     if (scene.trace_backend == TraceBackend::Optix || scene.edge_backend == EdgeBackend::Optix)
         optix_entry = &get_optix_context(static_cast<int>(scene.device_index));
 
     bool changed = false;
     for (int64_t mesh_id = 0; mesh_id < static_cast<int64_t>(scene.meshes.size()); ++mesh_id) {
-        MeshRecord &mesh = scene.meshes[mesh_id];
+        MeshRecord& mesh = scene.meshes[mesh_id];
         if (!mesh.pending_update)
             continue;
         if (scene.trace_backend == TraceBackend::Optix) {
-            update_triangle_accel(
-                mesh,
-                scene.triangle_accels[mesh_id],
-                optix_entry->optix_context,
-                torch_ctx.stream);
+            update_triangle_accel(mesh, scene.triangle_accels[mesh_id], optix_entry->optix_context, torch_ctx.stream);
         }
         mesh.pending_update = false;
         changed = true;
@@ -1217,10 +1002,8 @@ struct HostTreeletSchedule {
     std::vector<int> level_offsets;
 };
 
-HostTreeletSchedule build_treelet_schedule(
-    int primitive_count,
-    const std::vector<int> &left_child,
-    const std::vector<int> &right_child) {
+HostTreeletSchedule build_treelet_schedule(int primitive_count, const std::vector<int>& left_child,
+                                           const std::vector<int>& right_child) {
     const int node_count = primitive_count * 2 - 1;
     const int leaf_base = primitive_count - 1;
     std::vector<int> height(static_cast<size_t>(node_count), 0);
@@ -1257,35 +1040,32 @@ HostTreeletSchedule build_treelet_schedule(
 
     std::vector<std::vector<int>> levels(static_cast<size_t>(max_height + 1));
     for (int node = 0; node < leaf_base; ++node) {
-        if (leaf_count[static_cast<size_t>(node)] >=
-            rayd::shared::edge::kBvhTreeletMinSubtreeLeaves) {
+        if (leaf_count[static_cast<size_t>(node)] >= rayd::shared::edge::kBvhTreeletMinSubtreeLeaves) {
             levels[static_cast<size_t>(height[static_cast<size_t>(node)])].push_back(node);
         }
     }
     HostTreeletSchedule schedule;
     schedule.level_offsets.resize(static_cast<size_t>(max_height + 2), 0);
     for (int level = 0; level <= max_height; ++level) {
-        schedule.level_offsets[static_cast<size_t>(level)] =
-            static_cast<int>(schedule.nodes.size());
+        schedule.level_offsets[static_cast<size_t>(level)] = static_cast<int>(schedule.nodes.size());
         schedule.nodes.insert(schedule.nodes.end(), levels[static_cast<size_t>(level)].begin(),
                               levels[static_cast<size_t>(level)].end());
     }
-    schedule.level_offsets[static_cast<size_t>(max_height + 1)] =
-        static_cast<int>(schedule.nodes.size());
+    schedule.level_offsets[static_cast<size_t>(max_height + 1)] = static_cast<int>(schedule.nodes.size());
     return schedule;
 }
 
 } // namespace
 
-rayd::shared::edge::EdgeSoAView scene_edge_view(const SceneCache &scene) {
-    return {scene.edge_p0_x.data_ptr<float>(), scene.edge_p0_y.data_ptr<float>(),
-            scene.edge_p0_z.data_ptr<float>(), scene.edge_e1_x.data_ptr<float>(),
-            scene.edge_e1_y.data_ptr<float>(), scene.edge_e1_z.data_ptr<float>(),
+rayd::shared::edge::EdgeSoAView scene_edge_view(const SceneCache& scene) {
+    return {scene.edge_p0_x.data_ptr<float>(),         scene.edge_p0_y.data_ptr<float>(),
+            scene.edge_p0_z.data_ptr<float>(),         scene.edge_e1_x.data_ptr<float>(),
+            scene.edge_e1_y.data_ptr<float>(),         scene.edge_e1_z.data_ptr<float>(),
             static_cast<size_t>(scene.edge_v0.numel())};
 }
 
-rayd::shared::edge::AabbSoAView scene_edge_bvh_bounds_view(const SceneCache &scene) {
-    const CompactEdgeBvh &bvh = scene.custom_edge_bvh;
+rayd::shared::edge::AabbSoAView scene_edge_bvh_bounds_view(const SceneCache& scene) {
+    const CompactEdgeBvh& bvh = scene.custom_edge_bvh;
     return {bvh.node_min_x.defined() ? bvh.node_min_x.data_ptr<float>() : nullptr,
             bvh.node_min_y.defined() ? bvh.node_min_y.data_ptr<float>() : nullptr,
             bvh.node_min_z.defined() ? bvh.node_min_z.data_ptr<float>() : nullptr,
@@ -1295,18 +1075,20 @@ rayd::shared::edge::AabbSoAView scene_edge_bvh_bounds_view(const SceneCache &sce
             static_cast<size_t>(bvh.node_count)};
 }
 
-rayd::shared::edge::CompactBvhTopologyView scene_edge_bvh_topology_view(
-    const SceneCache &scene) {
-    const CompactEdgeBvh &bvh = scene.custom_edge_bvh;
+rayd::shared::edge::CompactBvhTopologyView scene_edge_bvh_topology_view(const SceneCache& scene) {
+    const CompactEdgeBvh& bvh = scene.custom_edge_bvh;
     const size_t primitive_count = static_cast<size_t>(scene.edge_v0.numel());
     return {bvh.left_child.defined() ? bvh.left_child.data_ptr<int>() : nullptr,
             bvh.right_child.defined() ? bvh.right_child.data_ptr<int>() : nullptr,
-            bvh.leaf_primitives.defined() ? bvh.leaf_primitives.data_ptr<int>() : nullptr, nullptr,
-            static_cast<size_t>(bvh.node_count), primitive_count, primitive_count};
+            bvh.leaf_primitives.defined() ? bvh.leaf_primitives.data_ptr<int>() : nullptr,
+            nullptr,
+            static_cast<size_t>(bvh.node_count),
+            primitive_count,
+            primitive_count};
 }
 
-void ensure_custom_edge_bvh(SceneCache &scene) {
-    CompactEdgeBvh &bvh = scene.custom_edge_bvh;
+void ensure_custom_edge_bvh(SceneCache& scene) {
+    CompactEdgeBvh& bvh = scene.custom_edge_bvh;
     if (bvh.valid && bvh.geometry_version == scene.edge_version)
         return;
 
@@ -1315,11 +1097,9 @@ void ensure_custom_edge_bvh(SceneCache &scene) {
     if (torch_ctx.device_index != scene.device_index)
         throw std::runtime_error("ensure_custom_edge_bvh(): current CUDA device does not match scene.");
     const int64_t primitive_count = scene.edge_v0.numel();
-    const int64_t max_primitive_count =
-        (static_cast<int64_t>(std::numeric_limits<int>::max()) + 1) / 2;
+    const int64_t max_primitive_count = (static_cast<int64_t>(std::numeric_limits<int>::max()) + 1) / 2;
     if (primitive_count > max_primitive_count)
-        throw std::runtime_error(
-            "ensure_custom_edge_bvh(): node topology exceeds int32 indexing range.");
+        throw std::runtime_error("ensure_custom_edge_bvh(): node topology exceeds int32 indexing range.");
 
     bvh = {};
     bvh.geometry_version = scene.edge_version;
@@ -1335,193 +1115,193 @@ void ensure_custom_edge_bvh(SceneCache &scene) {
     const auto bopts = at::TensorOptions().device(scene.edge_v0.device()).dtype(at::kByte);
     auto make_f = [&](int64_t count) { return at::empty({count}, fopts); };
     auto make_i = [&](int64_t count) { return at::empty({count}, iopts); };
-    bvh.primitive_min_x = make_f(primitive_count); bvh.primitive_min_y = make_f(primitive_count);
-    bvh.primitive_min_z = make_f(primitive_count); bvh.primitive_max_x = make_f(primitive_count);
-    bvh.primitive_max_y = make_f(primitive_count); bvh.primitive_max_z = make_f(primitive_count);
-    bvh.node_min_x = make_f(node_count); bvh.node_min_y = make_f(node_count);
-    bvh.node_min_z = make_f(node_count); bvh.node_max_x = make_f(node_count);
-    bvh.node_max_y = make_f(node_count); bvh.node_max_z = make_f(node_count);
-    bvh.left_child = make_i(node_count).fill_(-1); bvh.right_child = make_i(node_count).fill_(-1);
-    bvh.parent = make_i(node_count).fill_(-1); bvh.leaf_primitive = make_i(node_count).fill_(-1);
-    bvh.is_leaf = make_i(node_count).zero_(); bvh.primitive_leaf_node = make_i(primitive_count).fill_(-1);
+    bvh.primitive_min_x = make_f(primitive_count);
+    bvh.primitive_min_y = make_f(primitive_count);
+    bvh.primitive_min_z = make_f(primitive_count);
+    bvh.primitive_max_x = make_f(primitive_count);
+    bvh.primitive_max_y = make_f(primitive_count);
+    bvh.primitive_max_z = make_f(primitive_count);
+    bvh.node_min_x = make_f(node_count);
+    bvh.node_min_y = make_f(node_count);
+    bvh.node_min_z = make_f(node_count);
+    bvh.node_max_x = make_f(node_count);
+    bvh.node_max_y = make_f(node_count);
+    bvh.node_max_z = make_f(node_count);
+    bvh.left_child = make_i(node_count).fill_(-1);
+    bvh.right_child = make_i(node_count).fill_(-1);
+    bvh.parent = make_i(node_count).fill_(-1);
+    bvh.leaf_primitive = make_i(node_count).fill_(-1);
+    bvh.is_leaf = make_i(node_count).zero_();
+    bvh.primitive_leaf_node = make_i(primitive_count).fill_(-1);
     bvh.leaf_primitives = make_i(primitive_count).fill_(-1);
-    bvh.morton_in = make_i(primitive_count); bvh.morton_out = make_i(primitive_count);
-    bvh.primitive_ids_in = make_i(primitive_count); bvh.primitive_ids_out = make_i(primitive_count);
+    bvh.morton_in = make_i(primitive_count);
+    bvh.morton_out = make_i(primitive_count);
+    bvh.primitive_ids_in = make_i(primitive_count);
+    bvh.primitive_ids_out = make_i(primitive_count);
     bvh.merge_counters = make_i(std::max<int64_t>(primitive_count - 1, 1)).zero_();
     const size_t bounds_bytes = sizeof(rayd::shared::edge::BvhBounds3);
     bvh.packed_bounds = at::empty({primitive_count * static_cast<int64_t>(bounds_bytes)}, bopts);
     bvh.reduced_bound = at::empty({static_cast<int64_t>(bounds_bytes)}, bopts);
-    const size_t scratch_bytes = std::max(
-        edge_bvh_bounds_reduce_scratch_bytes(primitive_count, torch_ctx.stream),
-        edge_bvh_sort_scratch_bytes(primitive_count, torch_ctx.stream));
+    const size_t scratch_bytes = std::max(edge_bvh_bounds_reduce_scratch_bytes(primitive_count, torch_ctx.stream),
+                                          edge_bvh_sort_scratch_bytes(primitive_count, torch_ctx.stream));
     bvh.scratch = at::empty({static_cast<int64_t>(scratch_bytes)}, bopts);
 
-    rayd::shared::edge::launch_compute_primitive_bounds_async({
-        scene_edge_view(scene),
-        {bvh.primitive_min_x.data_ptr<float>(), bvh.primitive_min_y.data_ptr<float>(),
-         bvh.primitive_min_z.data_ptr<float>(), bvh.primitive_max_x.data_ptr<float>(),
-         bvh.primitive_max_y.data_ptr<float>(), bvh.primitive_max_z.data_ptr<float>(),
-         static_cast<size_t>(primitive_count)},
-        reinterpret_cast<rayd::shared::edge::BvhBounds3 *>(bvh.packed_bounds.data_ptr<uint8_t>()),
-        torch_ctx.stream});
-    reduce_edge_bvh_bounds_cuda(
-        primitive_count, bvh.packed_bounds, bvh.reduced_bound, bvh.scratch, torch_ctx.stream);
+    rayd::shared::edge::launch_compute_primitive_bounds_async(
+        {scene_edge_view(scene),
+         {bvh.primitive_min_x.data_ptr<float>(), bvh.primitive_min_y.data_ptr<float>(),
+          bvh.primitive_min_z.data_ptr<float>(), bvh.primitive_max_x.data_ptr<float>(),
+          bvh.primitive_max_y.data_ptr<float>(), bvh.primitive_max_z.data_ptr<float>(),
+          static_cast<size_t>(primitive_count)},
+         reinterpret_cast<rayd::shared::edge::BvhBounds3*>(bvh.packed_bounds.data_ptr<uint8_t>()),
+         torch_ctx.stream});
+    reduce_edge_bvh_bounds_cuda(primitive_count, bvh.packed_bounds, bvh.reduced_bound, bvh.scratch, torch_ctx.stream);
     rayd::shared::edge::BvhBounds3 scene_bound = {};
     cuda_check(cudaMemcpyAsync(&scene_bound, bvh.reduced_bound.data_ptr<uint8_t>(), bounds_bytes,
                                cudaMemcpyDeviceToHost, torch_ctx.stream),
                "cudaMemcpyAsync(custom BVH scene bound)");
-    cuda_check(cudaStreamSynchronize(torch_ctx.stream),
-               "cudaStreamSynchronize(custom BVH scene bound)");
+    cuda_check(cudaStreamSynchronize(torch_ctx.stream), "cudaStreamSynchronize(custom BVH scene bound)");
 
-    rayd::shared::edge::launch_compute_morton_codes_async({
-        {bvh.primitive_min_x.data_ptr<float>(), bvh.primitive_min_y.data_ptr<float>(),
-         bvh.primitive_min_z.data_ptr<float>(), bvh.primitive_max_x.data_ptr<float>(),
-         bvh.primitive_max_y.data_ptr<float>(), bvh.primitive_max_z.data_ptr<float>(),
-         static_cast<size_t>(primitive_count)},
-        scene_bound, reinterpret_cast<uint32_t *>(bvh.morton_in.data_ptr<int>()), torch_ctx.stream});
-    rayd::shared::edge::launch_init_sequence_async({
-        bvh.primitive_ids_in.data_ptr<int>(), static_cast<int>(primitive_count), torch_ctx.stream});
-    sort_edge_bvh_morton_cuda(primitive_count, bvh.morton_in, bvh.morton_out,
-                              bvh.primitive_ids_in, bvh.primitive_ids_out,
-                              bvh.scratch, torch_ctx.stream);
+    rayd::shared::edge::launch_compute_morton_codes_async(
+        {{bvh.primitive_min_x.data_ptr<float>(), bvh.primitive_min_y.data_ptr<float>(),
+          bvh.primitive_min_z.data_ptr<float>(), bvh.primitive_max_x.data_ptr<float>(),
+          bvh.primitive_max_y.data_ptr<float>(), bvh.primitive_max_z.data_ptr<float>(),
+          static_cast<size_t>(primitive_count)},
+         scene_bound,
+         reinterpret_cast<uint32_t*>(bvh.morton_in.data_ptr<int>()),
+         torch_ctx.stream});
+    rayd::shared::edge::launch_init_sequence_async(
+        {bvh.primitive_ids_in.data_ptr<int>(), static_cast<int>(primitive_count), torch_ctx.stream});
+    sort_edge_bvh_morton_cuda(primitive_count, bvh.morton_in, bvh.morton_out, bvh.primitive_ids_in,
+                              bvh.primitive_ids_out, bvh.scratch, torch_ctx.stream);
     HostTreeletSchedule treelet_schedule;
-    const bool optimize_treelets =
-        primitive_count >= rayd::shared::edge::kBvhTreeletMinPrimitives &&
-        primitive_count <= rayd::shared::edge::kBvhTreeletMaxPrimitives;
+    const bool optimize_treelets = primitive_count >= rayd::shared::edge::kBvhTreeletMinPrimitives &&
+                                   primitive_count <= rayd::shared::edge::kBvhTreeletMaxPrimitives;
     if (primitive_count > 1) {
-        rayd::shared::edge::launch_build_radix_tree_async({
-            reinterpret_cast<const uint32_t *>(bvh.morton_out.data_ptr<int>()),
-            bvh.primitive_ids_out.data_ptr<int>(), bvh.left_child.data_ptr<int>(),
-            bvh.right_child.data_ptr<int>(), bvh.parent.data_ptr<int>(),
-            static_cast<int>(primitive_count), torch_ctx.stream});
+        rayd::shared::edge::launch_build_radix_tree_async(
+            {reinterpret_cast<const uint32_t*>(bvh.morton_out.data_ptr<int>()), bvh.primitive_ids_out.data_ptr<int>(),
+             bvh.left_child.data_ptr<int>(), bvh.right_child.data_ptr<int>(), bvh.parent.data_ptr<int>(),
+             static_cast<int>(primitive_count), torch_ctx.stream});
     }
     if (optimize_treelets) {
         std::vector<int> host_left(static_cast<size_t>(node_count), -1);
         std::vector<int> host_right(static_cast<size_t>(node_count), -1);
         cuda_check(cudaMemcpyAsync(host_left.data(), bvh.left_child.data_ptr<int>(),
-                                   static_cast<size_t>(node_count) * sizeof(int),
-                                   cudaMemcpyDeviceToHost, torch_ctx.stream),
+                                   static_cast<size_t>(node_count) * sizeof(int), cudaMemcpyDeviceToHost,
+                                   torch_ctx.stream),
                    "cudaMemcpyAsync(custom BVH left topology)");
         cuda_check(cudaMemcpyAsync(host_right.data(), bvh.right_child.data_ptr<int>(),
-                                   static_cast<size_t>(node_count) * sizeof(int),
-                                   cudaMemcpyDeviceToHost, torch_ctx.stream),
+                                   static_cast<size_t>(node_count) * sizeof(int), cudaMemcpyDeviceToHost,
+                                   torch_ctx.stream),
                    "cudaMemcpyAsync(custom BVH right topology)");
-        cuda_check(cudaStreamSynchronize(torch_ctx.stream),
-                   "cudaStreamSynchronize(custom BVH topology)");
-        treelet_schedule = build_treelet_schedule(
-            static_cast<int>(primitive_count), host_left, host_right);
+        cuda_check(cudaStreamSynchronize(torch_ctx.stream), "cudaStreamSynchronize(custom BVH topology)");
+        treelet_schedule = build_treelet_schedule(static_cast<int>(primitive_count), host_left, host_right);
         bvh.node_cost = make_f(node_count);
         bvh.internal_cost_arrivals = make_i(node_count).zero_();
         bvh.treelet_nodes = make_i(static_cast<int64_t>(treelet_schedule.nodes.size()));
         if (!treelet_schedule.nodes.empty()) {
-            cuda_check(cudaMemcpyAsync(
-                           bvh.treelet_nodes.data_ptr<int>(), treelet_schedule.nodes.data(),
-                           treelet_schedule.nodes.size() * sizeof(int),
-                           cudaMemcpyHostToDevice, torch_ctx.stream),
+            cuda_check(cudaMemcpyAsync(bvh.treelet_nodes.data_ptr<int>(), treelet_schedule.nodes.data(),
+                                       treelet_schedule.nodes.size() * sizeof(int), cudaMemcpyHostToDevice,
+                                       torch_ctx.stream),
                        "cudaMemcpyAsync(custom BVH treelet schedule)");
         }
     }
-    rayd::shared::edge::launch_finalize_leaves_and_bounds_async({
-        bvh.primitive_ids_out.data_ptr<int>(), bvh.parent.data_ptr<int>(),
-        {bvh.primitive_min_x.data_ptr<float>(), bvh.primitive_min_y.data_ptr<float>(),
-         bvh.primitive_min_z.data_ptr<float>(), bvh.primitive_max_x.data_ptr<float>(),
-         bvh.primitive_max_y.data_ptr<float>(), bvh.primitive_max_z.data_ptr<float>(),
-         static_cast<size_t>(primitive_count)},
-        bvh.left_child.data_ptr<int>(), bvh.right_child.data_ptr<int>(),
-        {bvh.node_min_x.data_ptr<float>(), bvh.node_min_y.data_ptr<float>(),
-         bvh.node_min_z.data_ptr<float>(), bvh.node_max_x.data_ptr<float>(),
-         bvh.node_max_y.data_ptr<float>(), bvh.node_max_z.data_ptr<float>(),
-         static_cast<size_t>(node_count)},
-        bvh.leaf_primitive.data_ptr<int>(), bvh.is_leaf.data_ptr<int>(),
-        bvh.primitive_leaf_node.data_ptr<int>(), bvh.merge_counters.data_ptr<int>(),
-        static_cast<int>(primitive_count), torch_ctx.stream});
+    rayd::shared::edge::launch_finalize_leaves_and_bounds_async(
+        {bvh.primitive_ids_out.data_ptr<int>(),
+         bvh.parent.data_ptr<int>(),
+         {bvh.primitive_min_x.data_ptr<float>(), bvh.primitive_min_y.data_ptr<float>(),
+          bvh.primitive_min_z.data_ptr<float>(), bvh.primitive_max_x.data_ptr<float>(),
+          bvh.primitive_max_y.data_ptr<float>(), bvh.primitive_max_z.data_ptr<float>(),
+          static_cast<size_t>(primitive_count)},
+         bvh.left_child.data_ptr<int>(),
+         bvh.right_child.data_ptr<int>(),
+         {bvh.node_min_x.data_ptr<float>(), bvh.node_min_y.data_ptr<float>(), bvh.node_min_z.data_ptr<float>(),
+          bvh.node_max_x.data_ptr<float>(), bvh.node_max_y.data_ptr<float>(), bvh.node_max_z.data_ptr<float>(),
+          static_cast<size_t>(node_count)},
+         bvh.leaf_primitive.data_ptr<int>(),
+         bvh.is_leaf.data_ptr<int>(),
+         bvh.primitive_leaf_node.data_ptr<int>(),
+         bvh.merge_counters.data_ptr<int>(),
+         static_cast<int>(primitive_count),
+         torch_ctx.stream});
     if (optimize_treelets) {
-        const float scene_scale = std::max(
-            scene_bound.max.x - scene_bound.min.x,
-            std::max(scene_bound.max.y - scene_bound.min.y,
-                     scene_bound.max.z - scene_bound.min.z));
-        const float inflation = std::max(
-            scene_scale * rayd::shared::edge::kBvhTreeletCostInflationRatio, 1.0e-6f);
-        rayd::shared::edge::launch_initialize_leaf_costs_async({
-            {bvh.node_min_x.data_ptr<float>(), bvh.node_min_y.data_ptr<float>(),
-             bvh.node_min_z.data_ptr<float>(), bvh.node_max_x.data_ptr<float>(),
-             bvh.node_max_y.data_ptr<float>(), bvh.node_max_z.data_ptr<float>(),
-             static_cast<size_t>(node_count)},
-            bvh.node_cost.data_ptr<float>(), inflation, static_cast<int>(primitive_count),
-            torch_ctx.stream});
-        rayd::shared::edge::launch_initialize_internal_costs_async({
-            bvh.left_child.data_ptr<int>(), bvh.right_child.data_ptr<int>(),
-            bvh.parent.data_ptr<int>(),
-            {bvh.node_min_x.data_ptr<float>(), bvh.node_min_y.data_ptr<float>(),
-             bvh.node_min_z.data_ptr<float>(), bvh.node_max_x.data_ptr<float>(),
-             bvh.node_max_y.data_ptr<float>(), bvh.node_max_z.data_ptr<float>(),
-             static_cast<size_t>(node_count)},
-            bvh.node_cost.data_ptr<float>(), bvh.internal_cost_arrivals.data_ptr<int>(),
-            inflation, static_cast<int>(primitive_count), torch_ctx.stream});
+        const float scene_scale =
+            std::max(scene_bound.max.x - scene_bound.min.x,
+                     std::max(scene_bound.max.y - scene_bound.min.y, scene_bound.max.z - scene_bound.min.z));
+        const float inflation = std::max(scene_scale * rayd::shared::edge::kBvhTreeletCostInflationRatio, 1.0e-6f);
+        rayd::shared::edge::launch_initialize_leaf_costs_async(
+            {{bvh.node_min_x.data_ptr<float>(), bvh.node_min_y.data_ptr<float>(), bvh.node_min_z.data_ptr<float>(),
+              bvh.node_max_x.data_ptr<float>(), bvh.node_max_y.data_ptr<float>(), bvh.node_max_z.data_ptr<float>(),
+              static_cast<size_t>(node_count)},
+             bvh.node_cost.data_ptr<float>(),
+             inflation,
+             static_cast<int>(primitive_count),
+             torch_ctx.stream});
+        rayd::shared::edge::launch_initialize_internal_costs_async(
+            {bvh.left_child.data_ptr<int>(),
+             bvh.right_child.data_ptr<int>(),
+             bvh.parent.data_ptr<int>(),
+             {bvh.node_min_x.data_ptr<float>(), bvh.node_min_y.data_ptr<float>(), bvh.node_min_z.data_ptr<float>(),
+              bvh.node_max_x.data_ptr<float>(), bvh.node_max_y.data_ptr<float>(), bvh.node_max_z.data_ptr<float>(),
+              static_cast<size_t>(node_count)},
+             bvh.node_cost.data_ptr<float>(),
+             bvh.internal_cost_arrivals.data_ptr<int>(),
+             inflation,
+             static_cast<int>(primitive_count),
+             torch_ctx.stream});
         const int max_height = static_cast<int>(treelet_schedule.level_offsets.size()) - 2;
         for (int height = 1; height <= max_height; ++height) {
             const int begin = treelet_schedule.level_offsets[static_cast<size_t>(height)];
             const int end = treelet_schedule.level_offsets[static_cast<size_t>(height + 1)];
             if (end == begin)
                 continue;
-            rayd::shared::edge::launch_optimize_selected_treelets_async({
-                bvh.treelet_nodes.data_ptr<int>() + begin, bvh.is_leaf.data_ptr<int>(),
-                bvh.left_child.data_ptr<int>(), bvh.right_child.data_ptr<int>(),
-                bvh.parent.data_ptr<int>(),
-                {bvh.node_min_x.data_ptr<float>(), bvh.node_min_y.data_ptr<float>(),
-                 bvh.node_min_z.data_ptr<float>(), bvh.node_max_x.data_ptr<float>(),
-                 bvh.node_max_y.data_ptr<float>(), bvh.node_max_z.data_ptr<float>(),
-                 static_cast<size_t>(node_count)},
-                bvh.leaf_primitive.data_ptr<int>(), bvh.node_cost.data_ptr<float>(),
-                inflation, end - begin, torch_ctx.stream});
+            rayd::shared::edge::launch_optimize_selected_treelets_async(
+                {bvh.treelet_nodes.data_ptr<int>() + begin,
+                 bvh.is_leaf.data_ptr<int>(),
+                 bvh.left_child.data_ptr<int>(),
+                 bvh.right_child.data_ptr<int>(),
+                 bvh.parent.data_ptr<int>(),
+                 {bvh.node_min_x.data_ptr<float>(), bvh.node_min_y.data_ptr<float>(), bvh.node_min_z.data_ptr<float>(),
+                  bvh.node_max_x.data_ptr<float>(), bvh.node_max_y.data_ptr<float>(), bvh.node_max_z.data_ptr<float>(),
+                  static_cast<size_t>(node_count)},
+                 bvh.leaf_primitive.data_ptr<int>(),
+                 bvh.node_cost.data_ptr<float>(),
+                 inflation,
+                 end - begin,
+                 torch_ctx.stream});
         }
     }
-    encode_raw_edge_bvh_cuda(primitive_count, bvh.left_child, bvh.right_child,
-                             bvh.leaf_primitive, bvh.leaf_primitives, torch_ctx.stream);
+    encode_raw_edge_bvh_cuda(primitive_count, bvh.left_child, bvh.right_child, bvh.leaf_primitive, bvh.leaf_primitives,
+                             torch_ctx.stream);
     cuda_check(cudaGetLastError(), "ensure_custom_edge_bvh() kernel launch");
     // The cache may be consumed by a later dispatcher call on another Torch
     // stream. Publish it only after its persistent topology is fully built.
-    cuda_check(cudaStreamSynchronize(torch_ctx.stream),
-               "cudaStreamSynchronize(custom BVH build)");
+    cuda_check(cudaStreamSynchronize(torch_ctx.stream), "cudaStreamSynchronize(custom BVH build)");
     bvh.valid = true;
 }
 
-std::vector<at::Tensor> scene_edge_records(SceneCache &scene) {
+std::vector<at::Tensor> scene_edge_records(SceneCache& scene) {
     at::Tensor edge_shape_index = scene.edge_shape_id.to(at::kLong);
     at::Tensor face_offsets = scene.face_offsets.index_select(0, edge_shape_index);
     at::Tensor edge_face0_global = scene.edge_face0 + face_offsets;
-    at::Tensor edge_face1_global = at::where(
-        scene.edge_face1.ge(0),
-        scene.edge_face1 + face_offsets,
-        scene.edge_face1);
+    at::Tensor edge_face1_global = at::where(scene.edge_face1.ge(0), scene.edge_face1 + face_offsets, scene.edge_face1);
 
     return {
-        scene.global_vertices,
-        scene.global_faces,
-        scene.tri_fn_x,
-        scene.tri_fn_y,
-        scene.tri_fn_z,
-        scene.edge_v0,
-        scene.edge_v1,
-        edge_face0_global,
-        edge_face1_global,
-        scene.edge_shape_id,
-        scene.edge_local_id,
-        scene.edge_opposite,
+        scene.global_vertices, scene.global_faces,  scene.tri_fn_x,      scene.tri_fn_y,
+        scene.tri_fn_z,        scene.edge_v0,       scene.edge_v1,       edge_face0_global,
+        edge_face1_global,     scene.edge_shape_id, scene.edge_local_id, scene.edge_opposite,
     };
 }
 
-rayd::shared::bvh::TriangleSoAView scene_triangle_view(const SceneCache &scene) {
+rayd::shared::bvh::TriangleSoAView scene_triangle_view(const SceneCache& scene) {
     return {scene.tri_p0_x.data_ptr<float>(), scene.tri_p0_y.data_ptr<float>(),
             scene.tri_p0_z.data_ptr<float>(), scene.tri_e1_x.data_ptr<float>(),
             scene.tri_e1_y.data_ptr<float>(), scene.tri_e1_z.data_ptr<float>(),
             scene.tri_e2_x.data_ptr<float>(), scene.tri_e2_y.data_ptr<float>(),
-            scene.tri_e2_z.data_ptr<float>(),
-            static_cast<size_t>(scene.global_faces.size(0))};
+            scene.tri_e2_z.data_ptr<float>(), static_cast<size_t>(scene.global_faces.size(0))};
 }
 
-rayd::shared::bvh::AabbSoAView scene_triangle_bvh_bounds_view(const SceneCache &scene) {
-    const CompactTriangleBvh &bvh = scene.custom_triangle_bvh;
+rayd::shared::bvh::AabbSoAView scene_triangle_bvh_bounds_view(const SceneCache& scene) {
+    const CompactTriangleBvh& bvh = scene.custom_triangle_bvh;
     return {bvh.node_min_x.defined() ? bvh.node_min_x.data_ptr<float>() : nullptr,
             bvh.node_min_y.defined() ? bvh.node_min_y.data_ptr<float>() : nullptr,
             bvh.node_min_z.defined() ? bvh.node_min_z.data_ptr<float>() : nullptr,
@@ -1531,32 +1311,31 @@ rayd::shared::bvh::AabbSoAView scene_triangle_bvh_bounds_view(const SceneCache &
             static_cast<size_t>(bvh.node_count)};
 }
 
-rayd::shared::bvh::CompactBvhTopologyView scene_triangle_bvh_topology_view(
-    const SceneCache &scene) {
-    const CompactTriangleBvh &bvh = scene.custom_triangle_bvh;
+rayd::shared::bvh::CompactBvhTopologyView scene_triangle_bvh_topology_view(const SceneCache& scene) {
+    const CompactTriangleBvh& bvh = scene.custom_triangle_bvh;
     const size_t primitive_count = static_cast<size_t>(scene.global_faces.size(0));
     return {bvh.left_child.defined() ? bvh.left_child.data_ptr<int>() : nullptr,
             bvh.right_child.defined() ? bvh.right_child.data_ptr<int>() : nullptr,
             bvh.leaf_primitives.defined() ? bvh.leaf_primitives.data_ptr<int>() : nullptr,
-            nullptr, static_cast<size_t>(bvh.node_count), primitive_count, primitive_count};
+            nullptr,
+            static_cast<size_t>(bvh.node_count),
+            primitive_count,
+            primitive_count};
 }
 
-void ensure_custom_triangle_bvh(SceneCache &scene) {
-    CompactTriangleBvh &bvh = scene.custom_triangle_bvh;
+void ensure_custom_triangle_bvh(SceneCache& scene) {
+    CompactTriangleBvh& bvh = scene.custom_triangle_bvh;
     if (bvh.valid && bvh.geometry_version == scene.version)
         return;
 
     c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     if (torch_ctx.device_index != scene.device_index)
-        throw std::runtime_error(
-            "ensure_custom_triangle_bvh(): current CUDA device does not match scene.");
+        throw std::runtime_error("ensure_custom_triangle_bvh(): current CUDA device does not match scene.");
     const int64_t primitive_count = scene.global_faces.size(0);
-    const int64_t max_primitive_count =
-        (static_cast<int64_t>(std::numeric_limits<int>::max()) + 1) / 2;
+    const int64_t max_primitive_count = (static_cast<int64_t>(std::numeric_limits<int>::max()) + 1) / 2;
     if (primitive_count > max_primitive_count)
-        throw std::runtime_error(
-            "ensure_custom_triangle_bvh(): topology exceeds int32 indexing range.");
+        throw std::runtime_error("ensure_custom_triangle_bvh(): topology exceeds int32 indexing range.");
 
     bvh = {};
     bvh.geometry_version = scene.version;
@@ -1572,76 +1351,83 @@ void ensure_custom_triangle_bvh(SceneCache &scene) {
     const auto bopts = at::TensorOptions().device(scene.global_faces.device()).dtype(at::kByte);
     auto make_f = [&](int64_t count) { return at::empty({count}, fopts); };
     auto make_i = [&](int64_t count) { return at::empty({count}, iopts); };
-    bvh.primitive_min_x = make_f(primitive_count); bvh.primitive_min_y = make_f(primitive_count);
-    bvh.primitive_min_z = make_f(primitive_count); bvh.primitive_max_x = make_f(primitive_count);
-    bvh.primitive_max_y = make_f(primitive_count); bvh.primitive_max_z = make_f(primitive_count);
-    bvh.node_min_x = make_f(node_count); bvh.node_min_y = make_f(node_count);
-    bvh.node_min_z = make_f(node_count); bvh.node_max_x = make_f(node_count);
-    bvh.node_max_y = make_f(node_count); bvh.node_max_z = make_f(node_count);
-    bvh.left_child = make_i(node_count).fill_(-1); bvh.right_child = make_i(node_count).fill_(-1);
-    bvh.parent = make_i(node_count).fill_(-1); bvh.leaf_primitive = make_i(node_count).fill_(-1);
+    bvh.primitive_min_x = make_f(primitive_count);
+    bvh.primitive_min_y = make_f(primitive_count);
+    bvh.primitive_min_z = make_f(primitive_count);
+    bvh.primitive_max_x = make_f(primitive_count);
+    bvh.primitive_max_y = make_f(primitive_count);
+    bvh.primitive_max_z = make_f(primitive_count);
+    bvh.node_min_x = make_f(node_count);
+    bvh.node_min_y = make_f(node_count);
+    bvh.node_min_z = make_f(node_count);
+    bvh.node_max_x = make_f(node_count);
+    bvh.node_max_y = make_f(node_count);
+    bvh.node_max_z = make_f(node_count);
+    bvh.left_child = make_i(node_count).fill_(-1);
+    bvh.right_child = make_i(node_count).fill_(-1);
+    bvh.parent = make_i(node_count).fill_(-1);
+    bvh.leaf_primitive = make_i(node_count).fill_(-1);
     bvh.is_leaf = make_i(node_count).zero_();
     bvh.primitive_leaf_node = make_i(primitive_count).fill_(-1);
     bvh.leaf_primitives = make_i(primitive_count).fill_(-1);
-    bvh.morton_in = make_i(primitive_count); bvh.morton_out = make_i(primitive_count);
-    bvh.primitive_ids_in = make_i(primitive_count); bvh.primitive_ids_out = make_i(primitive_count);
+    bvh.morton_in = make_i(primitive_count);
+    bvh.morton_out = make_i(primitive_count);
+    bvh.primitive_ids_in = make_i(primitive_count);
+    bvh.primitive_ids_out = make_i(primitive_count);
     bvh.merge_counters = make_i(std::max<int64_t>(primitive_count - 1, 1)).zero_();
     const size_t bounds_bytes = sizeof(rayd::shared::bvh::BvhBounds3);
-    bvh.packed_bounds = at::empty(
-        {primitive_count * static_cast<int64_t>(bounds_bytes)}, bopts);
+    bvh.packed_bounds = at::empty({primitive_count * static_cast<int64_t>(bounds_bytes)}, bopts);
     bvh.reduced_bound = at::empty({static_cast<int64_t>(bounds_bytes)}, bopts);
-    const size_t scratch_bytes = std::max(
-        edge_bvh_bounds_reduce_scratch_bytes(primitive_count, torch_ctx.stream),
-        edge_bvh_sort_scratch_bytes(primitive_count, torch_ctx.stream));
+    const size_t scratch_bytes = std::max(edge_bvh_bounds_reduce_scratch_bytes(primitive_count, torch_ctx.stream),
+                                          edge_bvh_sort_scratch_bytes(primitive_count, torch_ctx.stream));
     bvh.scratch = at::empty({static_cast<int64_t>(scratch_bytes)}, bopts);
 
-    compute_triangle_bvh_bounds_cuda(
-        scene, bvh.primitive_min_x, bvh.primitive_min_y, bvh.primitive_min_z,
-        bvh.primitive_max_x, bvh.primitive_max_y, bvh.primitive_max_z,
-        bvh.packed_bounds, torch_ctx.stream);
-    reduce_edge_bvh_bounds_cuda(
-        primitive_count, bvh.packed_bounds, bvh.reduced_bound, bvh.scratch, torch_ctx.stream);
+    compute_triangle_bvh_bounds_cuda(scene, bvh.primitive_min_x, bvh.primitive_min_y, bvh.primitive_min_z,
+                                     bvh.primitive_max_x, bvh.primitive_max_y, bvh.primitive_max_z, bvh.packed_bounds,
+                                     torch_ctx.stream);
+    reduce_edge_bvh_bounds_cuda(primitive_count, bvh.packed_bounds, bvh.reduced_bound, bvh.scratch, torch_ctx.stream);
     rayd::shared::bvh::BvhBounds3 scene_bound = {};
-    cuda_check(cudaMemcpyAsync(
-                   &scene_bound, bvh.reduced_bound.data_ptr<uint8_t>(), bounds_bytes,
-                   cudaMemcpyDeviceToHost, torch_ctx.stream),
+    cuda_check(cudaMemcpyAsync(&scene_bound, bvh.reduced_bound.data_ptr<uint8_t>(), bounds_bytes,
+                               cudaMemcpyDeviceToHost, torch_ctx.stream),
                "cudaMemcpyAsync(triangle BVH scene bound)");
-    cuda_check(cudaStreamSynchronize(torch_ctx.stream),
-               "cudaStreamSynchronize(triangle BVH scene bound)");
+    cuda_check(cudaStreamSynchronize(torch_ctx.stream), "cudaStreamSynchronize(triangle BVH scene bound)");
 
-    rayd::shared::bvh::launch_compute_morton_codes_async({
-        {bvh.primitive_min_x.data_ptr<float>(), bvh.primitive_min_y.data_ptr<float>(),
-         bvh.primitive_min_z.data_ptr<float>(), bvh.primitive_max_x.data_ptr<float>(),
-         bvh.primitive_max_y.data_ptr<float>(), bvh.primitive_max_z.data_ptr<float>(),
-         static_cast<size_t>(primitive_count)},
-        scene_bound, reinterpret_cast<uint32_t *>(bvh.morton_in.data_ptr<int>()),
-        torch_ctx.stream});
-    rayd::shared::bvh::launch_init_sequence_async({
-        bvh.primitive_ids_in.data_ptr<int>(), static_cast<int>(primitive_count), torch_ctx.stream});
-    sort_edge_bvh_morton_cuda(
-        primitive_count, bvh.morton_in, bvh.morton_out, bvh.primitive_ids_in,
-        bvh.primitive_ids_out, bvh.scratch, torch_ctx.stream);
+    rayd::shared::bvh::launch_compute_morton_codes_async(
+        {{bvh.primitive_min_x.data_ptr<float>(), bvh.primitive_min_y.data_ptr<float>(),
+          bvh.primitive_min_z.data_ptr<float>(), bvh.primitive_max_x.data_ptr<float>(),
+          bvh.primitive_max_y.data_ptr<float>(), bvh.primitive_max_z.data_ptr<float>(),
+          static_cast<size_t>(primitive_count)},
+         scene_bound,
+         reinterpret_cast<uint32_t*>(bvh.morton_in.data_ptr<int>()),
+         torch_ctx.stream});
+    rayd::shared::bvh::launch_init_sequence_async(
+        {bvh.primitive_ids_in.data_ptr<int>(), static_cast<int>(primitive_count), torch_ctx.stream});
+    sort_edge_bvh_morton_cuda(primitive_count, bvh.morton_in, bvh.morton_out, bvh.primitive_ids_in,
+                              bvh.primitive_ids_out, bvh.scratch, torch_ctx.stream);
     if (primitive_count > 1) {
-        rayd::shared::bvh::launch_build_radix_tree_async({
-            reinterpret_cast<const uint32_t *>(bvh.morton_out.data_ptr<int>()),
-            bvh.primitive_ids_out.data_ptr<int>(), bvh.left_child.data_ptr<int>(),
-            bvh.right_child.data_ptr<int>(), bvh.parent.data_ptr<int>(),
-            static_cast<int>(primitive_count), torch_ctx.stream});
+        rayd::shared::bvh::launch_build_radix_tree_async(
+            {reinterpret_cast<const uint32_t*>(bvh.morton_out.data_ptr<int>()), bvh.primitive_ids_out.data_ptr<int>(),
+             bvh.left_child.data_ptr<int>(), bvh.right_child.data_ptr<int>(), bvh.parent.data_ptr<int>(),
+             static_cast<int>(primitive_count), torch_ctx.stream});
     }
-    rayd::shared::bvh::launch_finalize_leaves_and_bounds_async({
-        bvh.primitive_ids_out.data_ptr<int>(), bvh.parent.data_ptr<int>(),
-        {bvh.primitive_min_x.data_ptr<float>(), bvh.primitive_min_y.data_ptr<float>(),
-         bvh.primitive_min_z.data_ptr<float>(), bvh.primitive_max_x.data_ptr<float>(),
-         bvh.primitive_max_y.data_ptr<float>(), bvh.primitive_max_z.data_ptr<float>(),
-         static_cast<size_t>(primitive_count)},
-        bvh.left_child.data_ptr<int>(), bvh.right_child.data_ptr<int>(),
-        {bvh.node_min_x.data_ptr<float>(), bvh.node_min_y.data_ptr<float>(),
-         bvh.node_min_z.data_ptr<float>(), bvh.node_max_x.data_ptr<float>(),
-         bvh.node_max_y.data_ptr<float>(), bvh.node_max_z.data_ptr<float>(),
-         static_cast<size_t>(node_count)},
-        bvh.leaf_primitive.data_ptr<int>(), bvh.is_leaf.data_ptr<int>(),
-        bvh.primitive_leaf_node.data_ptr<int>(), bvh.merge_counters.data_ptr<int>(),
-        static_cast<int>(primitive_count), torch_ctx.stream});
+    rayd::shared::bvh::launch_finalize_leaves_and_bounds_async(
+        {bvh.primitive_ids_out.data_ptr<int>(),
+         bvh.parent.data_ptr<int>(),
+         {bvh.primitive_min_x.data_ptr<float>(), bvh.primitive_min_y.data_ptr<float>(),
+          bvh.primitive_min_z.data_ptr<float>(), bvh.primitive_max_x.data_ptr<float>(),
+          bvh.primitive_max_y.data_ptr<float>(), bvh.primitive_max_z.data_ptr<float>(),
+          static_cast<size_t>(primitive_count)},
+         bvh.left_child.data_ptr<int>(),
+         bvh.right_child.data_ptr<int>(),
+         {bvh.node_min_x.data_ptr<float>(), bvh.node_min_y.data_ptr<float>(), bvh.node_min_z.data_ptr<float>(),
+          bvh.node_max_x.data_ptr<float>(), bvh.node_max_y.data_ptr<float>(), bvh.node_max_z.data_ptr<float>(),
+          static_cast<size_t>(node_count)},
+         bvh.leaf_primitive.data_ptr<int>(),
+         bvh.is_leaf.data_ptr<int>(),
+         bvh.primitive_leaf_node.data_ptr<int>(),
+         bvh.merge_counters.data_ptr<int>(),
+         static_cast<int>(primitive_count),
+         torch_ctx.stream});
 
     // The fused CUDA traverser intentionally uses a fixed, caller-owned stack.
     // Reject a topology that cannot fit before making it visible to queries;
@@ -1651,32 +1437,27 @@ void ensure_custom_triangle_bvh(SceneCache &scene) {
     std::vector<int> host_right(static_cast<size_t>(node_count));
     std::vector<int> host_is_leaf(static_cast<size_t>(node_count));
     const size_t topology_bytes = static_cast<size_t>(node_count) * sizeof(int);
-    cuda_check(cudaMemcpyAsync(host_left.data(), bvh.left_child.data_ptr<int>(),
-                               topology_bytes, cudaMemcpyDeviceToHost, torch_ctx.stream),
+    cuda_check(cudaMemcpyAsync(host_left.data(), bvh.left_child.data_ptr<int>(), topology_bytes, cudaMemcpyDeviceToHost,
+                               torch_ctx.stream),
                "cudaMemcpyAsync(triangle BVH left child)");
-    cuda_check(cudaMemcpyAsync(host_right.data(), bvh.right_child.data_ptr<int>(),
-                               topology_bytes, cudaMemcpyDeviceToHost, torch_ctx.stream),
+    cuda_check(cudaMemcpyAsync(host_right.data(), bvh.right_child.data_ptr<int>(), topology_bytes,
+                               cudaMemcpyDeviceToHost, torch_ctx.stream),
                "cudaMemcpyAsync(triangle BVH right child)");
-    cuda_check(cudaMemcpyAsync(host_is_leaf.data(), bvh.is_leaf.data_ptr<int>(),
-                               topology_bytes, cudaMemcpyDeviceToHost, torch_ctx.stream),
+    cuda_check(cudaMemcpyAsync(host_is_leaf.data(), bvh.is_leaf.data_ptr<int>(), topology_bytes, cudaMemcpyDeviceToHost,
+                               torch_ctx.stream),
                "cudaMemcpyAsync(triangle BVH leaf flags)");
-    cuda_check(cudaStreamSynchronize(torch_ctx.stream),
-               "cudaStreamSynchronize(triangle BVH topology guard)");
+    cuda_check(cudaStreamSynchronize(torch_ctx.stream), "cudaStreamSynchronize(triangle BVH topology guard)");
     std::vector<int> heights(static_cast<size_t>(node_count), -1);
-    const int tree_height = rayd::shared::bvh::compute_node_height(
-        0, host_left, host_right, host_is_leaf, heights);
+    const int tree_height = rayd::shared::bvh::compute_node_height(0, host_left, host_right, host_is_leaf, heights);
     if (tree_height > rayd::shared::bvh::kBvhTraversalStackDepth)
-        throw std::runtime_error(
-            "CUDA triangle BVH height " + std::to_string(tree_height) +
-            " exceeds traversal stack capacity " +
-            std::to_string(rayd::shared::bvh::kBvhTraversalStackDepth) + ".");
+        throw std::runtime_error("CUDA triangle BVH height " + std::to_string(tree_height) +
+                                 " exceeds traversal stack capacity " +
+                                 std::to_string(rayd::shared::bvh::kBvhTraversalStackDepth) + ".");
 
-    encode_raw_edge_bvh_cuda(
-        primitive_count, bvh.left_child, bvh.right_child, bvh.leaf_primitive,
-        bvh.leaf_primitives, torch_ctx.stream);
+    encode_raw_edge_bvh_cuda(primitive_count, bvh.left_child, bvh.right_child, bvh.leaf_primitive, bvh.leaf_primitives,
+                             torch_ctx.stream);
     cuda_check(cudaGetLastError(), "ensure_custom_triangle_bvh() kernel launch");
-    cuda_check(cudaStreamSynchronize(torch_ctx.stream),
-               "cudaStreamSynchronize(triangle BVH build)");
+    cuda_check(cudaStreamSynchronize(torch_ctx.stream), "cudaStreamSynchronize(triangle BVH build)");
     bvh.valid = true;
 }
 
@@ -1684,39 +1465,26 @@ std::vector<at::Tensor> scene_edge_records(c10::intrusive_ptr<SceneHandle> scene
     return scene_edge_records(get_scene(scene_handle->handle));
 }
 
-std::vector<at::Tensor> scene_global_geometry(
-    c10::intrusive_ptr<SceneHandle> scene_handle) {
-    SceneCache &scene = get_scene(scene_handle->handle);
-    at::Tensor face_normal = at::stack(
-        {scene.tri_fn_x, scene.tri_fn_y, scene.tri_fn_z}, 1);
+std::vector<at::Tensor> scene_global_geometry(c10::intrusive_ptr<SceneHandle> scene_handle) {
+    SceneCache& scene = get_scene(scene_handle->handle);
+    at::Tensor face_normal = at::stack({scene.tri_fn_x, scene.tri_fn_y, scene.tri_fn_z}, 1);
     at::Tensor squared_normal = face_normal.square().sum(1, true);
-    at::Tensor inverse_normal = squared_normal
-        .clamp_min(std::numeric_limits<float>::min())
-        .rsqrt();
-    face_normal = at::where(
-        squared_normal.gt(0.0f), face_normal * inverse_normal,
-        at::zeros_like(face_normal));
-    at::Tensor global_prim_id = at::arange(
-        scene.global_faces.size(0), scene.face_local_id.options());
+    at::Tensor inverse_normal = squared_normal.clamp_min(std::numeric_limits<float>::min()).rsqrt();
+    face_normal = at::where(squared_normal.gt(0.0f), face_normal * inverse_normal, at::zeros_like(face_normal));
+    at::Tensor global_prim_id = at::arange(scene.global_faces.size(0), scene.face_local_id.options());
     return {
-        scene.global_vertices,
-        scene.global_faces,
-        face_normal,
-        scene.face_shape_id,
-        scene.face_local_id,
-        global_prim_id,
+        scene.global_vertices, scene.global_faces,  face_normal,
+        scene.face_shape_id,   scene.face_local_id, global_prim_id,
     };
 }
 
 at::Tensor get_scene_edge_mask(c10::intrusive_ptr<SceneHandle> scene_handle) {
-    SceneCache &scene = get_scene(scene_handle->handle);
+    SceneCache& scene = get_scene(scene_handle->handle);
     return scene.edge_mask.to(at::kBool);
 }
 
-void set_scene_edge_mask(
-    c10::intrusive_ptr<SceneHandle> scene_handle,
-    at::Tensor mask) {
-    SceneCache &scene = get_scene(scene_handle->handle);
+void set_scene_edge_mask(c10::intrusive_ptr<SceneHandle> scene_handle, at::Tensor mask) {
+    SceneCache& scene = get_scene(scene_handle->handle);
     require_cuda(mask, "edge_mask");
     require_contiguous(mask, "edge_mask");
     require_rank(mask, 1, "edge_mask");

@@ -1,4 +1,4 @@
 # Copyright Xingyu Chen.
-# Benchmarks init.
+# Declares the Torch benchmark package.
 
 __all__ = []

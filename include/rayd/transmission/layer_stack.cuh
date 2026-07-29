@@ -45,20 +45,20 @@ namespace rayd::shared::transmission {
 // row this evaluation targets. Layers of material m occupy
 // [offset[m], offset[m] + count[m]) in the flat arrays.
 struct LayerView {
-    const int* layer_offset;      // int32[M]
-    const int* layer_count;       // int32[M]
-    const float* layer_thickness_m;  // f32[L]
-    const float* layer_eps_r;        // f32[L]
-    const float* layer_sigma_e;      // f32[L]
-    const float* layer_mu_r;         // f32[L]
+    const int* layer_offset;        // int32[M]
+    const int* layer_count;         // int32[M]
+    const float* layer_thickness_m; // f32[L]
+    const float* layer_eps_r;       // f32[L]
+    const float* layer_sigma_e;     // f32[L]
+    const float* layer_mu_r;        // f32[L]
     int material;
 };
 
 struct StackRT {
     utd::Complex r;
     utd::Complex t;
-    float cap_r;  // |r|^2
-    float cap_t;  // Re(Y_exit)/Re(Y_entry) * |t|^2
+    float cap_r; // |r|^2
+    float cap_t; // Re(Y_exit)/Re(Y_entry) * |t|^2
 };
 
 // One-way layer propagator p = exp(-j*k_z*d).
@@ -67,25 +67,17 @@ struct StackRT {
 // exponential; strong decay (|Im(k_z)|*d large, e.g. sigma_e up to 1e9 S/m
 // with thickness up to 10 m) underflows expf to 0 cleanly instead of
 // overflowing anywhere in the recursion.
-__device__ __forceinline__ utd::Complex layer_one_way_phase(
-    utd::Complex k_z, float thickness_m) {
-    const float amplitude = expf(
-        fminf(k_z.im * thickness_m, 0.0f));
-    const utd::Complex phasor = c_exp_neg_j(
-        static_cast<double>(k_z.re) * static_cast<double>(thickness_m));
+__device__ __forceinline__ utd::Complex layer_one_way_phase(utd::Complex k_z, float thickness_m) {
+    const float amplitude = expf(fminf(k_z.im * thickness_m, 0.0f));
+    const utd::Complex phasor = c_exp_neg_j(static_cast<double>(k_z.re) * static_cast<double>(thickness_m));
     return utd::cplx_mul_real(phasor, amplitude);
 }
 
 // Evaluate the full vacuum | layers | vacuum stack at incidence angle
 // cos_theta_i (entry-medium angle; k_par = k0*sin(theta_i) is conserved).
 // Zero-layer materials are transparent: r = 0, t = 1.
-__device__ __forceinline__ StackRT stack_rt(
-    float cos_theta_i,
-    const LayerView& layers,
-    float frequency_hz,
-    int pol) {
-    const float omega = fmaxf(
-        2.0f * utd::UTD_PI * frequency_hz, utd::UTD_SMALL_EPS);
+__device__ __forceinline__ StackRT stack_rt(float cos_theta_i, const LayerView& layers, float frequency_hz, int pol) {
+    const float omega = fmaxf(2.0f * utd::UTD_PI * frequency_hz, utd::UTD_SMALL_EPS);
     const float ct = fminf(fmaxf(fabsf(cos_theta_i), utd::UTD_SMALL_EPS), 1.0f);
     const float sin2 = fmaxf(0.0f, 1.0f - ct * ct);
 
@@ -111,11 +103,7 @@ __device__ __forceinline__ StackRT stack_rt(
     // Backward pass: start at the last interface (layer N -> exit medium),
     // then fold layers N..1 in.
     const int last = offset + count - 1;
-    Medium below = make_medium(
-        layers.layer_eps_r[last],
-        layers.layer_sigma_e[last],
-        layers.layer_mu_r[last],
-        omega);
+    Medium below = make_medium(layers.layer_eps_r[last], layers.layer_sigma_e[last], layers.layer_mu_r[last], omega);
     utd::Complex kz_below = kz_from_kpar(below.k, k_par);
     utd::Complex y_below = admittance(below, kz_below, omega, pol);
     InterfaceRT exit_interface = interface_rt(y_below, y_exit);
@@ -124,8 +112,7 @@ __device__ __forceinline__ StackRT stack_rt(
 
     for (int layer = count - 1; layer >= 0; --layer) {
         const int slot = offset + layer;
-        const utd::Complex phase = layer_one_way_phase(
-            kz_below, fmaxf(layers.layer_thickness_m[slot], 0.0f));
+        const utd::Complex phase = layer_one_way_phase(kz_below, fmaxf(layers.layer_thickness_m[slot], 0.0f));
         const utd::Complex phase2 = utd::cplx_mul(phase, phase);
 
         // Medium above interface I_layer: previous layer, or entry medium.
@@ -134,11 +121,8 @@ __device__ __forceinline__ StackRT stack_rt(
         utd::Complex y_above;
         if (layer > 0) {
             const int above_slot = slot - 1;
-            above = make_medium(
-                layers.layer_eps_r[above_slot],
-                layers.layer_sigma_e[above_slot],
-                layers.layer_mu_r[above_slot],
-                omega);
+            above = make_medium(layers.layer_eps_r[above_slot], layers.layer_sigma_e[above_slot],
+                                layers.layer_mu_r[above_slot], omega);
             kz_above = kz_from_kpar(above.k, k_par);
             y_above = admittance(above, kz_above, omega, pol);
         } else {
@@ -147,11 +131,9 @@ __device__ __forceinline__ StackRT stack_rt(
         }
         const InterfaceRT top = interface_rt(y_above, y_below);
         const utd::Complex loop = utd::cplx_mul(phase2, r_total);
-        const utd::Complex denom = utd::cplx_add(
-            utd::cplx(1.0f, 0.0f), utd::cplx_mul(top.r, loop));
+        const utd::Complex denom = utd::cplx_add(utd::cplx(1.0f, 0.0f), utd::cplx_mul(top.r, loop));
         r_total = c_div(utd::cplx_add(top.r, loop), denom);
-        t_total = c_div(
-            utd::cplx_mul(top.t, utd::cplx_mul(phase, t_total)), denom);
+        t_total = c_div(utd::cplx_mul(top.t, utd::cplx_mul(phase, t_total)), denom);
 
         kz_below = kz_above;
         y_below = y_above;
@@ -167,4 +149,4 @@ __device__ __forceinline__ StackRT stack_rt(
     return out;
 }
 
-}  // namespace rayd::shared::transmission
+} // namespace rayd::shared::transmission

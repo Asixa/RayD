@@ -36,7 +36,7 @@ DEFAULT_REL = 1e-5
 FIELD_ABS = 5e-5
 FIELD_REL = 5e-5
 
-SCENE_SCRIPT = r'''
+SCENE_SCRIPT = r"""
 import json, math, sys
 import numpy as np
 import drjit as dr
@@ -125,9 +125,9 @@ out["acc_field_x_re"] = flt(acc.reflection_field_x.real)
 out["acc_field_x_im"] = flt(acc.reflection_field_x.imag)
 
 print(json.dumps(out, sort_keys=True))
-'''
+"""
 
-EPC_SCRIPT = r'''
+EPC_SCRIPT = r"""
 import json, math, sys
 import drjit as dr
 import drjit.cuda as cuda
@@ -161,9 +161,9 @@ out["f_path"] = [float(x) for x in fr.path_length.numpy().tolist()]
 out["f_fx_re"] = [float(x) for x in fr.field_x_re.numpy().tolist()]
 out["f_fx_im"] = [float(x) for x in fr.field_x_im.numpy().tolist()]
 print(json.dumps(out, sort_keys=True))
-'''
+"""
 
-DFR_PATHS_SCRIPT = r'''
+DFR_PATHS_SCRIPT = r"""
 import json, math, sys
 import numpy as np
 import drjit.cuda as cuda
@@ -203,10 +203,10 @@ print(json.dumps({
     "fx_im": float(np.asarray(r.field_x.imag, dtype=np.float32)[0]),
     "p0_x": float(np.asarray(r.p0.x, dtype=np.float32)[0]),
 }, sort_keys=True))
-'''
+"""
 
 
-DFR_ACCUM_SCRIPT = r'''
+DFR_ACCUM_SCRIPT = r"""
 import json, math, sys
 import numpy as np
 import drjit as dr
@@ -354,9 +354,9 @@ out["coherent_field_re"] = ff(r.direct_field_x.real)
 out["coherent_field_im"] = ff(r.direct_field_x.imag)
 
 print(json.dumps(out, sort_keys=True))
-'''
+"""
 
-DFR_ACCUM_AD_SCRIPT = r'''
+DFR_ACCUM_AD_SCRIPT = r"""
 import json, sys
 import drjit as dr
 import drjit.cuda as cuda
@@ -452,7 +452,7 @@ out["chain_grad_src_x"] = float(cgrad.x[0])
 out["chain_grad_src_z"] = float(cgrad.z[0])
 
 print(json.dumps(out, sort_keys=True))
-'''
+"""
 
 
 def _run(script, backend, timeout=240):
@@ -460,18 +460,38 @@ def _run(script, backend, timeout=240):
     env["PYTHONPATH"] = str(ROOT) + os.pathsep + env.get("PYTHONPATH", "")
     result = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(script), backend],
-        cwd=str(ROOT), env=env, text=True, capture_output=True, timeout=timeout, check=False)
+        cwd=str(ROOT),
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=timeout,
+        check=False,
+    )
     if result.returncode != 0:
-        raise AssertionError(
-            f"Subprocess ({backend}) failed.\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}")
+        raise AssertionError(f"Subprocess ({backend}) failed.\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}")
     lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
     return json.loads(lines[-1])
 
 
 class CudaMultipathParityTests(unittest.TestCase):
-    DISCRETE_PREFIXES = ("refl_bounce_count", "refl_shape_ids", "refl_global_prim_ids",
-                         "visible", "edge_visible", "chain_", "acc_count", "g_valid", "g_group",
-                         "g_resolved", "f_valid", "capacity", "count", "valid0", "rx0", "edge0")
+    DISCRETE_PREFIXES = (
+        "refl_bounce_count",
+        "refl_shape_ids",
+        "refl_global_prim_ids",
+        "visible",
+        "edge_visible",
+        "chain_",
+        "acc_count",
+        "g_valid",
+        "g_group",
+        "g_resolved",
+        "f_valid",
+        "capacity",
+        "count",
+        "valid0",
+        "rx0",
+        "edge0",
+    )
     FIELD_KEYS = ("acc_field", "acc_power", "f_fx", "fx_re", "fx_im", "g_path", "f_path", "delay0")
 
     def _compare(self, optix, cuda):
@@ -492,8 +512,7 @@ class CudaMultipathParityTests(unittest.TestCase):
                             self.assertEqual(repr(a), repr(b), f"sentinel mismatch {key}")
                             continue
                         ad = abs(a - b)
-                        self.assertTrue(ad <= abs_tol or ad <= rel_tol * abs(a),
-                                        f"{key}: optix={a} cuda={b} abs={ad}")
+                        self.assertTrue(ad <= abs_tol or ad <= rel_tol * abs(a), f"{key}: optix={a} cuda={b} abs={ad}")
 
     def test_reflection_visibility_accumulation_parity(self):
         self._compare(_run(SCENE_SCRIPT, "optix"), _run(SCENE_SCRIPT, "cuda"))
@@ -519,8 +538,9 @@ class CudaMultipathParityTests(unittest.TestCase):
                 ov, cv = optix[key], cuda[key]
                 if key.endswith("_power") or "_field" in key:
                     ad = abs(ov - cv)
-                    self.assertTrue(ad <= FIELD_ABS or ad <= FIELD_REL * abs(ov),
-                                    f"{key}: optix={ov} cuda={cv} abs={ad}")
+                    self.assertTrue(
+                        ad <= FIELD_ABS or ad <= FIELD_REL * abs(ov), f"{key}: optix={ov} cuda={cv} abs={ad}"
+                    )
                 else:
                     self.assertEqual(ov, cv, f"discrete mismatch for {key}")
 
@@ -545,14 +565,18 @@ class CudaMultipathParityTests(unittest.TestCase):
         self.assertEqual(optix["direct_count"], cuda["direct_count"])
         self.assertNotEqual(optix["direct_grad_src_z"], 0.0)
         self.assertNotEqual(optix["chain_grad_src_z"], 0.0)
-        grad_keys = ("direct_grad_src_x", "direct_grad_src_y", "direct_grad_src_z",
-                     "chain_grad_src_x", "chain_grad_src_z")
+        grad_keys = (
+            "direct_grad_src_x",
+            "direct_grad_src_y",
+            "direct_grad_src_z",
+            "chain_grad_src_x",
+            "chain_grad_src_z",
+        )
         for key in grad_keys:
             ov, cv = optix[key], cuda[key]
             with self.subTest(key=key):
                 ad = abs(ov - cv)
-                self.assertTrue(ad <= 5e-4 or ad <= 5e-4 * abs(ov),
-                                f"{key}: optix={ov} cuda={cv} abs={ad}")
+                self.assertTrue(ad <= 5e-4 or ad <= 5e-4 * abs(ov), f"{key}: optix={ov} cuda={cv} abs={ad}")
 
     def test_diffraction_accumulation_stress(self):
         # 10 consecutive CUDA runs must be deterministic (no literal-materialization

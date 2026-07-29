@@ -21,58 +21,48 @@
 #include <string>
 
 #if defined(_WIN32)
-#  define NOMINMAX
-#  include <windows.h>
-#  include <winver.h>
-#  include <cfgmgr32.h>
+#define NOMINMAX
+#include <windows.h>
+#include <winver.h>
+#include <cfgmgr32.h>
 #elif defined(__linux__) || defined(__APPLE__)
-#  include <dlfcn.h>
+#include <dlfcn.h>
 #endif
 
 namespace rayd {
 
 namespace {
 
-using OptixQueryFunctionTableFn = OptixResult (*)(int,
-                                                  unsigned int,
-                                                  OptixQueryFunctionTableOptions *,
-                                                  const void **,
-                                                  void *,
-                                                  size_t);
+using OptixQueryFunctionTableFn = OptixResult (*)(int, unsigned int, OptixQueryFunctionTableOptions*, const void**,
+                                                  void*, size_t);
 
 std::string format_optix_version(int version) {
     std::ostringstream oss;
-    oss << (version / 10000) << '.'
-        << ((version / 100) % 100) << '.'
-        << (version % 100);
+    oss << (version / 10000) << '.' << ((version / 100) % 100) << '.' << (version % 100);
     return oss.str();
 }
 
 #if defined(_WIN32)
-std::string narrow_utf8(const std::wstring &value) {
+std::string narrow_utf8(const std::wstring& value) {
     if (value.empty())
         return {};
 
-    int size = WideCharToMultiByte(CP_UTF8, 0, value.data(),
-                                   static_cast<int>(value.size()),
-                                   nullptr, 0, nullptr, nullptr);
+    int size =
+        WideCharToMultiByte(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
     if (size <= 0)
         return {};
 
     std::string result(static_cast<size_t>(size), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, value.data(),
-                        static_cast<int>(value.size()),
-                        result.data(), size, nullptr, nullptr);
+    WideCharToMultiByte(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), result.data(), size, nullptr,
+                        nullptr);
     return result;
 }
 
 HMODULE optix_module_handle_from_symbol() {
     HMODULE module = nullptr;
     if (optixModuleCreate != nullptr &&
-        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                           reinterpret_cast<LPCWSTR>(reinterpret_cast<const void *>(optixModuleCreate)),
-                           &module)) {
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           reinterpret_cast<LPCWSTR>(reinterpret_cast<const void*>(optixModuleCreate)), &module)) {
         return module;
     }
 
@@ -124,64 +114,66 @@ std::string optix_module_version(HMODULE module) {
     if (!GetFileVersionInfoW(path.c_str(), 0, info_size, buffer.data()))
         return {};
 
-    VS_FIXEDFILEINFO *info = nullptr;
+    VS_FIXEDFILEINFO* info = nullptr;
     UINT len = 0;
-    if (!VerQueryValueW(buffer.data(), L"\\", reinterpret_cast<LPVOID *>(&info), &len) ||
-        info == nullptr || len < sizeof(VS_FIXEDFILEINFO)) {
+    if (!VerQueryValueW(buffer.data(), L"\\", reinterpret_cast<LPVOID*>(&info), &len) || info == nullptr ||
+        len < sizeof(VS_FIXEDFILEINFO)) {
         return {};
     }
 
     std::ostringstream oss;
-    oss << HIWORD(info->dwFileVersionMS) << '.'
-        << LOWORD(info->dwFileVersionMS) << '.'
-        << HIWORD(info->dwFileVersionLS) << '.'
-        << LOWORD(info->dwFileVersionLS);
+    oss << HIWORD(info->dwFileVersionMS) << '.' << LOWORD(info->dwFileVersionMS) << '.' << HIWORD(info->dwFileVersionLS)
+        << '.' << LOWORD(info->dwFileVersionLS);
     return oss.str();
 }
 
 OptixQueryFunctionTableFn optix_query_function_table(HMODULE module) {
     if (!module)
         return nullptr;
-    return reinterpret_cast<OptixQueryFunctionTableFn>(
-        GetProcAddress(module, "optixQueryFunctionTable"));
+    return reinterpret_cast<OptixQueryFunctionTableFn>(GetProcAddress(module, "optixQueryFunctionTable"));
 }
 #elif defined(__linux__) || defined(__APPLE__)
-void *optix_module_handle_from_symbol() {
+void* optix_module_handle_from_symbol() {
     Dl_info info;
-    if (optixModuleCreate != nullptr &&
-        dladdr(reinterpret_cast<const void *>(optixModuleCreate), &info) != 0 &&
+    if (optixModuleCreate != nullptr && dladdr(reinterpret_cast<const void*>(optixModuleCreate), &info) != 0 &&
         info.dli_fname != nullptr) {
         return dlopen(info.dli_fname, RTLD_LAZY | RTLD_LOCAL);
     }
     return dlopen("libnvoptix.so.1", RTLD_LAZY | RTLD_LOCAL);
 }
 
-std::string optix_module_path(void *module) {
+std::string optix_module_path(void* module) {
     Dl_info info;
-    if (optixModuleCreate != nullptr &&
-        dladdr(reinterpret_cast<const void *>(optixModuleCreate), &info) != 0 &&
+    if (optixModuleCreate != nullptr && dladdr(reinterpret_cast<const void*>(optixModuleCreate), &info) != 0 &&
         info.dli_fname != nullptr) {
         return info.dli_fname;
     }
-    (void) module;
+    (void)module;
     return {};
 }
 
-std::string optix_module_version(void *) {
+std::string optix_module_version(void*) {
     return {};
 }
 
-OptixQueryFunctionTableFn optix_query_function_table(void *module) {
+OptixQueryFunctionTableFn optix_query_function_table(void* module) {
     if (!module)
         return nullptr;
-    return reinterpret_cast<OptixQueryFunctionTableFn>(
-        dlsym(module, "optixQueryFunctionTable"));
+    return reinterpret_cast<OptixQueryFunctionTableFn>(dlsym(module, "optixQueryFunctionTable"));
 }
 #else
-void *optix_module_handle_from_symbol() { return nullptr; }
-std::string optix_module_path(void *) { return {}; }
-std::string optix_module_version(void *) { return {}; }
-OptixQueryFunctionTableFn optix_query_function_table(void *) { return nullptr; }
+void* optix_module_handle_from_symbol() {
+    return nullptr;
+}
+std::string optix_module_path(void*) {
+    return {};
+}
+std::string optix_module_version(void*) {
+    return {};
+}
+OptixQueryFunctionTableFn optix_query_function_table(void*) {
+    return nullptr;
+}
 #endif
 
 // Standalone driver-module probe used by optix_available(). Unlike
@@ -192,49 +184,44 @@ OptixQueryFunctionTableFn optix_query_function_table(void *) { return nullptr; }
 // in the NVIDIA driver store, not on the default DLL search path, so a bare
 // LoadLibrary("nvoptix.dll") fails. Fall back to the graphics-driver directory
 // found via the display-adapter device's OpenGLDriverName registry value.
-HMODULE optix_load_windows_dll_from_driver_store(const char *dll_name) {
-    static const char *kDisplayAdapterClassGuid =
-        "{4d36e968-e325-11ce-bfc1-08002be10318}";
+HMODULE optix_load_windows_dll_from_driver_store(const char* dll_name) {
+    static const char* kDisplayAdapterClassGuid = "{4d36e968-e325-11ce-bfc1-08002be10318}";
     const ULONG flags = CM_GETIDLIST_FILTER_CLASS | CM_GETIDLIST_FILTER_PRESENT;
 
     ULONG device_list_size = 0;
-    if (CM_Get_Device_ID_List_SizeA(&device_list_size, kDisplayAdapterClassGuid, flags) !=
-            CR_SUCCESS ||
+    if (CM_Get_Device_ID_List_SizeA(&device_list_size, kDisplayAdapterClassGuid, flags) != CR_SUCCESS ||
         device_list_size == 0) {
         return nullptr;
     }
 
     std::string device_names(device_list_size, '\0');
-    if (CM_Get_Device_ID_ListA(kDisplayAdapterClassGuid, device_names.data(),
-                               device_list_size, flags) != CR_SUCCESS) {
+    if (CM_Get_Device_ID_ListA(kDisplayAdapterClassGuid, device_names.data(), device_list_size, flags) != CR_SUCCESS) {
         return nullptr;
     }
 
-    for (const char *device_name = device_names.c_str(); *device_name != '\0';
+    for (const char* device_name = device_names.c_str(); *device_name != '\0';
          device_name += std::strlen(device_name) + 1) {
         DEVINST device_id = 0;
-        if (CM_Locate_DevNodeA(&device_id, const_cast<DEVINSTID_A>(device_name),
-                               CM_LOCATE_DEVNODE_NORMAL) != CR_SUCCESS) {
+        if (CM_Locate_DevNodeA(&device_id, const_cast<DEVINSTID_A>(device_name), CM_LOCATE_DEVNODE_NORMAL) !=
+            CR_SUCCESS) {
             continue;
         }
 
         HKEY reg_key = nullptr;
-        if (CM_Open_DevNode_Key(device_id, KEY_QUERY_VALUE, 0, RegDisposition_OpenExisting,
-                                &reg_key, CM_REGISTRY_SOFTWARE) != CR_SUCCESS) {
+        if (CM_Open_DevNode_Key(device_id, KEY_QUERY_VALUE, 0, RegDisposition_OpenExisting, &reg_key,
+                                CM_REGISTRY_SOFTWARE) != CR_SUCCESS) {
             continue;
         }
 
         DWORD value_size = 0;
-        if (RegQueryValueExA(reg_key, "OpenGLDriverName", nullptr, nullptr, nullptr,
-                             &value_size) != ERROR_SUCCESS) {
+        if (RegQueryValueExA(reg_key, "OpenGLDriverName", nullptr, nullptr, nullptr, &value_size) != ERROR_SUCCESS) {
             RegCloseKey(reg_key);
             continue;
         }
 
         std::string reg_value(value_size, '\0');
-        const LSTATUS status =
-            RegQueryValueExA(reg_key, "OpenGLDriverName", nullptr, nullptr,
-                             reinterpret_cast<LPBYTE>(reg_value.data()), &value_size);
+        const LSTATUS status = RegQueryValueExA(reg_key, "OpenGLDriverName", nullptr, nullptr,
+                                                reinterpret_cast<LPBYTE>(reg_value.data()), &value_size);
         RegCloseKey(reg_key);
         if (status != ERROR_SUCCESS) {
             continue;
@@ -267,17 +254,19 @@ HMODULE probe_load_optix_module() {
     return optix_load_windows_dll_from_driver_store("nvoptix.dll");
 }
 #elif defined(__linux__) || defined(__APPLE__)
-void *probe_load_optix_module() {
+void* probe_load_optix_module() {
     return dlopen("libnvoptix.so.1", RTLD_LAZY | RTLD_LOCAL);
 }
 #else
-void *probe_load_optix_module() { return nullptr; }
+void* probe_load_optix_module() {
+    return nullptr;
+}
 #endif
 
 // Kill-switch: RAYD_DISABLE_OPTIX=1/true forces optix_available() to report false,
 // letting an OptiX-capable machine exercise the OptiX-less paths in tests/CI.
 bool env_disables_optix() {
-    const char *raw = std::getenv("RAYD_DISABLE_OPTIX");
+    const char* raw = std::getenv("RAYD_DISABLE_OPTIX");
     if (raw == nullptr)
         return false;
     std::string value(raw);
@@ -287,14 +276,13 @@ bool env_disables_optix() {
 }
 
 struct OptixDeviceContextOptionsProbe {
-    void *log_callback_function = nullptr;
-    void *log_callback_data = nullptr;
+    void* log_callback_function = nullptr;
+    void* log_callback_data = nullptr;
     int log_callback_level = 0;
     unsigned int validation_mode = 0;
 };
 
-using OptixDeviceContextCreateFn = OptixResult (*)(
-    void *, const OptixDeviceContextOptionsProbe *, OptixDeviceContext *);
+using OptixDeviceContextCreateFn = OptixResult (*)(void*, const OptixDeviceContextOptionsProbe*, OptixDeviceContext*);
 using OptixDeviceContextDestroyFn = OptixResult (*)(OptixDeviceContext);
 
 constexpr OptixResult kOptixErrorNotCompatible = 7400;
@@ -320,22 +308,14 @@ OptixRuntimeInfo query_optix_runtime_info() {
     OptixQueryFunctionTableFn query_fn = optix_query_function_table(module);
     info.query_function_table_available = query_fn != nullptr;
     if (query_fn != nullptr) {
-        info.abi_probe_result = query_fn(RAYD_OPTIX_TARGET_ABI,
-                                         0,
-                                         nullptr,
-                                         nullptr,
-                                         nullptr,
-                                         0);
+        info.abi_probe_result = query_fn(RAYD_OPTIX_TARGET_ABI, 0, nullptr, nullptr, nullptr, 0);
         info.target_abi_supported = info.abi_probe_result != 7801;
     }
 
     if (optixDeviceContextGetProperty != nullptr) {
         unsigned int rtcore_version = 0;
-        OptixResult rv = optixDeviceContextGetProperty(
-            jit_optix_context(),
-            OPTIX_DEVICE_PROPERTY_RTCORE_VERSION,
-            &rtcore_version,
-            sizeof(rtcore_version));
+        OptixResult rv = optixDeviceContextGetProperty(jit_optix_context(), OPTIX_DEVICE_PROPERTY_RTCORE_VERSION,
+                                                       &rtcore_version, sizeof(rtcore_version));
         if (rv == 0)
             info.rtcore_version = static_cast<int>(rtcore_version);
     }
@@ -352,14 +332,12 @@ bool optix_available() {
     if (env_disables_optix())
         return false;
 
-    void *cuda_context = jit_cuda_context();
+    void* cuda_context = jit_cuda_context();
     if (cuda_context == nullptr) {
-        throw std::runtime_error(
-            "OptiX capability probe requires an active Dr.Jit CUDA context.");
+        throw std::runtime_error("OptiX capability probe requires an active Dr.Jit CUDA context.");
     }
     const int device = jit_cuda_device();
-    const auto key = std::make_pair(
-        device, reinterpret_cast<std::uintptr_t>(cuda_context));
+    const auto key = std::make_pair(device, reinterpret_cast<std::uintptr_t>(cuda_context));
 
     std::lock_guard<std::mutex> lock(optix_capability_mutex);
     auto cached = optix_capability_cache.find(key);
@@ -384,67 +362,52 @@ bool optix_available() {
     // private table so capability discovery does not initialize Dr.Jit's
     // default OptiX module/program/SBT. Entries 2 and 3 are the typed device
     // context create/destroy functions in NVIDIA's ABI-93 contract.
-    std::array<void *, 50> function_table = {};
-    const OptixResult abi_probe = query_fn(
-        RAYD_OPTIX_TARGET_ABI,
-        0,
-        nullptr,
-        nullptr,
-        function_table.data(),
-        sizeof(function_table));
+    std::array<void*, 50> function_table = {};
+    const OptixResult abi_probe =
+        query_fn(RAYD_OPTIX_TARGET_ABI, 0, nullptr, nullptr, function_table.data(), sizeof(function_table));
     if (abi_probe == 7801) {
         optix_capability_cache.emplace(key, false);
         return false;
     }
     if (abi_probe != 0) {
-        throw std::runtime_error(
-            "OptiX ABI capability probe failed with error code " +
-            std::to_string(abi_probe) + ".");
+        throw std::runtime_error("OptiX ABI capability probe failed with error code " + std::to_string(abi_probe) +
+                                 ".");
     }
 
-    auto create_context = reinterpret_cast<OptixDeviceContextCreateFn>(
-        function_table[2]);
-    auto destroy_context = reinterpret_cast<OptixDeviceContextDestroyFn>(
-        function_table[3]);
+    auto create_context = reinterpret_cast<OptixDeviceContextCreateFn>(function_table[2]);
+    auto destroy_context = reinterpret_cast<OptixDeviceContextDestroyFn>(function_table[3]);
     if (create_context == nullptr || destroy_context == nullptr) {
-        throw std::runtime_error(
-            "OptiX ABI-93 function table is missing device-context entry points.");
+        throw std::runtime_error("OptiX ABI-93 function table is missing device-context entry points.");
     }
 
     OptixDeviceContextOptionsProbe options = {};
     OptixDeviceContext temporary_context = nullptr;
-    const OptixResult create_result =
-        create_context(cuda_context, &options, &temporary_context);
-    if (create_result == kOptixErrorNotSupported ||
-        create_result == kOptixErrorNotCompatible) {
+    const OptixResult create_result = create_context(cuda_context, &options, &temporary_context);
+    if (create_result == kOptixErrorNotSupported || create_result == kOptixErrorNotCompatible) {
         optix_capability_cache.emplace(key, false);
         return false;
     }
     if (create_result != 0) {
-        throw std::runtime_error(
-            "OptiX device capability probe failed with error code " +
-            std::to_string(create_result) + ".");
+        throw std::runtime_error("OptiX device capability probe failed with error code " +
+                                 std::to_string(create_result) + ".");
     }
 
     const OptixResult destroy_result = destroy_context(temporary_context);
     if (destroy_result != 0) {
-        throw std::runtime_error(
-            "OptiX device capability probe cleanup failed with error code " +
-            std::to_string(destroy_result) + ".");
+        throw std::runtime_error("OptiX device capability probe cleanup failed with error code " +
+                                 std::to_string(destroy_result) + ".");
     }
     optix_capability_cache.emplace(key, true);
     return true;
 }
 
-void check_optix(OptixResult result, const char *message) {
+void check_optix(OptixResult result, const char* message) {
     if (result != 0) {
         throw std::runtime_error(std::string("OptiX error in ") + message);
     }
 }
 
-OptixProgramGroup make_raygen_group(OptixDeviceContext context,
-                                    OptixModule module,
-                                    const char *entry_name) {
+OptixProgramGroup make_raygen_group(OptixDeviceContext context, OptixModule module, const char* entry_name) {
     OptixProgramGroupOptions pg_options = {};
     OptixProgramGroupDesc desc = {};
     desc.kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
@@ -459,9 +422,7 @@ OptixProgramGroup make_raygen_group(OptixDeviceContext context,
     return group;
 }
 
-OptixProgramGroup make_miss_group(OptixDeviceContext context,
-                                  OptixModule module,
-                                  const char *entry_name) {
+OptixProgramGroup make_miss_group(OptixDeviceContext context, OptixModule module, const char* entry_name) {
     OptixProgramGroupOptions pg_options = {};
     OptixProgramGroupDesc desc = {};
     desc.kind = OPTIX_PROGRAM_GROUP_KIND_MISS;
@@ -476,11 +437,8 @@ OptixProgramGroup make_miss_group(OptixDeviceContext context,
     return group;
 }
 
-OptixProgramGroup make_hitgroup(OptixDeviceContext context,
-                                OptixModule module,
-                                const char *closesthit,
-                                const char *anyhit,
-                                const char *intersection) {
+OptixProgramGroup make_hitgroup(OptixDeviceContext context, OptixModule module, const char* closesthit,
+                                const char* anyhit, const char* intersection) {
     OptixProgramGroupOptions pg_options = {};
     OptixProgramGroupDesc desc = {};
     desc.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
@@ -499,11 +457,11 @@ OptixProgramGroup make_hitgroup(OptixDeviceContext context,
     return group;
 }
 
-void *make_sbt_record(OptixProgramGroup group) {
+void* make_sbt_record(OptixProgramGroup group) {
     EmptySbtRecord record = {};
     check_optix(optixSbtRecordPackHeader(group, &record), "optixSbtRecordPackHeader");
 
-    void *device_record = jit_malloc(AllocType::Device, sizeof(EmptySbtRecord));
+    void* device_record = jit_malloc(AllocType::Device, sizeof(EmptySbtRecord));
     audit_jit_memcpy();
     jit_memcpy(JitBackend::CUDA, device_record, &record, sizeof(EmptySbtRecord));
     return device_record;
@@ -514,7 +472,7 @@ void *make_sbt_record(OptixProgramGroup group) {
 void init_optix_api() {
     jit_optix_context(); // Ensure OptiX is initialized
 
-    #define L(name) name = (decltype(name)) jit_optix_lookup(#name);
+#define L(name) name = (decltype(name))jit_optix_lookup(#name);
 
     L(optixAccelComputeMemoryUsage);
     L(optixAccelBuild);
@@ -530,7 +488,7 @@ void init_optix_api() {
     L(optixSbtRecordPackHeader);
     L(optixLaunch);
 
-    #undef L
+#undef L
 }
 
 // Consolidated native launch audit implementation.
@@ -544,20 +502,19 @@ namespace rayd {
 
 namespace {
 
-std::mutex &audit_mutex() {
+std::mutex& audit_mutex() {
     static std::mutex mutex;
     return mutex;
 }
 
-NativeLaunchAuditSnapshot &audit_snapshot_storage() {
+NativeLaunchAuditSnapshot& audit_snapshot_storage() {
     static NativeLaunchAuditSnapshot snapshot;
     return snapshot;
 }
 
 thread_local NativeLaunchStage current_stage = NativeLaunchStage::Unknown;
 
-NativeLaunchStageStats &stage_stats(NativeLaunchAuditSnapshot &snapshot,
-                                    NativeLaunchStage stage) {
+NativeLaunchStageStats& stage_stats(NativeLaunchAuditSnapshot& snapshot, NativeLaunchStage stage) {
     switch (stage) {
     case NativeLaunchStage::Build:
         return snapshot.build;
@@ -579,22 +536,16 @@ NativeLaunchStageStats &stage_stats(NativeLaunchAuditSnapshot &snapshot,
     }
 }
 
-void clear_stage_stats(NativeLaunchStageStats &stats) {
+void clear_stage_stats(NativeLaunchStageStats& stats) {
     stats = NativeLaunchStageStats();
 }
 
-void update_kernel_stat(NativeLaunchStageStats &stats,
-                        const char *label,
-                        uint64_t threads,
-                        uint64_t items) {
+void update_kernel_stat(NativeLaunchStageStats& stats, const char* label, uint64_t threads, uint64_t items) {
     const std::string key = label != nullptr ? std::string(label) : std::string("unnamed");
-    auto it = std::find_if(stats.kernels.begin(),
-                           stats.kernels.end(),
-                           [&key](const NativeKernelLaunchStat &entry) {
-                               return entry.label == key;
-                           });
+    auto it = std::find_if(stats.kernels.begin(), stats.kernels.end(),
+                           [&key](const NativeKernelLaunchStat& entry) { return entry.label == key; });
     if (it == stats.kernels.end()) {
-        stats.kernels.push_back(NativeKernelLaunchStat { key, 1, threads, threads, items, items });
+        stats.kernels.push_back(NativeKernelLaunchStat{key, 1, threads, threads, items, items});
         return;
     }
 
@@ -605,17 +556,15 @@ void update_kernel_stat(NativeLaunchStageStats &stats,
     it->max_items = std::max(it->max_items, items);
 }
 
-template <typename Member>
-void increment_counter(Member NativeLaunchStageStats::*member) {
+template <typename Member> void increment_counter(Member NativeLaunchStageStats::* member) {
     std::lock_guard<std::mutex> guard(audit_mutex());
-    NativeLaunchStageStats &stats = stage_stats(audit_snapshot_storage(), current_stage);
+    NativeLaunchStageStats& stats = stage_stats(audit_snapshot_storage(), current_stage);
     stats.*member += 1;
 }
 
 } // namespace
 
-ScopedNativeLaunchStage::ScopedNativeLaunchStage(NativeLaunchStage stage)
-    : previous_(current_stage) {
+ScopedNativeLaunchStage::ScopedNativeLaunchStage(NativeLaunchStage stage) : previous_(current_stage) {
     current_stage = stage;
 }
 
@@ -625,7 +574,7 @@ ScopedNativeLaunchStage::~ScopedNativeLaunchStage() {
 
 void native_launch_audit_clear() {
     std::lock_guard<std::mutex> guard(audit_mutex());
-    NativeLaunchAuditSnapshot &snapshot = audit_snapshot_storage();
+    NativeLaunchAuditSnapshot& snapshot = audit_snapshot_storage();
     clear_stage_stats(snapshot.unknown);
     clear_stage_stats(snapshot.build);
     clear_stage_stats(snapshot.sync);
@@ -641,20 +590,14 @@ NativeLaunchAuditSnapshot native_launch_audit_snapshot() {
     return audit_snapshot_storage();
 }
 
-void audit_cuda_kernel_launch(const char *label,
-                              uint32_t grid_x,
-                              uint32_t grid_y,
-                              uint32_t grid_z,
-                              uint32_t block_x,
-                              uint32_t block_y,
-                              uint32_t block_z,
-                              uint64_t items) {
-    const uint64_t threads =
-        static_cast<uint64_t>(grid_x) * static_cast<uint64_t>(grid_y) * static_cast<uint64_t>(grid_z) *
-        static_cast<uint64_t>(block_x) * static_cast<uint64_t>(block_y) * static_cast<uint64_t>(block_z);
+void audit_cuda_kernel_launch(const char* label, uint32_t grid_x, uint32_t grid_y, uint32_t grid_z, uint32_t block_x,
+                              uint32_t block_y, uint32_t block_z, uint64_t items) {
+    const uint64_t threads = static_cast<uint64_t>(grid_x) * static_cast<uint64_t>(grid_y) *
+                             static_cast<uint64_t>(grid_z) * static_cast<uint64_t>(block_x) *
+                             static_cast<uint64_t>(block_y) * static_cast<uint64_t>(block_z);
 
     std::lock_guard<std::mutex> guard(audit_mutex());
-    NativeLaunchStageStats &stats = stage_stats(audit_snapshot_storage(), current_stage);
+    NativeLaunchStageStats& stats = stage_stats(audit_snapshot_storage(), current_stage);
     stats.cuda_kernel_launches += 1;
     stats.cuda_kernel_total_threads += threads;
     update_kernel_stat(stats, label, threads, items);
@@ -718,10 +661,9 @@ void audit_optix_launch() {
 
 void audit_optix_launch_duration_ms(double elapsed_ms) {
     std::lock_guard<std::mutex> guard(audit_mutex());
-    NativeLaunchStageStats &stats = stage_stats(audit_snapshot_storage(), current_stage);
+    NativeLaunchStageStats& stats = stage_stats(audit_snapshot_storage(), current_stage);
     stats.optix_launch_time_ms += elapsed_ms;
-    if (stats.optix_launch_time_min_ms == 0.0 ||
-        elapsed_ms < stats.optix_launch_time_min_ms) {
+    if (stats.optix_launch_time_min_ms == 0.0 || elapsed_ms < stats.optix_launch_time_min_ms) {
         stats.optix_launch_time_min_ms = elapsed_ms;
     }
     stats.optix_launch_time_max_ms = std::max(stats.optix_launch_time_max_ms, elapsed_ms);
@@ -729,7 +671,7 @@ void audit_optix_launch_duration_ms(double elapsed_ms) {
 
 bool native_launch_audit_timing_enabled() {
     static const bool enabled = []() {
-        const char *value = std::getenv("RAYD_NATIVE_LAUNCH_AUDIT_TIMING");
+        const char* value = std::getenv("RAYD_NATIVE_LAUNCH_AUDIT_TIMING");
         return value != nullptr && value[0] != '\0' && value[0] != '0';
     }();
     return enabled;
@@ -768,38 +710,29 @@ bool native_launch_audit_timing_enabled() {
 namespace rayd {
 
 #ifndef RAYD_OPTIX_MODULE_OPT_LEVEL
-#  define RAYD_OPTIX_MODULE_OPT_LEVEL OPTIX_COMPILE_OPTIMIZATION_LEVEL_3
+#define RAYD_OPTIX_MODULE_OPT_LEVEL OPTIX_COMPILE_OPTIMIZATION_LEVEL_3
 #endif
 
 #ifndef RAYD_MULTIPATH_OPTIX_MODULE_OPT_LEVEL
-#  define RAYD_MULTIPATH_OPTIX_MODULE_OPT_LEVEL RAYD_OPTIX_MODULE_OPT_LEVEL
+#define RAYD_MULTIPATH_OPTIX_MODULE_OPT_LEVEL RAYD_OPTIX_MODULE_OPT_LEVEL
 #endif
 
 #ifndef RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS
-#  define RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS RAYD_OPTIX_EXCEPTION_FLAGS
+#define RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS RAYD_OPTIX_EXCEPTION_FLAGS
 #endif
 
 namespace {
 
-using PipelineCacheKey = std::tuple<
-    OptixDeviceContext,
-    const char *,
-    size_t,
-    std::string,
-    std::string,
-    std::string,
-    std::string,
-    int,
-    int,
-    size_t>;
+using PipelineCacheKey = std::tuple<OptixDeviceContext, const char*, size_t, std::string, std::string, std::string,
+                                    std::string, int, int, size_t>;
 
-std::string pipeline_entry_key(const char *entry) {
+std::string pipeline_entry_key(const char* entry) {
     return entry != nullptr ? std::string(entry) : std::string();
 }
 
-std::string pipeline_raygen_entries_key(const std::vector<const char *> &entries) {
+std::string pipeline_raygen_entries_key(const std::vector<const char*>& entries) {
     std::string key;
-    for (const char *entry : entries) {
+    for (const char* entry : entries) {
         if (!key.empty()) {
             key.push_back('\n');
         }
@@ -808,20 +741,19 @@ std::string pipeline_raygen_entries_key(const std::vector<const char *> &entries
     return key;
 }
 
-std::mutex &pipeline_cache_mutex() {
-    static std::mutex *mutex = new std::mutex();
+std::mutex& pipeline_cache_mutex() {
+    static std::mutex* mutex = new std::mutex();
     return *mutex;
 }
 
-std::map<PipelineCacheKey, std::shared_ptr<OptixLaunchPipeline>> &pipeline_cache() {
-    static std::map<PipelineCacheKey, std::shared_ptr<OptixLaunchPipeline>> *cache =
+std::map<PipelineCacheKey, std::shared_ptr<OptixLaunchPipeline>>& pipeline_cache() {
+    static std::map<PipelineCacheKey, std::shared_ptr<OptixLaunchPipeline>>* cache =
         new std::map<PipelineCacheKey, std::shared_ptr<OptixLaunchPipeline>>();
     return *cache;
 }
 
-void check_cuda(cudaError_t result, const char *message) {
-    require(result == cudaSuccess,
-            std::string(message) + ": " + cudaGetErrorString(result));
+void check_cuda(cudaError_t result, const char* message) {
+    require(result == cudaSuccess, std::string(message) + ": " + cudaGetErrorString(result));
 }
 
 int hitgroup_record_capacity(int hitgroup_record_count) {
@@ -862,7 +794,7 @@ OptixLaunchPipeline::~OptixLaunchPipeline() {
     if (sbt_miss_record_ != nullptr) {
         jit_free(sbt_miss_record_);
     }
-    for (void *record : sbt_raygen_records_) {
+    for (void* record : sbt_raygen_records_) {
         if (record != nullptr) {
             jit_free(record);
         }
@@ -871,14 +803,11 @@ OptixLaunchPipeline::~OptixLaunchPipeline() {
 
 /// Compile the module, create program groups, link the pipeline, and build the SBT and
 /// params buffer from \p config. The shared build sequence for all four multipath pipelines.
-void OptixLaunchPipeline::build(OptixDeviceContext context,
-                                int hitgroup_record_count,
-                                const OptixPipelineConfig &config) {
+void OptixLaunchPipeline::build(OptixDeviceContext context, int hitgroup_record_count,
+                                const OptixPipelineConfig& config) {
     require(context != nullptr, "OptixLaunchPipeline::build(): invalid OptiX context.");
-    require(hitgroup_record_count > 0,
-            "OptixLaunchPipeline::build(): hitgroup_record_count must be positive.");
-    require(!config.raygen_entries.empty(),
-            "OptixLaunchPipeline::build(): config requires at least one raygen entry.");
+    require(hitgroup_record_count > 0, "OptixLaunchPipeline::build(): hitgroup_record_count must be positive.");
+    require(!config.raygen_entries.empty(), "OptixLaunchPipeline::build(): config requires at least one raygen entry.");
     init_optix_api();
 
     OptixModuleCompileOptions module_options = {};
@@ -888,34 +817,25 @@ void OptixLaunchPipeline::build(OptixDeviceContext context,
 
     OptixPipelineCompileOptions pipeline_options = {};
     pipeline_options.usesMotionBlur = 0;
-    pipeline_options.traversableGraphFlags =
-        OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
+    pipeline_options.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
     pipeline_options.numPayloadValues = config.num_payload_values;
     pipeline_options.numAttributeValues = shared::optix::TriangleAttributeCount;
     pipeline_options.exceptionFlags = RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS;
     pipeline_options.pipelineLaunchParamsVariableName = "params";
-    pipeline_options.usesPrimitiveTypeFlags =
-        static_cast<unsigned>(OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE);
+    pipeline_options.usesPrimitiveTypeFlags = static_cast<unsigned>(OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE);
     pipeline_options.allowOpacityMicromaps = 0;
 
     char log[2048];
     size_t log_size = sizeof(log);
-    check_optix(optixModuleCreate(context,
-                                  &module_options,
-                                  &pipeline_options,
-                                  config.ptx,
-                                  config.ptx_size,
-                                  log,
-                                  &log_size,
-                                  &module_),
+    check_optix(optixModuleCreate(context, &module_options, &pipeline_options, config.ptx, config.ptx_size, log,
+                                  &log_size, &module_),
                 "optixModuleCreate(multipath)");
 
-    for (const char *entry : config.raygen_entries) {
+    for (const char* entry : config.raygen_entries) {
         pg_raygens_.push_back(make_raygen_group(context, module_, entry));
     }
     pg_miss_ = make_miss_group(context, module_, config.miss_entry);
-    pg_hitgroup_ = make_hitgroup(context, module_, config.closesthit_entry,
-                                 config.anyhit_entry, nullptr);
+    pg_hitgroup_ = make_hitgroup(context, module_, config.closesthit_entry, config.anyhit_entry, nullptr);
 
     std::vector<OptixProgramGroup> groups = pg_raygens_;
     groups.push_back(pg_miss_);
@@ -929,18 +849,11 @@ void OptixLaunchPipeline::build(OptixDeviceContext context,
     link_options.maxTraversableGraphDepth = 2;
 
     log_size = sizeof(log);
-    check_optix(optixPipelineCreate(context,
-                                    &pipeline_options,
-                                    &link_options,
-                                    groups.data(),
-                                    static_cast<unsigned int>(groups.size()),
-                                    log,
-                                    &log_size,
-                                    &pipeline_),
+    check_optix(optixPipelineCreate(context, &pipeline_options, &link_options, groups.data(),
+                                    static_cast<unsigned int>(groups.size()), log, &log_size, &pipeline_),
                 "optixPipelineCreate(multipath)");
 
-    check_optix(optixPipelineSetStackSize(pipeline_, 0, 0, 4096, 2),
-                "optixPipelineSetStackSize(multipath)");
+    check_optix(optixPipelineSetStackSize(pipeline_, 0, 0, 4096, 2), "optixPipelineSetStackSize(multipath)");
 
     for (OptixProgramGroup pg : pg_raygens_) {
         sbt_raygen_records_.push_back(make_sbt_record(pg));
@@ -948,33 +861,26 @@ void OptixLaunchPipeline::build(OptixDeviceContext context,
     sbt_miss_record_ = make_sbt_record(pg_miss_);
 
     std::vector<EmptySbtRecord> hitgroup_records(static_cast<size_t>(hitgroup_record_count));
-    for (EmptySbtRecord &record : hitgroup_records) {
-        check_optix(optixSbtRecordPackHeader(pg_hitgroup_, &record),
-                    "optixSbtRecordPackHeader(hitgroup)");
+    for (EmptySbtRecord& record : hitgroup_records) {
+        check_optix(optixSbtRecordPackHeader(pg_hitgroup_, &record), "optixSbtRecordPackHeader(hitgroup)");
     }
-    sbt_hitgroup_records_ = jit_malloc(AllocType::Device,
-                                       sizeof(EmptySbtRecord) * hitgroup_records.size());
+    sbt_hitgroup_records_ = jit_malloc(AllocType::Device, sizeof(EmptySbtRecord) * hitgroup_records.size());
     audit_jit_memcpy();
-    jit_memcpy(JitBackend::CUDA,
-               sbt_hitgroup_records_,
-               hitgroup_records.data(),
+    jit_memcpy(JitBackend::CUDA, sbt_hitgroup_records_, hitgroup_records.data(),
                sizeof(EmptySbtRecord) * hitgroup_records.size());
 
-    for (OptixProgramGroup &pg : pg_raygens_) {
+    for (OptixProgramGroup& pg : pg_raygens_) {
         if (pg != nullptr) {
-            check_optix(optixProgramGroupDestroy(pg),
-                        "optixProgramGroupDestroy(raygen)");
+            check_optix(optixProgramGroupDestroy(pg), "optixProgramGroupDestroy(raygen)");
             pg = nullptr;
         }
     }
     if (pg_hitgroup_ != nullptr) {
-        check_optix(optixProgramGroupDestroy(pg_hitgroup_),
-                    "optixProgramGroupDestroy(hitgroup)");
+        check_optix(optixProgramGroupDestroy(pg_hitgroup_), "optixProgramGroupDestroy(hitgroup)");
         pg_hitgroup_ = nullptr;
     }
     if (pg_miss_ != nullptr) {
-        check_optix(optixProgramGroupDestroy(pg_miss_),
-                    "optixProgramGroupDestroy(miss)");
+        check_optix(optixProgramGroupDestroy(pg_miss_), "optixProgramGroupDestroy(miss)");
         pg_miss_ = nullptr;
     }
     if (module_ != nullptr) {
@@ -990,10 +896,8 @@ void OptixLaunchPipeline::build(OptixDeviceContext context,
     ready_ = true;
 }
 
-std::shared_ptr<OptixLaunchPipeline> shared_optix_launch_pipeline(
-    OptixDeviceContext context,
-    int hitgroup_record_count,
-    const OptixPipelineConfig &config) {
+std::shared_ptr<OptixLaunchPipeline> shared_optix_launch_pipeline(OptixDeviceContext context, int hitgroup_record_count,
+                                                                  const OptixPipelineConfig& config) {
     int hitgroup_capacity = hitgroup_record_capacity(hitgroup_record_count);
     PipelineCacheKey key{
         context,
@@ -1009,7 +913,7 @@ std::shared_ptr<OptixLaunchPipeline> shared_optix_launch_pipeline(
     };
 
     std::lock_guard<std::mutex> guard(pipeline_cache_mutex());
-    auto &cache = pipeline_cache();
+    auto& cache = pipeline_cache();
     auto it = cache.find(key);
     if (it != cache.end()) {
         return it->second;
@@ -1022,31 +926,30 @@ std::shared_ptr<OptixLaunchPipeline> shared_optix_launch_pipeline(
 }
 
 /// Upload \p params and launch the pipeline with the \p raygen_index'th raygen entry over n_rays threads.
-void OptixLaunchPipeline::launch_impl(int raygen_index,
-                                       const void *params,
-                                       size_t actual_params_size,
-                                       unsigned int n_rays) const {
+void OptixLaunchPipeline::launch_impl(int raygen_index, const void* params, size_t actual_params_size,
+                                      unsigned int n_rays) const {
     require(ready_, "OptixLaunchPipeline::launch(): pipeline is not ready.");
     // The OptiX module, SBT records, and params buffer were allocated on the
     // build-time Dr.Jit device, while the launch below uses the stream of
     // whichever device is current. Reject the mismatch instead of corrupting.
     const int current_device = jit_cuda_device();
     if (current_device != device_) {
-        throw std::runtime_error(
-            "OptixLaunchPipeline::launch(): pipeline was built on Dr.Jit CUDA "
-            "device " + std::to_string(device_) + " but the current Dr.Jit CUDA "
-            "device is " + std::to_string(current_device) +
-            ". Multipath pipelines are bound to their build device; call "
-            "rayd.drjit.set_device(" + std::to_string(device_) +
-            ") before launching, or rebuild the scene on the current device.");
+        throw std::runtime_error("OptixLaunchPipeline::launch(): pipeline was built on Dr.Jit CUDA "
+                                 "device " +
+                                 std::to_string(device_) +
+                                 " but the current Dr.Jit CUDA "
+                                 "device is " +
+                                 std::to_string(current_device) +
+                                 ". Multipath pipelines are bound to their build device; call "
+                                 "rayd.drjit.set_device(" +
+                                 std::to_string(device_) +
+                                 ") before launching, or rebuild the scene on the current device.");
     }
-    require(raygen_index >= 0 &&
-                raygen_index < static_cast<int>(sbt_raygen_records_.size()),
+    require(raygen_index >= 0 && raygen_index < static_cast<int>(sbt_raygen_records_.size()),
             "OptixLaunchPipeline::launch(): raygen index out of range.");
 
     const size_t launch_params_size = std::max(params_size_, actual_params_size);
-    require(launch_params_size <= params_buffer_size_,
-            "OptixLaunchPipeline::launch(): params buffer is too small.");
+    require(launch_params_size <= params_buffer_size_, "OptixLaunchPipeline::launch(): params buffer is too small.");
 
     audit_jit_memcpy_async();
     jit_memcpy_async(JitBackend::CUDA, params_buffer_, params, launch_params_size);
@@ -1066,23 +969,15 @@ void OptixLaunchPipeline::launch_impl(int raygen_index,
     cudaEvent_t stop_event = nullptr;
     const bool time_optix_launch = native_launch_audit_timing_enabled();
     if (time_optix_launch) {
-        check_cuda(cudaEventCreateWithFlags(&start_event, cudaEventDefault),
-                   "cudaEventCreateWithFlags(start)");
-        check_cuda(cudaEventCreateWithFlags(&stop_event, cudaEventDefault),
-                   "cudaEventCreateWithFlags(stop)");
+        check_cuda(cudaEventCreateWithFlags(&start_event, cudaEventDefault), "cudaEventCreateWithFlags(start)");
+        check_cuda(cudaEventCreateWithFlags(&stop_event, cudaEventDefault), "cudaEventCreateWithFlags(stop)");
         audit_cuda_event_record();
         check_cuda(cudaEventRecord(start_event, cuda_stream), "cudaEventRecord(start)");
     }
 
     audit_optix_launch();
-    check_optix(optixLaunch(pipeline_,
-                            jit_stream,
-                            reinterpret_cast<CUdeviceptr>(params_buffer_),
-                            launch_params_size,
-                            &sbt,
-                            n_rays,
-                            1,
-                            1),
+    check_optix(optixLaunch(pipeline_, jit_stream, reinterpret_cast<CUdeviceptr>(params_buffer_), launch_params_size,
+                            &sbt, n_rays, 1, 1),
                 "optixLaunch(multipath)");
 
     if (time_optix_launch) {
@@ -1090,8 +985,7 @@ void OptixLaunchPipeline::launch_impl(int raygen_index,
         check_cuda(cudaEventRecord(stop_event, cuda_stream), "cudaEventRecord(stop)");
         check_cuda(cudaEventSynchronize(stop_event), "cudaEventSynchronize(stop)");
         float elapsed_ms = 0.0f;
-        check_cuda(cudaEventElapsedTime(&elapsed_ms, start_event, stop_event),
-                   "cudaEventElapsedTime(optixLaunch)");
+        check_cuda(cudaEventElapsedTime(&elapsed_ms, start_event, stop_event), "cudaEventElapsedTime(optixLaunch)");
         audit_optix_launch_duration_ms(static_cast<double>(elapsed_ms));
         check_cuda(cudaEventDestroy(start_event), "cudaEventDestroy(start)");
         check_cuda(cudaEventDestroy(stop_event), "cudaEventDestroy(stop)");
@@ -1348,14 +1242,10 @@ namespace rayd {
 
 namespace {
 
-std::string normalize_optix_split_mode_value(const char *value) {
+std::string normalize_optix_split_mode_value(const char* value) {
     std::string normalized = value != nullptr ? std::string(value) : std::string();
-    std::transform(normalized.begin(),
-                   normalized.end(),
-                   normalized.begin(),
-                   [](unsigned char ch) -> char {
-                       return static_cast<char>(std::tolower(ch));
-                   });
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                   [](unsigned char ch) -> char { return static_cast<char>(std::tolower(ch)); });
     return normalized;
 }
 
@@ -1365,39 +1255,32 @@ namespace multipath_detail {
 
 TraceVisibilityBackend active_trace_visibility_backend() {
     static const TraceVisibilityBackend value = []() {
-        const char *raw = std::getenv("RAYD_TRACE_VISIBILITY_BACKEND");
+        const char* raw = std::getenv("RAYD_TRACE_VISIBILITY_BACKEND");
         const std::string normalized = normalize_optix_split_mode_value(raw);
         if (normalized.empty() || normalized == "auto") {
             return TraceVisibilityBackend::Auto;
         }
-        if (normalized == "jit" || normalized == "drjit" ||
-            normalized == "hitobject" || normalized == "hit_object") {
+        if (normalized == "jit" || normalized == "drjit" || normalized == "hitobject" || normalized == "hit_object") {
             return TraceVisibilityBackend::Jit;
         }
-        if (normalized == "native" || normalized == "optixlaunch" ||
-            normalized == "optix_launch") {
+        if (normalized == "native" || normalized == "optixlaunch" || normalized == "optix_launch") {
             return TraceVisibilityBackend::Native;
         }
-        throw std::runtime_error(
-            "Invalid RAYD_TRACE_VISIBILITY_BACKEND. Expected one of: auto, jit, native.");
+        throw std::runtime_error("Invalid RAYD_TRACE_VISIBILITY_BACKEND. Expected one of: auto, jit, native.");
     }();
     return value;
 }
 
-ReflEpcVisibilityIgnoreMode parse_refl_epc_vis_ignore(
-    const std::string &value) {
+ReflEpcVisibilityIgnoreMode parse_refl_epc_vis_ignore(const std::string& value) {
     const std::string normalized = normalize_optix_split_mode_value(value.c_str());
-    if (normalized.empty() || normalized == "primitive" ||
-        normalized == "prim" || normalized == "exact") {
+    if (normalized.empty() || normalized == "primitive" || normalized == "prim" || normalized == "exact") {
         return ReflEpcVisibilityIgnoreMode::Primitive;
     }
-    if (normalized == "surface_group" || normalized == "surface-group" ||
-        normalized == "group") {
+    if (normalized == "surface_group" || normalized == "surface-group" || normalized == "group") {
         return ReflEpcVisibilityIgnoreMode::SurfaceGroup;
     }
-    throw std::runtime_error(
-        "Invalid ReflEpcOptions.visibility_ignore_mode. "
-        "Expected one of: 'primitive', 'surface_group'.");
+    throw std::runtime_error("Invalid ReflEpcOptions.visibility_ignore_mode. "
+                             "Expected one of: 'primitive', 'surface_group'.");
 }
 
 bool use_jit_trace_visibility_path(int ignore_k) {
@@ -1406,8 +1289,7 @@ bool use_jit_trace_visibility_path(int ignore_k) {
         return false;
     }
     if (backend == TraceVisibilityBackend::Jit) {
-        require(ignore_k == 0,
-                "RAYD_TRACE_VISIBILITY_BACKEND=jit does not support ignore lists yet.");
+        require(ignore_k == 0, "RAYD_TRACE_VISIBILITY_BACKEND=jit does not support ignore lists yet.");
         return true;
     }
     return ignore_k == 0;
@@ -1423,10 +1305,8 @@ bool uses_symbolic_optix_query_path() {
     return jit_flag(JitFlag::Recording);
 }
 
-void ensure_pipeline(std::shared_ptr<OptixLaunchPipeline> &pipeline,
-                     OptixDeviceContext context,
-                     int hitgroup_record_count,
-                     const OptixPipelineConfig &config) {
+void ensure_pipeline(std::shared_ptr<OptixLaunchPipeline>& pipeline, OptixDeviceContext context,
+                     int hitgroup_record_count, const OptixPipelineConfig& config) {
     if (!pipeline) {
         pipeline = shared_optix_launch_pipeline(context, hitgroup_record_count, config);
     }

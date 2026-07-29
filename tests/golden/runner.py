@@ -32,8 +32,7 @@ BASELINE_DIR = Path(__file__).resolve().parent / "baselines"
 
 COMPARISON_POLICY = {
     "discrete": "exact bitwise equality (ints, bools-as-ints, strings)",
-    "continuous": "contracts/operations.json tolerances "
-    "(default_abs, default_rel)",
+    "continuous": "contracts/operations.json tolerances (default_abs, default_rel)",
     "informative": "recorded but not compared (traversal-order or tie dependent)",
 }
 
@@ -121,8 +120,7 @@ def _run_intersect(dr, cuda, rd, scene, query, offsets):
             dr.eval(its.t)
             width = int(dr.width(its.t))
         except Exception as exc:  # noqa: BLE001 - freezing the observed failure mode
-            return {"kind": "intersect", "discrete": {"raises": 1, "exc_type": type(exc).__name__},
-                    "continuous": {}}
+            return {"kind": "intersect", "discrete": {"raises": 1, "exc_type": type(exc).__name__}, "continuous": {}}
         return {"kind": "intersect", "discrete": {"raises": 0, "width": width}, "continuous": {}}
 
     ray = _make_ray(rd, cuda, query)
@@ -165,8 +163,7 @@ def _run_intersect(dr, cuda, rd, scene, query, offsets):
                 ok.append(int(global_prim_id[lane] == -1))
         discrete["id_mapping_ok"] = ok
     return _apply_informative(
-        {"kind": "intersect", "discrete": discrete, "continuous": continuous},
-        query.get("informative"),
+        {"kind": "intersect", "discrete": discrete, "continuous": continuous}, query.get("informative")
     )
 
 
@@ -220,17 +217,11 @@ def _run_visible_pair(cuda, scene, query):
     if active is not None:
         kwargs["active"] = active
     result = scene.visible_pair(
-        _make_vec3(cuda, query["start"]),
-        _make_vec3(cuda, query["end_a"]),
-        _make_vec3(cuda, query["end_b"]),
-        **kwargs,
+        _make_vec3(cuda, query["start"]), _make_vec3(cuda, query["end_a"]), _make_vec3(cuda, query["end_b"]), **kwargs
     )
     return {
         "kind": "visible_pair",
-        "discrete": {
-            "visible_a": _bools_as_ints(result.visible_a),
-            "visible_b": _bools_as_ints(result.visible_b),
-        },
+        "discrete": {"visible_a": _bools_as_ints(result.visible_a), "visible_b": _bools_as_ints(result.visible_b)},
         "continuous": {},
     }
 
@@ -254,8 +245,7 @@ def _run_nearest_edge_point(dr, cuda, scene, query):
         "edge_point": _rows3(res.edge_point, width),
     }
     return _apply_informative(
-        {"kind": "nearest_edge_point", "discrete": discrete, "continuous": continuous},
-        query.get("informative"),
+        {"kind": "nearest_edge_point", "discrete": discrete, "continuous": continuous}, query.get("informative")
     )
 
 
@@ -279,8 +269,7 @@ def _run_nearest_edge_ray(dr, cuda, rd, scene, query):
         "edge_point": _rows3(res.edge_point, width),
     }
     return _apply_informative(
-        {"kind": "nearest_edge_ray", "discrete": discrete, "continuous": continuous},
-        query.get("informative"),
+        {"kind": "nearest_edge_ray", "discrete": discrete, "continuous": continuous}, query.get("informative")
     )
 
 
@@ -306,8 +295,7 @@ def _run_nearest_edges(dr, cuda, scene, query):
         "edge_points": _rows3(res.edge_points, width),
     }
     return _apply_informative(
-        {"kind": "nearest_edges", "discrete": discrete, "continuous": continuous},
-        query.get("informative"),
+        {"kind": "nearest_edges", "discrete": discrete, "continuous": continuous}, query.get("informative")
     )
 
 
@@ -337,11 +325,7 @@ def _collect_scene(dr, cuda, rd, scene_def, trace_backend=None):
 
     queries = {}
     if scene_def.get("record_face_offsets"):
-        queries["mesh_face_offsets"] = {
-            "kind": "meta",
-            "discrete": {"offsets": offsets},
-            "continuous": {},
-        }
+        queries["mesh_face_offsets"] = {"kind": "meta", "discrete": {"offsets": offsets}, "continuous": {}}
 
     for query in scene_def["queries"]:
         kind = query["kind"]
@@ -386,10 +370,7 @@ def collect_golden(backend="drjit", trace_backend=None):
 
 
 def _git_head():
-    out = subprocess.run(
-        ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
-        text=True, capture_output=True, check=False,
-    )
+    out = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True, capture_output=True, check=False)
     return out.stdout.strip() or "unknown"
 
 
@@ -398,7 +379,9 @@ def _gpu_manifest_fields():
     try:
         query = subprocess.run(
             ["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"],
-            text=True, capture_output=True, check=False,
+            text=True,
+            capture_output=True,
+            check=False,
         )
         first = query.stdout.strip().splitlines()
         if first:
@@ -420,9 +403,7 @@ def write_baselines(backend="drjit"):
     out_dir.mkdir(parents=True, exist_ok=True)
     for name, scene_data in data.items():
         path = out_dir / f"{name}.json"
-        path.write_text(
-            json.dumps(scene_data, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
-        )
+        path.write_text(json.dumps(scene_data, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
     manifest = {
         "backend": backend,
         "rayd_commit": _git_head(),

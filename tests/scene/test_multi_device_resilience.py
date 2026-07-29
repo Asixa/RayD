@@ -49,9 +49,7 @@ class _FakeReplica:
 
 def _fake_layer(*replicas):
     layer = object.__new__(_ReplicatedScene)
-    layer.devices = tuple(
-        SimpleNamespace(index=index) for index in range(len(replicas))
-    )
+    layer.devices = tuple(SimpleNamespace(index=index) for index in range(len(replicas)))
     layer._replicas = tuple(replicas)
     layer._poisoned = None
     return layer
@@ -66,9 +64,7 @@ class NoGpuResilienceTests(unittest.TestCase):
             for node in ast.walk(function)
             if isinstance(node, ast.Try)
             and any(
-                isinstance(call, ast.Call)
-                and isinstance(call.func, ast.Attribute)
-                and call.func.attr == "_exit"
+                isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr == "_exit"
                 for statement in node.finalbody
                 for call in ast.walk(statement)
             )
@@ -79,9 +75,7 @@ class NoGpuResilienceTests(unittest.TestCase):
             any(
                 isinstance(node, ast.Assign)
                 and any(
-                    isinstance(target, ast.Attribute)
-                    and target.attr == "_active_stream"
-                    for target in node.targets
+                    isinstance(target, ast.Attribute) and target.attr == "_active_stream" for target in node.targets
                 )
                 and isinstance(node.value, ast.Constant)
                 and node.value.value is None
@@ -103,20 +97,13 @@ class NoGpuResilienceTests(unittest.TestCase):
                     else ((_FakeTensor(),) if operation == "set_edge_mask" else ())
                 )
                 with mock.patch.object(torch.cuda, "device", return_value=nullcontext()):
-                    with self.assertRaisesRegex(
-                        RuntimeError, f"injected {operation} failure"
-                    ):
+                    with self.assertRaisesRegex(RuntimeError, f"injected {operation} failure"):
                         getattr(layer, operation)(*arguments)
 
                 self.assertTrue(layer.is_poisoned)
                 self.assertEqual(first.calls, [operation])
                 self.assertEqual(second.calls, [operation])
-                for access in (
-                    layer.master,
-                    layer.master_native_scene,
-                    layer.sync,
-                    lambda: layer._shards(4),
-                ):
+                for access in (layer.master, layer.master_native_scene, layer.sync, lambda: layer._shards(4)):
                     with self.assertRaisesRegex(RuntimeError, "Call Scene.build"):
                         access()
 
@@ -132,27 +119,16 @@ class NoGpuResilienceTests(unittest.TestCase):
 
 def _dynamic_scene(options=None):
     device = torch.device("cuda", 0)
-    vertices = torch.tensor(
-        [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [0.0, 1.0, 0.0]],
-        dtype=torch.float32,
-        device=device,
-    )
+    vertices = torch.tensor([[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [0.0, 1.0, 0.0]], dtype=torch.float32, device=device)
     faces = torch.tensor([[0, 1, 2]], dtype=torch.int32, device=device)
     mesh = rt.Mesh(vertices, faces)
-    scene = rt.Scene(
-        devices=[0, 1],
-        options=options
-        or rt.MultiDeviceOptions(warm_up=False, min_rays_per_device=1),
-    )
+    scene = rt.Scene(devices=[0, 1], options=options or rt.MultiDeviceOptions(warm_up=False, min_rays_per_device=1))
     scene.add_mesh(mesh, dynamic=True)
     scene.build()
     return scene, mesh
 
 
-@unittest.skipUnless(
-    torch.cuda.is_available() and torch.cuda.device_count() >= 2,
-    "two CUDA devices are required",
-)
+@unittest.skipUnless(torch.cuda.is_available() and torch.cuda.device_count() >= 2, "two CUDA devices are required")
 class GpuFailureInjectionTests(unittest.TestCase):
     def test_partial_vertex_broadcast_requires_a_complete_rebuild(self):
         scene, mesh = _dynamic_scene()
@@ -183,12 +159,7 @@ class GpuFailureInjectionTests(unittest.TestCase):
         def fail_offload(_start, _result):
             raise RuntimeError("injected offload failure")
 
-        options = rt.MultiDeviceOptions(
-            warm_up=False,
-            min_rays_per_device=1,
-            chunk_rays=8,
-            offload=fail_offload,
-        )
+        options = rt.MultiDeviceOptions(warm_up=False, min_rays_per_device=1, chunk_rays=8, offload=fail_offload)
         scene, mesh = _dynamic_scene(options)
         origins = torch.zeros((64, 3), dtype=torch.float32, device="cuda:0")
         origins[:, 2] = -1.0

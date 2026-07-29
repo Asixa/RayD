@@ -44,10 +44,7 @@ def _drjit_triangle_scene(dr_backend, cuda, vertices=None):
     faces = cuda.Array3i([0], [1], [2])
     if vertices is None:
         vertices = ad.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0])
-    mesh = dr_backend.Mesh(
-        cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]),
-        faces,
-    )
+    mesh = dr_backend.Mesh(cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]), faces)
     mesh.vertex_positions = vertices
     scene = dr_backend.Scene()
     scene.add_mesh(mesh)
@@ -60,10 +57,7 @@ def _dr_vec3(value):
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA torch is required")
-@unittest.skipUnless(
-    os.environ.get("RAYD_TORCH_RUN_DR_JIT_PARITY") == "1",
-    "external RayD parity is opt-in",
-)
+@unittest.skipUnless(os.environ.get("RAYD_TORCH_RUN_DR_JIT_PARITY") == "1", "external RayD parity is opt-in")
 class Share2AdParityTests(unittest.TestCase):
     def assertVectorClose(self, actual, expected, *, delta=_GRAD_ATOL):
         self.assertEqual(len(actual), len(expected))
@@ -75,15 +69,11 @@ class Share2AdParityTests(unittest.TestCase):
         dr = importlib.import_module("drjit")
         ad = importlib.import_module("drjit.cuda.ad")
         base_vertices = torch.tensor(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device="cuda", dtype=torch.float32
         )
         tangent = torch.tensor([[0.07, -0.03, 0.05]], device="cuda")
 
-        point_t = torch.tensor(
-            [[0.25, -0.2, 0.3]], device="cuda", dtype=torch.float32, requires_grad=True
-        )
+        point_t = torch.tensor([[0.25, -0.2, 0.3]], device="cuda", dtype=torch.float32, requires_grad=True)
         scene_t = _torch_triangle_scene(rt, base_vertices)
         hit_t = scene_t.nearest_edge(point_t)
         self.assertEqual(int(hit_t.edge_id[0]), 0)
@@ -120,20 +110,9 @@ class Share2AdParityTests(unittest.TestCase):
         dr_backend, rt, cuda = _load_backends()
         dr = importlib.import_module("drjit")
         ad = importlib.import_module("drjit.cuda.ad")
-        vertices = torch.tensor(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
-        )
-        direction_t = torch.tensor(
-            [[0.0, 0.0, -1.0]], device="cuda", requires_grad=True
-        )
-        origin_t = torch.tensor(
-            [[0.25, -0.4, 1.0]],
-            device="cuda",
-            dtype=torch.float32,
-            requires_grad=True,
-        )
+        vertices = torch.tensor([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device="cuda", dtype=torch.float32)
+        direction_t = torch.tensor([[0.0, 0.0, -1.0]], device="cuda", requires_grad=True)
+        origin_t = torch.tensor([[0.25, -0.4, 1.0]], device="cuda", dtype=torch.float32, requires_grad=True)
         scene_t = _torch_triangle_scene(rt, vertices)
         hit_t = scene_t.nearest_edge(rt.Ray(origin_t, direction_t))
         self.assertEqual(int(hit_t.edge_id[0]), 0)
@@ -145,9 +124,7 @@ class Share2AdParityTests(unittest.TestCase):
             return scene_t.nearest_edge(rt.Ray(origin, direction_t.detach())).distance
 
         tangent_origin_t = torch.tensor([[0.0, 0.07, 0.0]], device="cuda")
-        _, jvp_t = torch.func.jvp(
-            torch_distance, (origin_t.detach(),), (tangent_origin_t,)
-        )
+        _, jvp_t = torch.func.jvp(torch_distance, (origin_t.detach(),), (tangent_origin_t,))
 
         origin_d = ad.Array3f([0.25], [-0.4], [1.0])
         direction_d = ad.Array3f([0.0], [0.0], [-1.0])
@@ -184,17 +161,11 @@ class Share2AdParityTests(unittest.TestCase):
         ad = importlib.import_module("drjit.cuda.ad")
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         base_t = torch.tensor(
-            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]], device="cuda", dtype=torch.float32
         )
-        tangent_t = torch.tensor(
-            [[0.0, 0.0, 0.2], [0.0, 0.0, -0.1], [0.0, 0.0, 0.05]],
-            device="cuda",
-        )
+        tangent_t = torch.tensor([[0.0, 0.0, 0.2], [0.0, 0.0, -0.1], [0.0, 0.0, 0.05]], device="cuda")
         ray_t = rt.Ray(
-            torch.tensor([[-0.2, -0.2, -1.0]], device="cuda"),
-            torch.tensor([[0.0, 0.0, 1.0]], device="cuda"),
+            torch.tensor([[-0.2, -0.2, -1.0]], device="cuda"), torch.tensor([[0.0, 0.0, 1.0]], device="cuda")
         )
 
         vertices_t = base_t.clone().requires_grad_(True)
@@ -217,9 +188,7 @@ class Share2AdParityTests(unittest.TestCase):
         vertices_d = ad.Array3f([-1.0, 1.0, -1.0], [-1.0, -1.0, 1.0], [0.0, 0.0, 0.0])
         dr.enable_grad(vertices_d)
         scene_d = _drjit_triangle_scene(dr_backend, cuda, vertices_d)
-        ray_d = dr_backend.RayAD(
-            ad.Array3f([-0.2], [-0.2], [-1.0]), ad.Array3f([0.0], [0.0], [1.0])
-        )
+        ray_d = dr_backend.RayAD(ad.Array3f([-0.2], [-0.2], [-1.0]), ad.Array3f([0.0], [0.0], [1.0]))
         chain_d = scene_d.trace_reflections(ray_d, max_bounces=1, symbolic=False)
         self.assertTrue(bool(chain_d.is_valid()[0]))
         forward_d = float(chain_d.t[0])
@@ -247,14 +216,9 @@ class Share2AdParityTests(unittest.TestCase):
         dr_backend, rt, cuda = _load_backends()
         dr = importlib.import_module("drjit")
         ad = importlib.import_module("drjit.cuda.ad")
-        vertices_t = torch.tensor(
-            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
-            device="cuda",
-        )
+        vertices_t = torch.tensor([[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]], device="cuda")
         source_t = torch.tensor([[-0.2, -0.2, -1.0]], device="cuda")
-        receiver_t = torch.tensor(
-            [[-0.2, -0.2, 1.0]], device="cuda", requires_grad=True
-        )
+        receiver_t = torch.tensor([[-0.2, -0.2, 1.0]], device="cuda", requires_grad=True)
         tangent_t = torch.tensor([[0.03, -0.02, 0.04]], device="cuda")
         scene_t = _torch_triangle_scene(rt, vertices_t)
         field_t = scene_t.trace_refl_epc_field(source_t, receiver_t, max_bounces=1)
@@ -311,22 +275,16 @@ class Share2AdParityTests(unittest.TestCase):
                 valid=torch.tensor([True], device="cuda"),
             )
             return scene_t.accum_dfr_direct(
-                states=states_t,
-                grid=grid_t,
-                material=material,
-                wavelength=0.125,
-                seed=17,
-                direct_samples=64,
+                states=states_t, grid=grid_t, material=material, wavelength=0.125, seed=17, direct_samples=64
             ).power
 
         power_t = torch_power(gain_t)
         power_t.sum().backward()
         grad_t = float(gain_t.grad[0])
-        _, jvp_t = torch.func.jvp(
-            torch_power, (gain_t.detach(),), (torch.tensor([0.3], device="cuda"),)
-        )
+        _, jvp_t = torch.func.jvp(torch_power, (gain_t.detach(),), (torch.tensor([0.3], device="cuda"),))
 
         scene_d = _rayd_dfr_scene(dr_backend, cuda)
+
         def drjit_states():
             states = dr_backend.DfrStatesAD()
             states.count = 1

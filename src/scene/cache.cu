@@ -20,11 +20,10 @@ namespace rayd::torch_backend {
 
 namespace {
 
-void cuda_check(cudaError_t result, const char *expr) {
+void cuda_check(cudaError_t result, const char* expr) {
     if (result == cudaSuccess)
         return;
-    throw std::runtime_error(
-        std::string("CUDA error in ") + expr + ": " + cudaGetErrorString(result));
+    throw std::runtime_error(std::string("CUDA error in ") + expr + ": " + cudaGetErrorString(result));
 }
 
 __forceinline__ __device__ uint64_t make_edge_key(int a, int b) {
@@ -49,20 +48,14 @@ __forceinline__ __device__ int candidate_local_edge(int candidate) {
     return candidate - (candidate / 3) * 3;
 }
 
-__forceinline__ __device__ int candidate_opposite_vertex(
-    const int *__restrict__ faces,
-    int candidate) {
+__forceinline__ __device__ int candidate_opposite_vertex(const int* __restrict__ faces, int candidate) {
     const int face = candidate_face(candidate);
     const int local_edge = candidate_local_edge(candidate);
     const int opposite_corner = (local_edge + 2) % 3;
     return faces[face * 3 + opposite_corner];
 }
 
-__device__ int ordered_candidate(
-    const int *__restrict__ candidates,
-    int start,
-    int count,
-    int order) {
+__device__ int ordered_candidate(const int* __restrict__ candidates, int start, int count, int order) {
     int previous = -1;
     int selected = -1;
     for (int step = 0; step <= order; ++step) {
@@ -79,21 +72,10 @@ __device__ int ordered_candidate(
 }
 
 __forceinline__ __device__ void write_edge_topology_record(
-    int out,
-    int v0,
-    int v1,
-    int shape_id,
-    int vertex_offset,
-    const int *__restrict__ faces,
-    int candidate0,
-    int candidate1,
-    int *__restrict__ edge_v0,
-    int *__restrict__ edge_v1,
-    int *__restrict__ edge_face0,
-    int *__restrict__ edge_face1,
-    int *__restrict__ edge_opposite,
-    int *__restrict__ edge_shape_id,
-    int *__restrict__ edge_local_id) {
+    int out, int v0, int v1, int shape_id, int vertex_offset, const int* __restrict__ faces, int candidate0,
+    int candidate1, int* __restrict__ edge_v0, int* __restrict__ edge_v1, int* __restrict__ edge_face0,
+    int* __restrict__ edge_face1, int* __restrict__ edge_opposite, int* __restrict__ edge_shape_id,
+    int* __restrict__ edge_local_id) {
     edge_v0[out] = v0;
     edge_v1[out] = v1;
     edge_face0[out] = candidate_face(candidate0);
@@ -103,11 +85,8 @@ __forceinline__ __device__ void write_edge_topology_record(
     edge_local_id[out] = out;
 }
 
-__global__ void emit_edge_candidates_kernel(
-    int face_count,
-    const int *__restrict__ faces,
-    uint64_t *__restrict__ keys,
-    int *__restrict__ candidates) {
+__global__ void emit_edge_candidates_kernel(int face_count, const int* __restrict__ faces, uint64_t* __restrict__ keys,
+                                            int* __restrict__ candidates) {
     const int face = blockIdx.x * blockDim.x + threadIdx.x;
     if (face >= face_count)
         return;
@@ -125,60 +104,39 @@ __global__ void emit_edge_candidates_kernel(
     }
 }
 
-__global__ void mark_edge_key_runs_kernel(
-    int candidate_count,
-    const uint64_t *__restrict__ sorted_keys,
-    int *__restrict__ run_flags) {
+__global__ void mark_edge_key_runs_kernel(int candidate_count, const uint64_t* __restrict__ sorted_keys,
+                                          int* __restrict__ run_flags) {
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= candidate_count)
         return;
     run_flags[idx] = (idx == 0 || sorted_keys[idx] != sorted_keys[idx - 1]) ? 1 : 0;
 }
 
-__global__ void fill_edge_run_starts_kernel(
-    int candidate_count,
-    const int *__restrict__ run_flags,
-    const int *__restrict__ run_ids,
-    int *__restrict__ run_starts) {
+__global__ void fill_edge_run_starts_kernel(int candidate_count, const int* __restrict__ run_flags,
+                                            const int* __restrict__ run_ids, int* __restrict__ run_starts) {
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= candidate_count || run_flags[idx] == 0)
         return;
     run_starts[run_ids[idx] - 1] = idx;
 }
 
-__global__ void compute_edge_output_counts_kernel(
-    int unique_edge_count,
-    int candidate_count,
-    const int *__restrict__ run_starts,
-    int *__restrict__ output_counts) {
+__global__ void compute_edge_output_counts_kernel(int unique_edge_count, int candidate_count,
+                                                  const int* __restrict__ run_starts, int* __restrict__ output_counts) {
     const int run = blockIdx.x * blockDim.x + threadIdx.x;
     if (run >= unique_edge_count)
         return;
     const int start = run_starts[run];
     const int end = (run + 1 < unique_edge_count) ? run_starts[run + 1] : candidate_count;
     const int incident_count = end - start;
-    output_counts[run] = (incident_count <= 1)
-        ? 1
-        : (incident_count * (incident_count - 1)) / 2;
+    output_counts[run] = (incident_count <= 1) ? 1 : (incident_count * (incident_count - 1)) / 2;
 }
 
 __global__ void emit_edge_topology_outputs_kernel(
-    int unique_edge_count,
-    int candidate_count,
-    int vertex_offset,
-    int shape_id,
-    const int *__restrict__ faces,
-    const uint64_t *__restrict__ sorted_keys,
-    const int *__restrict__ sorted_candidates,
-    const int *__restrict__ run_starts,
-    const int *__restrict__ output_offsets,
-    int *__restrict__ edge_v0,
-    int *__restrict__ edge_v1,
-    int *__restrict__ edge_face0,
-    int *__restrict__ edge_face1,
-    int *__restrict__ edge_opposite,
-    int *__restrict__ edge_shape_id,
-    int *__restrict__ edge_local_id) {
+    int unique_edge_count, int candidate_count, int vertex_offset, int shape_id, const int* __restrict__ faces,
+    const uint64_t* __restrict__ sorted_keys, const int* __restrict__ sorted_candidates,
+    const int* __restrict__ run_starts, const int* __restrict__ output_offsets, int* __restrict__ edge_v0,
+    int* __restrict__ edge_v1, int* __restrict__ edge_face0, int* __restrict__ edge_face1,
+    int* __restrict__ edge_opposite, int* __restrict__ edge_shape_id, int* __restrict__ edge_local_id) {
     const int run = blockIdx.x * blockDim.x + threadIdx.x;
     if (run >= unique_edge_count)
         return;
@@ -193,22 +151,8 @@ __global__ void emit_edge_topology_outputs_kernel(
 
     if (incident_count <= 1) {
         const int candidate0 = sorted_candidates[start];
-        write_edge_topology_record(
-            out_start,
-            v0,
-            v1,
-            shape_id,
-            vertex_offset,
-            faces,
-            candidate0,
-            -1,
-            edge_v0,
-            edge_v1,
-            edge_face0,
-            edge_face1,
-            edge_opposite,
-            edge_shape_id,
-            edge_local_id);
+        write_edge_topology_record(out_start, v0, v1, shape_id, vertex_offset, faces, candidate0, -1, edge_v0, edge_v1,
+                                   edge_face0, edge_face1, edge_opposite, edge_shape_id, edge_local_id);
         return;
     }
 
@@ -217,47 +161,20 @@ __global__ void emit_edge_topology_outputs_kernel(
         const int candidate0 = ordered_candidate(sorted_candidates, start, incident_count, i);
         for (int j = i + 1; j < incident_count; ++j) {
             const int candidate1 = ordered_candidate(sorted_candidates, start, incident_count, j);
-            write_edge_topology_record(
-                out_start + write_offset,
-                v0,
-                v1,
-                shape_id,
-                vertex_offset,
-                faces,
-                candidate0,
-                candidate1,
-                edge_v0,
-                edge_v1,
-                edge_face0,
-                edge_face1,
-                edge_opposite,
-                edge_shape_id,
-                edge_local_id);
+            write_edge_topology_record(out_start + write_offset, v0, v1, shape_id, vertex_offset, faces, candidate0,
+                                       candidate1, edge_v0, edge_v1, edge_face0, edge_face1, edge_opposite,
+                                       edge_shape_id, edge_local_id);
             ++write_offset;
         }
     }
 }
 
 __global__ void compute_triangle_soa_kernel(
-    int triangle_count,
-    const float *__restrict__ vertices,
-    const int *__restrict__ faces,
-    float *__restrict__ p0_x,
-    float *__restrict__ p0_y,
-    float *__restrict__ p0_z,
-    float *__restrict__ e1_x,
-    float *__restrict__ e1_y,
-    float *__restrict__ e1_z,
-    float *__restrict__ e2_x,
-    float *__restrict__ e2_y,
-    float *__restrict__ e2_z,
-    float *__restrict__ fn_x,
-    float *__restrict__ fn_y,
-    float *__restrict__ fn_z,
-    float4 *__restrict__ p0_packed,
-    float4 *__restrict__ e1_packed,
-    float4 *__restrict__ e2_packed,
-    float4 *__restrict__ fn_packed) {
+    int triangle_count, const float* __restrict__ vertices, const int* __restrict__ faces, float* __restrict__ p0_x,
+    float* __restrict__ p0_y, float* __restrict__ p0_z, float* __restrict__ e1_x, float* __restrict__ e1_y,
+    float* __restrict__ e1_z, float* __restrict__ e2_x, float* __restrict__ e2_y, float* __restrict__ e2_z,
+    float* __restrict__ fn_x, float* __restrict__ fn_y, float* __restrict__ fn_z, float4* __restrict__ p0_packed,
+    float4* __restrict__ e1_packed, float4* __restrict__ e2_packed, float4* __restrict__ fn_packed) {
     const int tri = blockIdx.x * blockDim.x + threadIdx.x;
     if (tri >= triangle_count) {
         return;
@@ -291,17 +208,10 @@ __global__ void compute_triangle_soa_kernel(
     fn_packed[tri] = make_float4(normal.x, normal.y, normal.z, 0.0f);
 }
 
-__global__ void compute_edge_soa_kernel(
-    int edge_count,
-    const float *__restrict__ vertices,
-    const int *__restrict__ edge_v0,
-    const int *__restrict__ edge_v1,
-    float *__restrict__ p0_x,
-    float *__restrict__ p0_y,
-    float *__restrict__ p0_z,
-    float *__restrict__ e1_x,
-    float *__restrict__ e1_y,
-    float *__restrict__ e1_z) {
+__global__ void compute_edge_soa_kernel(int edge_count, const float* __restrict__ vertices,
+                                        const int* __restrict__ edge_v0, const int* __restrict__ edge_v1,
+                                        float* __restrict__ p0_x, float* __restrict__ p0_y, float* __restrict__ p0_z,
+                                        float* __restrict__ e1_x, float* __restrict__ e1_y, float* __restrict__ e1_z) {
     const int edge = blockIdx.x * blockDim.x + threadIdx.x;
     if (edge >= edge_count) {
         return;
@@ -321,23 +231,18 @@ __global__ void compute_edge_soa_kernel(
     e1_z[edge] = edge1.z;
 }
 
-__global__ void compute_edge_search_stats_kernel(
-    int edge_count,
-    const float *__restrict__ p0_x,
-    const float *__restrict__ p0_y,
-    const float *__restrict__ p0_z,
-    const float *__restrict__ e1_x,
-    const float *__restrict__ e1_y,
-    const float *__restrict__ e1_z,
-    float *__restrict__ partials) {
+__global__ void compute_edge_search_stats_kernel(int edge_count, const float* __restrict__ p0_x,
+                                                 const float* __restrict__ p0_y, const float* __restrict__ p0_z,
+                                                 const float* __restrict__ e1_x, const float* __restrict__ e1_y,
+                                                 const float* __restrict__ e1_z, float* __restrict__ partials) {
     extern __shared__ float shared[];
-    float *min_x = shared;
-    float *min_y = min_x + blockDim.x;
-    float *min_z = min_y + blockDim.x;
-    float *max_x = min_z + blockDim.x;
-    float *max_y = max_x + blockDim.x;
-    float *max_z = max_y + blockDim.x;
-    float *max_len = max_z + blockDim.x;
+    float* min_x = shared;
+    float* min_y = min_x + blockDim.x;
+    float* min_z = min_y + blockDim.x;
+    float* max_x = min_z + blockDim.x;
+    float* max_y = max_x + blockDim.x;
+    float* max_z = max_y + blockDim.x;
+    float* max_len = max_z + blockDim.x;
 
     const int edge = blockIdx.x * blockDim.x + threadIdx.x;
     float local_min_x = FLT_MAX;
@@ -390,7 +295,7 @@ __global__ void compute_edge_search_stats_kernel(
     }
 
     if (lane == 0) {
-        float *out = partials + static_cast<int64_t>(blockIdx.x) * 7;
+        float* out = partials + static_cast<int64_t>(blockIdx.x) * 7;
         out[0] = min_x[0];
         out[1] = min_y[0];
         out[2] = min_z[0];
@@ -401,18 +306,16 @@ __global__ void compute_edge_search_stats_kernel(
     }
 }
 
-__global__ void finalize_edge_search_stats_kernel(
-    int partial_count,
-    const float *__restrict__ partials,
-    float *__restrict__ out_stats) {
+__global__ void finalize_edge_search_stats_kernel(int partial_count, const float* __restrict__ partials,
+                                                  float* __restrict__ out_stats) {
     extern __shared__ float shared[];
-    float *min_x = shared;
-    float *min_y = min_x + blockDim.x;
-    float *min_z = min_y + blockDim.x;
-    float *max_x = min_z + blockDim.x;
-    float *max_y = max_x + blockDim.x;
-    float *max_z = max_y + blockDim.x;
-    float *max_len = max_z + blockDim.x;
+    float* min_x = shared;
+    float* min_y = min_x + blockDim.x;
+    float* min_z = min_y + blockDim.x;
+    float* max_x = min_z + blockDim.x;
+    float* max_y = max_x + blockDim.x;
+    float* max_z = max_y + blockDim.x;
+    float* max_len = max_z + blockDim.x;
 
     float local_min_x = FLT_MAX;
     float local_min_y = FLT_MAX;
@@ -422,7 +325,7 @@ __global__ void finalize_edge_search_stats_kernel(
     float local_max_z = -FLT_MAX;
     float local_max_len = 0.0f;
     for (int block = threadIdx.x; block < partial_count; block += blockDim.x) {
-        const float *row = partials + static_cast<int64_t>(block) * 7;
+        const float* row = partials + static_cast<int64_t>(block) * 7;
         local_min_x = fminf(local_min_x, row[0]);
         local_min_y = fminf(local_min_y, row[1]);
         local_min_z = fminf(local_min_z, row[2]);
@@ -466,7 +369,7 @@ __global__ void finalize_edge_search_stats_kernel(
     }
 }
 
-void launch_require_count(int64_t count, const char *name) {
+void launch_require_count(int64_t count, const char* name) {
     if (count < 0 || count > static_cast<int64_t>(std::numeric_limits<int>::max())) {
         throw std::runtime_error(std::string(name) + ": count is outside int32 launch range.");
     }
@@ -474,10 +377,7 @@ void launch_require_count(int64_t count, const char *name) {
 
 } // namespace
 
-EdgeTopology build_edge_topology_cuda(
-    const at::Tensor &faces,
-    int32_t vertex_offset,
-    int32_t shape_id) {
+EdgeTopology build_edge_topology_cuda(const at::Tensor& faces, int32_t vertex_offset, int32_t shape_id) {
     at::Tensor faces_contiguous = faces.contiguous();
     const int64_t face_count = faces_contiguous.size(0);
     launch_require_count(face_count, "build_edge_topology_cuda(face_count)");
@@ -509,8 +409,7 @@ EdgeTopology build_edge_topology_cuda(
     const int64_t candidate_count = face_count * 3;
     const int candidate_count_i = static_cast<int>(candidate_count);
     const int face_blocks = static_cast<int>((face_count + block_size - 1) / block_size);
-    const int candidate_blocks =
-        static_cast<int>((candidate_count + block_size - 1) / block_size);
+    const int candidate_blocks = static_cast<int>((candidate_count + block_size - 1) / block_size);
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     cudaStream_t stream = torch_ctx.stream;
 
@@ -518,87 +417,43 @@ EdgeTopology build_edge_topology_cuda(
     at::Tensor keys_out = at::empty({candidate_count}, key_options);
     at::Tensor candidates_in = at::empty({candidate_count}, int_options);
     at::Tensor candidates_out = at::empty({candidate_count}, int_options);
-    auto *keys_in_ptr = reinterpret_cast<uint64_t *>(keys_in.data_ptr<int64_t>());
-    auto *keys_out_ptr = reinterpret_cast<uint64_t *>(keys_out.data_ptr<int64_t>());
+    auto* keys_in_ptr = reinterpret_cast<uint64_t*>(keys_in.data_ptr<int64_t>());
+    auto* keys_out_ptr = reinterpret_cast<uint64_t*>(keys_out.data_ptr<int64_t>());
 
-    emit_edge_candidates_kernel<<<face_blocks, block_size, 0, stream>>>(
-        face_count_i,
-        faces_contiguous.data_ptr<int>(),
-        keys_in_ptr,
-        candidates_in.data_ptr<int>());
+    emit_edge_candidates_kernel<<<face_blocks, block_size, 0, stream>>>(face_count_i, faces_contiguous.data_ptr<int>(),
+                                                                        keys_in_ptr, candidates_in.data_ptr<int>());
     cuda_check(cudaGetLastError(), "emit_edge_candidates_kernel");
 
     size_t sort_temp_bytes = 0;
-    cuda_check(
-        cub::DeviceRadixSort::SortPairs(
-            nullptr,
-            sort_temp_bytes,
-            keys_in_ptr,
-            keys_out_ptr,
-            candidates_in.data_ptr<int>(),
-            candidates_out.data_ptr<int>(),
-            candidate_count_i,
-            0,
-            64,
-            stream),
-        "cub::DeviceRadixSort::SortPairs(edge topology size)");
-    at::Tensor sort_temp = at::empty(
-        {std::max<int64_t>(1, static_cast<int64_t>(sort_temp_bytes))},
-        byte_options);
-    cuda_check(
-        cub::DeviceRadixSort::SortPairs(
-            sort_temp.data_ptr<uint8_t>(),
-            sort_temp_bytes,
-            keys_in_ptr,
-            keys_out_ptr,
-            candidates_in.data_ptr<int>(),
-            candidates_out.data_ptr<int>(),
-            candidate_count_i,
-            0,
-            64,
-            stream),
-        "cub::DeviceRadixSort::SortPairs(edge topology)");
+    cuda_check(cub::DeviceRadixSort::SortPairs(nullptr, sort_temp_bytes, keys_in_ptr, keys_out_ptr,
+                                               candidates_in.data_ptr<int>(), candidates_out.data_ptr<int>(),
+                                               candidate_count_i, 0, 64, stream),
+               "cub::DeviceRadixSort::SortPairs(edge topology size)");
+    at::Tensor sort_temp = at::empty({std::max<int64_t>(1, static_cast<int64_t>(sort_temp_bytes))}, byte_options);
+    cuda_check(cub::DeviceRadixSort::SortPairs(sort_temp.data_ptr<uint8_t>(), sort_temp_bytes, keys_in_ptr,
+                                               keys_out_ptr, candidates_in.data_ptr<int>(),
+                                               candidates_out.data_ptr<int>(), candidate_count_i, 0, 64, stream),
+               "cub::DeviceRadixSort::SortPairs(edge topology)");
 
     at::Tensor run_flags = at::empty({candidate_count}, int_options);
     at::Tensor run_ids = at::empty({candidate_count}, int_options);
-    mark_edge_key_runs_kernel<<<candidate_blocks, block_size, 0, stream>>>(
-        candidate_count_i,
-        keys_out_ptr,
-        run_flags.data_ptr<int>());
+    mark_edge_key_runs_kernel<<<candidate_blocks, block_size, 0, stream>>>(candidate_count_i, keys_out_ptr,
+                                                                           run_flags.data_ptr<int>());
     cuda_check(cudaGetLastError(), "mark_edge_key_runs_kernel");
 
     size_t scan_temp_bytes = 0;
-    cuda_check(
-        cub::DeviceScan::InclusiveSum(
-            nullptr,
-            scan_temp_bytes,
-            run_flags.data_ptr<int>(),
-            run_ids.data_ptr<int>(),
-            candidate_count_i,
-            stream),
-        "cub::DeviceScan::InclusiveSum(edge runs size)");
-    at::Tensor scan_temp = at::empty(
-        {std::max<int64_t>(1, static_cast<int64_t>(scan_temp_bytes))},
-        byte_options);
-    cuda_check(
-        cub::DeviceScan::InclusiveSum(
-            scan_temp.data_ptr<uint8_t>(),
-            scan_temp_bytes,
-            run_flags.data_ptr<int>(),
-            run_ids.data_ptr<int>(),
-            candidate_count_i,
-            stream),
-        "cub::DeviceScan::InclusiveSum(edge runs)");
+    cuda_check(cub::DeviceScan::InclusiveSum(nullptr, scan_temp_bytes, run_flags.data_ptr<int>(),
+                                             run_ids.data_ptr<int>(), candidate_count_i, stream),
+               "cub::DeviceScan::InclusiveSum(edge runs size)");
+    at::Tensor scan_temp = at::empty({std::max<int64_t>(1, static_cast<int64_t>(scan_temp_bytes))}, byte_options);
+    cuda_check(cub::DeviceScan::InclusiveSum(scan_temp.data_ptr<uint8_t>(), scan_temp_bytes, run_flags.data_ptr<int>(),
+                                             run_ids.data_ptr<int>(), candidate_count_i, stream),
+               "cub::DeviceScan::InclusiveSum(edge runs)");
 
     int unique_edge_count = 0;
-    cuda_check(
-        cudaMemcpyAsync(
-            &unique_edge_count,
-            run_ids.data_ptr<int>() + candidate_count_i - 1,
-            sizeof(int),
-            cudaMemcpyDeviceToHost,
-            stream),
-        "cudaMemcpyAsync(unique edge count)");
+    cuda_check(cudaMemcpyAsync(&unique_edge_count, run_ids.data_ptr<int>() + candidate_count_i - 1, sizeof(int),
+                               cudaMemcpyDeviceToHost, stream),
+               "cudaMemcpyAsync(unique edge count)");
     cuda_check(cudaStreamSynchronize(stream), "cudaStreamSynchronize(unique edge count)");
     if (unique_edge_count <= 0) {
         return make_empty();
@@ -609,53 +464,32 @@ EdgeTopology build_edge_topology_cuda(
     at::Tensor output_counts = at::empty({unique_edge_count}, int_options);
     at::Tensor output_offsets = at::empty({unique_edge_count}, int_options);
     const int unique_blocks = (unique_edge_count + block_size - 1) / block_size;
-    fill_edge_run_starts_kernel<<<candidate_blocks, block_size, 0, stream>>>(
-        candidate_count_i,
-        run_flags.data_ptr<int>(),
-        run_ids.data_ptr<int>(),
-        run_starts.data_ptr<int>());
+    fill_edge_run_starts_kernel<<<candidate_blocks, block_size, 0, stream>>>(candidate_count_i,
+                                                                             run_flags.data_ptr<int>(),
+                                                                             run_ids.data_ptr<int>(),
+                                                                             run_starts.data_ptr<int>());
     cuda_check(cudaGetLastError(), "fill_edge_run_starts_kernel");
-    compute_edge_output_counts_kernel<<<unique_blocks, block_size, 0, stream>>>(
-        unique_edge_count,
-        candidate_count_i,
-        run_starts.data_ptr<int>(),
-        output_counts.data_ptr<int>());
+    compute_edge_output_counts_kernel<<<unique_blocks, block_size, 0, stream>>>(unique_edge_count, candidate_count_i,
+                                                                                run_starts.data_ptr<int>(),
+                                                                                output_counts.data_ptr<int>());
     cuda_check(cudaGetLastError(), "compute_edge_output_counts_kernel");
 
     size_t output_scan_temp_bytes = 0;
-    cuda_check(
-        cub::DeviceScan::InclusiveSum(
-            nullptr,
-            output_scan_temp_bytes,
-            output_counts.data_ptr<int>(),
-            output_offsets.data_ptr<int>(),
-            unique_edge_count,
-            stream),
-        "cub::DeviceScan::InclusiveSum(edge output offsets size)");
+    cuda_check(cub::DeviceScan::InclusiveSum(nullptr, output_scan_temp_bytes, output_counts.data_ptr<int>(),
+                                             output_offsets.data_ptr<int>(), unique_edge_count, stream),
+               "cub::DeviceScan::InclusiveSum(edge output offsets size)");
     if (output_scan_temp_bytes > static_cast<size_t>(scan_temp.numel())) {
-        scan_temp = at::empty(
-            {std::max<int64_t>(1, static_cast<int64_t>(output_scan_temp_bytes))},
-            byte_options);
+        scan_temp = at::empty({std::max<int64_t>(1, static_cast<int64_t>(output_scan_temp_bytes))}, byte_options);
     }
-    cuda_check(
-        cub::DeviceScan::InclusiveSum(
-            scan_temp.data_ptr<uint8_t>(),
-            output_scan_temp_bytes,
-            output_counts.data_ptr<int>(),
-            output_offsets.data_ptr<int>(),
-            unique_edge_count,
-            stream),
-        "cub::DeviceScan::InclusiveSum(edge output offsets)");
+    cuda_check(cub::DeviceScan::InclusiveSum(scan_temp.data_ptr<uint8_t>(), output_scan_temp_bytes,
+                                             output_counts.data_ptr<int>(), output_offsets.data_ptr<int>(),
+                                             unique_edge_count, stream),
+               "cub::DeviceScan::InclusiveSum(edge output offsets)");
 
     int edge_count = 0;
-    cuda_check(
-        cudaMemcpyAsync(
-            &edge_count,
-            output_offsets.data_ptr<int>() + unique_edge_count - 1,
-            sizeof(int),
-            cudaMemcpyDeviceToHost,
-            stream),
-        "cudaMemcpyAsync(edge topology output count)");
+    cuda_check(cudaMemcpyAsync(&edge_count, output_offsets.data_ptr<int>() + unique_edge_count - 1, sizeof(int),
+                               cudaMemcpyDeviceToHost, stream),
+               "cudaMemcpyAsync(edge topology output count)");
     cuda_check(cudaStreamSynchronize(stream), "cudaStreamSynchronize(edge topology output count)");
     if (edge_count <= 0) {
         return make_empty();
@@ -672,37 +506,19 @@ EdgeTopology build_edge_topology_cuda(
     topology.edge_local_id = at::empty({edge_count}, int_options);
 
     emit_edge_topology_outputs_kernel<<<unique_blocks, block_size, 0, stream>>>(
-        unique_edge_count,
-        candidate_count_i,
-        vertex_offset,
-        shape_id,
-        faces_contiguous.data_ptr<int>(),
-        keys_out_ptr,
-        candidates_out.data_ptr<int>(),
-        run_starts.data_ptr<int>(),
-        output_offsets.data_ptr<int>(),
-        topology.edge_v0.data_ptr<int>(),
-        topology.edge_v1.data_ptr<int>(),
-        topology.edge_face0.data_ptr<int>(),
-        topology.edge_face1.data_ptr<int>(),
-        topology.edge_opposite.data_ptr<int>(),
-        topology.edge_shape_id.data_ptr<int>(),
-        topology.edge_local_id.data_ptr<int>());
+        unique_edge_count, candidate_count_i, vertex_offset, shape_id, faces_contiguous.data_ptr<int>(), keys_out_ptr,
+        candidates_out.data_ptr<int>(), run_starts.data_ptr<int>(), output_offsets.data_ptr<int>(),
+        topology.edge_v0.data_ptr<int>(), topology.edge_v1.data_ptr<int>(), topology.edge_face0.data_ptr<int>(),
+        topology.edge_face1.data_ptr<int>(), topology.edge_opposite.data_ptr<int>(),
+        topology.edge_shape_id.data_ptr<int>(), topology.edge_local_id.data_ptr<int>());
     cuda_check(cudaGetLastError(), "emit_edge_topology_outputs_kernel");
 
     return topology;
 }
 
-void pack_global_geometry_cuda(
-    const at::Tensor &mesh_vertices,
-    const at::Tensor &mesh_faces,
-    int32_t vertex_offset,
-    int32_t face_offset,
-    int32_t shape_id,
-    at::Tensor &global_vertices,
-    at::Tensor &global_faces,
-    at::Tensor &face_shape_id,
-    at::Tensor &face_local_id) {
+void pack_global_geometry_cuda(const at::Tensor& mesh_vertices, const at::Tensor& mesh_faces, int32_t vertex_offset,
+                               int32_t face_offset, int32_t shape_id, at::Tensor& global_vertices,
+                               at::Tensor& global_faces, at::Tensor& face_shape_id, at::Tensor& face_local_id) {
     const int64_t vertex_count = mesh_vertices.size(0);
     const int64_t face_count = mesh_faces.size(0);
     const int64_t launch_count = std::max(vertex_count, face_count);
@@ -726,22 +542,16 @@ void pack_global_geometry_cuda(
         face_local_id.data_ptr<int>(),
         torch_ctx.stream,
     };
-    cuda_check(
-        shared::scene::launch_pack_global_geometry_async(params),
-        "launch_pack_global_geometry_async");
+    cuda_check(shared::scene::launch_pack_global_geometry_async(params), "launch_pack_global_geometry_async");
 }
 
-void pack_global_vertex_tangent_cuda(
-    const at::Tensor &mesh_tangent,
-    int64_t vertex_offset,
-    int64_t vertex_count,
-    at::Tensor &global_tangent) {
+void pack_global_vertex_tangent_cuda(const at::Tensor& mesh_tangent, int64_t vertex_offset, int64_t vertex_count,
+                                     at::Tensor& global_tangent) {
     launch_require_count(vertex_count, "pack_global_vertex_tangent_cuda()");
     if (vertex_count == 0) {
         return;
     }
-    if (vertex_offset < 0 ||
-        vertex_offset > static_cast<int64_t>(std::numeric_limits<int>::max()) ||
+    if (vertex_offset < 0 || vertex_offset > static_cast<int64_t>(std::numeric_limits<int>::max()) ||
         vertex_count > static_cast<int64_t>(std::numeric_limits<int>::max())) {
         throw std::runtime_error("pack_global_vertex_tangent_cuda(): vertex range exceeds int32.");
     }
@@ -754,21 +564,16 @@ void pack_global_vertex_tangent_cuda(
         global_tangent.data_ptr<float>(),
         torch_ctx.stream,
     };
-    cuda_check(
-        shared::scene::launch_pack_global_vertex_tangent_async(params),
-        "launch_pack_global_vertex_tangent_async");
+    cuda_check(shared::scene::launch_pack_global_vertex_tangent_async(params),
+               "launch_pack_global_vertex_tangent_async");
 }
 
-void zero_global_vertex_tangent_range_cuda(
-    int64_t vertex_offset,
-    int64_t vertex_count,
-    at::Tensor &global_tangent) {
+void zero_global_vertex_tangent_range_cuda(int64_t vertex_offset, int64_t vertex_count, at::Tensor& global_tangent) {
     launch_require_count(vertex_count, "zero_global_vertex_tangent_range_cuda()");
     if (vertex_count == 0) {
         return;
     }
-    if (vertex_offset < 0 ||
-        vertex_offset > static_cast<int64_t>(std::numeric_limits<int>::max()) ||
+    if (vertex_offset < 0 || vertex_offset > static_cast<int64_t>(std::numeric_limits<int>::max()) ||
         vertex_count > static_cast<int64_t>(std::numeric_limits<int>::max())) {
         throw std::runtime_error("zero_global_vertex_tangent_range_cuda(): vertex range exceeds int32.");
     }
@@ -780,31 +585,16 @@ void zero_global_vertex_tangent_range_cuda(
         global_tangent.data_ptr<float>(),
         torch_ctx.stream,
     };
-    cuda_check(
-        shared::scene::launch_zero_global_vertex_tangent_range_async(params),
-        "launch_zero_global_vertex_tangent_range_async");
+    cuda_check(shared::scene::launch_zero_global_vertex_tangent_range_async(params),
+               "launch_zero_global_vertex_tangent_range_async");
 }
 
-void compute_triangle_soa_cuda(
-    int64_t triangle_count,
-    const at::Tensor &vertices,
-    const at::Tensor &faces,
-    at::Tensor &tri_p0_x,
-    at::Tensor &tri_p0_y,
-    at::Tensor &tri_p0_z,
-    at::Tensor &tri_e1_x,
-    at::Tensor &tri_e1_y,
-    at::Tensor &tri_e1_z,
-    at::Tensor &tri_e2_x,
-    at::Tensor &tri_e2_y,
-    at::Tensor &tri_e2_z,
-    at::Tensor &tri_fn_x,
-    at::Tensor &tri_fn_y,
-    at::Tensor &tri_fn_z,
-    at::Tensor &tri_p0_packed,
-    at::Tensor &tri_e1_packed,
-    at::Tensor &tri_e2_packed,
-    at::Tensor &tri_fn_packed) {
+void compute_triangle_soa_cuda(int64_t triangle_count, const at::Tensor& vertices, const at::Tensor& faces,
+                               at::Tensor& tri_p0_x, at::Tensor& tri_p0_y, at::Tensor& tri_p0_z, at::Tensor& tri_e1_x,
+                               at::Tensor& tri_e1_y, at::Tensor& tri_e1_z, at::Tensor& tri_e2_x, at::Tensor& tri_e2_y,
+                               at::Tensor& tri_e2_z, at::Tensor& tri_fn_x, at::Tensor& tri_fn_y, at::Tensor& tri_fn_z,
+                               at::Tensor& tri_p0_packed, at::Tensor& tri_e1_packed, at::Tensor& tri_e2_packed,
+                               at::Tensor& tri_fn_packed) {
     launch_require_count(triangle_count, "compute_triangle_soa_cuda()");
     if (triangle_count == 0) {
         return;
@@ -814,38 +604,19 @@ void compute_triangle_soa_cuda(
     const int block_count = static_cast<int>((triangle_count + block_size - 1) / block_size);
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     compute_triangle_soa_kernel<<<block_count, block_size, 0, torch_ctx.stream>>>(
-        static_cast<int>(triangle_count),
-        vertices.data_ptr<float>(),
-        faces.data_ptr<int>(),
-        tri_p0_x.data_ptr<float>(),
-        tri_p0_y.data_ptr<float>(),
-        tri_p0_z.data_ptr<float>(),
-        tri_e1_x.data_ptr<float>(),
-        tri_e1_y.data_ptr<float>(),
-        tri_e1_z.data_ptr<float>(),
-        tri_e2_x.data_ptr<float>(),
-        tri_e2_y.data_ptr<float>(),
-        tri_e2_z.data_ptr<float>(),
-        tri_fn_x.data_ptr<float>(),
-        tri_fn_y.data_ptr<float>(),
-        tri_fn_z.data_ptr<float>(),
-        reinterpret_cast<float4 *>(tri_p0_packed.data_ptr<float>()),
-        reinterpret_cast<float4 *>(tri_e1_packed.data_ptr<float>()),
-        reinterpret_cast<float4 *>(tri_e2_packed.data_ptr<float>()),
-        reinterpret_cast<float4 *>(tri_fn_packed.data_ptr<float>()));
+        static_cast<int>(triangle_count), vertices.data_ptr<float>(), faces.data_ptr<int>(), tri_p0_x.data_ptr<float>(),
+        tri_p0_y.data_ptr<float>(), tri_p0_z.data_ptr<float>(), tri_e1_x.data_ptr<float>(), tri_e1_y.data_ptr<float>(),
+        tri_e1_z.data_ptr<float>(), tri_e2_x.data_ptr<float>(), tri_e2_y.data_ptr<float>(), tri_e2_z.data_ptr<float>(),
+        tri_fn_x.data_ptr<float>(), tri_fn_y.data_ptr<float>(), tri_fn_z.data_ptr<float>(),
+        reinterpret_cast<float4*>(tri_p0_packed.data_ptr<float>()),
+        reinterpret_cast<float4*>(tri_e1_packed.data_ptr<float>()),
+        reinterpret_cast<float4*>(tri_e2_packed.data_ptr<float>()),
+        reinterpret_cast<float4*>(tri_fn_packed.data_ptr<float>()));
 }
 
-void compute_edge_soa_cuda(
-    int64_t edge_count,
-    const at::Tensor &vertices,
-    const at::Tensor &edge_v0,
-    const at::Tensor &edge_v1,
-    at::Tensor &edge_p0_x,
-    at::Tensor &edge_p0_y,
-    at::Tensor &edge_p0_z,
-    at::Tensor &edge_e1_x,
-    at::Tensor &edge_e1_y,
-    at::Tensor &edge_e1_z) {
+void compute_edge_soa_cuda(int64_t edge_count, const at::Tensor& vertices, const at::Tensor& edge_v0,
+                           const at::Tensor& edge_v1, at::Tensor& edge_p0_x, at::Tensor& edge_p0_y,
+                           at::Tensor& edge_p0_z, at::Tensor& edge_e1_x, at::Tensor& edge_e1_y, at::Tensor& edge_e1_z) {
     launch_require_count(edge_count, "compute_edge_soa_cuda()");
     if (edge_count == 0) {
         return;
@@ -855,26 +626,15 @@ void compute_edge_soa_cuda(
     const int block_count = static_cast<int>((edge_count + block_size - 1) / block_size);
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     compute_edge_soa_kernel<<<block_count, block_size, 0, torch_ctx.stream>>>(
-        static_cast<int>(edge_count),
-        vertices.data_ptr<float>(),
-        edge_v0.data_ptr<int>(),
-        edge_v1.data_ptr<int>(),
-        edge_p0_x.data_ptr<float>(),
-        edge_p0_y.data_ptr<float>(),
-        edge_p0_z.data_ptr<float>(),
-        edge_e1_x.data_ptr<float>(),
-        edge_e1_y.data_ptr<float>(),
-        edge_e1_z.data_ptr<float>());
+        static_cast<int>(edge_count), vertices.data_ptr<float>(), edge_v0.data_ptr<int>(), edge_v1.data_ptr<int>(),
+        edge_p0_x.data_ptr<float>(), edge_p0_y.data_ptr<float>(), edge_p0_z.data_ptr<float>(),
+        edge_e1_x.data_ptr<float>(), edge_e1_y.data_ptr<float>(), edge_e1_z.data_ptr<float>());
 }
 
-EdgeSearchStats compute_edge_search_stats_cuda(
-    int64_t edge_count,
-    const at::Tensor &edge_p0_x,
-    const at::Tensor &edge_p0_y,
-    const at::Tensor &edge_p0_z,
-    const at::Tensor &edge_e1_x,
-    const at::Tensor &edge_e1_y,
-    const at::Tensor &edge_e1_z) {
+EdgeSearchStats compute_edge_search_stats_cuda(int64_t edge_count, const at::Tensor& edge_p0_x,
+                                               const at::Tensor& edge_p0_y, const at::Tensor& edge_p0_z,
+                                               const at::Tensor& edge_e1_x, const at::Tensor& edge_e1_y,
+                                               const at::Tensor& edge_e1_z) {
     launch_require_count(edge_count, "compute_edge_search_stats_cuda()");
     EdgeSearchStats stats;
     if (edge_count == 0) {
@@ -885,35 +645,21 @@ EdgeSearchStats compute_edge_search_stats_cuda(
     const int block_count = static_cast<int>((edge_count + block_size - 1) / block_size);
     at::Tensor partials = at::empty({block_count, 7}, edge_p0_x.options());
     TorchCudaContext torch_ctx = current_torch_cuda_context();
-    compute_edge_search_stats_kernel<<<
-        block_count,
-        block_size,
-        sizeof(float) * block_size * 7,
-        torch_ctx.stream>>>(
-        static_cast<int>(edge_count),
-        edge_p0_x.data_ptr<float>(),
-        edge_p0_y.data_ptr<float>(),
-        edge_p0_z.data_ptr<float>(),
-        edge_e1_x.data_ptr<float>(),
-        edge_e1_y.data_ptr<float>(),
-        edge_e1_z.data_ptr<float>(),
-        partials.data_ptr<float>());
+    compute_edge_search_stats_kernel<<<block_count, block_size, sizeof(float) * block_size * 7, torch_ctx.stream>>>(
+        static_cast<int>(edge_count), edge_p0_x.data_ptr<float>(), edge_p0_y.data_ptr<float>(),
+        edge_p0_z.data_ptr<float>(), edge_e1_x.data_ptr<float>(), edge_e1_y.data_ptr<float>(),
+        edge_e1_z.data_ptr<float>(), partials.data_ptr<float>());
     cuda_check(cudaGetLastError(), "compute_edge_search_stats_kernel");
 
     at::Tensor stats_gpu = at::empty({7}, edge_p0_x.options());
     constexpr int finalize_block_size = 256;
-    finalize_edge_search_stats_kernel<<<
-        1,
-        finalize_block_size,
-        sizeof(float) * finalize_block_size * 7,
-        torch_ctx.stream>>>(
-        block_count,
-        partials.data_ptr<float>(),
-        stats_gpu.data_ptr<float>());
+    finalize_edge_search_stats_kernel<<<1, finalize_block_size, sizeof(float) * finalize_block_size * 7,
+                                        torch_ctx.stream>>>(block_count, partials.data_ptr<float>(),
+                                                            stats_gpu.data_ptr<float>());
     cuda_check(cudaGetLastError(), "finalize_edge_search_stats_kernel");
 
     at::Tensor stats_cpu = stats_gpu.cpu();
-    const float *values = stats_cpu.data_ptr<float>();
+    const float* values = stats_cpu.data_ptr<float>();
     stats.has_edges = true;
     stats.min_x = values[0];
     stats.min_y = values[1];

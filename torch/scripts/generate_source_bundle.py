@@ -24,10 +24,7 @@ INTEGRATION_ABI_PATHS = (
     "include/rayd/transmission.h",
     "include/rayd/visibility.h",
 )
-BUNDLED_PUBLIC_HEADERS = (
-    *INTEGRATION_ABI_PATHS,
-    "include/rayd/path_exchange.h",
-)
+BUNDLED_PUBLIC_HEADERS = (*INTEGRATION_ABI_PATHS, "include/rayd/path_exchange.h")
 SOURCE_INPUTS = (
     "LICENSE",
     "torch/CMakeLists.txt",
@@ -49,6 +46,7 @@ SOURCE_INPUTS = (
     "src",
     "cmake",
 )
+
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -79,9 +77,7 @@ def _header_set(source_root: Path) -> tuple[list[dict[str, str]], str]:
 
 def _write_json(path: Path, value: object) -> None:
     path.write_text(
-        json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-        newline="\n",
+        json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n"
     )
 
 
@@ -114,12 +110,7 @@ def _source_files(workspace: Path) -> list[Path]:
 
 
 def generate(
-    workspace: Path,
-    output: Path,
-    *,
-    distribution_version: str,
-    commit: str | None,
-    repository_url: str | None,
+    workspace: Path, output: Path, *, distribution_version: str, commit: str | None, repository_url: str | None
 ) -> None:
     workspace = workspace.resolve(strict=True)
     git_commit = _git_value(workspace, "rev-parse", "HEAD")
@@ -128,9 +119,7 @@ def generate(
     resolved_commit = commit or git_commit
     resolved_repository_url = repository_url or git_repository_url
     if not resolved_commit or len(resolved_commit) != 40:
-        raise RuntimeError(
-            "RayD source commit is unavailable; pass --commit when building outside a Git checkout"
-        )
+        raise RuntimeError("RayD source commit is unavailable; pass --commit when building outside a Git checkout")
     if not resolved_repository_url:
         raise RuntimeError(
             "RayD repository URL is unavailable; pass --repository-url when building outside a Git checkout"
@@ -147,9 +136,7 @@ def generate(
         destination = source_root / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
-        manifest_files.append(
-            {"path": relative.as_posix(), "sha256": _sha256(destination)}
-        )
+        manifest_files.append({"path": relative.as_posix(), "sha256": _sha256(destination)})
 
     manifest_path = output / "source-files.json"
     _write_json(manifest_path, {"schema_version": 1, "files": manifest_files})
@@ -165,18 +152,12 @@ def generate(
         output / "rayd-source.json",
         {
             "schema_version": 2,
-            "distribution": {
-                "name": "rayd-torch",
-                "version": distribution_version,
-            },
+            "distribution": {"name": "rayd-torch", "version": distribution_version},
             "repository_url": resolved_repository_url,
             "commit": resolved_commit,
             "dirty": git_status not in (None, ""),
             "source_root": "source",
-            "source_manifest": {
-                "path": "source-files.json",
-                "sha256": _sha256(manifest_path),
-            },
+            "source_manifest": {"path": "source-files.json", "sha256": _sha256(manifest_path)},
             "integration_abi": {
                 "kind": "source-header-set-sha256",
                 "entrypoint": INTEGRATION_ABI_PATH,

@@ -24,9 +24,7 @@ def main() -> None:
     n = 64 if args.quick else 128
     qn = 4096 if args.quick else 32768
     xs, ys = torch.meshgrid(
-        torch.linspace(0, 1, n, device="cuda"),
-        torch.linspace(0, 1, n, device="cuda"),
-        indexing="ij",
+        torch.linspace(0, 1, n, device="cuda"), torch.linspace(0, 1, n, device="cuda"), indexing="ij"
     )
     verts = torch.stack([xs.reshape(-1), ys.reshape(-1), torch.zeros(n * n, device="cuda")], dim=1).contiguous()
     faces = []

@@ -36,9 +36,7 @@ from pathlib import Path
 import torch
 
 
-_EXAMPLES = (
-    Path(__file__).resolve().parents[2] / "examples" / "torch" / "distributed"
-)
+_EXAMPLES = Path(__file__).resolve().parents[2] / "examples" / "torch" / "distributed"
 _INTERSECT_EXAMPLE = _EXAMPLES / "ddp_intersect_train.py"
 _ACCUM_EXAMPLE = _EXAMPLES / "ddp_accum_grids.py"
 
@@ -82,9 +80,7 @@ def _launch_env(cache_root: str) -> dict[str, str]:
     package_root = str(Path(rt.__file__).resolve().parents[2])
     env = dict(os.environ)
     existing = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = (
-        package_root if not existing else os.pathsep.join((package_root, existing))
-    )
+    env["PYTHONPATH"] = package_root if not existing else os.pathsep.join((package_root, existing))
     env["RAYD_EXAMPLE_OPTIX_CACHE_ROOT"] = cache_root
     env.pop("OPTIX_CACHE_PATH", None)
     return env
@@ -124,15 +120,8 @@ class _Launcher:
         except subprocess.TimeoutExpired:
             os.killpg(os.getpgid(process.pid), signal.SIGKILL)
             output, _ = process.communicate()
-            self._test.fail(
-                f"{script.name} did not finish within "
-                f"{_LAUNCH_TIMEOUT_SECONDS:.0f}s; output:\n{output}"
-            )
-        self._test.assertEqual(
-            process.returncode,
-            0,
-            f"{script.name} exited {process.returncode}; output:\n{output}",
-        )
+            self._test.fail(f"{script.name} did not finish within {_LAUNCH_TIMEOUT_SECONDS:.0f}s; output:\n{output}")
+        self._test.assertEqual(process.returncode, 0, f"{script.name} exited {process.returncode}; output:\n{output}")
         return output
 
 
@@ -169,9 +158,7 @@ class DistributedLaneArithmeticTests(unittest.TestCase):
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA torch is required")
-@unittest.skipUnless(
-    torch.cuda.device_count() >= 2, "two CUDA devices are required"
-)
+@unittest.skipUnless(torch.cuda.device_count() >= 2, "two CUDA devices are required")
 @unittest.skipUnless(
     torch.distributed.is_available() and torch.distributed.is_nccl_available(),
     "torch.distributed with NCCL is required",
@@ -184,22 +171,12 @@ class DistributedRecipeTests(unittest.TestCase):
         self.launcher = _Launcher(self, self._cache.name)
 
     def test_ddp_intersect_train_keeps_the_ranks_bitwise_identical(self):
-        output = self.launcher.run(
-            _INTERSECT_EXAMPLE,
-            "--steps=6",
-            "--check-every=3",
-            "--rays=65536",
-            "--cells=16",
-        )
+        output = self.launcher.run(_INTERSECT_EXAMPLE, "--steps=6", "--check-every=3", "--rays=65536", "--cells=16")
         # Two ranks writing to one pipe can interleave inside a line, so match
         # the tokens rather than parsing lines.
         digests = re.findall(r"final_param_sha256=([0-9a-f]{64})", output)
         self.assertEqual(len(digests), 2, f"expected two rank hashes; got:\n{output}")
-        self.assertEqual(
-            digests[0],
-            digests[1],
-            f"ranks diverged: {digests[0]} vs {digests[1]}\n{output}",
-        )
+        self.assertEqual(digests[0], digests[1], f"ranks diverged: {digests[0]} vs {digests[1]}\n{output}")
         # The in-run drift assertion has to have actually fired, or the hash
         # agreement above is the only thing that ran.
         self.assertGreaterEqual(len(re.findall(r"drift=0", output)), 4, output)
@@ -230,16 +207,7 @@ class DistributedRecipeTests(unittest.TestCase):
         # partition exactly that space.
         device = torch.device("cuda", 0)
         scene, states, material, grid = module.build_fixture(device, resolution)
-        reference = module.accumulate(
-            scene,
-            states,
-            material,
-            grid,
-            total=total,
-            seed=seed,
-            begin=0,
-            count=-1,
-        )
+        reference = module.accumulate(scene, states, material, grid, total=total, seed=seed, begin=0, count=-1)
 
         for name in module.COUNT_GRIDS:
             # Counts are integers: the partition is exact or it is wrong.
@@ -251,9 +219,7 @@ class DistributedRecipeTests(unittest.TestCase):
             expected = getattr(reference, name).cpu()
             # The only admissible difference is the order the identical set of
             # sample contributions was summed in.
-            torch.testing.assert_close(
-                merged[name], expected, rtol=1e-4, atol=1e-9, msg=f"{name} mismatch"
-            )
+            torch.testing.assert_close(merged[name], expected, rtol=1e-4, atol=1e-9, msg=f"{name} mismatch")
         self.assertGreater(
             float(getattr(reference, "power").double().sum()),
             0.0,

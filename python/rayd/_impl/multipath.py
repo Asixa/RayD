@@ -170,7 +170,9 @@ def _make_intersect_function(fused: bool):
             else:
                 ctx.mesh_count = len(inputs) - mesh_at
                 ctx.save_for_forward(ray_o, ray_d, active, tape_prim_id, tape_barycentric, t)
-            ctx.mark_non_differentiable(shape_id, prim_id, local_prim_id, global_prim_id, tape_prim_id, tape_barycentric, active)
+            ctx.mark_non_differentiable(
+                shape_id, prim_id, local_prim_id, global_prim_id, tape_prim_id, tape_barycentric, active
+            )
 
         @staticmethod
         def backward(ctx, *grad_outputs):
@@ -179,7 +181,9 @@ def _make_intersect_function(fused: bool):
             if fused:
                 need_grad_vertices = bool(ctx.needs_input_grad[vertex_at])
             else:
-                needs_mesh_grad = tuple(bool(value) for value in ctx.needs_input_grad[mesh_at : mesh_at + ctx.mesh_count])
+                needs_mesh_grad = tuple(
+                    bool(value) for value in ctx.needs_input_grad[mesh_at : mesh_at + ctx.mesh_count]
+                )
                 need_grad_vertices = any(needs_mesh_grad)
             need_grad_ray_o = bool(ctx.needs_input_grad[ray_o_at])
             need_grad_ray_d = bool(ctx.needs_input_grad[ray_d_at])
@@ -257,7 +261,9 @@ def _make_intersect_function(fused: bool):
                 ray_o, ray_d, active, tape_prim_id, tape_barycentric, _tape_t = ctx.saved_tensors
                 native_mesh_tangents = tuple(_native_tangent_or_none(value) for value in tangents[mesh_at:])
                 with torch._C._DisableFuncTorch():
-                    packed_tangents = torch.ops.rayd_torch.pack_scene_vertex_tangents(ctx.scene, list(native_mesh_tangents))
+                    packed_tangents = torch.ops.rayd_torch.pack_scene_vertex_tangents(
+                        ctx.scene, list(native_mesh_tangents)
+                    )
             with torch._C._DisableFuncTorch():
                 values = torch.ops.rayd_torch.intersect_jvp_optional(
                     ctx.scene,
@@ -288,9 +294,7 @@ def _make_intersect_function(fused: bool):
                 None,
             )
 
-    return _named_autograd_function(
-        _Fn, "_IntersectFunction" if fused else "_IntersectMeshesFunction"
-    )
+    return _named_autograd_function(_Fn, "_IntersectFunction" if fused else "_IntersectMeshesFunction")
 
 
 _IntersectFunction = _make_intersect_function(True)
@@ -310,27 +314,15 @@ def intersect(
     tracked_vertices = (vertices,) if mesh_vertices is None else tuple(mesh_vertices)
     if len(tracked_vertices) > 1:
         values = _IntersectMeshesFunction.apply(
-            scene_handle,
-            ray_o,
-            ray_d,
-            ray_tmax,
-            active,
-            int(flags),
-            *tracked_vertices,
+            scene_handle, ray_o, ray_d, ray_tmax, active, int(flags), *tracked_vertices
         )
         return Intersection(*values[:10])
     if not _needs_forward_ad(vertices, ray_o, ray_d, ray_tmax):
-        values = torch.ops.rayd_torch.intersect_ad_flags(scene_handle, vertices, ray_o, ray_d, ray_tmax, active, int(flags))
+        values = torch.ops.rayd_torch.intersect_ad_flags(
+            scene_handle, vertices, ray_o, ray_d, ray_tmax, active, int(flags)
+        )
         return Intersection(*values)
-    values = _IntersectFunction.apply(
-        scene_handle,
-        vertices,
-        ray_o,
-        ray_d,
-        ray_tmax,
-        active,
-        int(flags),
-    )
+    values = _IntersectFunction.apply(scene_handle, vertices, ray_o, ray_d, ray_tmax, active, int(flags))
     return Intersection(*values[:10])
 
 
@@ -358,26 +350,21 @@ class _SdfIntersectFunction(torch.autograd.Function):
     @staticmethod
     def forward(values, position, rotation, scale, origins, directions, tmax, max_steps, relaxation, eps_hit):
         _require_native_dispatcher()
-        return tuple(torch.ops.rayd_torch.sdf_intersect_forward(
-            values,
-            position,
-            rotation,
-            scale,
-            origins,
-            directions,
-            tmax,
-            max_steps,
-            relaxation,
-            eps_hit,
-        ))
+        return tuple(
+            torch.ops.rayd_torch.sdf_intersect_forward(
+                values, position, rotation, scale, origins, directions, tmax, max_steps, relaxation, eps_hit
+            )
+        )
 
     @staticmethod
     def setup_context(ctx, inputs, output):
         ctx.set_materialize_grads(False)
         _t, hit_mask, _position, _normal, steps, tape_t, tape_base = output
-        saved = tuple(
-            torch.autograd.forward_ad.unpack_dual(value).primal for value in inputs[:6]
-        ) + (tape_t, hit_mask, tape_base)
+        saved = tuple(torch.autograd.forward_ad.unpack_dual(value).primal for value in inputs[:6]) + (
+            tape_t,
+            hit_mask,
+            tape_base,
+        )
         ctx.save_for_backward(*saved)
         ctx.save_for_forward(*saved)
         ctx.mark_non_differentiable(hit_mask, steps, tape_t, tape_base)
@@ -456,7 +443,9 @@ def _make_nearest_edge_function(fused: bool):
         def backward(ctx, *grad_outputs):
             point, tape_edge_id, tape_s, tape_d, distance = ctx.saved_tensors
             if not fused:
-                needs_mesh_grad = tuple(bool(value) for value in ctx.needs_input_grad[mesh_at : mesh_at + ctx.mesh_count])
+                needs_mesh_grad = tuple(
+                    bool(value) for value in ctx.needs_input_grad[mesh_at : mesh_at + ctx.mesh_count]
+                )
                 need_grad_vertices = any(needs_mesh_grad)
                 need_grad_point = bool(ctx.needs_input_grad[point_at])
             grad_vertices, grad_point = torch.ops.rayd_torch.nearest_edge_backward_optional(
@@ -487,16 +476,20 @@ def _make_nearest_edge_function(fused: bool):
                 point, tape_edge_id, tape_s, tape_d = ctx.saved_tensors
                 native_mesh_tangents = tuple(_native_tangent_or_none(value) for value in tangents[mesh_at:])
                 with torch._C._DisableFuncTorch():
-                    packed_tangents = torch.ops.rayd_torch.pack_scene_vertex_tangents(ctx.scene, list(native_mesh_tangents))
+                    packed_tangents = torch.ops.rayd_torch.pack_scene_vertex_tangents(
+                        ctx.scene, list(native_mesh_tangents)
+                    )
             with torch._C._DisableFuncTorch():
-                tangent_distance, tangent_edge_point, tangent_edge_t, tangent_tape_s, tangent_tape_d = torch.ops.rayd_torch.nearest_edge_jvp_optional(
-                    ctx.scene,
-                    _native_tensor(point),
-                    _native_tensor(tape_edge_id),
-                    _native_tensor(tape_s),
-                    _native_tensor(tape_d),
-                    _native_tangent_or_none(tangents[vertex_at]) if fused else _native_tensor(packed_tangents),
-                    _native_tangent_or_none(tangents[point_at]),
+                tangent_distance, tangent_edge_point, tangent_edge_t, tangent_tape_s, tangent_tape_d = (
+                    torch.ops.rayd_torch.nearest_edge_jvp_optional(
+                        ctx.scene,
+                        _native_tensor(point),
+                        _native_tensor(tape_edge_id),
+                        _native_tensor(tape_s),
+                        _native_tensor(tape_d),
+                        _native_tangent_or_none(tangents[vertex_at]) if fused else _native_tensor(packed_tangents),
+                        _native_tangent_or_none(tangents[point_at]),
+                    )
                 )
             return (
                 tangent_distance,
@@ -510,9 +503,7 @@ def _make_nearest_edge_function(fused: bool):
                 tangent_tape_d,
             )
 
-    return _named_autograd_function(
-        _Fn, "_NearestEdgeFunction" if fused else "_NearestEdgeMeshesFunction"
-    )
+    return _named_autograd_function(_Fn, "_NearestEdgeFunction" if fused else "_NearestEdgeMeshesFunction")
 
 
 _NearestEdgeFunction = _make_nearest_edge_function(True)
@@ -601,7 +592,9 @@ def _make_nearest_edges_topk_function(fused: bool):
             point, tape_edge_id, tape_s, tape_d = ctx.saved_tensors
             k = ctx.k
             if not fused:
-                needs_mesh_grad = tuple(bool(value) for value in ctx.needs_input_grad[mesh_at : mesh_at + ctx.mesh_count])
+                needs_mesh_grad = tuple(
+                    bool(value) for value in ctx.needs_input_grad[mesh_at : mesh_at + ctx.mesh_count]
+                )
                 need_grad_vertices = any(needs_mesh_grad)
                 need_grad_point = bool(ctx.needs_input_grad[point_at])
             grad_vertices, grad_point_slots = torch.ops.rayd_torch.nearest_edge_backward_optional(
@@ -648,9 +641,7 @@ def _make_nearest_edges_topk_function(fused: bool):
                     _native_tensor(tape_s.reshape(-1)),
                     _native_tensor(tape_d.reshape(-1, 3)),
                     _native_tangent_or_none(tangents[vertex_at]) if fused else _native_tensor(packed_tangents),
-                    _native_tangent_or_none(
-                        None if grad_point is None else _flatten_topk_point(grad_point, k)
-                    ),
+                    _native_tangent_or_none(None if grad_point is None else _flatten_topk_point(grad_point, k)),
                 )
             tangent_distance, tangent_edge_point, tangent_edge_t, tangent_tape_s, tangent_tape_d = values
             if grad_point is None:
@@ -673,9 +664,7 @@ def _make_nearest_edges_topk_function(fused: bool):
                 tangent_tape_d.reshape(point.shape[0], k, 3),
             )
 
-    return _named_autograd_function(
-        _Fn, "_NearestEdgesTopKFunction" if fused else "_NearestEdgesTopKMeshesFunction"
-    )
+    return _named_autograd_function(_Fn, "_NearestEdgesTopKFunction" if fused else "_NearestEdgesTopKMeshesFunction")
 
 
 _NearestEdgesTopKFunction = _make_nearest_edges_topk_function(True)
@@ -696,17 +685,11 @@ def nearest_edges(
     active_arg = _active_ctx_tensor(active, point)
     tracked_vertices = (vertices,) if mesh_vertices is None else tuple(mesh_vertices)
     if not _needs_nearest_edge_ad(point, *tracked_vertices):
-        values = torch.ops.rayd_torch.nearest_edges_topk_forward(
-            scene_handle, point, int(k), active_arg
-        )
+        values = torch.ops.rayd_torch.nearest_edges_topk_forward(scene_handle, point, int(k), active_arg)
     elif len(tracked_vertices) > 1:
-        values = _NearestEdgesTopKMeshesFunction.apply(
-            scene_handle, point, int(k), active_arg, *tracked_vertices
-        )
+        values = _NearestEdgesTopKMeshesFunction.apply(scene_handle, point, int(k), active_arg, *tracked_vertices)
     else:
-        values = _NearestEdgesTopKFunction.apply(
-            scene_handle, vertices, point, int(k), active_arg
-        )
+        values = _NearestEdgesTopKFunction.apply(scene_handle, vertices, point, int(k), active_arg)
     return NearestEdgesTopK(int(point.shape[0]), int(k), *values[:9])
 
 
@@ -761,15 +744,7 @@ class _NearestEdgeRayFunction(torch.autograd.Function):
         return None, grad_vertices, grad_ray_o, grad_ray_d, None, None
 
     @staticmethod
-    def jvp(
-        ctx,
-        grad_scene_handle,
-        grad_vertices,
-        grad_ray_o,
-        grad_ray_d,
-        grad_ray_tmax,
-        grad_active,
-    ):
+    def jvp(ctx, grad_scene_handle, grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax, grad_active):
         vertices, ray_o, ray_d, ray_tmax, tape_edge_id, ray_t, edge_t = ctx.saved_tensors
         with torch._C._DisableFuncTorch():
             values = torch.ops.rayd_torch.nearest_edge_ray_jvp_optional(
@@ -796,12 +771,7 @@ def nearest_edge_ray(
     active: torch.Tensor | None,
 ) -> NearestRayEdge:
     values = _NearestEdgeRayFunction.apply(
-        scene_handle,
-        vertices,
-        ray_o,
-        ray_d,
-        ray_tmax,
-        _active_ctx_tensor(active, ray_o),
+        scene_handle, vertices, ray_o, ray_d, ray_tmax, _active_ctx_tensor(active, ray_o)
     )
     return NearestRayEdge(*values[:8])
 
@@ -839,14 +809,16 @@ def _make_trace_reflections_function(fused: bool):
         @staticmethod
         def forward(*args):
             _require_native_dispatcher()
-            return tuple(torch.ops.rayd_torch.trace_reflections_forward(
-                args[0],
-                args[ray_o_at],
-                args[ray_d_at],
-                args[ray_tmax_at],
-                args[active_at],
-                int(args[max_bounces_at]),
-            ))
+            return tuple(
+                torch.ops.rayd_torch.trace_reflections_forward(
+                    args[0],
+                    args[ray_o_at],
+                    args[ray_d_at],
+                    args[ray_tmax_at],
+                    args[active_at],
+                    int(args[max_bounces_at]),
+                )
+            )
 
         @staticmethod
         def setup_context(ctx, inputs, output):
@@ -858,15 +830,7 @@ def _make_trace_reflections_function(fused: bool):
             ctx.scene = inputs[0]
             ctx.max_bounces = int(inputs[max_bounces_at])
             ctx.save_for_backward(
-                ray_o,
-                ray_d,
-                ray_tmax,
-                active,
-                tape_prim_id,
-                tape_barycentric,
-                tape_hits,
-                tape_normals,
-                image_sources,
+                ray_o, ray_d, ray_tmax, active, tape_prim_id, tape_barycentric, tape_hits, tape_normals, image_sources
             )
             if fused:
                 vertices = torch.autograd.forward_ad.unpack_dual(inputs[vertex_at]).primal
@@ -884,57 +848,40 @@ def _make_trace_reflections_function(fused: bool):
             else:
                 ctx.mesh_count = len(inputs) - mesh_at
                 ctx.save_for_forward(
+                    ray_o, ray_d, active, tape_prim_id, tape_barycentric, tape_hits, tape_normals, image_sources
+                )
+            ctx.mark_non_differentiable(
+                valid, prim_ids, tape_prim_id, tape_barycentric, tape_hits, tape_normals, active
+            )
+
+        @staticmethod
+        def backward(ctx, *grad_outputs):
+            (ray_o, ray_d, ray_tmax, active, tape_prim_id, tape_barycentric, tape_hits, tape_normals, image_sources) = (
+                ctx.saved_tensors
+            )
+            if not fused:
+                needs_mesh_grad = tuple(
+                    bool(value) for value in ctx.needs_input_grad[mesh_at : mesh_at + ctx.mesh_count]
+                )
+                need_grad_vertices = any(needs_mesh_grad)
+                need_grad_ray_o = bool(ctx.needs_input_grad[ray_o_at])
+                need_grad_ray_d = bool(ctx.needs_input_grad[ray_d_at])
+                need_grad_ray_tmax = bool(ctx.needs_input_grad[ray_tmax_at])
+            grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = (
+                torch.ops.rayd_torch.trace_reflections_backward_optional(
+                    ctx.scene,
                     ray_o,
                     ray_d,
+                    ray_tmax,
                     active,
                     tape_prim_id,
                     tape_barycentric,
                     tape_hits,
                     tape_normals,
                     image_sources,
+                    grad_outputs[1],
+                    grad_outputs[2],
                 )
-            ctx.mark_non_differentiable(
-                valid,
-                prim_ids,
-                tape_prim_id,
-                tape_barycentric,
-                tape_hits,
-                tape_normals,
-                active,
-            )
-
-        @staticmethod
-        def backward(ctx, *grad_outputs):
-            (
-                ray_o,
-                ray_d,
-                ray_tmax,
-                active,
-                tape_prim_id,
-                tape_barycentric,
-                tape_hits,
-                tape_normals,
-                image_sources,
-            ) = ctx.saved_tensors
-            if not fused:
-                needs_mesh_grad = tuple(bool(value) for value in ctx.needs_input_grad[mesh_at : mesh_at + ctx.mesh_count])
-                need_grad_vertices = any(needs_mesh_grad)
-                need_grad_ray_o = bool(ctx.needs_input_grad[ray_o_at])
-                need_grad_ray_d = bool(ctx.needs_input_grad[ray_d_at])
-                need_grad_ray_tmax = bool(ctx.needs_input_grad[ray_tmax_at])
-            grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = torch.ops.rayd_torch.trace_reflections_backward_optional(
-                ctx.scene,
-                ray_o,
-                ray_d,
-                ray_tmax,
-                active,
-                tape_prim_id,
-                tape_barycentric,
-                tape_hits,
-                tape_normals,
-                image_sources,
-                grad_outputs[1],
-                grad_outputs[2],
             )
             if fused:
                 return None, grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax, None, None
@@ -968,19 +915,14 @@ def _make_trace_reflections_function(fused: bool):
                     image_sources,
                 ) = ctx.saved_tensors
             else:
-                (
-                    ray_o,
-                    ray_d,
-                    active,
-                    tape_prim_id,
-                    tape_barycentric,
-                    tape_hits,
-                    tape_normals,
-                    image_sources,
-                ) = ctx.saved_tensors
+                (ray_o, ray_d, active, tape_prim_id, tape_barycentric, tape_hits, tape_normals, image_sources) = (
+                    ctx.saved_tensors
+                )
                 native_mesh_tangents = tuple(_native_tangent_or_none(value) for value in tangents[mesh_at:])
                 with torch._C._DisableFuncTorch():
-                    packed_tangents = torch.ops.rayd_torch.pack_scene_vertex_tangents(ctx.scene, list(native_mesh_tangents))
+                    packed_tangents = torch.ops.rayd_torch.pack_scene_vertex_tangents(
+                        ctx.scene, list(native_mesh_tangents)
+                    )
             with torch._C._DisableFuncTorch():
                 tangent_t, tangent_image_sources = torch.ops.rayd_torch.trace_reflections_jvp_optional(
                     ctx.scene,
@@ -998,9 +940,7 @@ def _make_trace_reflections_function(fused: bool):
                 )
             return None, tangent_t, tangent_image_sources, None, None, None, None, None, None
 
-    return _named_autograd_function(
-        _Fn, "_TraceReflectionsFunction" if fused else "_TraceReflectionsMeshesFunction"
-    )
+    return _named_autograd_function(_Fn, "_TraceReflectionsFunction" if fused else "_TraceReflectionsMeshesFunction")
 
 
 _TraceReflectionsFunction = _make_trace_reflections_function(True)
@@ -1020,48 +960,25 @@ def trace_reflections(
     _require_native_dispatcher()
     tracked_vertices = (vertices,) if mesh_vertices is None else tuple(mesh_vertices)
     if not _needs_trace_reflection_ad(*tracked_vertices, ray_o, ray_d, ray_tmax):
+
         def load(full: bool):
             if full:
                 valid, t, image_sources, prim_ids = torch.ops.rayd_torch.trace_reflections_forward_noad(
-                    scene_handle,
-                    ray_o,
-                    ray_d,
-                    ray_tmax,
-                    active,
-                    int(max_bounces),
+                    scene_handle, ray_o, ray_d, ray_tmax, active, int(max_bounces)
                 )
                 return valid, t, image_sources, prim_ids
             valid, t, prim_ids = torch.ops.rayd_torch.trace_reflections_forward_reduced(
-                scene_handle,
-                ray_o,
-                ray_d,
-                ray_tmax,
-                active,
-                int(max_bounces),
+                scene_handle, ray_o, ray_d, ray_tmax, active, int(max_bounces)
             )
             return valid, t, None, prim_ids
 
         return ReflectionChain(loader=load)
     if len(tracked_vertices) > 1:
         values = _TraceReflectionsMeshesFunction.apply(
-            scene_handle,
-            ray_o,
-            ray_d,
-            ray_tmax,
-            active,
-            int(max_bounces),
-            *tracked_vertices,
+            scene_handle, ray_o, ray_d, ray_tmax, active, int(max_bounces), *tracked_vertices
         )
         return ReflectionChain(*values[:4])
-    values = _TraceReflectionsFunction.apply(
-        scene_handle,
-        vertices,
-        ray_o,
-        ray_d,
-        ray_tmax,
-        active,
-        int(max_bounces),
-    )
+    values = _TraceReflectionsFunction.apply(scene_handle, vertices, ray_o, ray_d, ray_tmax, active, int(max_bounces))
     return ReflectionChain(*values[:4])
 
 
@@ -1082,18 +999,18 @@ def _make_trace_refl_epc_field_function(fused: bool):
         @staticmethod
         def forward(*args):
             _require_native_dispatcher()
-            return tuple(torch.ops.rayd_torch.trace_refl_epc_field_forward(
-                args[0],
-                args[source_at],
-                args[receiver_at],
-                args[active_at],
-                int(args[max_bounces_at]),
-            ))
+            return tuple(
+                torch.ops.rayd_torch.trace_refl_epc_field_forward(
+                    args[0], args[source_at], args[receiver_at], args[active_at], int(args[max_bounces_at])
+                )
+            )
 
         @staticmethod
         def setup_context(ctx, inputs, output):
             ctx.set_materialize_grads(False)
-            field_real, field_imag, path_length, valid, resolved_prim_ids, tape_prim_id, tape_barycentric, active = output
+            field_real, field_imag, path_length, valid, resolved_prim_ids, tape_prim_id, tape_barycentric, active = (
+                output
+            )
             tape_t = path_length
             source = torch.autograd.forward_ad.unpack_dual(inputs[source_at]).primal
             receiver = torch.autograd.forward_ad.unpack_dual(inputs[receiver_at]).primal
@@ -1114,7 +1031,9 @@ def _make_trace_refl_epc_field_function(fused: bool):
             if fused:
                 need_grad_vertices = bool(ctx.needs_input_grad[vertex_at])
             else:
-                needs_mesh_grad = tuple(bool(value) for value in ctx.needs_input_grad[mesh_at : mesh_at + ctx.mesh_count])
+                needs_mesh_grad = tuple(
+                    bool(value) for value in ctx.needs_input_grad[mesh_at : mesh_at + ctx.mesh_count]
+                )
                 need_grad_vertices = any(needs_mesh_grad)
             need_grad_source = bool(ctx.needs_input_grad[source_at])
             need_grad_receiver = bool(ctx.needs_input_grad[receiver_at])
@@ -1164,25 +1083,27 @@ def _make_trace_refl_epc_field_function(fused: bool):
                 source, receiver, active, tape_prim_id, tape_barycentric, tape_t = ctx.saved_tensors
                 native_mesh_tangents = tuple(_native_tangent_or_none(value) for value in tangents[mesh_at:])
                 with torch._C._DisableFuncTorch():
-                    packed_tangents = torch.ops.rayd_torch.pack_scene_vertex_tangents(ctx.scene, list(native_mesh_tangents))
+                    packed_tangents = torch.ops.rayd_torch.pack_scene_vertex_tangents(
+                        ctx.scene, list(native_mesh_tangents)
+                    )
             with torch._C._DisableFuncTorch():
-                tangent_field_real, tangent_field_imag, tangent_path_length = torch.ops.rayd_torch.trace_refl_epc_field_jvp(
-                    ctx.scene,
-                    _native_tensor(source),
-                    _native_tensor(receiver),
-                    _native_tensor(active),
-                    _native_tensor(tape_prim_id),
-                    _native_tensor(tape_barycentric),
-                    _native_tensor(tape_t),
-                    _native_tangent_or_none(tangents[vertex_at]) if fused else _native_tensor(packed_tangents),
-                    _native_tangent_or_none(tangents[source_at]),
-                    _native_tangent_or_none(tangents[receiver_at]),
+                tangent_field_real, tangent_field_imag, tangent_path_length = (
+                    torch.ops.rayd_torch.trace_refl_epc_field_jvp(
+                        ctx.scene,
+                        _native_tensor(source),
+                        _native_tensor(receiver),
+                        _native_tensor(active),
+                        _native_tensor(tape_prim_id),
+                        _native_tensor(tape_barycentric),
+                        _native_tensor(tape_t),
+                        _native_tangent_or_none(tangents[vertex_at]) if fused else _native_tensor(packed_tangents),
+                        _native_tangent_or_none(tangents[source_at]),
+                        _native_tangent_or_none(tangents[receiver_at]),
+                    )
                 )
             return tangent_field_real, tangent_field_imag, tangent_path_length, None, None, None, None, None
 
-    return _named_autograd_function(
-        _Fn, "_TraceReflEpcFieldFunction" if fused else "_TraceReflEpcFieldMeshesFunction"
-    )
+    return _named_autograd_function(_Fn, "_TraceReflEpcFieldFunction" if fused else "_TraceReflEpcFieldMeshesFunction")
 
 
 _TraceReflEpcFieldFunction = _make_trace_refl_epc_field_function(True)
@@ -1201,22 +1122,10 @@ def trace_refl_epc_field(
     tracked_vertices = (vertices,) if mesh_vertices is None else tuple(mesh_vertices)
     if len(tracked_vertices) > 1:
         values = _TraceReflEpcFieldMeshesFunction.apply(
-            scene_handle,
-            source,
-            receiver,
-            active,
-            int(max_bounces),
-            *tracked_vertices,
+            scene_handle, source, receiver, active, int(max_bounces), *tracked_vertices
         )
         return ReflEpcField(*values[:5])
-    values = _TraceReflEpcFieldFunction.apply(
-        scene_handle,
-        vertices,
-        source,
-        receiver,
-        active,
-        int(max_bounces),
-    )
+    values = _TraceReflEpcFieldFunction.apply(scene_handle, vertices, source, receiver, active, int(max_bounces))
     return ReflEpcField(*values[:5])
 
 
@@ -1272,29 +1181,31 @@ class _DfrDirectAccumFunction(torch.autograd.Function):
     @staticmethod
     def forward(*args):
         _require_native_dispatcher()
-        return tuple(torch.ops.rayd_torch.diffraction_accumulation_forward(
-            *args[:21],
-            int(args[21]),
-            *args[22:36],
-            1,
-            0,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            1,
-            None,
-            None,
-            int(args[36]),
-            int(args[37]),
-        ))
+        return tuple(
+            torch.ops.rayd_torch.diffraction_accumulation_forward(
+                *args[:21],
+                int(args[21]),
+                *args[22:36],
+                1,
+                0,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                1,
+                None,
+                None,
+                int(args[36]),
+                int(args[37]),
+            )
+        )
 
     @staticmethod
     def setup_context(ctx, inputs, output):
@@ -1654,18 +1565,20 @@ class _DfrChainAccumFunction(torch.autograd.Function):
     @staticmethod
     def forward(*args):
         _require_native_dispatcher()
-        return tuple(torch.ops.rayd_torch.diffraction_accumulation_forward(
-            *args[:21],
-            int(args[21]),
-            *args[23:38],
-            int(args[22]),
-            *args[38:49],
-            int(args[49]),
-            None,
-            None,
-            int(args[50]),
-            int(args[51]),
-        ))
+        return tuple(
+            torch.ops.rayd_torch.diffraction_accumulation_forward(
+                *args[:21],
+                int(args[21]),
+                *args[23:38],
+                int(args[22]),
+                *args[38:49],
+                int(args[49]),
+                None,
+                None,
+                int(args[50]),
+                int(args[51]),
+            )
+        )
 
     @staticmethod
     def setup_context(ctx, inputs, output):

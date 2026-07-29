@@ -48,8 +48,7 @@ struct GridSample {
 // Per-axis `N_i - 1`: the span of the grid coordinate `u`, and the factor that
 // turns an index-space gradient into a local-space one.
 RAYD_HOST_DEVICE math::Vec3f grid_cells(GridExtent extent) {
-    return math::make_vec3(static_cast<float>(extent.nx - 1),
-                           static_cast<float>(extent.ny - 1),
+    return math::make_vec3(static_cast<float>(extent.nx - 1), static_cast<float>(extent.ny - 1),
                            static_cast<float>(extent.nz - 1));
 }
 
@@ -57,14 +56,11 @@ RAYD_HOST_DEVICE math::Vec3f grid_cells(GridExtent extent) {
 // `[0, N_i - 1]` (ADR-0037 section 1), so the interpolant is never evaluated
 // outside the box. The clamp absorbs float32 rounding at the box faces; a lane
 // whose interval arithmetic is non-finite is rejected before it ever gets here.
-RAYD_HOST_DEVICE math::Vec3f grid_coord(math::Vec3f local_point,
-                                        math::Vec3f scale,
-                                        math::Vec3f cells) {
-    const math::Vec3f raw = math::make_vec3((local_point.x / scale.x + 0.5f) * cells.x,
-                                            (local_point.y / scale.y + 0.5f) * cells.y,
-                                            (local_point.z / scale.z + 0.5f) * cells.z);
-    return math::make_vec3(fminf(fmaxf(raw.x, 0.0f), cells.x),
-                           fminf(fmaxf(raw.y, 0.0f), cells.y),
+RAYD_HOST_DEVICE math::Vec3f grid_coord(math::Vec3f local_point, math::Vec3f scale, math::Vec3f cells) {
+    const math::Vec3f raw =
+        math::make_vec3((local_point.x / scale.x + 0.5f) * cells.x, (local_point.y / scale.y + 0.5f) * cells.y,
+                        (local_point.z / scale.z + 0.5f) * cells.z);
+    return math::make_vec3(fminf(fmaxf(raw.x, 0.0f), cells.x), fminf(fmaxf(raw.y, 0.0f), cells.y),
                            fminf(fmaxf(raw.z, 0.0f), cells.z));
 }
 
@@ -91,12 +87,9 @@ RAYD_HOST_DEVICE BaseIndex base_index(math::Vec3f u, GridExtent extent) {
 // rather than recomputed so that the forward pass and the derivative passes read
 // the same eight samples even if they contract the coordinate expression
 // differently (ADR-0037 section 6).
-RAYD_HOST_DEVICE TrilinearCell trilinear_cell(math::Vec3f u,
-                                              BaseIndex base,
-                                              GridExtent extent) {
+RAYD_HOST_DEVICE TrilinearCell trilinear_cell(math::Vec3f u, BaseIndex base, GridExtent extent) {
     TrilinearCell cell{};
-    cell.frac = math::make_vec3(u.x - static_cast<float>(base.i),
-                                u.y - static_cast<float>(base.j),
+    cell.frac = math::make_vec3(u.x - static_cast<float>(base.i), u.y - static_cast<float>(base.j),
                                 u.z - static_cast<float>(base.k));
     const float wx[2] = {1.0f - cell.frac.x, cell.frac.x};
     const float wy[2] = {1.0f - cell.frac.y, cell.frac.y};
@@ -120,7 +113,7 @@ RAYD_HOST_DEVICE TrilinearCell trilinear_cell(math::Vec3f u,
 // The gradient is the exact derivative of the interpolant on this voxel, not a
 // finite difference; it is C0-discontinuous across voxel faces, which is a
 // property of the representation (ADR-0037 section 6).
-RAYD_HOST_DEVICE GridSample sample_cell(const float *values, const TrilinearCell &cell) {
+RAYD_HOST_DEVICE GridSample sample_cell(const float* values, const TrilinearCell& cell) {
     const float wx[2] = {1.0f - cell.frac.x, cell.frac.x};
     const float wy[2] = {1.0f - cell.frac.y, cell.frac.y};
     const float wz[2] = {1.0f - cell.frac.z, cell.frac.z};
@@ -145,11 +138,8 @@ RAYD_HOST_DEVICE GridSample sample_cell(const float *values, const TrilinearCell
 
 // Local-frame gradient from the index-space one: ADR-0037 section 2's
 // `(grad_l D)_i = (dD/du_i) * (N_i - 1) / scale_i`.
-RAYD_HOST_DEVICE math::Vec3f local_gradient(math::Vec3f index_gradient,
-                                            math::Vec3f cells,
-                                            math::Vec3f scale) {
-    return math::make_vec3(index_gradient.x * cells.x / scale.x,
-                           index_gradient.y * cells.y / scale.y,
+RAYD_HOST_DEVICE math::Vec3f local_gradient(math::Vec3f index_gradient, math::Vec3f cells, math::Vec3f scale) {
+    return math::make_vec3(index_gradient.x * cells.x / scale.x, index_gradient.y * cells.y / scale.y,
                            index_gradient.z * cells.z / scale.z);
 }
 

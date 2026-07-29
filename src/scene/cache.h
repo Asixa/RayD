@@ -150,30 +150,25 @@ struct SceneCache {
 };
 
 struct SceneHandle : torch::CustomClassHolder {
-    explicit SceneHandle(int64_t handle_, bool owns_handle_ = true)
-        : handle(handle_), owns_handle(owns_handle_) {}
+    explicit SceneHandle(int64_t handle_, bool owns_handle_ = true) : handle(handle_), owns_handle(owns_handle_) {}
     ~SceneHandle();
     int64_t handle = 0;
     bool owns_handle = true;
 };
 
 std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes);
-std::unique_ptr<SceneCache> create_scene_cache(
-    std::vector<MeshRecord> meshes,
-    TraceBackend trace_backend,
-    EdgeBackend edge_backend);
+std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes, TraceBackend trace_backend,
+                                               EdgeBackend edge_backend);
 int64_t create_scene(std::vector<MeshRecord> meshes);
 void register_scene_cache(std::unique_ptr<SceneCache> scene);
 void destroy_scene(int64_t handle);
-SceneCache &get_scene(int64_t handle);
-c10::intrusive_ptr<SceneHandle> create_scene_cache_from_flat(
-    std::vector<at::Tensor> vertices,
-    std::vector<at::Tensor> faces,
-    std::vector<at::Tensor> uv,
-    std::vector<at::Tensor> face_uv,
-    std::vector<at::Tensor> to_world_left,
-    std::vector<at::Tensor> to_world_right,
-    std::vector<int64_t> mesh_flags);
+SceneCache& get_scene(int64_t handle);
+c10::intrusive_ptr<SceneHandle> create_scene_cache_from_flat(std::vector<at::Tensor> vertices,
+                                                             std::vector<at::Tensor> faces, std::vector<at::Tensor> uv,
+                                                             std::vector<at::Tensor> face_uv,
+                                                             std::vector<at::Tensor> to_world_left,
+                                                             std::vector<at::Tensor> to_world_right,
+                                                             std::vector<int64_t> mesh_flags);
 int64_t scene_version(int64_t handle);
 int64_t scene_num_meshes(int64_t handle);
 int64_t scene_edge_count(int64_t handle);
@@ -185,24 +180,22 @@ int64_t scene_version(c10::intrusive_ptr<SceneHandle> scene);
 int64_t scene_num_meshes(c10::intrusive_ptr<SceneHandle> scene);
 int64_t scene_edge_count(c10::intrusive_ptr<SceneHandle> scene);
 std::vector<at::Tensor> scene_edge_records(c10::intrusive_ptr<SceneHandle> scene);
-std::vector<at::Tensor> scene_edge_records(SceneCache &scene);
+std::vector<at::Tensor> scene_edge_records(SceneCache& scene);
 std::vector<at::Tensor> scene_global_geometry(c10::intrusive_ptr<SceneHandle> scene);
 at::Tensor get_scene_edge_mask(c10::intrusive_ptr<SceneHandle> scene);
 void set_scene_edge_mask(c10::intrusive_ptr<SceneHandle> scene, at::Tensor mask);
-void ensure_custom_edge_bvh(SceneCache &scene);
-void ensure_custom_triangle_bvh(SceneCache &scene);
-rayd::shared::bvh::TriangleSoAView scene_triangle_view(const SceneCache &scene);
-rayd::shared::bvh::AabbSoAView scene_triangle_bvh_bounds_view(const SceneCache &scene);
-rayd::shared::bvh::CompactBvhTopologyView scene_triangle_bvh_topology_view(
-    const SceneCache &scene);
-rayd::shared::edge::EdgeSoAView scene_edge_view(const SceneCache &scene);
-rayd::shared::edge::AabbSoAView scene_edge_bvh_bounds_view(const SceneCache &scene);
-rayd::shared::edge::CompactBvhTopologyView scene_edge_bvh_topology_view(const SceneCache &scene);
+void ensure_custom_edge_bvh(SceneCache& scene);
+void ensure_custom_triangle_bvh(SceneCache& scene);
+rayd::shared::bvh::TriangleSoAView scene_triangle_view(const SceneCache& scene);
+rayd::shared::bvh::AabbSoAView scene_triangle_bvh_bounds_view(const SceneCache& scene);
+rayd::shared::bvh::CompactBvhTopologyView scene_triangle_bvh_topology_view(const SceneCache& scene);
+rayd::shared::edge::EdgeSoAView scene_edge_view(const SceneCache& scene);
+rayd::shared::edge::AabbSoAView scene_edge_bvh_bounds_view(const SceneCache& scene);
+rayd::shared::edge::CompactBvhTopologyView scene_edge_bvh_topology_view(const SceneCache& scene);
 void update_mesh_vertices(c10::intrusive_ptr<SceneHandle> scene, int64_t mesh_id, at::Tensor vertices);
 void sync_scene(c10::intrusive_ptr<SceneHandle> scene);
 std::vector<at::Tensor> split_scene_vertex_grad(c10::intrusive_ptr<SceneHandle> scene, at::Tensor grad_vertices);
-at::Tensor pack_scene_vertex_tangents(
-    c10::intrusive_ptr<SceneHandle> scene,
-    std::vector<c10::optional<at::Tensor>> tangents);
+at::Tensor pack_scene_vertex_tangents(c10::intrusive_ptr<SceneHandle> scene,
+                                      std::vector<c10::optional<at::Tensor>> tangents);
 
 } // namespace rayd::torch_backend

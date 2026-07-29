@@ -64,30 +64,14 @@ class MultiDeviceEvidenceContractTests(unittest.TestCase):
         self.assertEqual(entry["provenance_kind"], "historical_documentation_import")
 
     def test_schema_requires_auditable_machine_and_provenance_fields(self) -> None:
-        self.assertEqual(
-            self.schema["$schema"], "https://json-schema.org/draft/2020-12/schema"
-        )
+        self.assertEqual(self.schema["$schema"], "https://json-schema.org/draft/2020-12/schema")
         self.assertEqual(self.schema["properties"]["schema_version"]["const"], 1)
         required = set(self.schema["required"])
-        self.assertEqual(
-            required,
-            {
-                "schema_version",
-                "benchmark",
-                "provenance",
-                "parameters",
-                "machine",
-                "configs",
-            },
-        )
-        machine_required = set(
-            self.schema["properties"]["machine"]["required"]
-        )
+        self.assertEqual(required, {"schema_version", "benchmark", "provenance", "parameters", "machine", "configs"})
+        machine_required = set(self.schema["properties"]["machine"]["required"])
         self.assertIn("device_count", machine_required)
         self.assertIn("peer_access", machine_required)
-        device_properties = self.schema["properties"]["machine"]["properties"][
-            "devices"
-        ]["items"]["properties"]
+        device_properties = self.schema["properties"]["machine"]["properties"]["devices"]["items"]["properties"]
         self.assertIn("compute_capability", device_properties)
         self.assertIn("peak_memory", self.schema["$defs"])
 
@@ -104,10 +88,7 @@ class MultiDeviceEvidenceContractTests(unittest.TestCase):
             ],
         )
         for config in self.record["configs"].values():
-            self.assertEqual(
-                config["intersect_offload"]["peak_memory"]["status"],
-                "not_recorded",
-            )
+            self.assertEqual(config["intersect_offload"]["peak_memory"]["status"], "not_recorded")
 
     def test_machine_record_does_not_invent_unmeasured_peer_directions(self) -> None:
         machine = self.record["machine"]
@@ -118,10 +99,7 @@ class MultiDeviceEvidenceContractTests(unittest.TestCase):
         self.assertEqual(machine["peer_access"]["status"], "partially_recorded")
         self.assertNotIn("all_pairs_accessible", machine["peer_access"])
         self.assertEqual(len(pairs), 1)
-        self.assertEqual(
-            {(pair["source"], pair["destination"]) for pair in pairs},
-            {(0, 1)},
-        )
+        self.assertEqual({(pair["source"], pair["destination"]) for pair in pairs}, {(0, 1)})
         self.assertTrue(all(pair["can_access"] for pair in pairs))
         self.assertIn("reverse direction", self.record["provenance"]["statement"])
 
@@ -134,37 +112,19 @@ class MultiDeviceEvidenceContractTests(unittest.TestCase):
         for operation, values in expected.items():
             with self.subTest(operation=operation):
                 row = self.record["configs"]["compute"][operation]
-                self.assertEqual(
-                    (row["single_ms"], row["multi_ms"], row["speedup"]),
-                    values,
-                )
-                rendered = [
-                    f"{values[0]:.2f} ms",
-                    f"{values[1]:.2f} ms",
-                    f"{values[2]:.2f}x",
-                ]
+                self.assertEqual((row["single_ms"], row["multi_ms"], row["speedup"]), values)
+                rendered = [f"{values[0]:.2f} ms", f"{values[1]:.2f} ms", f"{values[2]:.2f}x"]
                 self.assertEqual(table_row(self.adr, "compute", operation)[-3:], rendered)
-                self.assertEqual(
-                    table_row(self.operations, "compute", operation)[1:4],
-                    rendered,
-                )
+                self.assertEqual(table_row(self.operations, "compute", operation)[1:4], rendered)
 
     def test_correctness_evidence_matches_the_published_claims(self) -> None:
         configs = self.record["configs"]
         for name in ("light", "compute"):
             for operation in ("intersect", "trace_reflections"):
                 with self.subTest(config=name, operation=operation):
-                    self.assertEqual(
-                        configs[name][operation]["bitwise_agreement"], 1.0
-                    )
-        self.assertEqual(
-            configs["light"]["accum_dfr_direct"]["relative_grid_deviation"],
-            6.5e-08,
-        )
-        self.assertEqual(
-            configs["compute"]["accum_dfr_direct"]["relative_grid_deviation"],
-            2.9e-07,
-        )
+                    self.assertEqual(configs[name][operation]["bitwise_agreement"], 1.0)
+        self.assertEqual(configs["light"]["accum_dfr_direct"]["relative_grid_deviation"], 6.5e-08)
+        self.assertEqual(configs["compute"]["accum_dfr_direct"]["relative_grid_deviation"], 2.9e-07)
         for claim in ("6.5e-08", "2.9e-07"):
             self.assertIn(claim, self.adr)
             self.assertIn(claim, self.operations)
@@ -190,7 +150,7 @@ class MultiDeviceBenchmarkProducerTests(unittest.TestCase):
         ):
             with self.subTest(literal=literal):
                 self.assertIn(literal, source)
-        self.assertIn('parser.add_argument(\n        "--json"', source)
+        self.assertRegex(source, r'parser\.add_argument\(\s*"--json"')
         self.assertIn("args.json.parent.mkdir(parents=True, exist_ok=True)", source)
 
     def test_live_peer_evidence_is_all_pairs_not_only_the_first_two_devices(self) -> None:

@@ -20,11 +20,7 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
     def test_raw_and_compact_topologies_are_distinct_pods(self):
         topology = (BVH_CORE_INCLUDE / "topology.h").read_text(encoding="utf-8")
         edge = (SHARED_INCLUDE / "bvh_types.h").read_text(encoding="utf-8")
-        for type_name in (
-            "RawBvhTopologyView",
-            "MutableRawBvhTopologyView",
-            "CompactBvhTopologyView",
-        ):
+        for type_name in ("RawBvhTopologyView", "MutableRawBvhTopologyView", "CompactBvhTopologyView"):
             # The single struct definition now lives in the primitive-agnostic core.
             self.assertIn(f"struct {type_name}", topology)
             self.assertIn(f"RAYD_SHARED_BVH_ASSERT_POD({type_name})", topology)
@@ -39,9 +35,7 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
     def test_product_treelet_constants_have_one_shared_definition(self):
         shared = (BVH_CORE_INCLUDE / "topology.h").read_text(encoding="utf-8")
         edge = (SHARED_INCLUDE / "bvh_types.h").read_text(encoding="utf-8")
-        adapter = (ROOT / "include/rayd/jit/edge_bvh_config.h").read_text(
-            encoding="utf-8"
-        )
+        adapter = (ROOT / "include/rayd/jit/edge_bvh_config.h").read_text(encoding="utf-8")
         for token in (
             "kBvhTreeletMaxLeaves = 7",
             "kBvhTreeletMinPrimitives = 65536",
@@ -66,21 +60,12 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
             self.assertIn(f"using bvh::{name};", edge)
         self.assertGreaterEqual(adapter.count("shared::edge::kBvhTreelet"), 4)
         self.assertIn("shared::edge::kBvhLeafSize", adapter)
-        scene_edge = (ROOT / "src/edge/edge_jit.cpp").read_text(
-            encoding="utf-8"
-        )
+        scene_edge = (ROOT / "src/edge/edge_jit.cpp").read_text(encoding="utf-8")
         self.assertIn("shared::edge::kBvhTraversalStackDepth", scene_edge)
-        drjit_build = (ROOT / "src/edge/edge_bvh_jit.cu").read_text(
-            encoding="utf-8"
-        )
-        torch_build = (
-            ROOT / "src/scene/scene.cpp"
-        ).read_text(encoding="utf-8")
+        drjit_build = (ROOT / "src/edge/edge_bvh_jit.cu").read_text(encoding="utf-8")
+        torch_build = (ROOT / "src/scene/scene.cpp").read_text(encoding="utf-8")
         self.assertIn("primitive_count <= EdgeBVHTreeletMaxPrimitives", drjit_build)
-        self.assertIn(
-            "primitive_count <= rayd::shared::edge::kBvhTreeletMaxPrimitives",
-            torch_build,
-        )
+        self.assertIn("primitive_count <= rayd::shared::edge::kBvhTreeletMaxPrimitives", torch_build)
 
     def test_build_stages_are_shared_and_drjit_is_an_adapter(self):
         header = (SHARED_INCLUDE / "bvh_build.h").read_text(encoding="utf-8")
@@ -113,10 +98,7 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
             self.assertIn(f"bvh::{launcher}", shared)
 
     def test_shared_cuda_owns_no_resources_or_host_barriers(self):
-        combined = "\n".join(
-            (SHARED_SOURCE / name).read_text(encoding="utf-8")
-            for name in ("edge_shared.cu",)
-        )
+        combined = "\n".join((SHARED_SOURCE / name).read_text(encoding="utf-8") for name in ("edge_shared.cu",))
         combined += "\n" + (BVH_CORE_SOURCE / "build_shared.cu").read_text(encoding="utf-8")
         for forbidden in (
             "cudaMalloc",
@@ -141,8 +123,8 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
         traversal = (BVH_CORE_INCLUDE / "traversal_common.cuh").read_text(encoding="utf-8")
         for token in (
             "CompactBvhTopologyView topology",
-            "const std::uint8_t *active_mask",
-            "const std::uint8_t *edge_mask",
+            "const std::uint8_t* active_mask",
+            "const std::uint8_t* edge_mask",
             "EdgeBvhTopKMax =",
             "query_stride",
             "stack_depth",
@@ -187,9 +169,7 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
             mapping = f"edge_bvh_topk_capacity({k}) == {capacity}"
             self.assertIn(mapping, header)
         for capacity in (1, 2, 4, 8, 16):
-            self.assertIn(
-                f"launch_bvh_query_capacity<{capacity}, RayQuery>", source
-            )
+            self.assertIn(f"launch_bvh_query_capacity<{capacity}, RayQuery>", source)
         for local_array in (
             "int edge_ids[TopKCapacity]",
             "float distances[TopKCapacity]",
@@ -206,8 +186,8 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
         for token in (
             "launch_point_edge_distances_async",
             "launch_ray_edge_distances_async",
-            "const std::uint8_t *active_mask",
-            "const std::uint8_t *edge_mask",
+            "const std::uint8_t* active_mask",
+            "const std::uint8_t* edge_mask",
         ):
             self.assertIn(token, header)
         self.assertIn("point_segment_distance", source)
@@ -230,9 +210,7 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
             + list(BVH_CORE_INCLUDE.glob("*.cuh"))
             + list(BVH_CORE_SOURCE.glob("*.cu"))
         )
-        combined = "\n".join(
-            path.read_text(encoding="utf-8") for path in paths
-        ).lower()
+        combined = "\n".join(path.read_text(encoding="utf-8") for path in paths).lower()
         for forbidden in (
             "hlbvh",
             "top-level sah",

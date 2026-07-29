@@ -26,30 +26,23 @@ struct InterfaceRT {
     utd::Complex t;
 };
 
-__device__ __forceinline__ utd::Complex kz_from_kpar(
-    utd::Complex k, float k_par) {
-    return c_sqrt_passive(
-        utd::cplx_sub(utd::cplx_mul(k, k), utd::cplx(k_par * k_par, 0.0f)));
+__device__ __forceinline__ utd::Complex kz_from_kpar(utd::Complex k, float k_par) {
+    return c_sqrt_passive(utd::cplx_sub(utd::cplx_mul(k, k), utd::cplx(k_par * k_par, 0.0f)));
 }
 
-__device__ __forceinline__ utd::Complex admittance_te(
-    const Medium& medium, utd::Complex k_z, float omega) {
+__device__ __forceinline__ utd::Complex admittance_te(const Medium& medium, utd::Complex k_z, float omega) {
     return c_div(k_z, utd::cplx_mul_real(medium.mu_abs, omega));
 }
 
-__device__ __forceinline__ utd::Complex admittance_tm(
-    const Medium& medium, utd::Complex k_z, float omega) {
+__device__ __forceinline__ utd::Complex admittance_tm(const Medium& medium, utd::Complex k_z, float omega) {
     return c_div(utd::cplx_mul_real(medium.eps_abs, omega), k_z);
 }
 
-__device__ __forceinline__ utd::Complex admittance(
-    const Medium& medium, utd::Complex k_z, float omega, int pol) {
-    return pol == kPolTE ? admittance_te(medium, k_z, omega)
-                         : admittance_tm(medium, k_z, omega);
+__device__ __forceinline__ utd::Complex admittance(const Medium& medium, utd::Complex k_z, float omega, int pol) {
+    return pol == kPolTE ? admittance_te(medium, k_z, omega) : admittance_tm(medium, k_z, omega);
 }
 
-__device__ __forceinline__ InterfaceRT interface_rt(
-    utd::Complex y1, utd::Complex y2) {
+__device__ __forceinline__ InterfaceRT interface_rt(utd::Complex y1, utd::Complex y2) {
     const utd::Complex denom = utd::cplx_add(y1, y2);
     InterfaceRT out;
     out.r = c_div(utd::cplx_sub(y1, y2), denom);
@@ -57,4 +50,4 @@ __device__ __forceinline__ InterfaceRT interface_rt(
     return out;
 }
 
-}  // namespace rayd::shared::transmission
+} // namespace rayd::shared::transmission

@@ -112,8 +112,7 @@ LIGHT = Config(
     max_bounces=1,
     accum_samples=1 << 13,
     chunk_rays=1 << 19,
-    note="192-vertex grid (72,962 triangles), 1 bounce, small sample count "
-    "-- transfer-bound",
+    note="192-vertex grid (72,962 triangles), 1 bounce, small sample count -- transfer-bound",
 )
 
 COMPUTE = Config(
@@ -127,8 +126,7 @@ COMPUTE = Config(
     max_bounces=4,
     accum_samples=1 << 26,
     chunk_rays=1 << 19,
-    note="2.1M-triangle cloud, incoherent rays, 4 bounces, 67M samples "
-    "-- compute-bound",
+    note="2.1M-triangle cloud, incoherent rays, 4 bounces, 67M samples -- compute-bound",
 )
 
 CONFIGS = {config.name: config for config in (LIGHT, COMPUTE)}
@@ -154,9 +152,7 @@ def grid_mesh(device: torch.device, cells: int, span: float = 2.0):
     y, x = torch.meshgrid(axis, axis, indexing="ij")
     flat_x = x.reshape(-1)
     vertices = torch.stack((flat_x, y.reshape(-1), torch.zeros_like(flat_x)), dim=1)
-    index = torch.arange((cells + 1) * (cells + 1), dtype=torch.int32).reshape(
-        cells + 1, cells + 1
-    )
+    index = torch.arange((cells + 1) * (cells + 1), dtype=torch.int32).reshape(cells + 1, cells + 1)
     a = index[:-1, :-1].reshape(-1)
     b = index[:-1, 1:].reshape(-1)
     c = index[1:, :-1].reshape(-1)
@@ -191,9 +187,7 @@ def plane_rays(device: torch.device, count: int) -> rt.Ray:
     directions = torch.randn((count, 3), generator=generator)
     directions[:, 2] = directions[:, 2].abs() + 0.25
     directions = directions / directions.norm(dim=1, keepdim=True)
-    return rt.Ray(
-        origins.contiguous().to(device), directions.contiguous().to(device)
-    )
+    return rt.Ray(origins.contiguous().to(device), directions.contiguous().to(device))
 
 
 def volume_rays(device: torch.device, count: int) -> rt.Ray:
@@ -206,9 +200,7 @@ def volume_rays(device: torch.device, count: int) -> rt.Ray:
     origins = torch.rand((count, 3), generator=generator) * 2.0 - 1.0
     directions = torch.randn((count, 3), generator=generator)
     directions = directions / directions.norm(dim=1, keepdim=True)
-    return rt.Ray(
-        origins.contiguous().to(device), directions.contiguous().to(device)
-    )
+    return rt.Ray(origins.contiguous().to(device), directions.contiguous().to(device))
 
 
 def accum_fixture(device: torch.device, **kwargs):
@@ -262,11 +254,7 @@ def sync(devices) -> None:
 
 
 def interleaved_min_ms(
-    variants: dict[str, Callable[[], object]],
-    devices,
-    *,
-    warmup: int,
-    repeat: int,
+    variants: dict[str, Callable[[], object]], devices, *, warmup: int, repeat: int
 ) -> dict[str, float]:
     """Run every variant once per round; keep each variant's fastest round.
 
@@ -384,11 +372,7 @@ def calibration_margin(record) -> dict:
     if not seconds or len(record.candidates) != len(seconds):
         return {}
     chosen = next(
-        (
-            index
-            for index, candidate in enumerate(record.candidates)
-            if list(candidate) == weights
-        ),
+        (index for index, candidate in enumerate(record.candidates) if list(candidate) == weights),
         seconds.index(min(seconds)),
     )
     chosen_ms = seconds[chosen] * 1e3
@@ -401,9 +385,7 @@ def calibration_margin(record) -> dict:
     best_sharded_ms = min(sharded_rungs) if sharded_rungs else float("nan")
     sharded = any(value != 0.0 for value in weights[1:])
     margin_pct = (
-        (master_only_ms - best_sharded_ms) / master_only_ms * 100.0
-        if master_only_ms > 0.0 and sharded_rungs
-        else 0.0
+        (master_only_ms - best_sharded_ms) / master_only_ms * 100.0 if master_only_ms > 0.0 and sharded_rungs else 0.0
     )
     return {
         "calibration_chosen_ms": chosen_ms,
@@ -507,11 +489,7 @@ def measure_per_ray(config: Config, devices, args) -> dict:
         multi.build()
         sync(devices)
 
-    results: dict = {
-        "triangles": config.triangles,
-        "rays": config.rays,
-        "max_bounces": config.max_bounces,
-    }
+    results: dict = {"triangles": config.triangles, "rays": config.rays, "max_bounces": config.max_bounces}
 
     def run_intersect(scene):
         return lambda: scene.intersect(ray, flags=rt.RayFlags.All).t
@@ -519,16 +497,11 @@ def measure_per_ray(config: Config, devices, args) -> dict:
     def run_reflections(scene):
         return lambda: scene.trace_reflections(ray, max_bounces=config.max_bounces).t
 
-    for name, build in (
-        ("intersect", run_intersect),
-        ("trace_reflections", run_reflections),
-    ):
+    for name, build in (("intersect", run_intersect), ("trace_reflections", run_reflections)):
         variants = {"single": build(single)}
         if multi is not None:
             variants["multi"] = build(multi)
-        timings = interleaved_min_ms(
-            variants, devices, warmup=args.warmup, repeat=args.repeat
-        )
+        timings = interleaved_min_ms(variants, devices, warmup=args.warmup, repeat=args.repeat)
         record = compare(timings["single"], timings.get("multi"))
         record["batch"] = f"{config.rays} rays"
         record["ns_per_ray_single"] = timings["single"] * 1e6 / config.rays
@@ -558,15 +531,10 @@ def measure_per_ray(config: Config, devices, args) -> dict:
             # a probe smaller than the workload can and does pick a split that
             # loses at the workload's size.
             record = multi.calibrate_devices(
-                rays=args.calibration_rays or config.rays,
-                max_bounces=bounces,
-                repeats=args.calibration_repeats,
+                rays=args.calibration_rays or config.rays, max_bounces=bounces, repeats=args.calibration_repeats
             )
             timings = interleaved_min_ms(
-                {"single": build(single), "multi": build(multi)},
-                devices,
-                warmup=args.warmup,
-                repeat=args.repeat,
+                {"single": build(single), "multi": build(multi)}, devices, warmup=args.warmup, repeat=args.repeat
             )
             calibrated = compare(timings["single"], timings["multi"])
             calibrated["batch"] = f"{config.rays} rays"
@@ -603,8 +571,7 @@ def measure_offload(config: Config, devices, single, ray, args) -> dict:
 
     vertices, faces = build_mesh(config, devices[0])
     scene = rt.Scene(
-        devices=[d.index for d in devices],
-        options=rt.MultiDeviceOptions(chunk_rays=config.chunk_rays, offload=hook),
+        devices=[d.index for d in devices], options=rt.MultiDeviceOptions(chunk_rays=config.chunk_rays, offload=hook)
     )
     scene.add_mesh(rt.Mesh(vertices, faces, edges_enabled=False))
     scene.build()
@@ -623,11 +590,7 @@ def measure_offload(config: Config, devices, single, ray, args) -> dict:
     streamed()
     sync(devices)
     streamed_peaks = [
-        {
-            "device_index": int(device.index),
-            "bytes": int(torch.cuda.max_memory_allocated(device)),
-        }
-        for device in devices
+        {"device_index": int(device.index), "bytes": int(torch.cuda.max_memory_allocated(device))} for device in devices
     ]
     streamed_peak = streamed_peaks[0]["bytes"]
     torch.cuda.reset_peak_memory_stats(devices[0])
@@ -636,10 +599,7 @@ def measure_offload(config: Config, devices, single, ray, args) -> dict:
     concatenated_peak = torch.cuda.max_memory_allocated(devices[0])
 
     timings = interleaved_min_ms(
-        {"single": concatenated, "multi": streamed},
-        devices,
-        warmup=args.warmup,
-        repeat=args.repeat,
+        {"single": concatenated, "multi": streamed}, devices, warmup=args.warmup, repeat=args.repeat
     )
     record = compare(timings["single"], timings["multi"])
     record.update(chunk_record(scene))
@@ -669,21 +629,21 @@ def measure_accum(config: Config, devices, args) -> dict:
         multi, _s, _m, _g = accum_fixture(master, devices=[d.index for d in devices])
 
     def run(scene):
-        return lambda: scene.accum_dfr_direct(
-            states=states,
-            grid=grid,
-            material=material,
-            wavelength=1.0,
-            direct_samples=config.accum_samples,
-            seed=17,
-        ).power
+        return lambda: (
+            scene.accum_dfr_direct(
+                states=states,
+                grid=grid,
+                material=material,
+                wavelength=1.0,
+                direct_samples=config.accum_samples,
+                seed=17,
+            ).power
+        )
 
     variants = {"single": run(single)}
     if multi is not None:
         variants["multi"] = run(multi)
-    timings = interleaved_min_ms(
-        variants, devices, warmup=args.warmup, repeat=args.repeat
-    )
+    timings = interleaved_min_ms(variants, devices, warmup=args.warmup, repeat=args.repeat)
     record = compare(timings["single"], timings.get("multi"))
     record["direct_samples"] = config.accum_samples
     record["batch"] = f"{config.accum_samples} samples"
@@ -695,9 +655,7 @@ def measure_accum(config: Config, devices, args) -> dict:
         # order, so this is a relative deviation, not an agreement fraction.
         denominator = float(reference.abs().sum().item())
         record["relative_grid_deviation"] = (
-            float((merged.to(master) - reference).abs().sum().item()) / denominator
-            if denominator > 0.0
-            else 0.0
+            float((merged.to(master) - reference).abs().sum().item()) / denominator if denominator > 0.0 else 0.0
         )
         del reference, merged
     del single, multi
@@ -727,8 +685,7 @@ def markdown(results: dict) -> str:
     # "1 GPUs" next to the baseline reads as two measurements of the same run.
     multi_label = f"{count} GPUs" if count > 1 else "multi (n/a)"
     lines = [
-        f"| Configuration | Operation | Batch | 1 GPU | {multi_label} | speedup "
-        "| dispatch | chunks | weights |",
+        f"| Configuration | Operation | Batch | 1 GPU | {multi_label} | speedup | dispatch | chunks | weights |",
         "| --- | --- | ---: | ---: | ---: | ---: | --- | ---: | --- |",
     ]
     for name, config in results["configs"].items():
@@ -749,9 +706,7 @@ def markdown(results: dict) -> str:
                     speedup="--" if multi is None else f"{record['speedup']:.2f}x",
                     dispatch=record.get("dispatch", "--"),
                     chunks=record.get("chunk_count", "--"),
-                    weights="--"
-                    if weights is None
-                    else ", ".join(f"{value:.3f}" for value in weights),
+                    weights="--" if weights is None else ", ".join(f"{value:.3f}" for value in weights),
                 )
             )
     notes = overlap_notes(results) + calibration_notes(results)
@@ -808,11 +763,7 @@ def calibration_notes(results: dict) -> list[str]:
             verdict = (
                 "kept a remote share on tolerance alone"
                 if record["calibration_kept_on_tolerance"]
-                else (
-                    "sharded with a measured margin"
-                    if record["calibration_sharded"]
-                    else "chose the master alone"
-                )
+                else ("sharded with a measured margin" if record["calibration_sharded"] else "chose the master alone")
             )
             flags = ""
             if record["calibration_near_crossover"]:
@@ -841,16 +792,9 @@ def main() -> None:
     parser.add_argument("--config", choices=(*CONFIGS, "all"), default="all")
     parser.add_argument("--devices", default=None, help="comma-separated CUDA indices")
     parser.add_argument("--rays", type=int, default=None, help="override the batch size")
+    parser.add_argument("--accum-samples", type=int, default=None, help="override the accum_dfr_direct sample count")
     parser.add_argument(
-        "--accum-samples",
-        type=int,
-        default=None,
-        help="override the accum_dfr_direct sample count",
-    )
-    parser.add_argument(
-        "--accum-only",
-        action="store_true",
-        help="skip the per_ray operations (for sweeping the sample count cheaply)",
+        "--accum-only", action="store_true", help="skip the per_ray operations (for sweeping the sample count cheaply)"
     )
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--repeat", type=int, default=7)
@@ -861,12 +805,7 @@ def main() -> None:
         help="probe size for calibrate_devices(); 0 means the batch size itself",
     )
     parser.add_argument("--calibration-repeats", type=int, default=3)
-    parser.add_argument(
-        "--json",
-        type=Path,
-        default=None,
-        help="write the schema-versioned benchmark record here",
-    )
+    parser.add_argument("--json", type=Path, default=None, help="write the schema-versioned benchmark record here")
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -900,9 +839,7 @@ def main() -> None:
         {
             "source": int(source.index),
             "destination": int(destination.index),
-            "can_access": bool(
-                torch.cuda.can_device_access_peer(source, destination)
-            ),
+            "can_access": bool(torch.cuda.can_device_access_peer(source, destination)),
         }
         for source in devices
         for destination in devices
@@ -910,17 +847,13 @@ def main() -> None:
     ]
     machine["peer_access"] = {
         "status": "measured" if len(devices) > 1 else "not_applicable",
-        "all_pairs_accessible": bool(peer_pairs)
-        and all(pair["can_access"] for pair in peer_pairs),
+        "all_pairs_accessible": bool(peer_pairs) and all(pair["can_access"] for pair in peer_pairs),
         "pairs": peer_pairs,
     }
     if len(devices) > 1:
         machine["d2d_gbps"] = device_to_device_gbps(devices[0], devices[1])
     else:
-        print(
-            "Only one CUDA device is visible: reporting single-device times "
-            "with no multi-device column."
-        )
+        print("Only one CUDA device is visible: reporting single-device times with no multi-device column.")
 
     selected = list(CONFIGS.values()) if args.config == "all" else [CONFIGS[args.config]]
     results = {
@@ -928,9 +861,7 @@ def main() -> None:
         "benchmark": "rayd_multi_device",
         "provenance": {
             "kind": "live_measurement",
-            "generated_at": datetime.datetime.now(datetime.timezone.utc)
-            .isoformat()
-            .replace("+00:00", "Z"),
+            "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
         },
         "parameters": {
             "selected_configs": [config.name for config in selected],
@@ -958,11 +889,7 @@ def main() -> None:
         for key, _label in _ROWS:
             row = record.get(key)
             if isinstance(row, dict):
-                row.update(
-                    overlap_breakdown(
-                        row, record.get("rays", 0), machine.get("d2d_gbps")
-                    )
-                )
+                row.update(overlap_breakdown(row, record.get("rays", 0), machine.get("d2d_gbps")))
         results["configs"][config.name] = record
 
     print(json.dumps(results, indent=2, sort_keys=True))
@@ -970,10 +897,7 @@ def main() -> None:
     print(markdown(results))
     if args.json:
         args.json.parent.mkdir(parents=True, exist_ok=True)
-        args.json.write_text(
-            json.dumps(results, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        args.json.write_text(json.dumps(results, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

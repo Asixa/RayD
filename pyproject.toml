@@ -21,3 +21,14 @@ packages = []
 [tool.rayd.workspace]
 members = ["drjit", "torch"]
 distributions = ["rayd", "rayd-drjit", "rayd-torch"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+exclude = ["artifacts", "generated", "**/build", ".worktrees"]
+
+[tool.ruff.format]
+indent-style = "space"
+line-ending = "lf"
+quote-style = "double"
+skip-magic-trailing-comma = true

@@ -12,22 +12,12 @@ TORCH = ROOT / "torch"
 class TypedAxialEdgeVisibilityGovernanceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.adr = (ROOT / "docs/adr/0029-typed-axial-edge-visibility.md").read_text(
-            encoding="utf-8"
-        )
-        cls.header = (ROOT / "include/rayd/visibility.h").read_text(
-            encoding="utf-8"
-        )
-        cls.ops = (ROOT / "src/visibility/visibility.cpp").read_text(
-            encoding="utf-8"
-        )
-        cls.device = (
-            ROOT / "src/visibility/axial_edge_visibility_optix.cu"
-        ).read_text(encoding="utf-8")
+        cls.adr = (ROOT / "docs/adr/0029-typed-axial-edge-visibility.md").read_text(encoding="utf-8")
+        cls.header = (ROOT / "include/rayd/visibility.h").read_text(encoding="utf-8")
+        cls.ops = (ROOT / "src/visibility/visibility.cpp").read_text(encoding="utf-8")
+        cls.device = (ROOT / "src/visibility/axial_edge_visibility_optix.cu").read_text(encoding="utf-8")
         cls.cmake = (TORCH / "CMakeLists.txt").read_text(encoding="utf-8")
-        cls.direct_test = (ROOT / "tests/native/integration_test.cpp").read_text(
-            encoding="utf-8"
-        )
+        cls.direct_test = (ROOT / "tests/native/integration_test.cpp").read_text(encoding="utf-8")
 
     def test_accepted_contract_and_exact_fraction_bits(self):
         self.assertIn("Status: Accepted", self.adr)
@@ -43,11 +33,7 @@ class TypedAxialEdgeVisibilityGovernanceTests(unittest.TestCase):
             self.assertIn(token, self.header)
 
     def test_exact_device_arithmetic_has_no_torch_numerical_path(self):
-        for token in (
-            'asm volatile("sub.rn.f32',
-            'asm volatile("mul.rn.f32',
-            'asm volatile("add.rn.f32',
-        ):
+        for token in ('asm volatile("sub.rn.f32', 'asm volatile("mul.rn.f32', 'asm volatile("add.rn.f32'):
             self.assertIn(token, self.device)
         for forbidden in (".ftz", "fma.", "__fsub_rn", "__fmul_rn", "__fadd_rn"):
             self.assertNotIn(forbidden, self.device)
@@ -71,9 +57,7 @@ class TypedAxialEdgeVisibilityGovernanceTests(unittest.TestCase):
         self.assertLess(body.index("state_count == 0"), body.index("->launch("))
 
     def test_parity_and_existing_staging_sync_are_explicit(self):
-        common_launch = (
-            ROOT / "src/runtime/optix.cpp"
-        ).read_text(encoding="utf-8")
+        common_launch = (ROOT / "src/runtime/optix.cpp").read_text(encoding="utf-8")
         self.assertIn("cudaEventSynchronize(params_staging_events_[slot])", common_launch)
         self.assertIn("reducing four public launch-parameter staging checks to one", self.adr)
         self.assertIn("separate Phase 12 optimization", self.adr)
@@ -83,18 +67,14 @@ class TypedAxialEdgeVisibilityGovernanceTests(unittest.TestCase):
     def test_candidate_is_not_python_or_legacy_dispatcher_exposed(self):
         library = (ROOT / "src/bindings/library.cpp").read_text(encoding="utf-8")
         module = (ROOT / "src/bindings/module.cpp").read_text(encoding="utf-8")
-        legacy_device = (
-            ROOT / "src/visibility/visibility_optix.cu"
-        ).read_text(encoding="utf-8")
+        legacy_device = (ROOT / "src/visibility/visibility_optix.cu").read_text(encoding="utf-8")
         self.assertNotIn("axial_edge_visibility", library)
         self.assertNotIn("axial_edge_visibility", module)
         self.assertNotIn("axial_edge_visibility_exact", legacy_device)
         self.assertIn("__raygen__segment_visibility", legacy_device)
 
     def test_repository_guardrails_match(self):
-        self.assertEqual(
-            (ROOT / "AGENTS.md").read_bytes(), (ROOT / "CLAUDE.md").read_bytes()
-        )
+        self.assertEqual((ROOT / "AGENTS.md").read_bytes(), (ROOT / "CLAUDE.md").read_bytes())
 
 
 if __name__ == "__main__":

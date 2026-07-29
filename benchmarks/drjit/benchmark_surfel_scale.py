@@ -15,11 +15,7 @@ THIS_FILE = Path(__file__).resolve()
 TESTS_DIR = os.path.normcase(str(THIS_FILE.parent))
 REPO_ROOT = THIS_FILE.parents[2]
 CWD = os.path.normcase(os.path.abspath(os.getcwd()))
-sys.path = [
-    entry
-    for entry in sys.path
-    if os.path.normcase(os.path.abspath(entry or CWD)) != TESTS_DIR
-]
+sys.path = [entry for entry in sys.path if os.path.normcase(os.path.abspath(entry or CWD)) != TESTS_DIR]
 sys.path.insert(0, str(REPO_ROOT))
 
 import drjit as dr
@@ -45,10 +41,7 @@ def make_surfel_grid(count: int, spacing: float) -> rd.SurfelCloud:
     radius = dr.full(cuda.Float, spacing * 0.48, count)
     ones = dr.full(cuda.Float, 1.0, count)
     return rd.SurfelCloud(
-        cuda.Array3f(x, y, zeros),
-        cuda.Array3f(radius, zeros, zeros),
-        cuda.Array3f(zeros, radius, zeros),
-        ones,
+        cuda.Array3f(x, y, zeros), cuda.Array3f(radius, zeros, zeros), cuda.Array3f(zeros, radius, zeros), ones
     )
 
 
@@ -212,15 +205,7 @@ def run_surfel_count(
         base["build_ms"] = (time.perf_counter() - start) * 1000.0
         base["triangle_count"] = scene.triangle_count
     except Exception as exc:  # noqa: BLE001 - benchmark must preserve partial results.
-        return [
-            {
-                **base,
-                "ray_count": ray_count,
-                "status": "failed",
-                "error": repr(exc),
-            }
-            for ray_count in ray_counts
-        ]
+        return [{**base, "ray_count": ray_count, "status": "failed", "error": repr(exc)} for ray_count in ray_counts]
 
     records: list[dict[str, Any]] = []
     for ray_count in ray_counts:
@@ -255,11 +240,7 @@ def plot(data: dict[str, Any], output_dir: Path) -> dict[str, str]:
         subset = [r for r in records if r["ray_count"] == ray_count]
         subset.sort(key=lambda r: r["surfel_count"])
         plt.figure(figsize=(7.2, 4.6))
-        plt.plot(
-            [r["surfel_count"] for r in subset],
-            [r["trace"]["avg_ms"] for r in subset],
-            marker="o",
-        )
+        plt.plot([r["surfel_count"] for r in subset], [r["trace"]["avg_ms"] for r in subset], marker="o")
         plt.xscale("log", base=10)
         plt.yscale("log")
         plt.xlabel("surfel count")
@@ -278,11 +259,7 @@ def plot(data: dict[str, Any], output_dir: Path) -> dict[str, str]:
         build_subset.setdefault(record["surfel_count"], record)
     ordered = [build_subset[k] for k in sorted(build_subset)]
     plt.figure(figsize=(7.2, 4.6))
-    plt.plot(
-        [r["surfel_count"] for r in ordered],
-        [r["build_ms"] for r in ordered],
-        marker="o",
-    )
+    plt.plot([r["surfel_count"] for r in ordered], [r["build_ms"] for r in ordered], marker="o")
     plt.xscale("log", base=10)
     plt.yscale("log")
     plt.xlabel("surfel count")

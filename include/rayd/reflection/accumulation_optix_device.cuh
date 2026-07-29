@@ -43,22 +43,16 @@ static __forceinline__ __device__ void miss() {
 /// miss sentinel (a null handle yields the same cleared hit).
 static __forceinline__ __device__ ::rayd::shared::optix::OptixTraverser make_traverser(
     ::OptixTraversableHandle handle) {
-    return ::rayd::shared::optix::OptixTraverser{
-        handle,
-        static_cast<unsigned int>(OPTIX_RAY_FLAG_DISABLE_ANYHIT),
-        0u,
-        1u,
-        0u,
-        reflection_accumulation_algo_detail::TraceTMax};
+    return ::rayd::shared::optix::OptixTraverser{handle, static_cast<unsigned int>(OPTIX_RAY_FLAG_DISABLE_ANYHIT),
+                                                 0u,     1u,
+                                                 0u,     reflection_accumulation_algo_detail::TraceTMax};
 }
 
-template <typename Params, typename Policy>
-static __forceinline__ __device__ void raygen(const Params &params) {
+template <typename Params, typename Policy> static __forceinline__ __device__ void raygen(const Params& params) {
     const unsigned int ray_index = optixGetLaunchIndex().x;
     const ::rayd::shared::optix::OptixTraverser primary = make_traverser(params.primary_handle);
     const ::rayd::shared::optix::OptixTraverser secondary = make_traverser(params.secondary_handle);
-    ::rayd::shared::multipath::reflection_accumulation_algo<
-        Params, Policy, ::rayd::shared::optix::OptixTraverser>(
+    ::rayd::shared::multipath::reflection_accumulation_algo<Params, Policy, ::rayd::shared::optix::OptixTraverser>(
         params, ray_index, primary, secondary);
 }
 

@@ -12,32 +12,32 @@ namespace rayd {
 struct SurfelTraceParams {
     uint64_t handle = 0;
 
-    const float *ray_ox = nullptr;
-    const float *ray_oy = nullptr;
-    const float *ray_oz = nullptr;
-    const float *ray_dx = nullptr;
-    const float *ray_dy = nullptr;
-    const float *ray_dz = nullptr;
-    const float *ray_tmax = nullptr;
-    const uint8_t *active_mask = nullptr;
+    const float* ray_ox = nullptr;
+    const float* ray_oy = nullptr;
+    const float* ray_oz = nullptr;
+    const float* ray_dx = nullptr;
+    const float* ray_dy = nullptr;
+    const float* ray_dz = nullptr;
+    const float* ray_tmax = nullptr;
+    const uint8_t* active_mask = nullptr;
     int ray_count = 0;
 
-    const int *triangle_to_surfel_id = nullptr;
+    const int* triangle_to_surfel_id = nullptr;
     int triangle_count = 0;
     int surfel_count = 0;
 
-    const float *center_x = nullptr;
-    const float *center_y = nullptr;
-    const float *center_z = nullptr;
-    const float *tangent_u_x = nullptr;
-    const float *tangent_u_y = nullptr;
-    const float *tangent_u_z = nullptr;
-    const float *tangent_v_x = nullptr;
-    const float *tangent_v_y = nullptr;
-    const float *tangent_v_z = nullptr;
-    const float *opacity = nullptr;
-    const float *value = nullptr;
-    const float *appearance_values = nullptr;
+    const float* center_x = nullptr;
+    const float* center_y = nullptr;
+    const float* center_z = nullptr;
+    const float* tangent_u_x = nullptr;
+    const float* tangent_u_y = nullptr;
+    const float* tangent_u_z = nullptr;
+    const float* tangent_v_x = nullptr;
+    const float* tangent_v_y = nullptr;
+    const float* tangent_v_z = nullptr;
+    const float* opacity = nullptr;
+    const float* value = nullptr;
+    const float* appearance_values = nullptr;
     int appearance_channel_count = 1;
     int color_model = 0;
     int appearance_sh_degree = 0;
@@ -57,25 +57,25 @@ struct SurfelTraceParams {
     float transmittance_min = 0.03f;
     int max_trace_segments = 1;
 
-    int *out_triangle_id = nullptr;
-    float *out_proxy_t = nullptr;
-    uint8_t *out_valid = nullptr;
+    int* out_triangle_id = nullptr;
+    float* out_proxy_t = nullptr;
+    uint8_t* out_valid = nullptr;
 
     int composite_hit_capacity = 8;
-    int *scratch_surfel_id = nullptr;
-    float *scratch_t = nullptr;
-    float *scratch_alpha = nullptr;
-    float *scratch_value = nullptr;
-    float *out_intensity = nullptr;
-    float *out_channels = nullptr;
-    float *out_normal_x = nullptr;
-    float *out_normal_y = nullptr;
-    float *out_normal_z = nullptr;
-    float *out_alpha = nullptr;
-    float *out_transmittance = nullptr;
-    float *out_depth = nullptr;
-    int *out_candidate_count = nullptr;
-    uint8_t *out_candidate_buffer_full = nullptr;
+    int* scratch_surfel_id = nullptr;
+    float* scratch_t = nullptr;
+    float* scratch_alpha = nullptr;
+    float* scratch_value = nullptr;
+    float* out_intensity = nullptr;
+    float* out_channels = nullptr;
+    float* out_normal_x = nullptr;
+    float* out_normal_y = nullptr;
+    float* out_normal_z = nullptr;
+    float* out_alpha = nullptr;
+    float* out_transmittance = nullptr;
+    float* out_depth = nullptr;
+    int* out_candidate_count = nullptr;
+    uint8_t* out_candidate_buffer_full = nullptr;
 };
 
 } // namespace rayd

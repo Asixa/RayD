@@ -2,51 +2,13 @@
 # Tests device binding Dr.Jit.
 
 import json
-import subprocess
-import sys
-import textwrap
 import unittest
 from pathlib import Path
 
+from tests.support.subprocess_cases import compose, run_json_case, run_script
+
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def run_script(script: str, timeout: int = 300, check: bool = True):
-    result = subprocess.run(
-        [sys.executable, "-c", textwrap.dedent(script)],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        timeout=timeout,
-        check=False,
-    )
-    if check and result.returncode != 0:
-        raise AssertionError(
-            "Subprocess failed.\n"
-            f"Return code: {result.returncode}\n"
-            f"STDOUT:\n{result.stdout}\n"
-            f"STDERR:\n{result.stderr}"
-        )
-    return result
-
-
-def run_json_case(script: str, timeout: int = 300):
-    result = run_script(script, timeout=timeout, check=True)
-    lines = [line for line in result.stdout.splitlines() if line.strip()]
-    if not lines:
-        raise AssertionError(f"Subprocess produced no JSON output.\nSTDERR:\n{result.stderr}")
-    try:
-        return json.loads(lines[-1])
-    except json.JSONDecodeError as exc:
-        raise AssertionError(
-            f"Failed to parse JSON from subprocess.\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
-        ) from exc
-
-
-def compose(*parts: str) -> str:
-    """Join independently indented script fragments into one flat script."""
-    return "\n".join(textwrap.dedent(part).strip("\n") for part in parts)
 
 
 def drjit_device_count() -> int:
@@ -102,9 +64,7 @@ class DeviceBindingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         if drjit_device_count() < 2:
-            raise unittest.SkipTest(
-                "two Dr.Jit CUDA devices and an importable rayd.drjit are required"
-            )
+            raise unittest.SkipTest("two Dr.Jit CUDA devices and an importable rayd.drjit are required")
 
     def test_intersect_after_set_device_raises_and_restores(self):
         data = run_json_case(

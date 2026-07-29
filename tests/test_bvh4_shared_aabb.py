@@ -26,10 +26,7 @@ class SharedEdgeAabbSourceTests(unittest.TestCase):
 
     def test_shared_implementation_is_async_and_allocation_free(self) -> None:
         source = SHARED_SOURCE.read_text(encoding="utf-8")
-        self.assertRegex(
-            source,
-            re.compile(r"compute_edge_aabbs_kernel<<<[^>]+,\s*stream>>>", re.DOTALL),
-        )
+        self.assertRegex(source, re.compile(r"compute_edge_aabbs_kernel<<<[^>]+,\s*stream>>>", re.DOTALL))
         for forbidden in (
             "cudaDeviceSynchronize",
             "cudaStreamSynchronize",
@@ -51,14 +48,8 @@ class SharedEdgeAabbSourceTests(unittest.TestCase):
         self.assertIn("rayd/edge/edge_aabb.h", source)
         self.assertNotIn("current_torch_cuda_context()", source)
         self.assertIn("c10::cuda::CUDAGuard guard(out_aabbs.device());", source)
-        self.assertIn(
-            "at::cuda::getCurrentCUDAStream(out_aabbs.get_device()).stream();",
-            source,
-        )
-        self.assertRegex(
-            source,
-            re.compile(r"launch_edge_aabb\([\s\S]+?stream\s*\);"),
-        )
+        self.assertIn("at::cuda::getCurrentCUDAStream(out_aabbs.get_device()).stream();", source)
+        self.assertRegex(source, re.compile(r"launch_edge_aabb\([\s\S]+?stream\s*\);"))
         # F1 keeps a Torch-only raw-BVH encoding kernel in this adapter.  The
         # edge AABB implementation itself must remain exclusively shared.
         global_kernels = re.findall(r"__global__\s+void\s+(\w+)", source)

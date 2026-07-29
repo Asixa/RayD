@@ -34,10 +34,8 @@ py::dict contract_values() {
     values["ray_flags_uv"] = static_cast<std::uint32_t>(shared::RayFlagBits::UV);
     values["ray_flags_all"] = static_cast<std::uint32_t>(shared::RayFlagBits::All);
     values["intersection_field_count"] = static_cast<std::uint32_t>(shared::IntersectionField::Count);
-    values["nearest_point_edge_field_count"] =
-        static_cast<std::uint32_t>(shared::NearestPointEdgeField::Count);
-    values["nearest_ray_edge_field_count"] =
-        static_cast<std::uint32_t>(shared::NearestRayEdgeField::Count);
+    values["nearest_point_edge_field_count"] = static_cast<std::uint32_t>(shared::NearestPointEdgeField::Count);
+    values["nearest_ray_edge_field_count"] = static_cast<std::uint32_t>(shared::NearestRayEdgeField::Count);
     return values;
 }
 

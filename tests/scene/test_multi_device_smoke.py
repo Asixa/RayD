@@ -4,78 +4,46 @@
 import unittest
 
 import torch
+
+from tests.support.geometry import grid_mesh as _grid_mesh, tensor_bits as _bits
 import rayd.torch as rt
 
 
 # Query inputs are built once on the host and moved to each device, so the two
 # devices receive bit-identical inputs and any difference is device handling.
 _RAY_O = torch.tensor(
-    [
-        [-0.60, -0.60, -1.0],
-        [0.10, -0.30, -1.0],
-        [0.40, 0.50, -1.0],
-        [-0.20, 0.70, -1.0],
-    ],
-    dtype=torch.float32,
+    [[-0.60, -0.60, -1.0], [0.10, -0.30, -1.0], [0.40, 0.50, -1.0], [-0.20, 0.70, -1.0]], dtype=torch.float32
 )
 _RAY_D = torch.tensor([[0.0, 0.0, 1.0]] * 4, dtype=torch.float32)
 _POINTS = torch.tensor(
-    [
-        [0.00, 0.00, 0.25],
-        [0.90, -0.90, 0.10],
-        [-0.50, 0.50, -0.30],
-        [0.30, 0.20, 0.50],
-    ],
-    dtype=torch.float32,
+    [[0.00, 0.00, 0.25], [0.90, -0.90, 0.10], [-0.50, 0.50, -0.30], [0.30, 0.20, 0.50]], dtype=torch.float32
 )
-_SEGMENT_START = torch.tensor(
-    [[0.0, 0.0, -1.0], [0.0, 0.0, 1.0], [4.0, 4.0, -1.0]], dtype=torch.float32
-)
-_SEGMENT_END = torch.tensor(
-    [[0.0, 0.0, 1.0], [0.5, 0.5, 2.0], [4.0, 4.0, 1.0]], dtype=torch.float32
-)
-_SOURCE = torch.tensor(
-    [[0.0, 0.0, -1.0], [0.2, 0.1, -1.0], [-0.2, 0.2, -1.0]], dtype=torch.float32
-)
-_RECEIVER = torch.tensor(
-    [[0.0, 0.0, 1.0], [0.2, 0.1, 1.0], [-0.2, 0.2, 1.0]], dtype=torch.float32
-)
+_SEGMENT_START = torch.tensor([[0.0, 0.0, -1.0], [0.0, 0.0, 1.0], [4.0, 4.0, -1.0]], dtype=torch.float32)
+_SEGMENT_END = torch.tensor([[0.0, 0.0, 1.0], [0.5, 0.5, 2.0], [4.0, 4.0, 1.0]], dtype=torch.float32)
+_SOURCE = torch.tensor([[0.0, 0.0, -1.0], [0.2, 0.1, -1.0], [-0.2, 0.2, -1.0]], dtype=torch.float32)
+_RECEIVER = torch.tensor([[0.0, 0.0, 1.0], [0.2, 0.1, 1.0], [-0.2, 0.2, 1.0]], dtype=torch.float32)
 # The second pair endpoint clears the mesh, so `visible_pair` reports one
 # blocked and one unblocked segment per query instead of a constant answer.
-_PAIR_END_B = torch.tensor(
-    [[4.0, 4.0, 1.0], [4.0, -4.0, 1.0], [-4.0, 4.0, 1.0]], dtype=torch.float32
-)
+_PAIR_END_B = torch.tensor([[4.0, 4.0, 1.0], [4.0, -4.0, 1.0], [-4.0, 4.0, 1.0]], dtype=torch.float32)
 # The first axial edge sits below the mesh (visible from its source), the
 # second above it (occluded), so neither sample answer is degenerate.
-_EDGE_SOURCE = torch.tensor(
-    [[0.0, 0.0, -1.0], [0.5, 0.5, -1.0]], dtype=torch.float32
-)
-_EDGE_POSITION = torch.tensor(
-    [[0.0, 0.0, -0.5], [0.5, 0.5, 0.5]], dtype=torch.float32
-)
-_EDGE_DIRECTION = torch.tensor(
-    [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=torch.float32
-)
+_EDGE_SOURCE = torch.tensor([[0.0, 0.0, -1.0], [0.5, 0.5, -1.0]], dtype=torch.float32)
+_EDGE_POSITION = torch.tensor([[0.0, 0.0, -0.5], [0.5, 0.5, 0.5]], dtype=torch.float32)
+_EDGE_DIRECTION = torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=torch.float32)
 _EDGE_T_MIN = torch.tensor([-0.5, -0.5], dtype=torch.float32)
 _EDGE_T_MAX = torch.tensor([0.5, 0.5], dtype=torch.float32)
 # Chain 0 stays below the mesh; chain 1 crosses it on its first segment.
 _CHAIN_POINTS = torch.tensor(
-    [
-        [[0.0, 0.0, -1.0], [0.0, 0.0, -0.5], [0.2, 0.2, -0.4]],
-        [[0.0, 0.0, -1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.5]],
-    ],
+    [[[0.0, 0.0, -1.0], [0.0, 0.0, -0.5], [0.2, 0.2, -0.4]], [[0.0, 0.0, -1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.5]]],
     dtype=torch.float32,
 )
 _CHAIN_LENGTH = torch.tensor([2, 2], dtype=torch.int32)
 # Camera is Torch-only public API and takes no scene, so it is covered here as
 # its own family rather than through a scene query.
 _CAMERA = rt.Camera(width=16, height=12, fov_x=45.0)
-_CAMERA_SAMPLE = torch.tensor(
-    [[0.0, 0.0], [0.25, 0.75], [0.5, 0.5], [1.0, 1.0]], dtype=torch.float32
-)
+_CAMERA_SAMPLE = torch.tensor([[0.0, 0.0], [0.25, 0.75], [0.5, 0.5], [1.0, 1.0]], dtype=torch.float32)
 _CAMERA_POINT = torch.tensor(
-    [[0.1, -0.2, 2.0], [0.3, 0.4, 4.0], [-0.5, 0.25, 1.0], [0.0, 0.0, 3.0]],
-    dtype=torch.float32,
+    [[0.1, -0.2, 2.0], [0.3, 0.4, 4.0], [-0.5, 0.25, 1.0], [0.0, 0.0, 3.0]], dtype=torch.float32
 )
 
 
@@ -94,47 +62,14 @@ _SDF_POSITION = torch.zeros(3, dtype=torch.float32)
 _SDF_ROTATION = torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=torch.float32)
 _SDF_SCALE = torch.full((3,), 2.0, dtype=torch.float32)
 _SDF_ORIGINS = torch.tensor(
-    [
-        [0.00, 0.00, -2.0],
-        [0.20, 0.10, -2.0],
-        [-0.15, 0.25, -2.0],
-        [0.80, 0.80, -2.0],
-    ],
-    dtype=torch.float32,
+    [[0.00, 0.00, -2.0], [0.20, 0.10, -2.0], [-0.15, 0.25, -2.0], [0.80, 0.80, -2.0]], dtype=torch.float32
 )
 _SDF_DIRECTIONS = torch.tensor([[0.0, 0.0, 1.0]] * 4, dtype=torch.float32)
 
 
-def _grid_mesh(device: torch.device, cells: int = 3, span: float = 2.0):
-    """Deterministic z=0 triangle grid; identical bits on every CUDA device."""
-    axis = torch.linspace(-0.5 * span, 0.5 * span, cells + 1, dtype=torch.float32)
-    y, x = torch.meshgrid(axis, axis, indexing="ij")
-    flat_x = x.reshape(-1)
-    vertices = torch.stack((flat_x, y.reshape(-1), torch.zeros_like(flat_x)), dim=1)
-    index = torch.arange((cells + 1) * (cells + 1), dtype=torch.int32).reshape(
-        cells + 1, cells + 1
-    )
-    a = index[:-1, :-1].reshape(-1)
-    b = index[:-1, 1:].reshape(-1)
-    c = index[1:, :-1].reshape(-1)
-    d = index[1:, 1:].reshape(-1)
-    faces = torch.cat((torch.stack((a, b, c), dim=1), torch.stack((b, d, c), dim=1)))
-    return vertices.contiguous().to(device), faces.contiguous().to(device)
-
-
-def _bits(tensor: torch.Tensor) -> torch.Tensor:
-    """Host copy compared bit-for-bit, so NaN, -0.0, and inf all compare exactly."""
-    host = tensor.detach().contiguous().cpu()
-    if host.dtype == torch.float32:
-        return host.view(torch.int32)
-    if host.dtype == torch.float64:
-        return host.view(torch.int64)
-    return host
-
-
 def _build_scene(index: int) -> rt.Scene:
     """Scene.build() requires its own device to be current; nothing else does."""
-    vertices, faces = _grid_mesh(torch.device("cuda", index))
+    vertices, faces = _grid_mesh(torch.device("cuda", index), cells=3)
     with torch.cuda.device(index):
         scene = rt.Scene()
         scene.add_mesh(rt.Mesh(vertices, faces))
@@ -182,9 +117,7 @@ def _run_scene_query_ops(scene: rt.Scene, index: int) -> dict[str, torch.Tensor]
     nearest_ray = scene.nearest_edge(ray)
     topk = scene.nearest_edges(point, 4)
     visible = scene.visible(_SEGMENT_START.to(device), _SEGMENT_END.to(device))
-    pair = scene.visible_pair(
-        _SOURCE.to(device), _RECEIVER.to(device), _PAIR_END_B.to(device)
-    )
+    pair = scene.visible_pair(_SOURCE.to(device), _RECEIVER.to(device), _PAIR_END_B.to(device))
     axial = scene.visible_edge(
         _EDGE_SOURCE.to(device),
         _EDGE_POSITION.to(device),
@@ -236,9 +169,7 @@ def _run_reflection_ops(scene: rt.Scene, index: int) -> dict[str, torch.Tensor]:
     ray = rt.Ray(_RAY_O.to(device), _RAY_D.to(device))
 
     chain = scene.trace_reflections(ray, max_bounces=1)
-    epc = scene.trace_refl_epc_field(
-        _SOURCE.to(device), _RECEIVER.to(device), max_bounces=1
-    )
+    epc = scene.trace_refl_epc_field(_SOURCE.to(device), _RECEIVER.to(device), max_bounces=1)
 
     return {
         "trace_reflections.valid": chain.valid,
@@ -282,11 +213,7 @@ def _run_scene_free_ops(index: int) -> dict[str, torch.Tensor]:
 
 
 def _run_bitwise_ops(scene: rt.Scene, index: int) -> dict[str, torch.Tensor]:
-    return {
-        **_run_scene_query_ops(scene, index),
-        **_run_reflection_ops(scene, index),
-        **_run_scene_free_ops(index),
-    }
+    return {**_run_scene_query_ops(scene, index), **_run_reflection_ops(scene, index), **_run_scene_free_ops(index)}
 
 
 def _run_diffraction_ops(scene: rt.Scene, index: int) -> dict[str, torch.Tensor]:
@@ -309,9 +236,7 @@ def _run_diffraction_ops(scene: rt.Scene, index: int) -> dict[str, torch.Tensor]
         max_paths=states.state_count,
         wavelength=1.0,
     )
-    direct = scene.accum_dfr_direct(
-        states=states, grid=grid, wavelength=1.0, direct_samples=4, seed=7
-    )
+    direct = scene.accum_dfr_direct(states=states, grid=grid, wavelength=1.0, direct_samples=4, seed=7)
     recursive = scene.accum_dfr(
         initial_states=states,
         recursive_states=states,
@@ -322,9 +247,7 @@ def _run_diffraction_ops(scene: rt.Scene, index: int) -> dict[str, torch.Tensor]
         seed=7,
         max_order=2,
     )
-    coherent = scene.accum_dfr_coherent_direct(
-        states=states, grid=grid, wavelength=1.0
-    )
+    coherent = scene.accum_dfr_coherent_direct(states=states, grid=grid, wavelength=1.0)
 
     return {
         "trace_dfr_paths.count": paths.count,
@@ -344,10 +267,7 @@ def _run_diffraction_ops(scene: rt.Scene, index: int) -> dict[str, torch.Tensor]
     }
 
 
-@unittest.skipUnless(
-    torch.cuda.is_available() and torch.cuda.device_count() >= 2,
-    "two CUDA devices are required",
-)
+@unittest.skipUnless(torch.cuda.is_available() and torch.cuda.device_count() >= 2, "two CUDA devices are required")
 class MultiDeviceSmokeTests(unittest.TestCase):
     def setUp(self) -> None:
         self._entry_device = torch.cuda.current_device()
@@ -356,28 +276,15 @@ class MultiDeviceSmokeTests(unittest.TestCase):
     def tearDown(self) -> None:
         torch.cuda.set_device(self._entry_device)
 
-    def assert_same_results(
-        self,
-        left: dict[str, torch.Tensor],
-        right: dict[str, torch.Tensor],
-        context: str,
-    ) -> None:
+    def assert_same_results(self, left: dict[str, torch.Tensor], right: dict[str, torch.Tensor], context: str) -> None:
         self.assertEqual(sorted(left), sorted(right))
         for name, value in left.items():
             other = right[name]
             self.assertEqual(value.dtype, other.dtype, f"{context}: {name} dtype")
             self.assertEqual(value.shape, other.shape, f"{context}: {name} shape")
-            self.assertTrue(
-                torch.equal(_bits(value), _bits(other)),
-                f"{context}: {name} is not bitwise equal",
-            )
+            self.assertTrue(torch.equal(_bits(value), _bits(other)), f"{context}: {name} is not bitwise equal")
 
-    def assert_same_shapes(
-        self,
-        left: dict[str, torch.Tensor],
-        right: dict[str, torch.Tensor],
-        context: str,
-    ) -> None:
+    def assert_same_shapes(self, left: dict[str, torch.Tensor], right: dict[str, torch.Tensor], context: str) -> None:
         """Placement contract for the families whose float order is not fixed."""
         self.assertEqual(sorted(left), sorted(right))
         for name, value in left.items():
@@ -385,22 +292,16 @@ class MultiDeviceSmokeTests(unittest.TestCase):
             self.assertEqual(value.dtype, other.dtype, f"{context}: {name} dtype")
             self.assertEqual(value.shape, other.shape, f"{context}: {name} shape")
 
-    def assert_on_device(
-        self, results: dict[str, torch.Tensor], index: int, context: str
-    ) -> None:
+    def assert_on_device(self, results: dict[str, torch.Tensor], index: int, context: str) -> None:
         for name, value in results.items():
-            self.assertEqual(
-                value.device.index, index, f"{context}: {name} left the scene device"
-            )
+            self.assertEqual(value.device.index, index, f"{context}: {name} left the scene device")
 
     def run_with_ambient_device_zero(self, run):
         """Run `run` with device 0 current and prove no op leaked its guard."""
         torch.cuda.set_device(0)
         self.assertEqual(torch.cuda.current_device(), 0)
         results = run()
-        self.assertEqual(
-            torch.cuda.current_device(), 0, "an op leaked its device guard"
-        )
+        self.assertEqual(torch.cuda.current_device(), 0, "an op leaked its device guard")
         return results
 
     def test_same_mesh_on_two_devices_intersects_bitwise_equal(self):
@@ -420,8 +321,7 @@ class MultiDeviceSmokeTests(unittest.TestCase):
             right = getattr(second, name)
             self.assertEqual(left.dtype, right.dtype, f"intersect.{name} dtype")
             self.assertTrue(
-                torch.equal(_bits(left), _bits(right)),
-                f"intersect.{name} differs between cuda:0 and cuda:1",
+                torch.equal(_bits(left), _bits(right)), f"intersect.{name} differs between cuda:0 and cuda:1"
             )
 
     def test_scene_query_ops_are_independent_of_the_ambient_device(self):
@@ -429,9 +329,7 @@ class MultiDeviceSmokeTests(unittest.TestCase):
 
         with torch.cuda.device(1):
             reference = _run_scene_query_ops(scene, 1)
-        ambient_zero = self.run_with_ambient_device_zero(
-            lambda: _run_scene_query_ops(scene, 1)
-        )
+        ambient_zero = self.run_with_ambient_device_zero(lambda: _run_scene_query_ops(scene, 1))
 
         self.assert_on_device(ambient_zero, 1, "ambient device 0")
         self.assert_same_results(reference, ambient_zero, "ambient device 0")
@@ -441,9 +339,7 @@ class MultiDeviceSmokeTests(unittest.TestCase):
 
         with torch.cuda.device(1):
             reference = _run_reflection_ops(scene, 1)
-        ambient_zero = self.run_with_ambient_device_zero(
-            lambda: _run_reflection_ops(scene, 1)
-        )
+        ambient_zero = self.run_with_ambient_device_zero(lambda: _run_reflection_ops(scene, 1))
 
         self.assert_on_device(ambient_zero, 1, "ambient device 0")
         self.assert_same_results(reference, ambient_zero, "ambient device 0")
@@ -451,9 +347,7 @@ class MultiDeviceSmokeTests(unittest.TestCase):
     def test_scene_free_ops_are_independent_of_the_ambient_device(self):
         with torch.cuda.device(1):
             reference = _run_scene_free_ops(1)
-        ambient_zero = self.run_with_ambient_device_zero(
-            lambda: _run_scene_free_ops(1)
-        )
+        ambient_zero = self.run_with_ambient_device_zero(lambda: _run_scene_free_ops(1))
 
         self.assert_on_device(ambient_zero, 1, "ambient device 0")
         self.assert_same_results(reference, ambient_zero, "ambient device 0")
@@ -463,9 +357,7 @@ class MultiDeviceSmokeTests(unittest.TestCase):
 
         with torch.cuda.device(1):
             reference = _run_diffraction_ops(scene, 1)
-        ambient_zero = self.run_with_ambient_device_zero(
-            lambda: _run_diffraction_ops(scene, 1)
-        )
+        ambient_zero = self.run_with_ambient_device_zero(lambda: _run_diffraction_ops(scene, 1))
 
         self.assert_on_device(ambient_zero, 1, "ambient device 0")
         self.assert_same_shapes(reference, ambient_zero, "ambient device 0")
@@ -501,25 +393,21 @@ class MultiDeviceSmokeTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             scene.nearest_edges(foreign_point, 4)
         with self.assertRaises(RuntimeError):
-            scene.set_edge_mask(
-                torch.ones(
-                    scene.edge_mask().numel(), device="cuda:1", dtype=torch.bool
-                )
-            )
+            scene.set_edge_mask(torch.ones(scene.edge_mask().numel(), device="cuda:1", dtype=torch.bool))
 
         # The scene stays usable on its own device after a rejected query.
         local = scene.nearest_edges(_POINTS.to("cuda:0"), 4)
         self.assertEqual(local.distances.device.index, 0)
 
     def test_cross_device_mesh_build_is_rejected(self):
-        vertices, faces = _grid_mesh(torch.device("cuda", 0))
+        vertices, faces = _grid_mesh(torch.device("cuda", 0), cells=3)
         scene = rt.Scene()
         scene.add_mesh(rt.Mesh(vertices, faces.to("cuda:1")))
         with self.assertRaises(RuntimeError):
             scene.build()
 
     def test_cross_device_vertex_update_is_rejected(self):
-        vertices, faces = _grid_mesh(torch.device("cuda", 0))
+        vertices, faces = _grid_mesh(torch.device("cuda", 0), cells=3)
         scene = rt.Scene()
         scene.add_mesh(rt.Mesh(vertices, faces), dynamic=True)
         scene.build()

@@ -19,11 +19,7 @@ import rayd.torch as rt
 
 
 def _tri_scene():
-    verts = torch.tensor(
-        [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
-        device="cuda",
-        dtype=torch.float32,
-    )
+    verts = torch.tensor([[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]], device="cuda", dtype=torch.float32)
     faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
     scene = rt.Scene()
     scene.add_mesh(rt.Mesh(verts, faces))
@@ -56,11 +52,7 @@ def _states(requires_grad: bool = False):
 
 def _chain_scene_and_states(requires_grad: bool = False):
     """Order-2 chain fixture: one initial and one recursive diffraction state."""
-    verts = torch.tensor(
-        [[-1.0, -1.0, 10.0], [1.0, -1.0, 10.0], [-1.0, 1.0, 10.0]],
-        device="cuda",
-        dtype=torch.float32,
-    )
+    verts = torch.tensor([[-1.0, -1.0, 10.0], [1.0, -1.0, 10.0], [-1.0, 1.0, 10.0]], device="cuda", dtype=torch.float32)
     faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
     scene = rt.Scene()
     scene.add_mesh(rt.Mesh(verts, faces))
@@ -203,25 +195,12 @@ class LaneOffsetTests(unittest.TestCase):
         self.material = _material()
 
     def _single(self, samples, seed=17):
-        return _forward(
-            self.scene,
-            self.states,
-            self.grid,
-            self.material,
-            direct_samples=samples,
-            seed=seed,
-        )
+        return _forward(self.scene, self.states, self.grid, self.material, direct_samples=samples, seed=seed)
 
     def _windowed(self, samples, windows, seed=17):
         return [
             _forward(
-                self.scene,
-                self.states,
-                self.grid,
-                self.material,
-                direct_samples=samples,
-                seed=seed,
-                lane_window=window,
+                self.scene, self.states, self.grid, self.material, direct_samples=samples, seed=seed, lane_window=window
             )
             for window in windows
         ]
@@ -229,13 +208,7 @@ class LaneOffsetTests(unittest.TestCase):
     def test_default_window_is_bitwise_identical_to_omitting_the_arguments(self):
         omitted = self._single(64)
         explicit = _forward(
-            self.scene,
-            self.states,
-            self.grid,
-            self.material,
-            direct_samples=64,
-            seed=17,
-            lane_window=(0, -1),
+            self.scene, self.states, self.grid, self.material, direct_samples=64, seed=17, lane_window=(0, -1)
         )
         self.assertTrue(bool(omitted[14].any()), "the fixture must produce active lanes")
         for index, (a, b) in enumerate(zip(omitted, explicit)):
@@ -247,13 +220,7 @@ class LaneOffsetTests(unittest.TestCase):
     def test_full_window_by_explicit_count_is_bitwise_identical(self):
         omitted = self._single(64)
         explicit = _forward(
-            self.scene,
-            self.states,
-            self.grid,
-            self.material,
-            direct_samples=64,
-            seed=17,
-            lane_window=(0, 64),
+            self.scene, self.states, self.grid, self.material, direct_samples=64, seed=17, lane_window=(0, 64)
         )
         for index, (a, b) in enumerate(zip(omitted, explicit)):
             if a is None:
@@ -263,12 +230,7 @@ class LaneOffsetTests(unittest.TestCase):
 
     def test_public_accum_dfr_direct_lane_offset_zero_matches_the_default(self):
         default = self.scene.accum_dfr_direct(
-            states=self.states,
-            grid=self.grid,
-            material=self.material,
-            wavelength=1.0,
-            direct_samples=64,
-            seed=17,
+            states=self.states, grid=self.grid, material=self.material, wavelength=1.0, direct_samples=64, seed=17
         )
         explicit = self.scene.accum_dfr_direct(
             states=self.states,
@@ -311,9 +273,7 @@ class LaneOffsetTests(unittest.TestCase):
             merged = torch.zeros_like(single[index])
             for shard in shards:
                 merged = merged + shard[index]
-            torch.testing.assert_close(
-                merged, single[index], rtol=1e-5, atol=1e-6, msg=f"{name} mismatch"
-            )
+            torch.testing.assert_close(merged, single[index], rtol=1e-5, atol=1e-6, msg=f"{name} mismatch")
 
         merged_count = sum(int(shard[7].item()) for shard in shards)
         self.assertEqual(int(single[7].item()), merged_count)
@@ -338,14 +298,7 @@ class LaneOffsetTests(unittest.TestCase):
         single = _forward(self.scene, self.states, self.grid, self.material, **kwargs)
         merged = torch.zeros_like(single[0])
         for window in ((0, 2048), (2048, 2048)):
-            shard = _forward(
-                self.scene,
-                self.states,
-                self.grid,
-                self.material,
-                lane_window=window,
-                **kwargs,
-            )
+            shard = _forward(self.scene, self.states, self.grid, self.material, lane_window=window, **kwargs)
             merged = merged + shard[0]
         self.assertGreater(float(single[0].sum().item()), 0.0)
         torch.testing.assert_close(merged, single[0], rtol=1e-4, atol=1e-7)
@@ -393,9 +346,7 @@ class LaneOffsetTests(unittest.TestCase):
 
         self.assertIsNotNone(expected)
         self.assertGreater(float(expected.abs().sum().item()), 0.0)
-        torch.testing.assert_close(
-            split_states.edge_pos.grad, expected, rtol=1e-4, atol=1e-6
-        )
+        torch.testing.assert_close(split_states.edge_pos.grad, expected, rtol=1e-4, atol=1e-6)
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA torch is required")
@@ -427,9 +378,7 @@ class ChainLaneOffsetTests(unittest.TestCase):
         default = self._accum(False)
         explicit = self._accum(False, lane_offset=0, lane_count=-1)
         torch.testing.assert_close(explicit.power, default.power, rtol=1e-6, atol=0.0)
-        torch.testing.assert_close(
-            explicit.field_x_re, default.field_x_re, rtol=1e-6, atol=0.0
-        )
+        torch.testing.assert_close(explicit.field_x_re, default.field_x_re, rtol=1e-6, atol=0.0)
 
     def test_split_merges_back_to_the_single_launch(self):
         single = self._accum(False)

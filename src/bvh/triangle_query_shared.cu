@@ -54,10 +54,8 @@ __global__ void closest_hit_kernel(TriangleClosestHitParams params) {
     float best_u = 0.0f;
     float best_v = 0.0f;
     bool overflowed = false;
-    traverse_closest<true>(params.triangles, params.node_bounds, params.topology,
-                           params.scratch, ray, ox, oy, oz, dx, dy, dz,
-                           inv_dx, inv_dy, inv_dz, params.t_min,
-                           best_t, best_prim, best_u, best_v, overflowed);
+    traverse_closest<true>(params.triangles, params.node_bounds, params.topology, params.scratch, ray, ox, oy, oz, dx,
+                           dy, dz, inv_dx, inv_dy, inv_dz, params.t_min, best_t, best_prim, best_u, best_v, overflowed);
 
     if (overflowed) {
         if (params.scratch.overflow != nullptr) {
@@ -98,9 +96,8 @@ __global__ void occluded_kernel(TriangleOccludedParams params) {
     const float inv_dz = safe_rcp(dz);
 
     bool overflowed = false;
-    const bool hit = traverse_any_hit(params.triangles, params.node_bounds, params.topology,
-                                      params.scratch, ray, ox, oy, oz, dx, dy, dz,
-                                      inv_dx, inv_dy, inv_dz, params.t_min, t_max, overflowed);
+    const bool hit = traverse_any_hit(params.triangles, params.node_bounds, params.topology, params.scratch, ray, ox,
+                                      oy, oz, dx, dy, dz, inv_dx, inv_dy, inv_dz, params.t_min, t_max, overflowed);
     if (overflowed) {
         if (params.scratch.overflow != nullptr) {
             params.scratch.overflow[ray] = 1;
@@ -136,11 +133,9 @@ __global__ void first_blocker_kernel(TriangleFirstBlockerParams params) {
     float best_t = t_max;
     int best_prim = -1;
     bool overflowed = false;
-    traverse_first_blocker(params.triangles, params.node_bounds, params.topology,
-                           params.scratch, params.ignore_prim_ids, params.ignore_stride,
-                           ray, ox, oy, oz, dx, dy, dz,
-                           inv_dx, inv_dy, inv_dz, params.t_min,
-                           best_t, best_prim, overflowed);
+    traverse_first_blocker(params.triangles, params.node_bounds, params.topology, params.scratch,
+                           params.ignore_prim_ids, params.ignore_stride, ray, ox, oy, oz, dx, dy, dz, inv_dx, inv_dy,
+                           inv_dz, params.t_min, best_t, best_prim, overflowed);
 
     if (overflowed) {
         if (params.scratch.overflow != nullptr) {
@@ -166,8 +161,7 @@ __global__ void closest_hit_repair_kernel(TriangleClosestHitParams params) {
     int best_prim = -1;
     float best_u = 0.0f;
     float best_v = 0.0f;
-    brute_force_closest(params.triangles, ox, oy, oz, dx, dy, dz,
-                        params.t_min, best_t, best_prim, best_u, best_v);
+    brute_force_closest(params.triangles, ox, oy, oz, dx, dy, dz, params.t_min, best_t, best_prim, best_u, best_v);
     if (best_prim >= 0) {
         params.output.t[ray] = best_t;
         params.output.bary_u[ray] = best_u;
@@ -188,8 +182,7 @@ __global__ void occluded_repair_kernel(TriangleOccludedParams params) {
 
     float ox, oy, oz, dx, dy, dz, t_max;
     load_ray(params.rays, ray, ox, oy, oz, dx, dy, dz, t_max);
-    const bool hit = brute_force_occluded(params.triangles, ox, oy, oz, dx, dy, dz,
-                                          params.t_min, t_max);
+    const bool hit = brute_force_occluded(params.triangles, ox, oy, oz, dx, dy, dz, params.t_min, t_max);
     params.out_hit[ray] = hit ? 1 : 0;
 }
 
@@ -199,35 +192,35 @@ int block_count(std::size_t count) {
 
 } // namespace
 
-void launch_triangle_closest_hit_async(const TriangleClosestHitParams &params) {
+void launch_triangle_closest_hit_async(const TriangleClosestHitParams& params) {
     if (params.rays.count == 0) {
         return;
     }
     closest_hit_kernel<<<block_count(params.rays.count), kBlockSize, 0, params.stream>>>(params);
 }
 
-void launch_triangle_occluded_async(const TriangleOccludedParams &params) {
+void launch_triangle_occluded_async(const TriangleOccludedParams& params) {
     if (params.rays.count == 0) {
         return;
     }
     occluded_kernel<<<block_count(params.rays.count), kBlockSize, 0, params.stream>>>(params);
 }
 
-void launch_triangle_first_blocker_async(const TriangleFirstBlockerParams &params) {
+void launch_triangle_first_blocker_async(const TriangleFirstBlockerParams& params) {
     if (params.rays.count == 0) {
         return;
     }
     first_blocker_kernel<<<block_count(params.rays.count), kBlockSize, 0, params.stream>>>(params);
 }
 
-void launch_triangle_closest_hit_repair_async(const TriangleClosestHitParams &params) {
+void launch_triangle_closest_hit_repair_async(const TriangleClosestHitParams& params) {
     if (params.rays.count == 0) {
         return;
     }
     closest_hit_repair_kernel<<<block_count(params.rays.count), kBlockSize, 0, params.stream>>>(params);
 }
 
-void launch_triangle_occluded_repair_async(const TriangleOccludedParams &params) {
+void launch_triangle_occluded_repair_async(const TriangleOccludedParams& params) {
     if (params.rays.count == 0) {
         return;
     }

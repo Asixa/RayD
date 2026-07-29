@@ -12,10 +12,7 @@ import rayd.torch as rt
 class EdgeQueryTests(unittest.TestCase):
     def test_nearest_edge_point_forward_and_grad(self):
         verts = torch.tensor(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
-            requires_grad=True,
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device="cuda", dtype=torch.float32, requires_grad=True
         )
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         point = torch.tensor([[0.5, -0.25, 0.0]], device="cuda", dtype=torch.float32, requires_grad=True)
@@ -41,10 +38,7 @@ class EdgeQueryTests(unittest.TestCase):
             requires_grad=True,
         )
         verts1 = torch.tensor(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
-            requires_grad=True,
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device="cuda", dtype=torch.float32, requires_grad=True
         )
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         point = torch.tensor([[0.5, -0.25, 0.0]], device="cuda", dtype=torch.float32)
@@ -53,8 +47,13 @@ class EdgeQueryTests(unittest.TestCase):
         scene.add_mesh(rt.Mesh(verts1, faces))
         scene.build()
         upstream = torch.tensor([1.0], device="cuda", dtype=torch.float32)
-        with mock.patch("torch.cat", side_effect=AssertionError("Scene.nearest_edge() must not use torch.cat.")), \
-             mock.patch("torch.zeros_like", side_effect=AssertionError("Scene.nearest_edge() backward must not fill grads in Python.")):
+        with (
+            mock.patch("torch.cat", side_effect=AssertionError("Scene.nearest_edge() must not use torch.cat.")),
+            mock.patch(
+                "torch.zeros_like",
+                side_effect=AssertionError("Scene.nearest_edge() backward must not fill grads in Python."),
+            ),
+        ):
             scene.nearest_edge(point).distance.backward(upstream)
         self.assertIsNotNone(verts0.grad)
         self.assertIsNotNone(verts1.grad)
@@ -73,21 +72,11 @@ class EdgeQueryTests(unittest.TestCase):
             return scene.nearest_edge(point).edge_point
 
         verts0 = torch.tensor(
-            [[10.0, 0.0, 0.0], [11.0, 0.0, 0.0], [10.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[10.0, 0.0, 0.0], [11.0, 0.0, 0.0], [10.0, 1.0, 0.0]], device="cuda", dtype=torch.float32
         )
-        verts1 = torch.tensor(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
-        )
+        verts1 = torch.tensor([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device="cuda", dtype=torch.float32)
         tangent0 = torch.zeros_like(verts0)
-        tangent1 = torch.tensor(
-            [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
-        )
+        tangent1 = torch.tensor([[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]], device="cuda", dtype=torch.float32)
         with mock.patch(
             "torch.zeros_like",
             side_effect=AssertionError("Scene.nearest_edge() jvp must not fill hidden tape tangents in Python."),
@@ -98,10 +87,7 @@ class EdgeQueryTests(unittest.TestCase):
 
     def test_nearest_edge_point_edge_t_vjp_matches_interior_edge(self):
         verts = torch.tensor(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
-            requires_grad=True,
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device="cuda", dtype=torch.float32, requires_grad=True
         )
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         point = torch.tensor([[0.25, 0.2, 0.0]], device="cuda", dtype=torch.float32, requires_grad=True)
@@ -115,10 +101,7 @@ class EdgeQueryTests(unittest.TestCase):
 
     def test_nearest_edge_point_edge_point_vjp_reaches_query_point(self):
         verts = torch.tensor(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
-            requires_grad=True,
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device="cuda", dtype=torch.float32, requires_grad=True
         )
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         point = torch.tensor([[0.25, 0.2, 0.0]], device="cuda", dtype=torch.float32, requires_grad=True)
@@ -133,22 +116,14 @@ class EdgeQueryTests(unittest.TestCase):
     def test_nearest_edge_backward_accepts_noncontiguous_upstream_edge_point(self):
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         point = torch.tensor(
-            [[0.25, 0.20, 0.0], [0.50, -0.25, 0.0], [0.20, 0.55, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[0.25, 0.20, 0.0], [0.50, -0.25, 0.0], [0.20, 0.55, 0.0]], device="cuda", dtype=torch.float32
         )
         upstream = torch.tensor(
-            [[0.25, -0.75, 1.25], [0.50, 0.25, -1.50], [-0.20, 1.10, 0.80]],
-            device="cuda",
-            dtype=torch.float32,
+            [[0.25, -0.75, 1.25], [0.50, 0.25, -1.50], [-0.20, 1.10, 0.80]], device="cuda", dtype=torch.float32
         ).t()
         self.assertEqual(tuple(upstream.shape), (3, 3))
         self.assertFalse(upstream.is_contiguous())
-        base = torch.tensor(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
-        )
+        base = torch.tensor([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device="cuda", dtype=torch.float32)
 
         actual_verts = base.clone().detach().requires_grad_(True)
         actual_point = point.clone().detach().requires_grad_(True)
@@ -177,15 +152,9 @@ class EdgeQueryTests(unittest.TestCase):
             scene.build()
             return scene.nearest_edge(point).edge_point
 
-        verts = torch.tensor(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
-        )
+        verts = torch.tensor([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device="cuda", dtype=torch.float32)
         tangent = torch.tensor(
-            [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
+            [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 0.0]], device="cuda", dtype=torch.float32
         ).t()
         self.assertFalse(tangent.is_contiguous())
         primal, jvp = torch.func.jvp(fn, (verts,), (tangent,))
@@ -193,11 +162,7 @@ class EdgeQueryTests(unittest.TestCase):
         torch.testing.assert_close(jvp, torch.tensor([[0.0, 0.0, 1.0]], device="cuda"), atol=1e-5, rtol=1e-5)
 
     def test_nearest_edge_ray_forward(self):
-        verts = torch.tensor(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
-        )
+        verts = torch.tensor([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device="cuda", dtype=torch.float32)
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene = rt.Scene()
         scene.add_mesh(rt.Mesh(verts, faces))
@@ -215,44 +180,21 @@ class EdgeQueryTests(unittest.TestCase):
         self.assertIsInstance(result, rt.NearestRayEdge)
         torch.testing.assert_close(result.distance, torch.tensor([0.25], device="cuda"), atol=1e-5, rtol=1e-5)
         torch.testing.assert_close(result.ray_t, torch.tensor([1.0], device="cuda"), atol=1e-5, rtol=1e-5)
-        torch.testing.assert_close(
-            result.point,
-            torch.tensor([[0.5, -0.25, 0.0]], device="cuda"),
-            atol=1e-5,
-            rtol=1e-5,
-        )
+        torch.testing.assert_close(result.point, torch.tensor([[0.5, -0.25, 0.0]], device="cuda"), atol=1e-5, rtol=1e-5)
         torch.testing.assert_close(result.edge_t, torch.tensor([0.5], device="cuda"), atol=1e-5, rtol=1e-5)
         torch.testing.assert_close(
-            result.edge_point,
-            torch.tensor([[0.5, 0.0, 0.0]], device="cuda"),
-            atol=1e-5,
-            rtol=1e-5,
+            result.edge_point, torch.tensor([[0.5, 0.0, 0.0]], device="cuda"), atol=1e-5, rtol=1e-5
         )
         self.assertEqual(int(result.edge_id[0].item()), 0)
 
     def test_nearest_edge_ray_fixed_winner_distance_vjp(self):
         verts = torch.tensor(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
-            requires_grad=True,
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device="cuda", dtype=torch.float32, requires_grad=True
         )
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
-        ray_o = torch.tensor(
-            [[0.5, -0.25, 1.0]],
-            device="cuda",
-            dtype=torch.float32,
-            requires_grad=True,
-        )
-        ray_d = torch.tensor(
-            [[0.0, 0.0, -1.0]],
-            device="cuda",
-            dtype=torch.float32,
-            requires_grad=True,
-        )
-        ray_tmax = torch.tensor(
-            [2.0], device="cuda", dtype=torch.float32, requires_grad=True
-        )
+        ray_o = torch.tensor([[0.5, -0.25, 1.0]], device="cuda", dtype=torch.float32, requires_grad=True)
+        ray_d = torch.tensor([[0.0, 0.0, -1.0]], device="cuda", dtype=torch.float32, requires_grad=True)
+        ray_tmax = torch.tensor([2.0], device="cuda", dtype=torch.float32, requires_grad=True)
         scene = rt.Scene()
         scene.add_mesh(rt.Mesh(verts, faces))
         scene.build()
@@ -260,85 +202,46 @@ class EdgeQueryTests(unittest.TestCase):
         result = scene.nearest_edge(rt.Ray(ray_o, ray_d, ray_tmax))
         result.distance.sum().backward()
 
+        torch.testing.assert_close(ray_o.grad, torch.tensor([[0.0, -1.0, 0.0]], device="cuda"))
+        torch.testing.assert_close(ray_d.grad, torch.tensor([[0.0, -1.0, 0.0]], device="cuda"))
         torch.testing.assert_close(
-            ray_o.grad, torch.tensor([[0.0, -1.0, 0.0]], device="cuda")
-        )
-        torch.testing.assert_close(
-            ray_d.grad, torch.tensor([[0.0, -1.0, 0.0]], device="cuda")
-        )
-        torch.testing.assert_close(
-            verts.grad,
-            torch.tensor(
-                [[0.0, 0.5, 0.0], [0.0, 0.5, 0.0], [0.0, 0.0, 0.0]],
-                device="cuda",
-            ),
+            verts.grad, torch.tensor([[0.0, 0.5, 0.0], [0.0, 0.5, 0.0], [0.0, 0.0, 0.0]], device="cuda")
         )
         self.assertIsNone(ray_tmax.grad)
 
     def test_nearest_edge_ray_fixed_winner_jvp(self):
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
-        verts = torch.tensor(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
-        )
-        ray_o = torch.tensor(
-            [[0.5, -0.25, 1.0]], device="cuda", dtype=torch.float32
-        )
-        ray_d = torch.tensor(
-            [[0.0, 0.0, -1.0]], device="cuda", dtype=torch.float32
-        )
+        verts = torch.tensor([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device="cuda", dtype=torch.float32)
+        ray_o = torch.tensor([[0.5, -0.25, 1.0]], device="cuda", dtype=torch.float32)
+        ray_d = torch.tensor([[0.0, 0.0, -1.0]], device="cuda", dtype=torch.float32)
 
         def query(vertices, origin, direction):
             scene = rt.Scene()
             scene.add_mesh(rt.Mesh(vertices, faces))
             scene.build()
             result = scene.nearest_edge(rt.Ray(origin, direction))
-            return (
-                result.distance,
-                result.ray_t,
-                result.point,
-                result.edge_t,
-                result.edge_point,
-            )
+            return (result.distance, result.ray_t, result.point, result.edge_t, result.edge_point)
 
-        tangent_vertices = torch.tensor(
-            [[0.0, 0.0, 0.3], [0.0, 0.0, 0.3], [0.0, 0.0, 0.0]],
-            device="cuda",
-        )
+        tangent_vertices = torch.tensor([[0.0, 0.0, 0.3], [0.0, 0.0, 0.3], [0.0, 0.0, 0.0]], device="cuda")
         tangent_origin = torch.tensor([[0.0, 0.0, 0.2]], device="cuda")
         tangent_direction = torch.zeros_like(ray_d)
         _primal, tangent = torch.func.jvp(
-            query,
-            (verts, ray_o, ray_d),
-            (tangent_vertices, tangent_origin, tangent_direction),
+            query, (verts, ray_o, ray_d), (tangent_vertices, tangent_origin, tangent_direction)
         )
 
         tangent_distance, tangent_ray_t, tangent_point, tangent_edge_t, tangent_edge_point = tangent
         torch.testing.assert_close(tangent_distance, torch.zeros(1, device="cuda"))
-        torch.testing.assert_close(
-            tangent_ray_t, torch.tensor([-0.1], device="cuda"), atol=1e-5, rtol=1e-5
-        )
-        torch.testing.assert_close(
-            tangent_point,
-            torch.tensor([[0.0, 0.0, 0.3]], device="cuda"),
-            atol=1e-5,
-            rtol=1e-5,
-        )
+        torch.testing.assert_close(tangent_ray_t, torch.tensor([-0.1], device="cuda"), atol=1e-5, rtol=1e-5)
+        torch.testing.assert_close(tangent_point, torch.tensor([[0.0, 0.0, 0.3]], device="cuda"), atol=1e-5, rtol=1e-5)
         torch.testing.assert_close(tangent_edge_t, torch.zeros(1, device="cuda"))
         torch.testing.assert_close(
-            tangent_edge_point,
-            torch.tensor([[0.0, 0.0, 0.3]], device="cuda"),
-            atol=1e-5,
-            rtol=1e-5,
+            tangent_edge_point, torch.tensor([[0.0, 0.0, 0.3]], device="cuda"), atol=1e-5, rtol=1e-5
         )
 
     def test_large_grid_edge_query_returns_finite_distances(self):
         n = 64
         xs, ys = torch.meshgrid(
-            torch.linspace(0, 1, n, device="cuda"),
-            torch.linspace(0, 1, n, device="cuda"),
-            indexing="ij",
+            torch.linspace(0, 1, n, device="cuda"), torch.linspace(0, 1, n, device="cuda"), indexing="ij"
         )
         verts = torch.stack([xs.reshape(-1), ys.reshape(-1), torch.zeros(n * n, device="cuda")], dim=1).contiguous()
         faces = []
@@ -359,11 +262,7 @@ class EdgeQueryTests(unittest.TestCase):
         self.assertTrue(torch.isfinite(out.distance).all().item())
 
     def test_edges_disabled_mesh_has_no_nearest_edge_hits(self):
-        verts = torch.tensor(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
-        )
+        verts = torch.tensor([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device="cuda", dtype=torch.float32)
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         point = torch.tensor([[0.5, -0.25, 0.0]], device="cuda", dtype=torch.float32)
         scene = rt.Scene()
@@ -375,25 +274,11 @@ class EdgeQueryTests(unittest.TestCase):
 
     def test_nonmanifold_edge_uses_rayd_wedge_count(self):
         verts = torch.tensor(
-            [
-                [0.0, 0.0, 0.0],
-                [1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [0.0, -1.0, 0.0],
-                [0.0, 0.0, 1.0],
-            ],
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0]],
             device="cuda",
             dtype=torch.float32,
         )
-        faces = torch.tensor(
-            [
-                [0, 1, 2],
-                [1, 0, 3],
-                [0, 1, 4],
-            ],
-            device="cuda",
-            dtype=torch.int32,
-        )
+        faces = torch.tensor([[0, 1, 2], [1, 0, 3], [0, 1, 4]], device="cuda", dtype=torch.int32)
         scene = rt.Scene()
         scene.add_mesh(rt.Mesh(verts, faces))
         scene.build()

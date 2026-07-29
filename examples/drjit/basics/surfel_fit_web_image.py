@@ -103,10 +103,7 @@ def main() -> None:
     scene = rd.SurfelScene(cloud, opts)
     scene.build()
 
-    rays = rd.Ray(
-        cuda.Array3f(xs, ys, [1.0] * count),
-        cuda.Array3f([0.0] * count, [0.0] * count, [-1.0] * count),
-    )
+    rays = rd.Ray(cuda.Array3f(xs, ys, [1.0] * count), cuda.Array3f([0.0] * count, [0.0] * count, [-1.0] * count))
     its = scene.intersect(rays)
     valid = its.is_valid()
     intensity = dr.select(valid, its.opacity * its.gaussian_weight, cuda.Float([0.0] * count))
@@ -126,15 +123,9 @@ def main() -> None:
     metrics_path = args.output_dir / "rayd_2dgs_surfel_fit_metrics.json"
 
     target_image.save(target_path)
-    reconstruction_image = Image.fromarray(
-        np.clip(reconstruction * 255.0, 0.0, 255.0).astype(np.uint8),
-        mode="L",
-    )
+    reconstruction_image = Image.fromarray(np.clip(reconstruction * 255.0, 0.0, 255.0).astype(np.uint8), mode="L")
     reconstruction_image.save(reconstruction_path)
-    error_image = Image.fromarray(
-        np.clip(np.abs(error) * 12.0 * 255.0, 0.0, 255.0).astype(np.uint8),
-        mode="L",
-    )
+    error_image = Image.fromarray(np.clip(np.abs(error) * 12.0 * 255.0, 0.0, 255.0).astype(np.uint8), mode="L")
     error_image.save(error_path)
     save_montage(target_image, reconstruction_image, error_image, montage_path)
 

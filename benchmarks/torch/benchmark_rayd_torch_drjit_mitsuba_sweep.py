@@ -13,6 +13,8 @@ from typing import Any
 
 import torch
 
+from benchmarks.common import format_count as _format_count
+
 from .benchmark_rayd_torch_drjit_mitsuba_stress import (
     RAYDI_ROOT,
     _cleanup_drjit,
@@ -78,16 +80,6 @@ def _parse_int_list(values: list[str] | None, default: list[int]) -> list[int]:
     if not out:
         raise ValueError("empty integer list")
     return out
-
-
-def _format_count(value: int) -> str:
-    if value >= 1_000_000_000:
-        return f"{value / 1_000_000_000:.3g}B"
-    if value >= 1_000_000:
-        return f"{value / 1_000_000:.3g}M"
-    if value >= 1_000:
-        return f"{value / 1_000:.3g}K"
-    return str(value)
 
 
 def _ray_batch_side_for_target(target_total_rays: int, configured_side: int) -> int:
@@ -463,8 +455,7 @@ def _plot_results(results: dict[str, Any], output_dir: Path) -> list[str]:
             row = build_seen.get((backend, triangle_count))
             values.append(float(row["build_ms"]) if row else float("nan"))
         offsets = [
-            case_index + (backend_index - (len(backends) - 1) / 2) * width
-            for case_index in range(len(build_cases))
+            case_index + (backend_index - (len(backends) - 1) / 2) * width for case_index in range(len(build_cases))
         ]
         ax.bar(offsets, values, width=width, label=backend, color=colors.get(backend))
     ax.set_xticks(range(len(build_cases)))
@@ -485,12 +476,7 @@ def _plot_results(results: dict[str, Any], output_dir: Path) -> list[str]:
         for mode_index, mode in enumerate(modes):
             ax = axes[mode_index // fig_cols][mode_index % fig_cols]
             phase_mode_rows = [row for row in rows if row["phase"] == phase and row["mode"] == mode]
-            cases = sorted(
-                {
-                    (int(row["triangle_count"]), int(row["requested_total_rays"]))
-                    for row in phase_mode_rows
-                }
-            )
+            cases = sorted({(int(row["triangle_count"]), int(row["requested_total_rays"])) for row in phase_mode_rows})
             mode_backends = [
                 backend for backend in backends if any(row["backend"] == backend for row in phase_mode_rows)
             ]
@@ -552,10 +538,7 @@ def main() -> None:
     parser.add_argument("--warmup", type=int, default=None)
     parser.add_argument("--execute-total-rays", action="store_true")
     parser.add_argument(
-        "--backends",
-        nargs="+",
-        default=["torch", "rayd", "mitsuba"],
-        choices=["torch", "rayd", "mitsuba"],
+        "--backends", nargs="+", default=["torch", "rayd", "mitsuba"], choices=["torch", "rayd", "mitsuba"]
     )
     parser.add_argument("--edges", action="store_true", help="Enable edge caches in both RayD backends.")
     parser.add_argument("--rayd-source", choices=("package", "local"), default="package")
@@ -621,11 +604,7 @@ def main() -> None:
     plot_outputs: list[str] = []
     if not args.no_plots:
         plot_outputs = _plot_results(results, output_dir)
-    results["outputs"] = {
-        "json": str(json_output),
-        "csv": str(csv_output),
-        "plots": plot_outputs,
-    }
+    results["outputs"] = {"json": str(json_output), "csv": str(csv_output), "plots": plot_outputs}
     json_output.write_text(json.dumps(results, indent=2, sort_keys=True), encoding="utf-8")
     print(json.dumps(results, indent=2, sort_keys=True))
 

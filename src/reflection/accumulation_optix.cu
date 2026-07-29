@@ -13,23 +13,15 @@ namespace rayd::torch_backend {
 namespace shared_accum = shared::multipath::reflection_accumulation;
 
 struct ReflectionAccumulationPolicy {
-    static __forceinline__ __device__ bool include_depth(
-        const AccumParams &params,
-        int depth) {
+    static __forceinline__ __device__ bool include_depth(const AccumParams& params, int depth) {
         return depth > 0 || params.include_los != 0;
     }
 
-    static __forceinline__ __device__ void commit(
-        const AccumParams &params,
-        unsigned int ray_index,
-        int depth,
-        int cell,
-        shared::field::Complex3 field,
-        float power) {
+    static __forceinline__ __device__ void commit(const AccumParams& params, unsigned int ray_index, int depth,
+                                                  int cell, shared::field::Complex3 field, float power) {
         if (params.stage_cell != nullptr && params.stage_value != nullptr) {
             const long long stride = static_cast<long long>(params.max_bounces) + 1ll;
-            const long long slot =
-                static_cast<long long>(ray_index) * stride + static_cast<long long>(depth);
+            const long long slot = static_cast<long long>(ray_index) * stride + static_cast<long long>(depth);
             ReflAccumStagedValue value;
             value.a = make_float4(power, field.x.re, field.x.im, field.y.re);
             value.b = make_float4(field.y.im, field.z.re, field.z.im, 1.0f);

@@ -36,44 +36,44 @@ inline constexpr std::int32_t kBvhTopKMax = 16;
 
 /// Read-only structure-of-arrays view of axis-aligned bounds.
 struct AabbSoAView {
-    const float *min_x;
-    const float *min_y;
-    const float *min_z;
-    const float *max_x;
-    const float *max_y;
-    const float *max_z;
+    const float* min_x;
+    const float* min_y;
+    const float* min_z;
+    const float* max_x;
+    const float* max_y;
+    const float* max_z;
     std::size_t count;
 };
 
 /// Mutable structure-of-arrays view of caller-owned axis-aligned bounds.
 struct MutableAabbSoAView {
-    float *min_x;
-    float *min_y;
-    float *min_z;
-    float *max_x;
-    float *max_y;
-    float *max_z;
+    float* min_x;
+    float* min_y;
+    float* min_z;
+    float* max_x;
+    float* max_y;
+    float* max_z;
     std::size_t count;
 };
 
 /// Read-only topology produced directly by the GPU LBVH builder.
 struct RawBvhTopologyView {
-    const std::int32_t *left_child;
-    const std::int32_t *right_child;
-    const std::int32_t *leaf_primitive;
-    const std::int32_t *is_leaf;
-    const std::int32_t *primitive_leaf_node;
+    const std::int32_t* left_child;
+    const std::int32_t* right_child;
+    const std::int32_t* leaf_primitive;
+    const std::int32_t* is_leaf;
+    const std::int32_t* primitive_leaf_node;
     std::size_t node_count;
     std::size_t primitive_count;
 };
 
 /// Mutable caller-owned topology buffers for the GPU LBVH builder.
 struct MutableRawBvhTopologyView {
-    std::int32_t *left_child;
-    std::int32_t *right_child;
-    std::int32_t *leaf_primitive;
-    std::int32_t *is_leaf;
-    std::int32_t *primitive_leaf_node;
+    std::int32_t* left_child;
+    std::int32_t* right_child;
+    std::int32_t* leaf_primitive;
+    std::int32_t* is_leaf;
+    std::int32_t* primitive_leaf_node;
     std::size_t node_count;
     std::size_t primitive_count;
 };
@@ -82,13 +82,13 @@ struct MutableRawBvhTopologyView {
 /// Internal nodes store non-negative child indices. Leaves encode
 /// `left_child[node] = -leaf_begin - 1` and `right_child[node] = leaf_count`.
 struct CompactBvhTopologyView {
-    const std::int32_t *left_child;
-    const std::int32_t *right_child;
-    const std::int32_t *leaf_primitives;
+    const std::int32_t* left_child;
+    const std::int32_t* right_child;
+    const std::int32_t* leaf_primitives;
     /// Optional number of active primitives below each node. When present it
     /// must be synchronized with the mask used by the query; pass null while
     /// mask-derived counts are stale.
-    const std::int32_t *node_active_count;
+    const std::int32_t* node_active_count;
     std::size_t node_count;
     std::size_t primitive_count;
     std::size_t leaf_primitive_count;
@@ -96,12 +96,12 @@ struct CompactBvhTopologyView {
 
 /// Type-erased caller-owned temporary device storage.
 struct DeviceScratchView {
-    void *data;
+    void* data;
     std::size_t size_bytes;
 };
 
-#define RAYD_SHARED_BVH_ASSERT_POD(Type)                                      \
-    static_assert(std::is_standard_layout_v<Type>);                           \
+#define RAYD_SHARED_BVH_ASSERT_POD(Type)                                                                               \
+    static_assert(std::is_standard_layout_v<Type>);                                                                    \
     static_assert(std::is_trivially_copyable_v<Type>)
 
 RAYD_SHARED_BVH_ASSERT_POD(BvhFloat3);

@@ -48,9 +48,7 @@ TORCH_PUBLIC_MODULES = ("__init__", "path_exchange")
 
 # Dunder methods that are part of a public class's callable surface and were
 # typed by the removed stubs; every other dunder stays out of scope.
-PUBLIC_DUNDERS = frozenset(
-    {"__init__", "__call__", "__len__", "__iter__", "__getitem__", "__contains__"}
-)
+PUBLIC_DUNDERS = frozenset({"__init__", "__call__", "__len__", "__iter__", "__getitem__", "__contains__"})
 
 
 def _is_public(name):
@@ -120,8 +118,7 @@ def _overloaded_names(statements):
     return {
         node.name
         for node in statements
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and "overload" in _decorator_names(node)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and "overload" in _decorator_names(node)
     }
 
 
@@ -178,31 +175,25 @@ def _unannotated_public_surface(path):
                     if child.name in class_overloads and "overload" not in decorators:
                         continue
                     problems.extend(
-                        _signature_problems(
-                            child,
-                            f"{node.name}.{child.name}",
-                            "staticmethod" not in decorators,
-                        )
+                        _signature_problems(child, f"{node.name}.{child.name}", "staticmethod" not in decorators)
                     )
                 elif is_dataclass and isinstance(child, ast.Assign):
                     for target in child.targets:
                         if isinstance(target, ast.Name) and _is_public(target.id):
                             problems.append(
-                                f"{node.name}.{target.id} (line {child.lineno}): "
-                                "dataclass field has no annotation"
+                                f"{node.name}.{target.id} (line {child.lineno}): dataclass field has no annotation"
                             )
     return problems
 
 
 def _declared_all(statements):
     node = next(
-        node for node in statements
+        node
+        for node in statements
         if isinstance(node, ast.Assign)
         and any(isinstance(target, ast.Name) and target.id == "__all__" for target in node.targets)
     )
-    return node, {
-        element.value for element in node.value.elts if isinstance(element, ast.Constant)
-    }
+    return node, {element.value for element in node.value.elts if isinstance(element, ast.Constant)}
 
 
 def _reexported_names(statements):
@@ -215,8 +206,7 @@ def _reexported_names(statements):
     return {
         alias.asname or alias.name
         for node in statements
-        if isinstance(node, ast.ImportFrom)
-        and (node.level > 0 or (node.module or "").startswith("rayd._impl"))
+        if isinstance(node, ast.ImportFrom) and (node.level > 0 or (node.module or "").startswith("rayd._impl"))
         for alias in node.names
         if alias.name != "*" and not (alias.asname or alias.name).startswith("_")
     }
@@ -236,9 +226,9 @@ def _lazily_bound_names(tree):
     """
     hook = next(
         (
-            node for node in ast.walk(tree)
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name == "__getattr__"
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "__getattr__"
         ),
         None,
     )
@@ -247,9 +237,7 @@ def _lazily_bound_names(tree):
     return {
         child.value
         for child in ast.walk(hook)
-        if isinstance(child, ast.Constant)
-        and isinstance(child.value, str)
-        and child.value.isidentifier()
+        if isinstance(child, ast.Constant) and isinstance(child.value, str) and child.value.isidentifier()
     }
 
 
@@ -280,11 +268,7 @@ def _drjit_bound_names():
     `nb::class_<...>` template argument lists wrap before `(m, "Name")`.
     """
     source = DRJIT_BINDING_SOURCE.read_text(encoding="utf-8")
-    names = set(
-        re.findall(
-            r'nb::(?:class_|enum_)<.*?>\s*\(\s*m,\s*"([A-Za-z0-9_]+)"', source, re.S
-        )
-    )
+    names = set(re.findall(r'nb::(?:class_|enum_)<.*?>\s*\(\s*m,\s*"([A-Za-z0-9_]+)"', source, re.S))
     names.update(re.findall(r'\bm\.(?:def|attr)\(\s*"([A-Za-z0-9_]+)"', source))
     names.discard("__name__")
     return names
@@ -324,9 +308,7 @@ class PublicApiManifestTests(unittest.TestCase):
 
     def test_backend_capabilities_are_complete_and_boolean(self):
         required = set(MANIFEST["capability_keys"])
-        operations = json.loads(
-            (CONTRACT_DIR / "operations.json").read_text(encoding="utf-8")
-        )
+        operations = json.loads((CONTRACT_DIR / "operations.json").read_text(encoding="utf-8"))
         self.assertEqual(set(operations["required_capability_keys"]), {"backend"} | required)
         for backend in ("drjit", "torch"):
             entry = MANIFEST["backends"][backend]
@@ -335,13 +317,8 @@ class PublicApiManifestTests(unittest.TestCase):
             self.assertEqual(entry["typing"], "complete")
 
     def test_runtime_modules_are_validated_copies_of_shared_manifest(self):
-        schema_hash = hashlib.sha256(
-            MANIFEST_PATH.read_bytes().replace(b"\r\n", b"\n")
-        ).hexdigest()
-        capability_modules = {
-            "drjit": DRJIT_CAPABILITIES,
-            "torch": TORCH_CAPABILITIES,
-        }
+        schema_hash = hashlib.sha256(MANIFEST_PATH.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+        capability_modules = {"drjit": DRJIT_CAPABILITIES, "torch": TORCH_CAPABILITIES}
         for backend, module_path in capability_modules.items():
             namespace = runpy.run_path(str(module_path))
             flat = namespace["backend_capabilities"]()
@@ -372,10 +349,13 @@ class PublicApiManifestTests(unittest.TestCase):
         self.assertEqual(trace["integration_modes"], ["jit_symbolic", "eager_native"])
         # The CUDA backend is eager-native only: it never folds into a Dr.Jit
         # symbolic megakernel; Torch exposes the eager-native CUDA executor.
-        self.assertEqual(trace["frontend_support"], {
-            "drjit": {"optix": ["jit_symbolic", "eager_native"], "cuda": ["eager_native"]},
-            "torch": {"optix": ["eager_native"], "cuda": ["eager_native"]},
-        })
+        self.assertEqual(
+            trace["frontend_support"],
+            {
+                "drjit": {"optix": ["jit_symbolic", "eager_native"], "cuda": ["eager_native"]},
+                "torch": {"optix": ["eager_native"], "cuda": ["eager_native"]},
+            },
+        )
 
     def test_hybrid_is_only_a_deprecated_compatibility_alias(self):
         aliases = MANIFEST["aliases"]["edge_bvh_backend"]
@@ -390,10 +370,7 @@ class PublicApiManifestTests(unittest.TestCase):
         a downstream type checker at all, so it is load-bearing rather than
         decorative now that the shadow stubs are gone.
         """
-        packages = {
-            "drjit": (DRJIT_PACKAGE, DRJIT_CAPABILITIES),
-            "torch": (TORCH_PACKAGE, TORCH_CAPABILITIES),
-        }
+        packages = {"drjit": (DRJIT_PACKAGE, DRJIT_CAPABILITIES), "torch": (TORCH_PACKAGE, TORCH_CAPABILITIES)}
         for backend, (package, capability_path) in packages.items():
             with self.subTest(package=backend):
                 self.assertEqual((package / "py.typed").read_text(encoding="utf-8"), "")
@@ -408,12 +385,7 @@ class PublicApiManifestTests(unittest.TestCase):
                         node = capabilities[name]
                         self.assertEqual(_signature_problems(node, name, False), [])
                         arguments = node.args
-                        self.assertEqual(
-                            arguments.posonlyargs
-                            + arguments.args
-                            + arguments.kwonlyargs,
-                            [],
-                        )
+                        self.assertEqual(arguments.posonlyargs + arguments.args + arguments.kwonlyargs, [])
                         self.assertIsNone(arguments.vararg)
                         self.assertIsNone(arguments.kwarg)
 
@@ -429,9 +401,7 @@ class PublicApiManifestTests(unittest.TestCase):
         `Module has no attribute "Scene"` and `Any` -- the whole public surface
         of the backend at once -- while every runtime test stays green.
         """
-        ast.parse(
-            DRJIT_NATIVE_STUB.read_text(encoding="utf-8"), filename=str(DRJIT_NATIVE_STUB)
-        )
+        ast.parse(DRJIT_NATIVE_STUB.read_text(encoding="utf-8"), filename=str(DRJIT_NATIVE_STUB))
         frontend = _module_statements(DRJIT_PACKAGE / "__init__.py")
         runtime = _module_statements(DRJIT_RUNTIME)
         shield = _module_statements(DRJIT_TOP_LEVEL_STUB)
@@ -465,19 +435,13 @@ class PublicApiManifestTests(unittest.TestCase):
         )
         self.assertEqual(
             found,
-            sorted(
-                path.relative_to(ROOT).as_posix()
-                for path in (DRJIT_NATIVE_STUB, DRJIT_TOP_LEVEL_STUB)
-            ),
+            sorted(path.relative_to(ROOT).as_posix() for path in (DRJIT_NATIVE_STUB, DRJIT_TOP_LEVEL_STUB)),
             "the backend packages are typed inline; the nanobind extension stub "
             "and the Dr.Jit top-level shield are the only stubs allowed to ship",
         )
         # The shield must stay a pure re-export: anything else in it would be a
         # second, silently authoritative copy of an inline-annotated surface.
-        shield = ast.parse(
-            DRJIT_TOP_LEVEL_STUB.read_text(encoding="utf-8"),
-            filename=str(DRJIT_TOP_LEVEL_STUB),
-        )
+        shield = ast.parse(DRJIT_TOP_LEVEL_STUB.read_text(encoding="utf-8"), filename=str(DRJIT_TOP_LEVEL_STUB))
         self.assertTrue(
             all(isinstance(node, ast.ImportFrom) for node in shield.body),
             "rayd/drjit/__init__.pyi may only re-export; it must not declare types",
@@ -491,10 +455,7 @@ class PublicApiManifestTests(unittest.TestCase):
         only notice a public addition the stub did not mention, while this one
         also fails on a public addition that is present but untyped.
         """
-        for package, modules in (
-            (DRJIT_PACKAGE, DRJIT_PUBLIC_MODULES),
-            (TORCH_PACKAGE, TORCH_PUBLIC_MODULES),
-        ):
+        for package, modules in ((DRJIT_PACKAGE, DRJIT_PUBLIC_MODULES), (TORCH_PACKAGE, TORCH_PUBLIC_MODULES)):
             for stem in modules:
                 path = package / f"{stem}.py"
                 with self.subTest(module=f"rayd.{package.name}.{stem}"):
@@ -527,12 +488,7 @@ class PublicApiManifestTests(unittest.TestCase):
             for node in _module_statements(TORCH_GEOMETRY)
             if isinstance(node, ast.ClassDef) and _is_public(node.name)
         }
-        for name in (
-            "NearestEdgesTopK",
-            "SegmentPairVisibility",
-            "AxialEdgeVisibility",
-            "SegmentChainVisibility",
-        ):
+        for name in ("NearestEdgesTopK", "SegmentPairVisibility", "AxialEdgeVisibility", "SegmentChainVisibility"):
             with self.subTest(result_type=name):
                 self.assertIn(name, defined)
                 self.assertIn(name, reexported)
@@ -541,13 +497,12 @@ class PublicApiManifestTests(unittest.TestCase):
     def test_drjit_top_level_all_matches_native_bindings(self):
         runtime = ast.parse(DRJIT_RUNTIME.read_text(encoding="utf-8"))
         all_node = next(
-            node for node in runtime.body
+            node
+            for node in runtime.body
             if isinstance(node, ast.Assign)
             and any(isinstance(target, ast.Name) and target.id == "__all__" for target in node.targets)
         )
-        declared = {
-            element.value for element in all_node.value.elts if isinstance(element, ast.Constant)
-        }
+        declared = {element.value for element in all_node.value.elts if isinstance(element, ast.Constant)}
         self.assertEqual(len(declared), len(all_node.value.elts))
         expected = _drjit_bound_names() | {"api_manifest", "backend_capabilities"}
         self.assertEqual(
@@ -561,9 +516,7 @@ class PublicApiManifestTests(unittest.TestCase):
         stub_path = DRJIT_NATIVE_STUB
         tree = ast.parse(stub_path.read_text(encoding="utf-8"), filename=str(stub_path))
         stub_names = {
-            node.name
-            for node in tree.body
-            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+            node.name for node in tree.body if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
         }
         stub_names.update(
             node.target.id
@@ -576,17 +529,11 @@ class PublicApiManifestTests(unittest.TestCase):
     def test_drjit_key_classes_have_typed_members(self):
         stub_path = DRJIT_NATIVE_STUB
         tree = ast.parse(stub_path.read_text(encoding="utf-8"), filename=str(stub_path))
-        classes = {
-            node.name: node for node in tree.body if isinstance(node, ast.ClassDef)
-        }
+        classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
 
         def members(name):
             node = classes[name]
-            result = {
-                child.name
-                for child in node.body
-                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
-            }
+            result = {child.name for child in node.body if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))}
             result.update(
                 child.target.id
                 for child in node.body
@@ -599,21 +546,32 @@ class PublicApiManifestTests(unittest.TestCase):
 
         required = {
             "Mesh": {
-                "vertex_positions", "face_indices", "to_world", "build",
-                "set_transform", "append_transform", "secondary_edges",
+                "vertex_positions",
+                "face_indices",
+                "to_world",
+                "build",
+                "set_transform",
+                "append_transform",
+                "secondary_edges",
             },
             "Scene": {
-                "intersect", "nearest_edge", "nearest_edges", "set_edge_mask",
-                "visible", "visible_pair", "visible_edge", "visible_chain",
-                "trace_reflections", "trace_refl_epc_field", "trace_dfr_paths",
-                "accumulate_reflections", "accum_dfr_direct", "accum_dfr",
+                "intersect",
+                "nearest_edge",
+                "nearest_edges",
+                "set_edge_mask",
+                "visible",
+                "visible_pair",
+                "visible_edge",
+                "visible_chain",
+                "trace_reflections",
+                "trace_refl_epc_field",
+                "trace_dfr_paths",
+                "accumulate_reflections",
+                "accum_dfr_direct",
+                "accum_dfr",
             },
-            "ReflectionTraceOptions": {
-                "deduplicate", "canonical_prim_table", "export_mode", "return_trailing",
-            },
-            "DfrOptions": {
-                "strategy_mask", "sample_sequence", "receiver_model", "max_order",
-            },
+            "ReflectionTraceOptions": {"deduplicate", "canonical_prim_table", "export_mode", "return_trailing"},
+            "DfrOptions": {"strategy_mask", "sample_sequence", "receiver_model", "max_order"},
             "Intersection": {"is_valid", "t", "p", "global_prim_id"},
             "NearestEdgesTopK": {"query_count", "k", "distances", "global_edge_ids"},
             "ReflectionChain": {"is_valid", "bounce_count", "global_prim_ids"},

@@ -10,11 +10,7 @@ import rayd.torch as rt
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA torch is required")
 class SceneCacheTests(unittest.TestCase):
     def _mesh(self):
-        verts = torch.tensor(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
-        )
+        verts = torch.tensor([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device="cuda", dtype=torch.float32)
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         return rt.Mesh(verts, faces)
 
@@ -48,11 +44,7 @@ class SceneCacheTests(unittest.TestCase):
         self.assertTrue(scene.is_ready())
 
     def test_dynamic_vertex_update_changes_intersection(self):
-        verts = torch.tensor(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            device="cuda",
-            dtype=torch.float32,
-        )
+        verts = torch.tensor([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device="cuda", dtype=torch.float32)
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         scene = rt.Scene()
         mesh_id = scene.add_mesh(rt.Mesh(verts, faces), dynamic=True)

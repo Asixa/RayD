@@ -30,19 +30,10 @@ class EdgeBVHBenchmarkRunnerContractTests(unittest.TestCase):
             "distribution": "long_thin",
         }
         failed = CompletedProcess(
-            args=[],
-            returncode=1,
-            stdout=f'{WORKER_PREFIX}{{"error":"build failed"}}\n',
-            stderr="",
+            args=[], returncode=1, stdout=f'{WORKER_PREFIX}{{"error":"build failed"}}\n', stderr=""
         )
-        with patch(
-            "benchmarks.drjit.benchmark_edge_bvh_matrix.subprocess.run",
-            return_value=failed,
-        ):
-            with self.assertRaisesRegex(
-                ContractError,
-                "1000-1-point-1-static-sparse-long_thin: build failed",
-            ):
+        with patch("benchmarks.drjit.benchmark_edge_bvh_matrix.subprocess.run", return_value=failed):
+            with self.assertRaisesRegex(ContractError, "1000-1-point-1-static-sparse-long_thin: build failed"):
                 run_worker(dimensions, Path("matrix.json"))
 
     def test_component_partition_preserves_every_full_profile_edge_count(self):
@@ -104,10 +95,7 @@ class EdgeBVHBenchmarkRunnerContractTests(unittest.TestCase):
                         "native_optix_accel_operations": 0,
                         "total_observed_launches": 3,
                     }
-                    for stage in (
-                        "build", "refit", "query_point",
-                        "query_finite_ray", "query_infinite_ray",
-                    )
+                    for stage in ("build", "refit", "query_point", "query_finite_ray", "query_infinite_ray")
                 },
             },
             "correctness": {"max_abs_error": 1e-7, "max_rel_error": 2e-7},

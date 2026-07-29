@@ -19,9 +19,9 @@
 // ray direction, exactly like the Moller-Trumbore reference.
 
 #if defined(__CUDACC__)
-#  define RAYD_SHARED_BVH_TRI_INLINE __host__ __device__ __forceinline__
+#define RAYD_SHARED_BVH_TRI_INLINE __host__ __device__ __forceinline__
 #else
-#  define RAYD_SHARED_BVH_TRI_INLINE inline
+#define RAYD_SHARED_BVH_TRI_INLINE inline
 #endif
 
 namespace rayd::shared::bvh {
@@ -31,8 +31,8 @@ namespace rayd::shared::bvh {
 struct WatertightTriangleHit {
     bool hit;
     float t;
-    float u;  ///< Barycentric weight of vertex B (p0 + e1).
-    float v;  ///< Barycentric weight of vertex C (p0 + e2).
+    float u; ///< Barycentric weight of vertex B (p0 + e1).
+    float v; ///< Barycentric weight of vertex C (p0 + e2).
 };
 
 /// Correctly-rounded `a*b - c*d` (Kahan). This is FMA-contraction-proof: when
@@ -42,8 +42,8 @@ struct WatertightTriangleHit {
 /// mixed-sign miss.
 RAYD_SHARED_BVH_TRI_INLINE float diff_of_products(float a, float b, float c, float d) {
     const float cd = c * d;
-    const float error = fmaf(-c, d, cd);   // exact rounding error of c*d
-    const float diff = fmaf(a, b, -cd);    // a*b - cd, with a*b exact
+    const float error = fmaf(-c, d, cd); // exact rounding error of c*d
+    const float diff = fmaf(a, b, -cd);  // a*b - cd, with a*b exact
     return diff + error;
 }
 
@@ -60,13 +60,11 @@ RAYD_SHARED_BVH_TRI_INLINE float diff_of_products(float a, float b, float c, flo
 /// \param cx,cy,cz  Vertex C = p0 + e2.
 /// \param t_min     Inclusive lower bound on the accepted hit distance.
 /// \param t_max     Inclusive upper bound on the accepted hit distance.
-RAYD_SHARED_BVH_TRI_INLINE WatertightTriangleHit intersect_triangle_watertight(
-    float ox, float oy, float oz,
-    float dx, float dy, float dz,
-    float ax, float ay, float az,
-    float bx, float by, float bz,
-    float cx, float cy, float cz,
-    float t_min, float t_max) {
+RAYD_SHARED_BVH_TRI_INLINE WatertightTriangleHit intersect_triangle_watertight(float ox, float oy, float oz, float dx,
+                                                                               float dy, float dz, float ax, float ay,
+                                                                               float az, float bx, float by, float bz,
+                                                                               float cx, float cy, float cz,
+                                                                               float t_min, float t_max) {
     WatertightTriangleHit result{false, 0.0f, 0.0f, 0.0f};
 
     // Vertices relative to the ray origin.
@@ -163,8 +161,8 @@ RAYD_SHARED_BVH_TRI_INLINE WatertightTriangleHit intersect_triangle_watertight(
 
     result.hit = true;
     result.t = t;
-    result.u = v * rcp_det;  // weight of vertex B == Moller-Trumbore u
-    result.v = w * rcp_det;  // weight of vertex C == Moller-Trumbore v
+    result.u = v * rcp_det; // weight of vertex B == Moller-Trumbore u
+    result.v = w * rcp_det; // weight of vertex C == Moller-Trumbore v
     return result;
 }
 

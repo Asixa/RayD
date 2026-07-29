@@ -19,8 +19,7 @@ __constant__ AxialEdgeVisibilityParams params;
 namespace {
 
 using ExactPolicy = shared::optix::SegmentVisibilityDevicePolicy<true, false>;
-using ExactTraverser =
-    shared::optix::segment_visibility::SegmentVisibilityOptixTraverser<true>;
+using ExactTraverser = shared::optix::segment_visibility::SegmentVisibilityOptixTraverser<true>;
 using ExactConfig = shared::rt::TraceConfig<ExactPolicy, ExactTraverser>;
 using shared::math::Vec3f;
 
@@ -32,7 +31,7 @@ __device__ __forceinline__ bool finite(Vec3f value) {
     return finite(value.x) && finite(value.y) && finite(value.z);
 }
 
-__device__ __forceinline__ Vec3f load_aos3(const float *values, unsigned int row) {
+__device__ __forceinline__ Vec3f load_aos3(const float* values, unsigned int row) {
     const unsigned int offset = row * 3u;
     return {values[offset], values[offset + 1u], values[offset + 2u]};
 }
@@ -55,12 +54,8 @@ __device__ __forceinline__ float point_add_rn(float lhs, float rhs) {
     return result;
 }
 
-__device__ __forceinline__ Vec3f exact_sample_point(
-    Vec3f edge_position,
-    Vec3f edge_direction,
-    float edge_t_min,
-    float edge_t_max,
-    float fraction) {
+__device__ __forceinline__ Vec3f exact_sample_point(Vec3f edge_position, Vec3f edge_direction, float edge_t_min,
+                                                    float edge_t_max, float fraction) {
     const float span = point_sub_rn(edge_t_max, edge_t_min);
     const float t = point_add_rn(edge_t_min, point_mul_rn(fraction, span));
     return {
@@ -94,35 +89,23 @@ extern "C" __global__ void __raygen__axial_edge_visibility_exact() {
     const Vec3f edge_direction = load_aos3(params.edge_direction, state);
     const float edge_t_min = params.edge_t_min[state];
     const float edge_t_max = params.edge_t_max[state];
-    if (!finite(tx) || !finite(edge_position) || !finite(edge_direction) ||
-        !finite(edge_t_min) || !finite(edge_t_max)) {
+    if (!finite(tx) || !finite(edge_position) || !finite(edge_direction) || !finite(edge_t_min) ||
+        !finite(edge_t_max)) {
         params.out_any_visible[state] = 0u;
         return;
     }
 
-    const ExactTraverser traverser{
-        static_cast<::OptixTraversableHandle>(params.trace.handle), nullptr};
+    const ExactTraverser traverser{static_cast<::OptixTraversableHandle>(params.trace.handle), nullptr};
     std::uint32_t any_visible = 0u;
 #pragma unroll
-    for (int sample_index = 0;
-         sample_index < AxialEdgeVisibilitySampleCount;
-         ++sample_index) {
-        const Vec3f sample = exact_sample_point(
-            edge_position,
-            edge_direction,
-            edge_t_min,
-            edge_t_max,
-            params.sample_fractions[sample_index]);
+    for (int sample_index = 0; sample_index < AxialEdgeVisibilitySampleCount; ++sample_index) {
+        const Vec3f sample = exact_sample_point(edge_position, edge_direction, edge_t_min, edge_t_max,
+                                                params.sample_fractions[sample_index]);
         if (finite(sample)) {
-            any_visible |= shared::multipath::segment_visibility_algo_detail::
-                trace_segment<ExactConfig>(
-                    params.trace,
-                    tx,
-                    sample,
-                    true,
-                    0u,
-                    traverser,
-                    nullptr);
+            any_visible |=
+                shared::multipath::segment_visibility_algo_detail::trace_segment<ExactConfig>(params.trace, tx, sample,
+                                                                                              true, 0u, traverser,
+                                                                                              nullptr);
         }
     }
     params.out_any_visible[state] = any_visible != 0u ? 1u : 0u;

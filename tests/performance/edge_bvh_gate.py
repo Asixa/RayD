@@ -15,15 +15,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MATRIX = ROOT / "benchmarks" / "edge_bvh_matrix.json"
 
-PROFILE_KEYS = (
-    "edge_counts",
-    "query_counts",
-    "query_kinds",
-    "top_k",
-    "update_modes",
-    "masks",
-    "distributions",
-)
+PROFILE_KEYS = ("edge_counts", "query_counts", "query_kinds", "top_k", "update_modes", "masks", "distributions")
 PERFORMANCE_METRICS = {
     "hot_query_ms": ("ms", "hot_query_max_regression"),
     "build_ms": ("ms", "build_max_regression"),
@@ -31,9 +23,7 @@ PERFORMANCE_METRICS = {
     "peak_device_memory_bytes": ("bytes", "memory_max_regression"),
     "cold_create_ms": ("ms", "cold_create_max_regression"),
 }
-LAUNCH_STAGES = (
-    "build", "refit", "query_point", "query_finite_ray", "query_infinite_ray",
-)
+LAUNCH_STAGES = ("build", "refit", "query_point", "query_finite_ray", "query_infinite_ray")
 LAUNCH_COUNT_FIELDS = (
     "drjit_kernel_launches",
     "drjit_optix_launches",
@@ -42,9 +32,7 @@ LAUNCH_COUNT_FIELDS = (
     "native_optix_launches",
     "native_optix_accel_operations",
 )
-LAUNCH_TOTAL_FIELDS = tuple(
-    field for field in LAUNCH_COUNT_FIELDS if field != "drjit_optix_launches"
-)
+LAUNCH_TOTAL_FIELDS = tuple(field for field in LAUNCH_COUNT_FIELDS if field != "drjit_optix_launches")
 LAUNCH_AUDIT_CONTRACT = {
     "method": "independent_stable_audit",
     "timing_isolated": True,
@@ -99,19 +87,13 @@ def validate_matrix(matrix: dict[str, Any], schema_dir: Path | None = None) -> N
         "query_counts": [1, 256, 4096, 65536, 1000000],
         "query_kinds": ["point", "finite_ray", "infinite_ray"],
         "top_k": [1, 4, 8, 16],
-        "update_modes": [
-            "static", "full_refit", "dirty_refit_1pct",
-            "dirty_refit_10pct", "dirty_refit_100pct",
-        ],
+        "update_modes": ["static", "full_refit", "dirty_refit_1pct", "dirty_refit_10pct", "dirty_refit_100pct"],
         "masks": ["sparse", "dense"],
         "distributions": ["grid", "random", "long_thin"],
     }
     _require(full == expected_full, "full profile does not match the frozen BVH-0 matrix")
     for key in PROFILE_KEYS:
-        _require(
-            set(profiles["smoke"][key]).issubset(full[key]),
-            f"smoke.{key} must be a subset of full.{key}",
-        )
+        _require(set(profiles["smoke"][key]).issubset(full[key]), f"smoke.{key} must be a subset of full.{key}")
 
     contracts = matrix.get("dimension_contracts", {})
     for key in ("update_modes", "masks", "distributions"):
@@ -129,8 +111,13 @@ def validate_matrix(matrix: dict[str, Any], schema_dir: Path | None = None) -> N
     required_environment = matrix.get("required_environment_fields", [])
     _require(len(required_environment) == len(set(required_environment)), "environment fields contain duplicates")
     for required in (
-        "gpu_name", "cuda_runtime_version", "optix_version", "compiler_id",
-        "compiler_version", "build_type", "git_commit",
+        "gpu_name",
+        "cuda_runtime_version",
+        "optix_version",
+        "compiler_id",
+        "compiler_version",
+        "build_type",
+        "git_commit",
     ):
         _require(required in required_environment, f"missing environment field: {required}")
 
@@ -173,14 +160,22 @@ def _validate_summary(summary: Any, metric: str, expected_unit: str, minimum_run
     _require(summary.get("unit") == expected_unit, f"{metric} must use {expected_unit}")
     samples = summary.get("samples")
     _require(isinstance(samples, list) and len(samples) >= minimum_runs, f"{metric} needs {minimum_runs} samples")
-    _require(all(_is_number(value) and value >= 0 for value in samples), f"{metric} samples must be finite and non-negative")
+    _require(
+        all(_is_number(value) and value >= 0 for value in samples), f"{metric} samples must be finite and non-negative"
+    )
     for statistic in ("median", "p95"):
         _require(_is_number(summary.get(statistic)), f"{metric}.{statistic} is required")
     expected_median = statistics.median(samples)
     ordered = sorted(samples)
     expected_p95 = ordered[max(0, math.ceil(0.95 * len(ordered)) - 1)]
-    _require(math.isclose(summary["median"], expected_median, rel_tol=1e-12, abs_tol=1e-12), f"{metric}.median is inconsistent with samples")
-    _require(math.isclose(summary["p95"], expected_p95, rel_tol=1e-12, abs_tol=1e-12), f"{metric}.p95 is inconsistent with samples")
+    _require(
+        math.isclose(summary["median"], expected_median, rel_tol=1e-12, abs_tol=1e-12),
+        f"{metric}.median is inconsistent with samples",
+    )
+    _require(
+        math.isclose(summary["p95"], expected_p95, rel_tol=1e-12, abs_tol=1e-12),
+        f"{metric}.p95 is inconsistent with samples",
+    )
 
 
 def expected_case_dimensions(matrix: dict[str, Any], profile_name: str) -> list[dict[str, Any]]:
@@ -220,9 +215,12 @@ def expected_case_dimensions(matrix: dict[str, Any], profile_name: str) -> list[
 
 def dimension_key(dimensions: dict[str, Any]) -> tuple[Any, ...]:
     return (
-        dimensions["edge_count"], dimensions["query_count"],
-        dimensions["query_kind"], dimensions["top_k"],
-        dimensions["update_mode"], dimensions["mask"],
+        dimensions["edge_count"],
+        dimensions["query_count"],
+        dimensions["query_kind"],
+        dimensions["top_k"],
+        dimensions["update_mode"],
+        dimensions["mask"],
         dimensions["distribution"],
     )
 
@@ -242,31 +240,37 @@ def _validate_launch_audit(audit: Any, case_id: str, allow_missing: bool) -> boo
             f"{case_id}.launch_audit.{field} does not match the measurement contract",
         )
     stages = audit.get("stages")
-    _require(isinstance(stages, dict) and set(stages) == set(LAUNCH_STAGES), f"{case_id}.launch_audit stages are incomplete")
+    _require(
+        isinstance(stages, dict) and set(stages) == set(LAUNCH_STAGES), f"{case_id}.launch_audit stages are incomplete"
+    )
     for stage_name, stage in stages.items():
         _require(isinstance(stage, dict), f"{case_id}.launch_audit.{stage_name} must be an object")
         allowed = set(LAUNCH_COUNT_FIELDS) | {"total_observed_launches", "increase_explanation"}
         _require(set(stage).issubset(allowed), f"{case_id}.launch_audit.{stage_name} has unknown fields")
-        _require(set(LAUNCH_COUNT_FIELDS) | {"total_observed_launches"} <= set(stage), f"{case_id}.launch_audit.{stage_name} counts are incomplete")
+        _require(
+            set(LAUNCH_COUNT_FIELDS) | {"total_observed_launches"} <= set(stage),
+            f"{case_id}.launch_audit.{stage_name} counts are incomplete",
+        )
         for field in (*LAUNCH_COUNT_FIELDS, "total_observed_launches"):
             value = stage[field]
-            _require(isinstance(value, int) and not isinstance(value, bool) and value >= 0, f"{case_id}.launch_audit.{stage_name}.{field} must be a non-negative integer")
+            _require(
+                isinstance(value, int) and not isinstance(value, bool) and value >= 0,
+                f"{case_id}.launch_audit.{stage_name}.{field} must be a non-negative integer",
+            )
         _require(
             stage["total_observed_launches"] == sum(stage[field] for field in LAUNCH_TOTAL_FIELDS),
             f"{case_id}.launch_audit.{stage_name}.total_observed_launches is inconsistent",
         )
         if "increase_explanation" in stage:
             explanation = stage["increase_explanation"]
-            _require(isinstance(explanation, str) and explanation.strip(), f"{case_id}.launch_audit.{stage_name}.increase_explanation must be non-empty")
+            _require(
+                isinstance(explanation, str) and explanation.strip(),
+                f"{case_id}.launch_audit.{stage_name}.increase_explanation must be non-empty",
+            )
     return True
 
 
-def validate_result(
-    result: dict[str, Any],
-    matrix: dict[str, Any],
-    *,
-    allow_legacy_launch_audit: bool = False,
-) -> None:
+def validate_result(result: dict[str, Any], matrix: dict[str, Any], *, allow_legacy_launch_audit: bool = False) -> None:
     for key in ("schema_version", "matrix_id", "benchmark", "seed"):
         _require(result.get(key) == matrix[key], f"result.{key} does not match matrix")
     profile_name = result.get("profile")
@@ -277,7 +281,10 @@ def validate_result(
     _require(isinstance(environment, dict), "result.environment must be an object")
     for field in matrix["required_environment_fields"]:
         _require(isinstance(environment.get(field), str) and environment[field], f"missing environment field: {field}")
-    _require(re.fullmatch(r"[0-9a-fA-F]{7,40}", environment["git_commit"]) is not None, "git_commit must be a 7-40 digit hex hash")
+    _require(
+        re.fullmatch(r"[0-9a-fA-F]{7,40}", environment["git_commit"]) is not None,
+        "git_commit must be a 7-40 digit hex hash",
+    )
     _require(result.get("tolerances") == matrix["tolerances"], "result tolerances must match the matrix")
 
     cases = result.get("cases")
@@ -293,13 +300,19 @@ def validate_result(
 
         dimensions = case.get("dimensions", {})
         dimension_map = {
-            "edge_count": "edge_counts", "query_count": "query_counts",
-            "query_kind": "query_kinds", "top_k": "top_k",
-            "update_mode": "update_modes", "mask": "masks",
+            "edge_count": "edge_counts",
+            "query_count": "query_counts",
+            "query_kind": "query_kinds",
+            "top_k": "top_k",
+            "update_mode": "update_modes",
+            "mask": "masks",
             "distribution": "distributions",
         }
         for result_key, profile_key in dimension_map.items():
-            _require(dimensions.get(result_key) in profile[profile_key], f"{case_id}.{result_key} is outside the {profile_name} profile")
+            _require(
+                dimensions.get(result_key) in profile[profile_key],
+                f"{case_id}.{result_key} is outside the {profile_name} profile",
+            )
         if dimensions["query_kind"] != "point":
             _require(dimensions["top_k"] == 1, f"{case_id}: top_k only applies to point queries")
         key = dimension_key(dimensions)
@@ -316,13 +329,16 @@ def validate_result(
         for group_name in ("correctness", "ad"):
             group = case.get(group_name)
             expected_fields = matrix["tolerances"][group_name]
-            _require(isinstance(group, dict) and set(group) == set(expected_fields), f"{case_id}.{group_name} fields are incomplete")
-            _require(all(_is_number(value) and value >= 0 for value in group.values()), f"{case_id}.{group_name} values are invalid")
+            _require(
+                isinstance(group, dict) and set(group) == set(expected_fields),
+                f"{case_id}.{group_name} fields are incomplete",
+            )
+            _require(
+                all(_is_number(value) and value >= 0 for value in group.values()),
+                f"{case_id}.{group_name} values are invalid",
+            )
 
-    expected_dimensions = {
-        dimension_key(dimensions)
-        for dimensions in expected_case_dimensions(matrix, profile_name)
-    }
+    expected_dimensions = {dimension_key(dimensions) for dimensions in expected_case_dimensions(matrix, profile_name)}
     _require(
         actual_dimensions == expected_dimensions,
         f"{profile_name} profile coverage mismatch: expected {len(expected_dimensions)} cases, got {len(actual_dimensions)}",
@@ -342,16 +358,14 @@ def evaluate_gate(
     *,
     allow_legacy_launch_baseline: bool = False,
 ) -> dict[str, Any]:
-    validate_result(
-        baseline,
-        matrix,
-        allow_legacy_launch_audit=allow_legacy_launch_baseline,
-    )
+    validate_result(baseline, matrix, allow_legacy_launch_audit=allow_legacy_launch_baseline)
     validate_result(candidate, matrix)
     _require(baseline["profile"] == candidate["profile"], "profiles differ")
     for field in matrix["required_environment_fields"]:
         if field != "git_commit":
-            _require(baseline["environment"][field] == candidate["environment"][field], f"environment mismatch: {field}")
+            _require(
+                baseline["environment"][field] == candidate["environment"][field], f"environment mismatch: {field}"
+            )
 
     baseline_cases = {case["case_id"]: case for case in baseline["cases"]}
     candidate_cases = {case["case_id"]: case for case in candidate["cases"]}
@@ -371,11 +385,7 @@ def evaluate_gate(
             regression = _regression(baseline_value, candidate_value)
             limit = matrix["performance_gate"][threshold_key]
             absolute_regression = candidate_value - baseline_value
-            absolute_noise_floor = (
-                matrix["performance_gate"]["absolute_noise_floor_ms"]
-                if unit == "ms"
-                else 0.0
-            )
+            absolute_noise_floor = matrix["performance_gate"]["absolute_noise_floor_ms"] if unit == "ms" else 0.0
             comparison = {
                 "case_id": case_id,
                 "metric": metric,
@@ -389,28 +399,19 @@ def evaluate_gate(
             }
             comparisons.append(comparison)
             exceeds_relative_limit = regression is None or (
-                regression > limit
-                and not math.isclose(regression, limit, rel_tol=1e-12, abs_tol=1e-12)
+                regression > limit and not math.isclose(regression, limit, rel_tol=1e-12, abs_tol=1e-12)
             )
             exceeds_limit = (
                 exceeds_relative_limit
                 and absolute_regression > absolute_noise_floor
-                and not math.isclose(
-                    absolute_regression,
-                    absolute_noise_floor,
-                    rel_tol=1e-12,
-                    abs_tol=1e-12,
-                )
+                and not math.isclose(absolute_regression, absolute_noise_floor, rel_tol=1e-12, abs_tol=1e-12)
             )
             if exceeds_limit:
                 failures.append({**comparison, "reason": "performance regression"})
 
         baseline_audit = base_case.get("launch_audit")
         if baseline_audit is None:
-            warning = (
-                "legacy baseline has no launch_audit; launch regression checks were skipped "
-                f"for {case_id}"
-            )
+            warning = f"legacy baseline has no launch_audit; launch regression checks were skipped for {case_id}"
             warnings.append(warning)
         else:
             for stage_name in LAUNCH_STAGES:
@@ -437,20 +438,17 @@ def evaluate_gate(
             for field, limit in matrix["tolerances"][group_name].items():
                 value = candidate_case[group_name][field]
                 if value > limit:
-                    failures.append({
-                        "case_id": case_id,
-                        "metric": f"{group_name}.{field}",
-                        "candidate": value,
-                        "limit": limit,
-                        "reason": "tolerance exceeded",
-                    })
+                    failures.append(
+                        {
+                            "case_id": case_id,
+                            "metric": f"{group_name}.{field}",
+                            "candidate": value,
+                            "limit": limit,
+                            "reason": "tolerance exceeded",
+                        }
+                    )
 
-    return {
-        "passed": not failures,
-        "failures": failures,
-        "comparisons": comparisons,
-        "warnings": warnings,
-    }
+    return {"passed": not failures, "failures": failures, "comparisons": comparisons, "warnings": warnings}
 
 
 def main(argv: list[str] | None = None) -> int:

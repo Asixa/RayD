@@ -30,13 +30,8 @@ class TorchPtxDepfileTests(unittest.TestCase):
         text = CMAKE.read_text(encoding="utf-8")
         cls.ptx_blocks = [
             block
-            for block in re.findall(
-                r"    add_custom_command\(\s*(.*?)\r?\n    \)", text, re.DOTALL
-            )
-            if re.search(
-                r'COMMAND\s+"\$\{CMAKE_CUDA_COMPILER\}"\s+--ptx\b',
-                block,
-            )
+            for block in re.findall(r"    add_custom_command\(\s*(.*?)\r?\n    \)", text, re.DOTALL)
+            if re.search(r'COMMAND\s+"\$\{CMAKE_CUDA_COMPILER\}"\s+--ptx\b', block)
         ]
 
     def test_all_raw_ptx_commands_are_accounted_for(self):

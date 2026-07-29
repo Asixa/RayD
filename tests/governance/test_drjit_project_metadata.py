@@ -67,9 +67,9 @@ class ProjectMetadataTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
-        self.assertIn('nanobind==2.9.2', pyproject)
-        self.assertIn('nanobind==2.9.2', readme)
-        self.assertNotIn('nanobind==2.11.0', readme)
+        self.assertIn("nanobind==2.9.2", pyproject)
+        self.assertIn("nanobind==2.9.2", readme)
+        self.assertNotIn("nanobind==2.11.0", readme)
 
     def test_release_ci_covers_supported_python_and_cuda_architectures(self):
         workflow = (WORKSPACE_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
@@ -93,10 +93,7 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertIn("${RAYD_CUDA_GENCODE_FLAGS}", cuda_helper)
         self.assertIn("${RAYD_CUDA_GENCODE_FLAGS_LIST}", cuda_helper)
         self.assertIn("-gencode=arch=compute_${RAYD_CUDA_ARCH},code=sm_${RAYD_CUDA_ARCH}", cmake)
-        self.assertIn(
-            "-gencode=arch=compute_${RAYD_CUDA_PTX_ARCH},code=compute_${RAYD_CUDA_PTX_ARCH}",
-            cmake,
-        )
+        self.assertIn("-gencode=arch=compute_${RAYD_CUDA_PTX_ARCH},code=compute_${RAYD_CUDA_PTX_ARCH}", cmake)
         self.assertIn("--query-gpu=compute_cap", cmake)
         self.assertIn("RayD local CUDA architecture: sm_", cmake)
         self.assertIn("RAYD_NVCC_LAUNCHER", cmake)
@@ -110,25 +107,13 @@ class ProjectMetadataTests(unittest.TestCase):
 
     def test_reflection_trace_ptx_header_is_committed(self):
         self.assertTrue(
-            (
-                WORKSPACE_ROOT
-                / "generated"
-                / "drjit"
-                / "ptx"
-                / "reflection_trace_ptx.h"
-            ).is_file(),
+            (WORKSPACE_ROOT / "generated" / "drjit" / "ptx" / "reflection_trace_ptx.h").is_file(),
             "Expected committed reflection_trace PTX header for wheel builds.",
         )
 
     def test_reflection_epc_ptx_header_is_committed(self):
         self.assertTrue(
-            (
-                WORKSPACE_ROOT
-                / "generated"
-                / "drjit"
-                / "ptx"
-                / "reflection_epc_ptx.h"
-            ).is_file(),
+            (WORKSPACE_ROOT / "generated" / "drjit" / "ptx" / "reflection_epc_ptx.h").is_file(),
             "Expected committed reflection_epc PTX header for wheel builds.",
         )
 
@@ -136,32 +121,15 @@ class ProjectMetadataTests(unittest.TestCase):
         cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
         pipelines = (WORKSPACE_ROOT / "src" / "runtime" / "runtime_jit.cpp").read_text(encoding="utf-8")
 
-        self.assertIn(
-            "set(RAYD_MULTIPATH_OPTIX_MODULE_OPT_LEVEL ${RAYD_OPTIX_MODULE_OPT_LEVEL})",
-            cmake,
-        )
+        self.assertIn("set(RAYD_MULTIPATH_OPTIX_MODULE_OPT_LEVEL ${RAYD_OPTIX_MODULE_OPT_LEVEL})", cmake)
         self.assertIn("set(RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS 11)", cmake)
-        self.assertIn(
-            "RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS=${RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS}",
-            cmake,
-        )
-        self.assertIn(
-            "module_options.optLevel = RAYD_MULTIPATH_OPTIX_MODULE_OPT_LEVEL;",
-            pipelines,
-        )
-        self.assertIn(
-            "pipeline_options.exceptionFlags = RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS;",
-            pipelines,
-        )
-        self.assertNotIn(
-            "pipeline_options.exceptionFlags = RAYD_OPTIX_EXCEPTION_FLAGS;",
-            pipelines,
-        )
+        self.assertIn("RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS=${RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS}", cmake)
+        self.assertIn("module_options.optLevel = RAYD_MULTIPATH_OPTIX_MODULE_OPT_LEVEL;", pipelines)
+        self.assertIn("pipeline_options.exceptionFlags = RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS;", pipelines)
+        self.assertNotIn("pipeline_options.exceptionFlags = RAYD_OPTIX_EXCEPTION_FLAGS;", pipelines)
 
     def test_trace_reflections_builds_cold_pipeline_before_drjit_materialization(self):
-        source = (WORKSPACE_ROOT / "src" / "reflection" / "reflection_jit.cpp").read_text(
-            encoding="utf-8"
-        )
+        source = (WORKSPACE_ROOT / "src" / "reflection" / "reflection_jit.cpp").read_text(encoding="utf-8")
 
         anchor = source.find("const OptixSceneSelection scenes = select_optix_scenes();")
         self.assertGreaterEqual(anchor, 0, "Missing trace_reflections OptiX scene selection block.")
@@ -187,9 +155,7 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertLess(detached_eval, launch)
 
     def test_visibility_utilities_use_single_trace_segment_pipeline_launches(self):
-        source = (WORKSPACE_ROOT / "src" / "visibility" / "visibility_jit.cpp").read_text(
-            encoding="utf-8"
-        )
+        source = (WORKSPACE_ROOT / "src" / "visibility" / "visibility_jit.cpp").read_text(encoding="utf-8")
         segment_source = (WORKSPACE_ROOT / "src" / "visibility" / "visibility_optix_jit.cu").read_text(encoding="utf-8")
 
         visible_start = source.find("SegmentVisibilityT<Detached> Scene::visible(")
@@ -209,17 +175,10 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertNotIn("launch_segment_visibility_detached(", body)
         self.assertIn("out_visible_b", body)
         self.assertIn("segment_pair_visibility_pipeline_config", source)
-        shared_segment_source = (
-            WORKSPACE_ROOT
-            / "include"
-            / "rayd"
-            / "visibility"
-            / "segment_algo.h"
-        ).read_text(encoding="utf-8")
-        self.assertIn(
-            "<rayd/visibility/segment_optix_device.cuh>",
-            segment_source,
+        shared_segment_source = (WORKSPACE_ROOT / "include" / "rayd" / "visibility" / "segment_algo.h").read_text(
+            encoding="utf-8"
         )
+        self.assertIn("<rayd/visibility/segment_optix_device.cuh>", segment_source)
         self.assertIn("params.out_first_blocked_prim[ray]", shared_segment_source)
 
     def test_public_optix_cold_create_matrix_covers_multipath_apis(self):
@@ -257,12 +216,8 @@ class ProjectMetadataTests(unittest.TestCase):
             self.assertIn(marker, pipelines)
 
     def test_multipath_pipeline_order_guards_cover_staged_launches(self):
-        paths_source = (
-            WORKSPACE_ROOT / "src" / "diffraction" / "diffraction_jit.cpp"
-        ).read_text(encoding="utf-8")
-        accum_source = (
-            WORKSPACE_ROOT / "src" / "diffraction" / "diffraction_jit.cpp"
-        ).read_text(encoding="utf-8")
+        paths_source = (WORKSPACE_ROOT / "src" / "diffraction" / "diffraction_jit.cpp").read_text(encoding="utf-8")
+        accum_source = (WORKSPACE_ROOT / "src" / "diffraction" / "diffraction_jit.cpp").read_text(encoding="utf-8")
 
         def function_body(source: str, signature: str) -> str:
             start = source.find(signature)
@@ -274,12 +229,8 @@ class ProjectMetadataTests(unittest.TestCase):
                 end = len(source)
             return source[start:end]
 
-        trace_dfr_paths = function_body(
-            paths_source, "DfrPathsT<Detached> Scene::trace_dfr_paths("
-        )
-        accum_dfr_direct = function_body(
-            accum_source, "DfrAccumT<Detached> Scene::accum_dfr_direct("
-        )
+        trace_dfr_paths = function_body(paths_source, "DfrPathsT<Detached> Scene::trace_dfr_paths(")
+        accum_dfr_direct = function_body(accum_source, "DfrAccumT<Detached> Scene::accum_dfr_direct(")
         accum_dfr = function_body(accum_source, "DfrAccumT<Detached> Scene::accum_dfr(")
 
         def assert_order(name: str, body: str, before: str, after: str):
@@ -288,9 +239,7 @@ class ProjectMetadataTests(unittest.TestCase):
             self.assertGreaterEqual(before_pos, 0, f"Missing guard marker: {before}")
             self.assertGreaterEqual(after_pos, 0, f"Missing eval marker: {after}")
             self.assertLess(
-                before_pos,
-                after_pos,
-                f"{name} must cold-create its staged OptiX pipeline before Dr.Jit eval.",
+                before_pos, after_pos, f"{name} must cold-create its staged OptiX pipeline before Dr.Jit eval."
             )
 
         assert_order(
@@ -335,12 +284,7 @@ class ProjectMetadataTests(unittest.TestCase):
             "ensure_pipeline(diffraction_order1_suffix_target_primary_pipeline_",
             "diffraction_order1_suffix_target_primary_pipeline_->launch",
         )
-        assert_order(
-            "accum_dfr",
-            accum_dfr,
-            "ensure_pipeline(dfr_pipeline,",
-            "drjit::eval(initial_states.edge_index,",
-        )
+        assert_order("accum_dfr", accum_dfr, "ensure_pipeline(dfr_pipeline,", "drjit::eval(initial_states.edge_index,")
 
 
 if __name__ == "__main__":

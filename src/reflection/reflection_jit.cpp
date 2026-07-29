@@ -59,27 +59,20 @@ struct ReflectionTraceRaw {
 
 /// Convert per-mesh (shape_id, local primitive id) pairs into scene-global primitive ids;
 /// invalid or out-of-range inputs map to -1.
-Int globalize_primitive_ids(const Int &local_prim_ids,
-                                    const Int &shape_ids,
-                                    const Int &face_offsets) {
+Int globalize_primitive_ids(const Int& local_prim_ids, const Int& shape_ids, const Int& face_offsets) {
     const int ray_count = static_cast<int>(slices(local_prim_ids));
     if (ray_count == 0) {
         return Int();
     }
 
     const int mesh_count = std::max(0, static_cast<int>(slices(face_offsets)) - 1);
-    const Mask valid =
-        (local_prim_ids >= 0) && (shape_ids >= 0) && (shape_ids < mesh_count);
+    const Mask valid = (local_prim_ids >= 0) && (shape_ids >= 0) && (shape_ids < mesh_count);
     const Int safe_shape_ids = select(valid, shape_ids, zeros<Int>(ray_count));
-    const Int mesh_face_offsets =
-        gather<Int>(face_offsets, safe_shape_ids, valid);
-    return select(valid,
-                  local_prim_ids + mesh_face_offsets,
-                  full<Int>(-1, ray_count));
+    const Int mesh_face_offsets = gather<Int>(face_offsets, safe_shape_ids, valid);
+    return select(valid, local_prim_ids + mesh_face_offsets, full<Int>(-1, ray_count));
 }
 
-template <bool Detached>
-ReflectionBounceT<Detached> initialize_reflection_bounce_result(int ray_count) {
+template <bool Detached> ReflectionBounceT<Detached> initialize_reflection_bounce_result(int ray_count) {
     ReflectionBounceT<Detached> result;
     result.t = full<FloatT<Detached>>(Infinity, ray_count);
     result.hit_points = zeros<Vector3fT<Detached>>(ray_count);
@@ -94,10 +87,7 @@ ReflectionBounceT<Detached> initialize_reflection_bounce_result(int ray_count) {
     return result;
 }
 
-template <bool Detached>
-ReflectionTraceT<Detached> initialize_reflection_trace_result(
-    int ray_count,
-    int max_bounces) {
+template <bool Detached> ReflectionTraceT<Detached> initialize_reflection_trace_result(int ray_count, int max_bounces) {
     ReflectionTraceT<Detached> result;
     result.max_bounces = max_bounces;
     result.ray_count = ray_count;
@@ -109,12 +99,9 @@ ReflectionTraceT<Detached> initialize_reflection_trace_result(
     return result;
 }
 
-ReflectionTraceRaw allocate_reflection_trace_raw(
-    int ray_count,
-    int max_bounces,
-    int export_mode = RAYD_REFLECTION_EXPORT_FULL,
-    bool return_trailing = true,
-    bool include_shape_ids = true) {
+ReflectionTraceRaw allocate_reflection_trace_raw(int ray_count, int max_bounces,
+                                                 int export_mode = RAYD_REFLECTION_EXPORT_FULL,
+                                                 bool return_trailing = true, bool include_shape_ids = true) {
     const int slot_count = ray_count * max_bounces;
     const bool full_export = export_mode == RAYD_REFLECTION_EXPORT_FULL;
     const bool minimal_export = export_mode == RAYD_REFLECTION_EXPORT_MINIMAL;
@@ -164,8 +151,7 @@ ReflectionTraceRaw allocate_reflection_trace_raw(
     return raw;
 }
 
-void initialize_reflection_trace_raw(ReflectionTraceRaw &raw,
-                                     bool initialize_bounce_count = true) {
+void initialize_reflection_trace_raw(ReflectionTraceRaw& raw, bool initialize_bounce_count = true) {
     const int ray_count = raw.ray_count;
     const int slot_count = raw.ray_count * raw.max_bounces;
     const int zero_i = 0;
@@ -180,11 +166,7 @@ void initialize_reflection_trace_raw(ReflectionTraceRaw &raw,
         jit_memset_async(JitBackend::CUDA, raw.discovery_count.data(), ray_count, sizeof(int), &zero_i);
     }
     if (slices(raw.representative_ray_index) > 0) {
-        jit_memset_async(JitBackend::CUDA,
-                         raw.representative_ray_index.data(),
-                         ray_count,
-                         sizeof(int),
-                         &minus_one_i);
+        jit_memset_async(JitBackend::CUDA, raw.representative_ray_index.data(), ray_count, sizeof(int), &minus_one_i);
     }
     if (slices(raw.shape_ids) > 0) {
         jit_memset_async(JitBackend::CUDA, raw.shape_ids.data(), slot_count, sizeof(int), &minus_one_i);
@@ -257,15 +239,12 @@ void initialize_reflection_trace_raw(ReflectionTraceRaw &raw,
     }
 }
 
-template <typename ArrayD>
-ArrayD prefix_array(const ArrayD &value, int count) {
+template <typename ArrayD> ArrayD prefix_array(const ArrayD& value, int count) {
     return gather<ArrayD>(value, arange<Int>(count));
 }
 
-template <typename ArrayD>
-ArrayD concat_array_sequence(const std::vector<ArrayD> &parts) {
-    require(!parts.empty(),
-            "concat_array_sequence(): at least one array is required.");
+template <typename ArrayD> ArrayD concat_array_sequence(const std::vector<ArrayD>& parts) {
+    require(!parts.empty(), "concat_array_sequence(): at least one array is required.");
     ArrayD result = parts.front();
     for (size_t i = 1; i < parts.size(); ++i) {
         result = concat(result, parts[i]);
@@ -281,25 +260,19 @@ Int reflection_trace_ray_major_indices(int ray_count, int max_bounces) {
 }
 
 template <bool Detached>
-ReflectionTraceT<Detached> trace_bounces_impl(
-    const Scene &scene,
-    const RayT<Detached> &ray,
-    int max_bounces,
-    const ReflectionTraceOptions &options,
-    MaskT<Detached> active) {
+ReflectionTraceT<Detached> trace_bounces_impl(const Scene& scene, const RayT<Detached>& ray, int max_bounces,
+                                              const ReflectionTraceOptions& options, MaskT<Detached> active) {
     require(!options.deduplicate,
             "Scene::trace_reflections(): deduplicate=true is not implemented with symbolic=true yet.");
 
     const int ray_count = static_cast<int>(slices(ray.o));
-    ReflectionTraceT<Detached> result =
-        initialize_reflection_trace_result<Detached>(ray_count, max_bounces);
+    ReflectionTraceT<Detached> result = initialize_reflection_trace_result<Detached>(ray_count, max_bounces);
     result.deduplicate_requested = options.deduplicate;
     if (ray_count == 0) {
         return result;
     }
 
-    const Mask sanitized_active_detached =
-        sanitize_reflection_active<Detached>(ray, active);
+    const Mask sanitized_active_detached = sanitize_reflection_active<Detached>(ray, active);
 
     RayT<Detached> current_ray = ray;
     MaskT<Detached> current_active;
@@ -325,13 +298,10 @@ ReflectionTraceT<Detached> trace_bounces_impl(
 
         Vector3fT<Detached> geo_normal = its.geo_n;
         geo_normal = select(dot(current_ray.d, geo_normal) > 0.f, -geo_normal, geo_normal);
-        const FloatT<Detached> plane_distance =
-            dot(current_image_source - its.p, geo_normal);
-        const Vector3fT<Detached> reflected_image_source =
-            current_image_source - 2.f * plane_distance * geo_normal;
+        const FloatT<Detached> plane_distance = dot(current_image_source - its.p, geo_normal);
+        const Vector3fT<Detached> reflected_image_source = current_image_source - 2.f * plane_distance * geo_normal;
 
-        ReflectionBounceT<Detached> bounce_result =
-            initialize_reflection_bounce_result<Detached>(ray_count);
+        ReflectionBounceT<Detached> bounce_result = initialize_reflection_bounce_result<Detached>(ray_count);
         bounce_result.t = select(bounce_hit, its.t, miss_t);
         bounce_result.hit_points = select(bounce_hit, its.p, zero_v);
         bounce_result.geo_normals = select(bounce_hit, geo_normal, zero_v);
@@ -347,97 +317,67 @@ ReflectionTraceT<Detached> trace_bounces_impl(
         result.bounce_count += select(bounce_hit, one_i, zero_i);
 
         const FloatT<Detached> ray_dot_normal = dot(current_ray.d, geo_normal);
-        const Vector3fT<Detached> reflected_direction =
-            current_ray.d - 2.f * ray_dot_normal * geo_normal;
-        current_ray.o = select(bounce_hit,
-                               its.p + Epsilon * reflected_direction,
-                               current_ray.o);
+        const Vector3fT<Detached> reflected_direction = current_ray.d - 2.f * ray_dot_normal * geo_normal;
+        current_ray.o = select(bounce_hit, its.p + Epsilon * reflected_direction, current_ray.o);
         current_ray.d = select(bounce_hit, reflected_direction, current_ray.d);
-        current_ray.tmax = select(bounce_hit,
-                                  full<FloatT<Detached>>(Infinity, ray_count),
-                                  current_ray.tmax);
-        current_image_source =
-            select(bounce_hit, reflected_image_source, current_image_source);
+        current_ray.tmax = select(bounce_hit, full<FloatT<Detached>>(Infinity, ray_count), current_ray.tmax);
+        current_image_source = select(bounce_hit, reflected_image_source, current_image_source);
         current_active = bounce_hit;
     }
 
     result.dedup_keep_mask = result.bounce_count > 0;
     result.discovery_count = select(result.dedup_keep_mask, one_i, zero_i);
     result.representative_ray_index =
-        select(result.dedup_keep_mask,
-               result.representative_ray_index,
-               full<IntT<Detached>>(-1, ray_count));
+        select(result.dedup_keep_mask, result.representative_ray_index, full<IntT<Detached>>(-1, ray_count));
     return result;
 }
 
 } // namespace
 
 template <bool Detached>
-ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
-                                                    int max_bounces,
+ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached>& ray, int max_bounces,
                                                     MaskT<Detached> active) const {
-    return this->template trace_reflections<Detached>(
-        ray, max_bounces, ReflectionTraceOptions(), active);
+    return this->template trace_reflections<Detached>(ray, max_bounces, ReflectionTraceOptions(), active);
 }
 
 template <bool Detached>
-ReflectionTraceT<Detached> Scene::trace_bounces(
-    const RayT<Detached> &ray,
-    int max_bounces,
-    MaskT<Detached> active) const {
-    return this->template trace_bounces<Detached>(
-        ray, max_bounces, ReflectionTraceOptions(), active);
+ReflectionTraceT<Detached> Scene::trace_bounces(const RayT<Detached>& ray, int max_bounces,
+                                                MaskT<Detached> active) const {
+    return this->template trace_bounces<Detached>(ray, max_bounces, ReflectionTraceOptions(), active);
 }
 
 template <bool Detached>
-ReflectionTraceT<Detached> Scene::trace_bounces(
-    const RayT<Detached> &ray,
-    int max_bounces,
-    const ReflectionTraceOptions &options,
-    MaskT<Detached> active) const {
+ReflectionTraceT<Detached> Scene::trace_bounces(const RayT<Detached>& ray, int max_bounces,
+                                                const ReflectionTraceOptions& options, MaskT<Detached> active) const {
     ScopedNativeLaunchStage native_launch_stage(NativeLaunchStage::TraceReflections);
     require(is_ready(), "Scene::trace_reflections(): scene is not built.");
-    require(!pending_updates_,
-            "Scene::trace_reflections(): scene has pending updates. Call Scene::sync() first.");
-    require(max_bounces > 0,
-            "Scene::trace_reflections(): max_bounces must be positive.");
-    return trace_bounces_impl<Detached>(
-        *this, ray, max_bounces, options, active);
+    require(!pending_updates_, "Scene::trace_reflections(): scene has pending updates. Call Scene::sync() first.");
+    require(max_bounces > 0, "Scene::trace_reflections(): max_bounces must be positive.");
+    return trace_bounces_impl<Detached>(*this, ray, max_bounces, options, active);
 }
 
 template <bool Detached>
-ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
-                                                    int max_bounces,
-                                                    const ReflectionTraceOptions &options,
+ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached>& ray, int max_bounces,
+                                                    const ReflectionTraceOptions& options,
                                                     MaskT<Detached> active) const {
     ScopedNativeLaunchStage native_launch_stage(NativeLaunchStage::TraceReflections);
     require(is_ready(), "Scene::trace_reflections(): scene is not built.");
-    require(!pending_updates_,
-            "Scene::trace_reflections(): scene has pending updates. Call Scene::sync() first.");
+    require(!pending_updates_, "Scene::trace_reflections(): scene has pending updates. Call Scene::sync() first.");
     require(max_bounces > 0, "Scene::trace_reflections(): max_bounces must be positive.");
     require(options.export_mode == RAYD_REFLECTION_EXPORT_FULL ||
                 options.export_mode == RAYD_REFLECTION_EXPORT_MINIMAL ||
                 options.export_mode == RAYD_REFLECTION_EXPORT_COUNT_ONLY,
             "Scene::trace_reflections(): invalid reflection export mode.");
-    require(!options.deduplicate ||
-                options.export_mode == RAYD_REFLECTION_EXPORT_FULL,
+    require(!options.deduplicate || options.export_mode == RAYD_REFLECTION_EXPORT_FULL,
             "Scene::trace_reflections(): deduplicate requires full export mode.");
-    const int export_mode =
-        Detached ? options.export_mode : RAYD_REFLECTION_EXPORT_FULL;
+    const int export_mode = Detached ? options.export_mode : RAYD_REFLECTION_EXPORT_FULL;
 
     const int ray_count = static_cast<int>(slices(ray.o));
-    const bool include_shape_ids =
-        export_mode == RAYD_REFLECTION_EXPORT_FULL || !Detached;
-    const bool return_trailing =
-        options.return_trailing &&
-        export_mode != RAYD_REFLECTION_EXPORT_COUNT_ONLY;
+    const bool include_shape_ids = export_mode == RAYD_REFLECTION_EXPORT_FULL || !Detached;
+    const bool return_trailing = options.return_trailing && export_mode != RAYD_REFLECTION_EXPORT_COUNT_ONLY;
     ReflectionChainT<Detached> result =
-        initialize_reflection_chain_result<Detached>(
-            ray_count,
-            max_bounces,
-            export_mode,
-            return_trailing,
-            include_shape_ids);
+        initialize_reflection_chain_result<Detached>(ray_count, max_bounces, export_mode, return_trailing,
+                                                     include_shape_ids);
     if (ray_count == 0) {
         return result;
     }
@@ -448,13 +388,12 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
     if (symbolic_reflection_trace) {
         require(max_bounces == 1,
                 "Scene::trace_reflections(): symbolic recording currently supports max_bounces=1 only.");
-        const ReflectionTraceT<Detached> trace =
-            this->template trace_bounces<Detached>(ray, 1, options, active);
+        const ReflectionTraceT<Detached> trace = this->template trace_bounces<Detached>(ray, 1, options, active);
         result.bounce_count = trace.bounce_count;
         result.discovery_count = trace.discovery_count;
         result.representative_ray_index = trace.representative_ray_index;
         if (!trace.bounces.empty()) {
-            const ReflectionBounceT<Detached> &bounce = trace.bounces.front();
+            const ReflectionBounceT<Detached>& bounce = trace.bounces.front();
             result.t = bounce.t;
             result.hit_points = bounce.hit_points;
             result.geo_normals = bounce.geo_normals;
@@ -470,41 +409,27 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
                 const MaskT<Detached> trailing_active = trace.bounce_count > 0;
                 const Vector3fT<Detached> reflected_direction =
                     ray.d - 2.f * dot(ray.d, bounce.geo_normals) * bounce.geo_normals;
-                const Vector3fT<Detached> trailing_origin =
-                    bounce.hit_points + Epsilon * reflected_direction;
-                RayT<Detached> trailing_ray(
-                    trailing_origin,
-                    reflected_direction,
-                    full<FloatT<Detached>>(Infinity, ray_count));
+                const Vector3fT<Detached> trailing_origin = bounce.hit_points + Epsilon * reflected_direction;
+                RayT<Detached> trailing_ray(trailing_origin, reflected_direction,
+                                            full<FloatT<Detached>>(Infinity, ray_count));
                 const IntersectionT<Detached> trailing =
-                    this->template intersect<Detached>(
-                        trailing_ray, trailing_active, RayFlags::Geometric);
-                const MaskT<Detached> trailing_hit =
-                    trailing_active && trailing.is_valid();
-                result.trailing_t =
-                    select(trailing_hit,
-                           trailing.t,
-                           full<FloatT<Detached>>(Infinity, ray_count));
+                    this->template intersect<Detached>(trailing_ray, trailing_active, RayFlags::Geometric);
+                const MaskT<Detached> trailing_hit = trailing_active && trailing.is_valid();
+                result.trailing_t = select(trailing_hit, trailing.t, full<FloatT<Detached>>(Infinity, ray_count));
                 result.trailing_prim =
-                    select(trailing_hit,
-                           trailing.global_prim_id,
-                           full<IntT<Detached>>(-1, ray_count));
+                    select(trailing_hit, trailing.global_prim_id, full<IntT<Detached>>(-1, ray_count));
                 result.trailing_dir =
-                    select(trailing_active,
-                           reflected_direction,
-                           zeros<Vector3fT<Detached>>(ray_count));
+                    select(trailing_active, reflected_direction, zeros<Vector3fT<Detached>>(ray_count));
                 result.trailing_origin =
-                    select(trailing_active,
-                           trailing_origin,
-                           zeros<Vector3fT<Detached>>(ray_count));
+                    select(trailing_active, trailing_origin, zeros<Vector3fT<Detached>>(ray_count));
             }
         }
         return result;
     }
 
     const bool cuda_trace = triangle_kind_ == TraceBackendKind::Cuda;
-    const OptixScene *primary_scene = nullptr;
-    const OptixScene *secondary_scene = nullptr;
+    const OptixScene* primary_scene = nullptr;
+    const OptixScene* secondary_scene = nullptr;
     int split_mode = 0;
     if (!cuda_trace) {
         const OptixSceneSelection scenes = select_optix_scenes();
@@ -515,12 +440,9 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
 
         require(primary_scene != nullptr && primary_scene->is_ready(),
                 "Scene::trace_reflections(): OptiX scene is not ready.");
-        require(hitgroup_record_count > 0,
-                "Scene::trace_reflections(): invalid hitgroup record count.");
+        require(hitgroup_record_count > 0, "Scene::trace_reflections(): invalid hitgroup record count.");
 
-        ensure_pipeline(reflection_pipeline_,
-                        primary_scene->context(),
-                        hitgroup_record_count,
+        ensure_pipeline(reflection_pipeline_, primary_scene->context(), hitgroup_record_count,
                         reflection_trace_pipeline_config());
     }
 
@@ -529,48 +451,32 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
         return result;
     }
     if constexpr (!Detached) {
-        drjit::eval(triangle_info_.p0,
-                    triangle_info_.e1,
-                    triangle_info_.e2,
-                    triangle_info_.face_normal);
+        drjit::eval(triangle_info_.p0, triangle_info_.e1, triangle_info_.e2, triangle_info_.face_normal);
     }
 
     Ray broadphase_ray;
     if constexpr (!Detached) {
-        broadphase_ray = Ray(detach<false>(ray.o),
-                                     detach<false>(ray.d),
-                                     detach<false>(ray.tmax));
+        broadphase_ray = Ray(detach<false>(ray.o), detach<false>(ray.d), detach<false>(ray.tmax));
     } else {
         broadphase_ray = ray;
     }
 
-    drjit::eval(broadphase_ray.o,
-                broadphase_ray.d,
-                broadphase_ray.tmax,
-                active_detached,
-                triangle_info_detached_.p0,
-                triangle_info_detached_.e1,
-                triangle_info_detached_.e2,
-                triangle_info_detached_.face_normal,
+    drjit::eval(broadphase_ray.o, broadphase_ray.d, broadphase_ray.tmax, active_detached, triangle_info_detached_.p0,
+                triangle_info_detached_.e1, triangle_info_detached_.e2, triangle_info_detached_.face_normal,
                 face_offsets_);
     if (options.deduplicate && slices(options.canonical_prim_table) > 0) {
         drjit::eval(options.canonical_prim_table);
     }
 
     ReflectionTraceRaw raw =
-        allocate_reflection_trace_raw(ray_count,
-                                      max_bounces,
-                                      export_mode,
-                                      return_trailing,
-                                      include_shape_ids);
+        allocate_reflection_trace_raw(ray_count, max_bounces, export_mode, return_trailing, include_shape_ids);
     initialize_reflection_trace_raw(raw, false);
 
     ReflectionTraceParams params = {};
     params.primary_handle = cuda_trace ? 0ull : primary_scene->ias_handle();
-    params.secondary_handle =
-        (!cuda_trace && secondary_scene != nullptr && secondary_scene->is_ready())
-            ? secondary_scene->ias_handle()
-            : 0ull;
+    params.secondary_handle = (!cuda_trace && secondary_scene != nullptr && secondary_scene->is_ready())
+                                  ? secondary_scene->ias_handle()
+                                  : 0ull;
     params.split_mode = split_mode;
     params.tri_p0_x = triangle_info_detached_.p0.x().data();
     params.tri_p0_y = triangle_info_detached_.p0.y().data();
@@ -594,7 +500,7 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
     params.ray_dy = broadphase_ray.d.y().data();
     params.ray_dz = broadphase_ray.d.z().data();
     params.ray_tmax = broadphase_ray.tmax.data();
-    params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
+    params.active_mask = reinterpret_cast<const uint8_t*>(active_detached.data());
     params.n_rays = ray_count;
     params.max_bounces = max_bounces;
     params.export_mode = export_mode;
@@ -602,8 +508,7 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
     params.out_bounce_count = raw.bounce_count.data();
     params.out_shape_ids = slices(raw.shape_ids) > 0 ? raw.shape_ids.data() : nullptr;
     params.out_prim_ids = slices(raw.prim_ids) > 0 ? raw.prim_ids.data() : nullptr;
-    params.out_global_prim_ids =
-        slices(raw.global_prim_ids) > 0 ? raw.global_prim_ids.data() : nullptr;
+    params.out_global_prim_ids = slices(raw.global_prim_ids) > 0 ? raw.global_prim_ids.data() : nullptr;
     params.out_t = slices(raw.t) > 0 ? raw.t.data() : nullptr;
     params.out_bary_u = slices(raw.bary_u) > 0 ? raw.bary_u.data() : nullptr;
     params.out_bary_v = slices(raw.bary_v) > 0 ? raw.bary_v.data() : nullptr;
@@ -616,22 +521,14 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
     params.out_img_x = slices(raw.img_x) > 0 ? raw.img_x.data() : nullptr;
     params.out_img_y = slices(raw.img_y) > 0 ? raw.img_y.data() : nullptr;
     params.out_img_z = slices(raw.img_z) > 0 ? raw.img_z.data() : nullptr;
-    params.out_trailing_t =
-        slices(raw.trailing_t) > 0 ? raw.trailing_t.data() : nullptr;
-    params.out_trailing_prim =
-        slices(raw.trailing_prim) > 0 ? raw.trailing_prim.data() : nullptr;
-    params.out_trailing_dir_x =
-        slices(raw.trailing_dir_x) > 0 ? raw.trailing_dir_x.data() : nullptr;
-    params.out_trailing_dir_y =
-        slices(raw.trailing_dir_y) > 0 ? raw.trailing_dir_y.data() : nullptr;
-    params.out_trailing_dir_z =
-        slices(raw.trailing_dir_z) > 0 ? raw.trailing_dir_z.data() : nullptr;
-    params.out_trailing_origin_x =
-        slices(raw.trailing_origin_x) > 0 ? raw.trailing_origin_x.data() : nullptr;
-    params.out_trailing_origin_y =
-        slices(raw.trailing_origin_y) > 0 ? raw.trailing_origin_y.data() : nullptr;
-    params.out_trailing_origin_z =
-        slices(raw.trailing_origin_z) > 0 ? raw.trailing_origin_z.data() : nullptr;
+    params.out_trailing_t = slices(raw.trailing_t) > 0 ? raw.trailing_t.data() : nullptr;
+    params.out_trailing_prim = slices(raw.trailing_prim) > 0 ? raw.trailing_prim.data() : nullptr;
+    params.out_trailing_dir_x = slices(raw.trailing_dir_x) > 0 ? raw.trailing_dir_x.data() : nullptr;
+    params.out_trailing_dir_y = slices(raw.trailing_dir_y) > 0 ? raw.trailing_dir_y.data() : nullptr;
+    params.out_trailing_dir_z = slices(raw.trailing_dir_z) > 0 ? raw.trailing_dir_z.data() : nullptr;
+    params.out_trailing_origin_x = slices(raw.trailing_origin_x) > 0 ? raw.trailing_origin_x.data() : nullptr;
+    params.out_trailing_origin_y = slices(raw.trailing_origin_y) > 0 ? raw.trailing_origin_y.data() : nullptr;
+    params.out_trailing_origin_z = slices(raw.trailing_origin_z) > 0 ? raw.trailing_origin_z.data() : nullptr;
 
     if (cuda_trace) {
         cuda_backend().run_reflection_trace(params, ray_count);
@@ -644,10 +541,7 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
     Int trace_discovery_count;
     Int trace_representative_ray_index;
     if (export_mode == RAYD_REFLECTION_EXPORT_FULL) {
-        trace_discovery_count =
-            select(raw.bounce_count > 0,
-                   full<Int>(1, ray_count),
-                   full<Int>(0, ray_count));
+        trace_discovery_count = select(raw.bounce_count > 0, full<Int>(1, ray_count), full<Int>(0, ray_count));
         trace_representative_ray_index = arange<Int>(ray_count);
     }
     Int trace_shape_ids = raw.shape_ids;
@@ -678,53 +572,26 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
 
         const Int canonical_table = options.canonical_prim_table;
         const int canonical_table_size = static_cast<int>(slices(canonical_table));
-        const int n_unique = reflection_dedup_gpu(
-            ray_count,
-            max_bounces,
-            raw.bounce_count.data(),
-            raw.shape_ids.data(),
-            raw.prim_ids.data(),
-            raw.t.data(),
-            raw.bary_u.data(),
-            raw.bary_v.data(),
-            raw.hit_x.data(),
-            raw.hit_y.data(),
-            raw.hit_z.data(),
-            raw.norm_x.data(),
-            raw.norm_y.data(),
-            raw.norm_z.data(),
-            raw.img_x.data(),
-            raw.img_y.data(),
-            raw.img_z.data(),
-            face_offsets_.data(),
-            mesh_count_,
-            canonical_table_size > 0 ? canonical_table.data() : nullptr,
-            canonical_table_size,
-            options.image_source_tolerance,
-            compacted.bounce_count.data(),
-            compacted.shape_ids.data(),
-            compacted.prim_ids.data(),
-            compacted.t.data(),
-            compacted.bary_u.data(),
-            compacted.bary_v.data(),
-            compacted.hit_x.data(),
-            compacted.hit_y.data(),
-            compacted.hit_z.data(),
-            compacted.norm_x.data(),
-            compacted.norm_y.data(),
-            compacted.norm_z.data(),
-            compacted.img_x.data(),
-            compacted.img_y.data(),
-            compacted.img_z.data(),
-            compacted.discovery_count.data(),
-            compacted.representative_ray_index.data());
+        const int n_unique =
+            reflection_dedup_gpu(ray_count, max_bounces, raw.bounce_count.data(), raw.shape_ids.data(),
+                                 raw.prim_ids.data(), raw.t.data(), raw.bary_u.data(), raw.bary_v.data(),
+                                 raw.hit_x.data(), raw.hit_y.data(), raw.hit_z.data(), raw.norm_x.data(),
+                                 raw.norm_y.data(), raw.norm_z.data(), raw.img_x.data(), raw.img_y.data(),
+                                 raw.img_z.data(), face_offsets_.data(), mesh_count_,
+                                 canonical_table_size > 0 ? canonical_table.data() : nullptr, canonical_table_size,
+                                 options.image_source_tolerance, compacted.bounce_count.data(),
+                                 compacted.shape_ids.data(), compacted.prim_ids.data(), compacted.t.data(),
+                                 compacted.bary_u.data(), compacted.bary_v.data(), compacted.hit_x.data(),
+                                 compacted.hit_y.data(), compacted.hit_z.data(), compacted.norm_x.data(),
+                                 compacted.norm_y.data(), compacted.norm_z.data(), compacted.img_x.data(),
+                                 compacted.img_y.data(), compacted.img_z.data(), compacted.discovery_count.data(),
+                                 compacted.representative_ray_index.data());
 
         trace_ray_count = n_unique;
         const int unique_slot_count = trace_ray_count * max_bounces;
         trace_bounce_count = prefix_array(compacted.bounce_count, trace_ray_count);
         trace_discovery_count = prefix_array(compacted.discovery_count, trace_ray_count);
-        trace_representative_ray_index =
-            prefix_array(compacted.representative_ray_index, trace_ray_count);
+        trace_representative_ray_index = prefix_array(compacted.representative_ray_index, trace_ray_count);
         trace_shape_ids = prefix_array(compacted.shape_ids, unique_slot_count);
         trace_prim_ids = prefix_array(compacted.prim_ids, unique_slot_count);
         trace_t = prefix_array(compacted.t, unique_slot_count);
@@ -738,30 +605,19 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
         trace_img_y = prefix_array(compacted.img_y, unique_slot_count);
         trace_img_z = prefix_array(compacted.img_z, unique_slot_count);
         const Mask unique_mask = full<Mask>(true, trace_ray_count);
-        trace_trailing_t =
-            gather<Float>(raw.trailing_t, trace_representative_ray_index, unique_mask);
-        trace_trailing_prim =
-            gather<Int>(raw.trailing_prim, trace_representative_ray_index, unique_mask);
-        trace_trailing_dir_x =
-            gather<Float>(raw.trailing_dir_x, trace_representative_ray_index, unique_mask);
-        trace_trailing_dir_y =
-            gather<Float>(raw.trailing_dir_y, trace_representative_ray_index, unique_mask);
-        trace_trailing_dir_z =
-            gather<Float>(raw.trailing_dir_z, trace_representative_ray_index, unique_mask);
-        trace_trailing_origin_x =
-            gather<Float>(raw.trailing_origin_x, trace_representative_ray_index, unique_mask);
-        trace_trailing_origin_y =
-            gather<Float>(raw.trailing_origin_y, trace_representative_ray_index, unique_mask);
-        trace_trailing_origin_z =
-            gather<Float>(raw.trailing_origin_z, trace_representative_ray_index, unique_mask);
+        trace_trailing_t = gather<Float>(raw.trailing_t, trace_representative_ray_index, unique_mask);
+        trace_trailing_prim = gather<Int>(raw.trailing_prim, trace_representative_ray_index, unique_mask);
+        trace_trailing_dir_x = gather<Float>(raw.trailing_dir_x, trace_representative_ray_index, unique_mask);
+        trace_trailing_dir_y = gather<Float>(raw.trailing_dir_y, trace_representative_ray_index, unique_mask);
+        trace_trailing_dir_z = gather<Float>(raw.trailing_dir_z, trace_representative_ray_index, unique_mask);
+        trace_trailing_origin_x = gather<Float>(raw.trailing_origin_x, trace_representative_ray_index, unique_mask);
+        trace_trailing_origin_y = gather<Float>(raw.trailing_origin_y, trace_representative_ray_index, unique_mask);
+        trace_trailing_origin_z = gather<Float>(raw.trailing_origin_z, trace_representative_ray_index, unique_mask);
         result.ray_count = trace_ray_count;
     }
 
-    if (slices(trace_global_prim_ids) == 0 &&
-        slices(trace_prim_ids) > 0 &&
-        slices(trace_shape_ids) > 0) {
-        trace_global_prim_ids =
-            globalize_primitive_ids(trace_prim_ids, trace_shape_ids, face_offsets_);
+    if (slices(trace_global_prim_ids) == 0 && slices(trace_prim_ids) > 0 && slices(trace_shape_ids) > 0) {
+        trace_global_prim_ids = globalize_primitive_ids(trace_prim_ids, trace_shape_ids, face_offsets_);
     }
 
     if constexpr (Detached) {
@@ -801,12 +657,9 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
         if (return_trailing) {
             result.trailing_t = trace_trailing_t;
             result.trailing_prim = trace_trailing_prim;
-            result.trailing_dir = Vector3f(trace_trailing_dir_x,
-                                                   trace_trailing_dir_y,
-                                                   trace_trailing_dir_z);
-            result.trailing_origin = Vector3f(trace_trailing_origin_x,
-                                                      trace_trailing_origin_y,
-                                                      trace_trailing_origin_z);
+            result.trailing_dir = Vector3f(trace_trailing_dir_x, trace_trailing_dir_y, trace_trailing_dir_z);
+            result.trailing_origin =
+                Vector3f(trace_trailing_origin_x, trace_trailing_origin_y, trace_trailing_origin_z);
         }
         return result;
     } else {
@@ -820,48 +673,37 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
         result.global_prim_ids = IntAD(trace_global_prim_ids);
         result.trailing_t = FloatAD(trace_trailing_t);
         result.trailing_prim = IntAD(trace_trailing_prim);
-        result.trailing_dir = Vector3fAD(FloatAD(trace_trailing_dir_x),
-                                       FloatAD(trace_trailing_dir_y),
-                                       FloatAD(trace_trailing_dir_z));
-        result.trailing_origin = Vector3fAD(FloatAD(trace_trailing_origin_x),
-                                          FloatAD(trace_trailing_origin_y),
-                                          FloatAD(trace_trailing_origin_z));
+        result.trailing_dir =
+            Vector3fAD(FloatAD(trace_trailing_dir_x), FloatAD(trace_trailing_dir_y), FloatAD(trace_trailing_dir_z));
+        result.trailing_origin = Vector3fAD(FloatAD(trace_trailing_origin_x), FloatAD(trace_trailing_origin_y),
+                                            FloatAD(trace_trailing_origin_z));
 
         if (trace_ray_count == 0) {
             return result;
         }
 
         const MaskAD representative_mask = full<MaskAD>(true, trace_ray_count);
-        const Mask representative_mask_detached =
-            full<Mask>(true, trace_ray_count);
+        const Mask representative_mask_detached = full<Mask>(true, trace_ray_count);
         const IntAD representative_ray_index = IntAD(trace_representative_ray_index);
-        RayAD current_ray(
-            gather<Vector3fAD>(ray.o, representative_ray_index, representative_mask),
-            gather<Vector3fAD>(ray.d, representative_ray_index, representative_mask),
-            gather<FloatAD>(ray.tmax, representative_ray_index, representative_mask));
+        RayAD current_ray(gather<Vector3fAD>(ray.o, representative_ray_index, representative_mask),
+                          gather<Vector3fAD>(ray.d, representative_ray_index, representative_mask),
+                          gather<FloatAD>(ray.tmax, representative_ray_index, representative_mask));
         Mask current_active_detached =
-            gather<Mask>(active_detached,
-                                 trace_representative_ray_index,
-                                 representative_mask_detached);
+            gather<Mask>(active_detached, trace_representative_ray_index, representative_mask_detached);
         Vector3fAD current_image_source = current_ray.o;
-        const Int bounce_slots =
-            arange<Int>(trace_ray_count) * Int(max_bounces);
+        const Int bounce_slots = arange<Int>(trace_ray_count) * Int(max_bounces);
 
         for (int bounce = 0; bounce < max_bounces; ++bounce) {
             const Int slot_detached = bounce_slots + bounce;
             const IntAD slot = IntAD(slot_detached);
-            const Int shape_id_detached =
-                gather<Int>(trace_shape_ids, slot_detached, current_active_detached);
-            const Int prim_id_detached =
-                gather<Int>(trace_prim_ids, slot_detached, current_active_detached);
-            const Mask broadphase_hit =
-                current_active_detached && (shape_id_detached >= 0) && (prim_id_detached >= 0);
+            const Int shape_id_detached = gather<Int>(trace_shape_ids, slot_detached, current_active_detached);
+            const Int prim_id_detached = gather<Int>(trace_prim_ids, slot_detached, current_active_detached);
+            const Mask broadphase_hit = current_active_detached && (shape_id_detached >= 0) && (prim_id_detached >= 0);
             if (drjit::none(broadphase_hit)) {
                 break;
             }
 
-            const Int mesh_face_offset =
-                gather<Int>(face_offsets_, shape_id_detached, broadphase_hit);
+            const Int mesh_face_offset = gather<Int>(face_offsets_, shape_id_detached, broadphase_hit);
             const Int global_prim_detached = mesh_face_offset + prim_id_detached;
             const IntAD global_prim = IntAD(global_prim_detached);
             const MaskAD hit_mask = MaskAD(broadphase_hit);
@@ -875,18 +717,14 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
             std::tie(triangle_barycentric, hit_distance) =
                 ray_intersect_triangle<false>(triangle_p0, triangle_e1, triangle_e2, current_ray);
 
-            MaskAD bounce_hit =
-                hit_mask && drjit::isfinite(hit_distance) && (hit_distance < current_ray.tmax);
-            const FloatAD safe_t =
-                select(bounce_hit, hit_distance, full<FloatAD>(Infinity, trace_ray_count));
+            MaskAD bounce_hit = hit_mask && drjit::isfinite(hit_distance) && (hit_distance < current_ray.tmax);
+            const FloatAD safe_t = select(bounce_hit, hit_distance, full<FloatAD>(Infinity, trace_ray_count));
             Vector3fAD geo_normal = gather<Vector3fAD>(triangle_info_.face_normal, global_prim, hit_mask);
             geo_normal = normalize(select(hit_mask, geo_normal, Vector3fAD(0.f, 0.f, 1.f)));
             geo_normal = select(dot(current_ray.d, geo_normal) > 0.f, -geo_normal, geo_normal);
-            const Vector3fAD hit_point =
-                current_ray(select(bounce_hit, safe_t, zeros<FloatAD>(trace_ray_count)));
+            const Vector3fAD hit_point = current_ray(select(bounce_hit, safe_t, zeros<FloatAD>(trace_ray_count)));
             const FloatAD plane_distance = dot(current_image_source - hit_point, geo_normal);
-            const Vector3fAD reflected_image_source =
-                current_image_source - 2.f * plane_distance * geo_normal;
+            const Vector3fAD reflected_image_source = current_image_source - 2.f * plane_distance * geo_normal;
 
             scatter(result.t, safe_t, slot, bounce_hit);
             scatter(result.hit_points, hit_point, slot, bounce_hit);
@@ -896,81 +734,42 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
             scatter(result.plane_normals, geo_normal, slot, bounce_hit);
 
             const FloatAD ray_dot_normal = dot(current_ray.d, geo_normal);
-            const Vector3fAD reflected_direction =
-                current_ray.d - 2.f * ray_dot_normal * geo_normal;
-            current_ray.o = select(bounce_hit,
-                                   hit_point + Epsilon * reflected_direction,
-                                   current_ray.o);
+            const Vector3fAD reflected_direction = current_ray.d - 2.f * ray_dot_normal * geo_normal;
+            current_ray.o = select(bounce_hit, hit_point + Epsilon * reflected_direction, current_ray.o);
             current_ray.d = select(bounce_hit, reflected_direction, current_ray.d);
-            current_ray.tmax = select(bounce_hit,
-                                      full<FloatAD>(Infinity, trace_ray_count),
-                                      current_ray.tmax);
-            current_image_source =
-                select(bounce_hit, reflected_image_source, current_image_source);
+            current_ray.tmax = select(bounce_hit, full<FloatAD>(Infinity, trace_ray_count), current_ray.tmax);
+            current_image_source = select(bounce_hit, reflected_image_source, current_image_source);
             current_active_detached = detach<false>(bounce_hit);
         }
 
         if (return_trailing) {
             const MaskAD trailing_active = result.bounce_count > 0;
             const IntersectionAD trailing =
-                this->template intersect<false>(
-                    current_ray, trailing_active, RayFlags::Geometric);
+                this->template intersect<false>(current_ray, trailing_active, RayFlags::Geometric);
             const MaskAD trailing_hit = trailing_active && trailing.is_valid();
-            result.trailing_t =
-                select(trailing_hit,
-                       trailing.t,
-                       full<FloatAD>(Infinity, trace_ray_count));
-            result.trailing_prim =
-                select(trailing_hit,
-                       trailing.global_prim_id,
-                       full<IntAD>(-1, trace_ray_count));
-            result.trailing_dir =
-                select(trailing_active,
-                       current_ray.d,
-                       zeros<Vector3fAD>(trace_ray_count));
-            result.trailing_origin =
-                select(trailing_active,
-                       current_ray.o,
-                       zeros<Vector3fAD>(trace_ray_count));
+            result.trailing_t = select(trailing_hit, trailing.t, full<FloatAD>(Infinity, trace_ray_count));
+            result.trailing_prim = select(trailing_hit, trailing.global_prim_id, full<IntAD>(-1, trace_ray_count));
+            result.trailing_dir = select(trailing_active, current_ray.d, zeros<Vector3fAD>(trace_ray_count));
+            result.trailing_origin = select(trailing_active, current_ray.o, zeros<Vector3fAD>(trace_ray_count));
         }
 
         return result;
     }
 }
 
-template ReflectionChain Scene::trace_reflections<true>(const Ray &ray,
-                                                                int max_bounces,
-                                                                const ReflectionTraceOptions &options,
-                                                                Mask active) const;
-template ReflectionChainAD Scene::trace_reflections<false>(const RayAD &ray,
-                                                         int max_bounces,
-                                                         const ReflectionTraceOptions &options,
-                                                         MaskAD active) const;
-template ReflectionChain Scene::trace_reflections<true>(const Ray &ray,
-                                                                int max_bounces,
-                                                                Mask active) const;
-template ReflectionChainAD Scene::trace_reflections<false>(const RayAD &ray,
-                                                         int max_bounces,
-                                                         MaskAD active) const;
+template ReflectionChain Scene::trace_reflections<true>(const Ray& ray, int max_bounces,
+                                                        const ReflectionTraceOptions& options, Mask active) const;
+template ReflectionChainAD Scene::trace_reflections<false>(const RayAD& ray, int max_bounces,
+                                                           const ReflectionTraceOptions& options, MaskAD active) const;
+template ReflectionChain Scene::trace_reflections<true>(const Ray& ray, int max_bounces, Mask active) const;
+template ReflectionChainAD Scene::trace_reflections<false>(const RayAD& ray, int max_bounces, MaskAD active) const;
 
-template ReflectionTrace Scene::trace_bounces<true>(
-    const Ray &ray,
-    int max_bounces,
-    const ReflectionTraceOptions &options,
-    Mask active) const;
-template ReflectionTraceAD Scene::trace_bounces<false>(
-    const RayAD &ray,
-    int max_bounces,
-    const ReflectionTraceOptions &options,
-    MaskAD active) const;
-template ReflectionTrace Scene::trace_bounces<true>(
-    const Ray &ray,
-    int max_bounces,
-    Mask active) const;
-template ReflectionTraceAD Scene::trace_bounces<false>(
-    const RayAD &ray,
-    int max_bounces,
-    MaskAD active) const;
+template ReflectionTrace Scene::trace_bounces<true>(const Ray& ray, int max_bounces,
+                                                    const ReflectionTraceOptions& options, Mask active) const;
+template ReflectionTraceAD Scene::trace_bounces<false>(const RayAD& ray, int max_bounces,
+                                                       const ReflectionTraceOptions& options, MaskAD active) const;
+template ReflectionTrace Scene::trace_bounces<true>(const Ray& ray, int max_bounces, Mask active) const;
+template ReflectionTraceAD Scene::trace_bounces<false>(const RayAD& ray, int max_bounces, MaskAD active) const;
 
 } // namespace rayd
 
@@ -1035,10 +834,7 @@ struct AccumRaw {
     Int wedge_bounce_depth;
 };
 
-AccumRaw allocate_reflection_accumulation_raw(int ray_count,
-                                                               int max_bounces,
-                                                               int grid_cell_count,
-                                                               int wedge_capacity) {
+AccumRaw allocate_reflection_accumulation_raw(int ray_count, int max_bounces, int grid_cell_count, int wedge_capacity) {
     AccumRaw raw;
     raw.ray_count = ray_count;
     raw.max_bounces = max_bounces;
@@ -1076,179 +872,64 @@ AccumRaw allocate_reflection_accumulation_raw(int ray_count,
     return raw;
 }
 
-void initialize_reflection_accumulation_raw(AccumRaw &raw) {
+void initialize_reflection_accumulation_raw(AccumRaw& raw) {
     const int zero_i = 0;
     const int minus_one_i = -1;
     const float zero_f = 0.f;
     const int event_count = std::max(1, raw.wedge_capacity);
 
-    jit_memset_async(JitBackend::CUDA,
-                     raw.reflection_power.data(),
-                     raw.grid_cell_count,
-                     sizeof(float),
-                     &zero_f);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.field_x_re.data(),
-                     raw.grid_cell_count,
-                     sizeof(float),
-                     &zero_f);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.field_x_im.data(),
-                     raw.grid_cell_count,
-                     sizeof(float),
-                     &zero_f);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.field_y_re.data(),
-                     raw.grid_cell_count,
-                     sizeof(float),
-                     &zero_f);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.field_y_im.data(),
-                     raw.grid_cell_count,
-                     sizeof(float),
-                     &zero_f);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.field_z_re.data(),
-                     raw.grid_cell_count,
-                     sizeof(float),
-                     &zero_f);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.field_z_im.data(),
-                     raw.grid_cell_count,
-                     sizeof(float),
-                     &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.reflection_power.data(), raw.grid_cell_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.field_x_re.data(), raw.grid_cell_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.field_x_im.data(), raw.grid_cell_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.field_y_re.data(), raw.grid_cell_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.field_y_im.data(), raw.grid_cell_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.field_z_re.data(), raw.grid_cell_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.field_z_im.data(), raw.grid_cell_count, sizeof(float), &zero_f);
     jit_memset_async(JitBackend::CUDA, raw.reflection_count.data(), 1, sizeof(int), &zero_i);
     jit_memset_async(JitBackend::CUDA, raw.wedge_count.data(), 1, sizeof(int), &zero_i);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.wedge_ray_index.data(),
-                     event_count,
-                     sizeof(int),
-                     &minus_one_i);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.wedge_hit_x.data(),
-                     event_count,
-                     sizeof(float),
-                     &zero_f);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.wedge_hit_y.data(),
-                     event_count,
-                     sizeof(float),
-                     &zero_f);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.wedge_hit_z.data(),
-                     event_count,
-                     sizeof(float),
-                     &zero_f);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.wedge_normal_x.data(),
-                     event_count,
-                     sizeof(float),
-                     &zero_f);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.wedge_normal_y.data(),
-                     event_count,
-                     sizeof(float),
-                     &zero_f);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.wedge_normal_z.data(),
-                     event_count,
-                     sizeof(float),
-                     &zero_f);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.wedge_prim_id.data(),
-                     event_count,
-                     sizeof(int),
-                     &minus_one_i);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.wedge_dir_x.data(),
-                     event_count,
-                     sizeof(float),
-                     &zero_f);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.wedge_dir_y.data(),
-                     event_count,
-                     sizeof(float),
-                     &zero_f);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.wedge_dir_z.data(),
-                     event_count,
-                     sizeof(float),
-                     &zero_f);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.wedge_source_x.data(),
-                     event_count,
-                     sizeof(float),
-                     &zero_f);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.wedge_source_y.data(),
-                     event_count,
-                     sizeof(float),
-                     &zero_f);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.wedge_source_z.data(),
-                     event_count,
-                     sizeof(float),
-                     &zero_f);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.wedge_source_power.data(),
-                     event_count,
-                     sizeof(float),
-                     &zero_f);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.wedge_initial_dir_x.data(),
-                     event_count,
-                     sizeof(float),
-                     &zero_f);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.wedge_initial_dir_y.data(),
-                     event_count,
-                     sizeof(float),
-                     &zero_f);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.wedge_initial_dir_z.data(),
-                     event_count,
-                     sizeof(float),
-                     &zero_f);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.wedge_bounce_depth.data(),
-                     event_count,
-                     sizeof(int),
-                     &minus_one_i);
+    jit_memset_async(JitBackend::CUDA, raw.wedge_ray_index.data(), event_count, sizeof(int), &minus_one_i);
+    jit_memset_async(JitBackend::CUDA, raw.wedge_hit_x.data(), event_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.wedge_hit_y.data(), event_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.wedge_hit_z.data(), event_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.wedge_normal_x.data(), event_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.wedge_normal_y.data(), event_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.wedge_normal_z.data(), event_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.wedge_prim_id.data(), event_count, sizeof(int), &minus_one_i);
+    jit_memset_async(JitBackend::CUDA, raw.wedge_dir_x.data(), event_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.wedge_dir_y.data(), event_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.wedge_dir_z.data(), event_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.wedge_source_x.data(), event_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.wedge_source_y.data(), event_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.wedge_source_z.data(), event_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.wedge_source_power.data(), event_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.wedge_initial_dir_x.data(), event_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.wedge_initial_dir_y.data(), event_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.wedge_initial_dir_z.data(), event_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.wedge_bounce_depth.data(), event_count, sizeof(int), &minus_one_i);
 }
 
 } // namespace
 
 template <bool Detached>
-AccumResultT<Detached> Scene::accumulate_reflections(
-    const RayT<Detached> &ray,
-    const Vector3fT<Detached> &tx_position,
-    const AccumGrid &grid,
-    const MaterialT<Detached> &material,
-    int max_bounces,
-    const AccumOptions &options,
-    MaskT<Detached> active,
-    const Vector3fT<Detached> &tx_polarization) const {
+AccumResultT<Detached> Scene::accumulate_reflections(const RayT<Detached>& ray, const Vector3fT<Detached>& tx_position,
+                                                     const AccumGrid& grid, const MaterialT<Detached>& material,
+                                                     int max_bounces, const AccumOptions& options,
+                                                     MaskT<Detached> active,
+                                                     const Vector3fT<Detached>& tx_polarization) const {
     require(is_ready(), "Scene::accumulate_reflections(): scene is not built.");
-    require(!pending_updates_,
-            "Scene::accumulate_reflections(): scene has pending updates. Call Scene::sync() first.");
-    require(max_bounces > 0,
-            "Scene::accumulate_reflections(): max_bounces must be positive.");
-    require(grid.axis >= 0 && grid.axis <= 2,
-            "Scene::accumulate_reflections(): grid.axis must be 0, 1, or 2.");
+    require(!pending_updates_, "Scene::accumulate_reflections(): scene has pending updates. Call Scene::sync() first.");
+    require(max_bounces > 0, "Scene::accumulate_reflections(): max_bounces must be positive.");
+    require(grid.axis >= 0 && grid.axis <= 2, "Scene::accumulate_reflections(): grid.axis must be 0, 1, or 2.");
     require(grid.resolution0 > 0 && grid.resolution1 > 0,
             "Scene::accumulate_reflections(): grid resolution must be positive.");
     require(grid.coord0_min < grid.coord0_max && grid.coord1_min < grid.coord1_max,
             "Scene::accumulate_reflections(): grid bounds must be ordered.");
-    require(options.wavelength > 0.f,
-            "Scene::accumulate_reflections(): wavelength must be positive.");
-    require(options.cell_area > 0.f,
-            "Scene::accumulate_reflections(): cell_area must be positive.");
+    require(options.wavelength > 0.f, "Scene::accumulate_reflections(): wavelength must be positive.");
+    require(options.cell_area > 0.f, "Scene::accumulate_reflections(): cell_area must be positive.");
     require(options.solid_angle_per_ray >= 0.f,
             "Scene::accumulate_reflections(): solid_angle_per_ray must be non-negative.");
-    require(options.wedge_capacity >= 0,
-            "Scene::accumulate_reflections(): wedge_capacity must be non-negative.");
-    require(options.wedge_sample_stride >= 1,
-            "Scene::accumulate_reflections(): wedge_sample_stride must be >= 1.");
+    require(options.wedge_capacity >= 0, "Scene::accumulate_reflections(): wedge_capacity must be non-negative.");
+    require(options.wedge_sample_stride >= 1, "Scene::accumulate_reflections(): wedge_sample_stride must be >= 1.");
 
     const int ray_count = static_cast<int>(slices(ray.o));
     const int grid_cell_count = grid.resolution0 * grid.resolution1;
@@ -1260,15 +941,14 @@ AccumResultT<Detached> Scene::accumulate_reflections(
     if constexpr (!Detached) {
         ReflectionChainAD chain;
         if (max_bounces == 1) {
-            const ReflectionTraceAD trace =
-                this->template trace_bounces<false>(ray, 1, active);
+            const ReflectionTraceAD trace = this->template trace_bounces<false>(ray, 1, active);
             chain = initialize_reflection_chain_result<false>(ray_count, 1);
             chain.bounce_count = trace.bounce_count;
             chain.discovery_count = trace.discovery_count;
             chain.representative_ray_index = trace.representative_ray_index;
 
             if (!trace.bounces.empty()) {
-                const ReflectionBounceAD &bounce = trace.bounces.front();
+                const ReflectionBounceAD& bounce = trace.bounces.front();
                 chain.t = bounce.t;
                 chain.hit_points = bounce.hit_points;
                 chain.geo_normals = bounce.geo_normals;
@@ -1283,33 +963,15 @@ AccumResultT<Detached> Scene::accumulate_reflections(
                 const MaskAD trailing_active = trace.bounce_count > 0;
                 const Vector3fAD reflected_direction =
                     ray.d - 2.f * dot(ray.d, bounce.geo_normals) * bounce.geo_normals;
-                const Vector3fAD trailing_origin =
-                    bounce.hit_points + Epsilon * reflected_direction;
-                const RayAD trailing_ray(
-                    trailing_origin,
-                    reflected_direction,
-                    full<FloatAD>(Infinity, ray_count));
+                const Vector3fAD trailing_origin = bounce.hit_points + Epsilon * reflected_direction;
+                const RayAD trailing_ray(trailing_origin, reflected_direction, full<FloatAD>(Infinity, ray_count));
                 const IntersectionAD trailing =
-                    this->template intersect<false>(
-                        trailing_ray, trailing_active, RayFlags::Geometric);
-                const MaskAD trailing_hit =
-                    trailing_active && trailing.is_valid();
-                chain.trailing_t =
-                    select(trailing_hit,
-                           trailing.t,
-                           full<FloatAD>(Infinity, ray_count));
-                chain.trailing_prim =
-                    select(trailing_hit,
-                           trailing.global_prim_id,
-                           full<IntAD>(-1, ray_count));
-                chain.trailing_dir =
-                    select(trailing_active,
-                           reflected_direction,
-                           zeros<Vector3fAD>(ray_count));
-                chain.trailing_origin =
-                    select(trailing_active,
-                           trailing_origin,
-                           zeros<Vector3fAD>(ray_count));
+                    this->template intersect<false>(trailing_ray, trailing_active, RayFlags::Geometric);
+                const MaskAD trailing_hit = trailing_active && trailing.is_valid();
+                chain.trailing_t = select(trailing_hit, trailing.t, full<FloatAD>(Infinity, ray_count));
+                chain.trailing_prim = select(trailing_hit, trailing.global_prim_id, full<IntAD>(-1, ray_count));
+                chain.trailing_dir = select(trailing_active, reflected_direction, zeros<Vector3fAD>(ray_count));
+                chain.trailing_origin = select(trailing_active, trailing_origin, zeros<Vector3fAD>(ray_count));
             }
         } else {
             chain = this->template trace_reflections<false>(ray, max_bounces, active);
@@ -1317,14 +979,11 @@ AccumResultT<Detached> Scene::accumulate_reflections(
 
         result.reflection_power = zeros<FloatAD>(grid_cell_count);
         result.reflection_field_x =
-            drjit::Complex<FloatAD>(zeros<FloatAD>(grid_cell_count),
-                                    zeros<FloatAD>(grid_cell_count));
+            drjit::Complex<FloatAD>(zeros<FloatAD>(grid_cell_count), zeros<FloatAD>(grid_cell_count));
         result.reflection_field_y =
-            drjit::Complex<FloatAD>(zeros<FloatAD>(grid_cell_count),
-                                    zeros<FloatAD>(grid_cell_count));
+            drjit::Complex<FloatAD>(zeros<FloatAD>(grid_cell_count), zeros<FloatAD>(grid_cell_count));
         result.reflection_field_z =
-            drjit::Complex<FloatAD>(zeros<FloatAD>(grid_cell_count),
-                                    zeros<FloatAD>(grid_cell_count));
+            drjit::Complex<FloatAD>(zeros<FloatAD>(grid_cell_count), zeros<FloatAD>(grid_cell_count));
         result.reflection_count = full<IntAD>(0, 1);
         result.wedge_events.capacity = options.wedge_capacity;
         result.wedge_events.count = full<IntAD>(0, 1);
@@ -1343,15 +1002,14 @@ AccumResultT<Detached> Scene::accumulate_reflections(
             return result;
         }
         const int material_count = static_cast<int>(slices(material.gain));
-        require(material_count > 0,
-                "Scene::accumulate_reflections(): material payload must not be empty.");
+        require(material_count > 0, "Scene::accumulate_reflections(): material payload must not be empty.");
         require(static_cast<int>(slices(material.eta_r)) == material_count &&
                     static_cast<int>(slices(material.sigma)) == material_count &&
                     static_cast<int>(slices(material.mu_r)) == material_count &&
                     static_cast<int>(slices(material.valid)) == material_count,
                 "Scene::accumulate_reflections(): material payload fields must have matching widths.");
 
-        auto component = [](const Vector3fAD &value, int axis) -> FloatAD {
+        auto component = [](const Vector3fAD& value, int axis) -> FloatAD {
             if (axis == 0) {
                 return value.x();
             }
@@ -1360,10 +1018,8 @@ AccumResultT<Detached> Scene::accumulate_reflections(
             }
             return value.z();
         };
-        auto plane_point = [](int axis,
-                              const FloatAD &position,
-                              const FloatAD &coord0,
-                              const FloatAD &coord1) -> Vector3fAD {
+        auto plane_point = [](int axis, const FloatAD& position, const FloatAD& coord0,
+                              const FloatAD& coord1) -> Vector3fAD {
             if (axis == 0) {
                 return Vector3fAD(position, coord0, coord1);
             }
@@ -1372,10 +1028,7 @@ AccumResultT<Detached> Scene::accumulate_reflections(
             }
             return Vector3fAD(coord0, coord1, position);
         };
-        auto coords_from_point = [](const Vector3fAD &point,
-                                    int axis,
-                                    FloatAD &coord0,
-                                    FloatAD &coord1) {
+        auto coords_from_point = [](const Vector3fAD& point, int axis, FloatAD& coord0, FloatAD& coord1) {
             if (axis == 0) {
                 coord0 = point.y();
                 coord1 = point.z();
@@ -1387,7 +1040,7 @@ AccumResultT<Detached> Scene::accumulate_reflections(
                 coord1 = point.y();
             }
         };
-        auto broadcast_vec = [](const Vector3fAD &value, int width) -> Vector3fAD {
+        auto broadcast_vec = [](const Vector3fAD& value, int width) -> Vector3fAD {
             const int value_width = static_cast<int>(slices(value));
             if (value_width == width) {
                 return value;
@@ -1404,124 +1057,79 @@ AccumResultT<Detached> Scene::accumulate_reflections(
             Vector3fAD re;
             Vector3fAD im;
         };
-        auto complex_add = [](const ComplexADValue &a,
-                              const ComplexADValue &b) -> ComplexADValue {
+        auto complex_add = [](const ComplexADValue& a, const ComplexADValue& b) -> ComplexADValue {
             return {a.re + b.re, a.im + b.im};
         };
-        auto complex_sub = [](const ComplexADValue &a,
-                              const ComplexADValue &b) -> ComplexADValue {
+        auto complex_sub = [](const ComplexADValue& a, const ComplexADValue& b) -> ComplexADValue {
             return {a.re - b.re, a.im - b.im};
         };
-        auto complex_mul = [](const ComplexADValue &a,
-                              const ComplexADValue &b) -> ComplexADValue {
-            return {a.re * b.re - a.im * b.im,
-                    a.re * b.im + a.im * b.re};
+        auto complex_mul = [](const ComplexADValue& a, const ComplexADValue& b) -> ComplexADValue {
+            return {a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re};
         };
-        auto complex_scale = [](const ComplexADValue &a,
-                                const FloatAD &scale) -> ComplexADValue {
+        auto complex_scale = [](const ComplexADValue& a, const FloatAD& scale) -> ComplexADValue {
             return {a.re * scale, a.im * scale};
         };
-        auto complex_div = [](const ComplexADValue &a,
-                              const ComplexADValue &b) -> ComplexADValue {
-            const FloatAD denom =
-                maximum(b.re * b.re + b.im * b.im, FloatAD(Epsilon));
-            return {(a.re * b.re + a.im * b.im) / denom,
-                    (a.im * b.re - a.re * b.im) / denom};
+        auto complex_div = [](const ComplexADValue& a, const ComplexADValue& b) -> ComplexADValue {
+            const FloatAD denom = maximum(b.re * b.re + b.im * b.im, FloatAD(Epsilon));
+            return {(a.re * b.re + a.im * b.im) / denom, (a.im * b.re - a.re * b.im) / denom};
         };
-        auto complex_sqrt = [](const ComplexADValue &a) -> ComplexADValue {
-            const FloatAD mag =
-                sqrt(maximum(a.re * a.re + a.im * a.im, FloatAD(0.f)));
-            const MaskAD positive_real_axis =
-                (abs(a.im) <= FloatAD(Epsilon)) && (a.re > FloatAD(Epsilon));
-            const FloatAD real_part =
-                sqrt(maximum(FloatAD(0.5f) * (mag + a.re), FloatAD(0.f)));
-            const FloatAD imag_abs =
-                sqrt(maximum(FloatAD(0.5f) * (mag - a.re), FloatAD(1e-20f)));
-            const FloatAD imag_sign =
-                select(a.im < FloatAD(0.f), FloatAD(-1.f), FloatAD(1.f));
+        auto complex_sqrt = [](const ComplexADValue& a) -> ComplexADValue {
+            const FloatAD mag = sqrt(maximum(a.re * a.re + a.im * a.im, FloatAD(0.f)));
+            const MaskAD positive_real_axis = (abs(a.im) <= FloatAD(Epsilon)) && (a.re > FloatAD(Epsilon));
+            const FloatAD real_part = sqrt(maximum(FloatAD(0.5f) * (mag + a.re), FloatAD(0.f)));
+            const FloatAD imag_abs = sqrt(maximum(FloatAD(0.5f) * (mag - a.re), FloatAD(1e-20f)));
+            const FloatAD imag_sign = select(a.im < FloatAD(0.f), FloatAD(-1.f), FloatAD(1.f));
             return {
                 select(positive_real_axis, sqrt(a.re), real_part),
                 select(positive_real_axis, FloatAD(0.f), imag_sign * imag_abs),
             };
         };
-        auto normalize_safe = [](const Vector3fAD &value,
-                                 const Vector3fAD &fallback) -> Vector3fAD {
+        auto normalize_safe = [](const Vector3fAD& value, const Vector3fAD& fallback) -> Vector3fAD {
             const FloatAD value_norm = norm(value);
-            return select(value_norm > FloatAD(Epsilon),
-                          value / maximum(value_norm, FloatAD(Epsilon)),
-                          fallback);
+            return select(value_norm > FloatAD(Epsilon), value / maximum(value_norm, FloatAD(Epsilon)), fallback);
         };
-        auto stable_perpendicular = [&](const Vector3fAD &direction,
-                                        const Vector3fAD &preferred) -> Vector3fAD {
-            const Vector3fAD dir =
-                normalize_safe(direction, Vector3fAD(FloatAD(1.f), FloatAD(0.f), FloatAD(0.f)));
+        auto stable_perpendicular = [&](const Vector3fAD& direction, const Vector3fAD& preferred) -> Vector3fAD {
+            const Vector3fAD dir = normalize_safe(direction, Vector3fAD(FloatAD(1.f), FloatAD(0.f), FloatAD(0.f)));
             const Vector3fAD projected = preferred - dot(preferred, dir) * dir;
             const Vector3fAD axis =
-                select(abs(dir.x()) < FloatAD(0.9f),
-                       Vector3fAD(FloatAD(1.f), FloatAD(0.f), FloatAD(0.f)),
+                select(abs(dir.x()) < FloatAD(0.9f), Vector3fAD(FloatAD(1.f), FloatAD(0.f), FloatAD(0.f)),
                        Vector3fAD(FloatAD(0.f), FloatAD(1.f), FloatAD(0.f)));
             const Vector3fAD fallback = axis - dot(axis, dir) * dir;
-            return select(squared_norm(projected) > FloatAD(1e-12f),
-                          normalize_safe(projected, axis),
-                          normalize_safe(fallback,
-                                         Vector3fAD(FloatAD(0.f), FloatAD(0.f), FloatAD(1.f))));
+            return select(squared_norm(projected) > FloatAD(1e-12f), normalize_safe(projected, axis),
+                          normalize_safe(fallback, Vector3fAD(FloatAD(0.f), FloatAD(0.f), FloatAD(1.f))));
         };
-        auto complex_dot_real = [](const ComplexVectorAD &field,
-                                   const Vector3fAD &basis) -> ComplexADValue {
+        auto complex_dot_real = [](const ComplexVectorAD& field, const Vector3fAD& basis) -> ComplexADValue {
             return {dot(field.re, basis), dot(field.im, basis)};
         };
-        auto complex_vector_power = [](const ComplexVectorAD &field) -> FloatAD {
+        auto complex_vector_power = [](const ComplexVectorAD& field) -> FloatAD {
             return squared_norm(field.re) + squared_norm(field.im);
         };
         auto material_reflection_coefficients =
-            [&](const IntAD &prim,
-                const FloatAD &cos_theta,
-                const MaskAD &slot_active) -> std::pair<ComplexADValue, ComplexADValue> {
-            const MaskAD prim_in_range =
-                slot_active && (prim >= IntAD(0)) && (prim < IntAD(material_count));
+            [&](const IntAD& prim, const FloatAD& cos_theta,
+                const MaskAD& slot_active) -> std::pair<ComplexADValue, ComplexADValue> {
+            const MaskAD prim_in_range = slot_active && (prim >= IntAD(0)) && (prim < IntAD(material_count));
             const IntAD safe_prim = select(prim_in_range, prim, IntAD(0));
-            const MaskAD prim_valid =
-                prim_in_range && gather<MaskAD>(material.valid, safe_prim, prim_in_range);
-            const FloatAD eta_r =
-                maximum(gather<FloatAD>(material.eta_r, safe_prim, prim_valid),
-                        FloatAD(Epsilon));
-            const FloatAD sigma =
-                maximum(gather<FloatAD>(material.sigma, safe_prim, prim_valid),
-                        FloatAD(0.f));
+            const MaskAD prim_valid = prim_in_range && gather<MaskAD>(material.valid, safe_prim, prim_in_range);
+            const FloatAD eta_r = maximum(gather<FloatAD>(material.eta_r, safe_prim, prim_valid), FloatAD(Epsilon));
+            const FloatAD sigma = maximum(gather<FloatAD>(material.sigma, safe_prim, prim_valid), FloatAD(0.f));
             const FloatAD gain = gather<FloatAD>(material.gain, safe_prim, prim_valid);
-            const FloatAD mu_r =
-                maximum(gather<FloatAD>(material.mu_r, safe_prim, prim_valid),
-                        FloatAD(Epsilon));
-            const FloatAD omega = maximum(
-                FloatAD(2.f * Pi) * FloatAD(299792458.f) /
-                    maximum(FloatAD(options.wavelength), FloatAD(Epsilon)),
-                FloatAD(Epsilon));
-            const ComplexADValue eta = {
-                eta_r,
-                -sigma / (omega * FloatAD(8.854187817e-12f))
-            };
+            const FloatAD mu_r = maximum(gather<FloatAD>(material.mu_r, safe_prim, prim_valid), FloatAD(Epsilon));
+            const FloatAD omega = maximum(FloatAD(2.f * Pi) * FloatAD(299792458.f) /
+                                              maximum(FloatAD(options.wavelength), FloatAD(Epsilon)),
+                                          FloatAD(Epsilon));
+            const ComplexADValue eta = {eta_r, -sigma / (omega * FloatAD(8.854187817e-12f))};
             const ComplexADValue mu = {mu_r, FloatAD(0.f)};
-            const FloatAD cos_clamped =
-                minimum(maximum(abs(cos_theta), FloatAD(Epsilon)), FloatAD(1.f));
-            const FloatAD sin2 =
-                maximum(FloatAD(0.f), FloatAD(1.f) - cos_clamped * cos_clamped);
+            const FloatAD cos_clamped = minimum(maximum(abs(cos_theta), FloatAD(Epsilon)), FloatAD(1.f));
+            const FloatAD sin2 = maximum(FloatAD(0.f), FloatAD(1.f) - cos_clamped * cos_clamped);
             const ComplexADValue a =
-                complex_sqrt(complex_sub(complex_mul(mu, eta),
-                                         ComplexADValue{sin2, FloatAD(0.f)}));
+                complex_sqrt(complex_sub(complex_mul(mu, eta), ComplexADValue{sin2, FloatAD(0.f)}));
             const ComplexADValue mu_cos = {mu_r * cos_clamped, FloatAD(0.f)};
-            const ComplexADValue eta_cos = {eta.re * cos_clamped,
-                                            eta.im * cos_clamped};
+            const ComplexADValue eta_cos = {eta.re * cos_clamped, eta.im * cos_clamped};
             const ComplexADValue zero = {FloatAD(0.f), FloatAD(0.f)};
             const ComplexADValue r_te_raw =
-                complex_scale(
-                    complex_div(complex_sub(mu_cos, a),
-                                complex_add(mu_cos, a)),
-                    gain);
+                complex_scale(complex_div(complex_sub(mu_cos, a), complex_add(mu_cos, a)), gain);
             const ComplexADValue r_tm_raw =
-                complex_scale(
-                    complex_div(complex_sub(eta_cos, a),
-                                complex_add(eta_cos, a)),
-                    gain);
+                complex_scale(complex_div(complex_sub(eta_cos, a), complex_add(eta_cos, a)), gain);
             const ComplexADValue r_te = {
                 select(prim_valid, r_te_raw.re, zero.re),
                 select(prim_valid, r_te_raw.im, zero.im),
@@ -1532,39 +1140,28 @@ AccumResultT<Detached> Scene::accumulate_reflections(
             };
             return {r_te, r_tm};
         };
-        auto reflect_field_vector =
-            [&](const ComplexVectorAD &field,
-                const Vector3fAD &incident_dir,
-                const Vector3fAD &slot_normal,
-                const IntAD &prim,
-                const MaskAD &slot_active) -> std::pair<ComplexVectorAD, Vector3fAD> {
+        auto reflect_field_vector = [&](const ComplexVectorAD& field, const Vector3fAD& incident_dir,
+                                        const Vector3fAD& slot_normal, const IntAD& prim,
+                                        const MaskAD& slot_active) -> std::pair<ComplexVectorAD, Vector3fAD> {
             const Vector3fAD incident_hat =
-                normalize_safe(incident_dir,
-                               Vector3fAD(FloatAD(1.f), FloatAD(0.f), FloatAD(0.f)));
-            Vector3fAD normal_hat =
-                normalize_safe(slot_normal,
-                               Vector3fAD(FloatAD(0.f), FloatAD(0.f), FloatAD(1.f)));
-            normal_hat = select(dot(incident_hat, normal_hat) > FloatAD(0.f),
-                                -normal_hat,
-                                normal_hat);
+                normalize_safe(incident_dir, Vector3fAD(FloatAD(1.f), FloatAD(0.f), FloatAD(0.f)));
+            Vector3fAD normal_hat = normalize_safe(slot_normal, Vector3fAD(FloatAD(0.f), FloatAD(0.f), FloatAD(1.f)));
+            normal_hat = select(dot(incident_hat, normal_hat) > FloatAD(0.f), -normal_hat, normal_hat);
             const FloatAD dot_dn = dot(incident_hat, normal_hat);
             const Vector3fAD reflected_dir =
-                normalize_safe(incident_hat - FloatAD(2.f) * dot_dn * normal_hat,
-                               -incident_hat);
+                normalize_safe(incident_hat - FloatAD(2.f) * dot_dn * normal_hat, -incident_hat);
             Vector3fAD s_hat = cross(normal_hat, incident_hat);
             s_hat = select(squared_norm(s_hat) > FloatAD(1e-12f),
                            normalize_safe(s_hat, stable_perpendicular(incident_hat, normal_hat)),
                            stable_perpendicular(incident_hat, normal_hat));
             Vector3fAD p_in_hat = cross(s_hat, incident_hat);
-            p_in_hat =
-                select(squared_norm(p_in_hat) > FloatAD(1e-12f),
-                       normalize_safe(p_in_hat, stable_perpendicular(incident_hat, normal_hat)),
-                       stable_perpendicular(incident_hat, normal_hat));
+            p_in_hat = select(squared_norm(p_in_hat) > FloatAD(1e-12f),
+                              normalize_safe(p_in_hat, stable_perpendicular(incident_hat, normal_hat)),
+                              stable_perpendicular(incident_hat, normal_hat));
             Vector3fAD p_out_hat = cross(s_hat, reflected_dir);
-            p_out_hat =
-                select(squared_norm(p_out_hat) > FloatAD(1e-12f),
-                       normalize_safe(p_out_hat, stable_perpendicular(reflected_dir, normal_hat)),
-                       stable_perpendicular(reflected_dir, normal_hat));
+            p_out_hat = select(squared_norm(p_out_hat) > FloatAD(1e-12f),
+                               normalize_safe(p_out_hat, stable_perpendicular(reflected_dir, normal_hat)),
+                               stable_perpendicular(reflected_dir, normal_hat));
             const auto [r_te, r_tm] =
                 material_reflection_coefficients(prim, abs(dot(incident_hat, normal_hat)), slot_active);
             const ComplexADValue e_s = complex_dot_real(field, s_hat);
@@ -1572,9 +1169,10 @@ AccumResultT<Detached> Scene::accumulate_reflections(
             const ComplexADValue out_s = complex_mul(r_te, e_s);
             const ComplexADValue out_p = complex_mul(r_tm, e_p);
             return {{
-                s_hat * out_s.re + p_out_hat * out_p.re,
-                s_hat * out_s.im + p_out_hat * out_p.im,
-            }, reflected_dir};
+                        s_hat * out_s.re + p_out_hat * out_p.re,
+                        s_hat * out_s.im + p_out_hat * out_p.im,
+                    },
+                    reflected_dir};
         };
 
         const UIntAD ray_index = arange<UIntAD>(ray_count);
@@ -1586,11 +1184,9 @@ AccumResultT<Detached> Scene::accumulate_reflections(
         Vector3fAD image_source = broadcast_vec(tx_position, ray_count);
         Vector3fAD tx_pol = broadcast_vec(tx_polarization, ray_count);
         Vector3fAD transverse_pol = tx_pol - dot(tx_pol, direction) * direction;
-        transverse_pol = select(
-            squared_norm(transverse_pol) > FloatAD(1e-12f),
-            normalize_safe(transverse_pol,
-                           stable_perpendicular(direction, tx_pol)),
-            stable_perpendicular(direction, tx_pol));
+        transverse_pol = select(squared_norm(transverse_pol) > FloatAD(1e-12f),
+                                normalize_safe(transverse_pol, stable_perpendicular(direction, tx_pol)),
+                                stable_perpendicular(direction, tx_pol));
         ComplexVectorAD field = {transverse_pol, zeros<Vector3fAD>(ray_count)};
         FloatAD path_length = zeros<FloatAD>(ray_count);
         MaskAD current_active = active_ad;
@@ -1601,141 +1197,76 @@ AccumResultT<Detached> Scene::accumulate_reflections(
         const FloatAD wave_gain = wavelength / FloatAD(4.f * Pi);
         const FloatAD solid_angle = FloatAD(options.solid_angle_per_ray);
         const FloatAD cell_area = FloatAD(options.cell_area);
-        const FloatAD wave_k =
-            select(abs(FloatAD(options.k)) > FloatAD(Epsilon),
-                   FloatAD(options.k),
-                   FloatAD(2.f * Pi) / maximum(wavelength, FloatAD(Epsilon)));
+        const FloatAD wave_k = select(abs(FloatAD(options.k)) > FloatAD(Epsilon), FloatAD(options.k),
+                                      FloatAD(2.f * Pi) / maximum(wavelength, FloatAD(Epsilon)));
 
         for (int bounce = 0; bounce < max_bounces; ++bounce) {
             const IntAD slot = base_slot + IntAD(bounce);
-            const MaskAD bounce_active =
-                current_active && (chain.bounce_count > IntAD(bounce));
+            const MaskAD bounce_active = current_active && (chain.bounce_count > IntAD(bounce));
             if (drjit::none(detach<false>(bounce_active))) {
                 break;
             }
 
-            const Vector3fAD hit_point =
-                gather<Vector3fAD>(chain.hit_points, slot, bounce_active);
-            Vector3fAD normal =
-                gather<Vector3fAD>(chain.geo_normals, slot, bounce_active);
+            const Vector3fAD hit_point = gather<Vector3fAD>(chain.hit_points, slot, bounce_active);
+            Vector3fAD normal = gather<Vector3fAD>(chain.geo_normals, slot, bounce_active);
             normal = normalize(normal);
             normal = select(dot(direction, normal) > FloatAD(0.f), -normal, normal);
-            const IntAD prim =
-                gather<IntAD>(chain.global_prim_ids, slot, bounce_active);
+            const IntAD prim = gather<IntAD>(chain.global_prim_ids, slot, bounce_active);
             const MaskAD material_active = bounce_active;
 
             const Vector3fAD event_source = image_source;
             const Vector3fAD event_direction = direction;
             const FloatAD event_source_power = complex_vector_power(field) * solid_angle;
             const FloatAD image_distance = dot(image_source - hit_point, normal);
-            image_source = select(
-                material_active,
-                image_source - FloatAD(2.f) * image_distance * normal,
-                image_source);
+            image_source = select(material_active, image_source - FloatAD(2.f) * image_distance * normal, image_source);
             const auto reflected = reflect_field_vector(field, direction, normal, prim, material_active);
             direction = select(material_active, reflected.second, direction);
-            origin = select(
-                material_active,
-                hit_point + FloatAD(Epsilon) * direction,
-                origin);
+            origin = select(material_active, hit_point + FloatAD(Epsilon) * direction, origin);
             field = {
                 select(material_active, reflected.first.re, zeros<Vector3fAD>(ray_count)),
                 select(material_active, reflected.first.im, zeros<Vector3fAD>(ray_count)),
             };
-            path_length = select(
-                material_active,
-                path_length + gather<FloatAD>(chain.t, slot, bounce_active),
-                path_length);
+            path_length =
+                select(material_active, path_length + gather<FloatAD>(chain.t, slot, bounce_active), path_length);
 
             if (options.collect_wedges && options.wedge_capacity > 0) {
                 const IntAD event_slot =
-                    (ray_slot * IntAD(max_bounces) + IntAD(bounce)) /
-                    IntAD(options.wedge_sample_stride);
+                    (ray_slot * IntAD(max_bounces) + IntAD(bounce)) / IntAD(options.wedge_sample_stride);
                 const MaskAD wedge_active =
-                    material_active && (event_slot >= IntAD(0)) &&
-                    (event_slot < IntAD(options.wedge_capacity));
-                scatter(
-                    result.wedge_events.ray_index,
-                    ray_slot,
-                    event_slot,
-                    wedge_active);
-                scatter(
-                    result.wedge_events.hit_points,
-                    hit_point,
-                    event_slot,
-                    wedge_active);
-                scatter(
-                    result.wedge_events.normals,
-                    normal,
-                    event_slot,
-                    wedge_active);
-                scatter(
-                    result.wedge_events.prim_id,
-                    prim,
-                    event_slot,
-                    wedge_active);
-                scatter(
-                    result.wedge_events.directions,
-                    event_direction,
-                    event_slot,
-                    wedge_active);
-                scatter(
-                    result.wedge_events.source_points,
-                    event_source,
-                    event_slot,
-                    wedge_active);
-                scatter(
-                    result.wedge_events.src_power,
-                    event_source_power,
-                    event_slot,
-                    wedge_active);
-                scatter(
-                    result.wedge_events.initial_directions,
-                    normalize(ray.d),
-                    event_slot,
-                    wedge_active);
-                scatter(
-                    result.wedge_events.bounce_depth,
-                    IntAD(bounce),
-                    event_slot,
-                    wedge_active);
-                scatter_reduce(
-                    ReduceOp::Add,
-                    result.wedge_events.count,
-                    IntAD(1),
-                    zeros<IntAD>(ray_count),
-                    wedge_active);
+                    material_active && (event_slot >= IntAD(0)) && (event_slot < IntAD(options.wedge_capacity));
+                scatter(result.wedge_events.ray_index, ray_slot, event_slot, wedge_active);
+                scatter(result.wedge_events.hit_points, hit_point, event_slot, wedge_active);
+                scatter(result.wedge_events.normals, normal, event_slot, wedge_active);
+                scatter(result.wedge_events.prim_id, prim, event_slot, wedge_active);
+                scatter(result.wedge_events.directions, event_direction, event_slot, wedge_active);
+                scatter(result.wedge_events.source_points, event_source, event_slot, wedge_active);
+                scatter(result.wedge_events.src_power, event_source_power, event_slot, wedge_active);
+                scatter(result.wedge_events.initial_directions, normalize(ray.d), event_slot, wedge_active);
+                scatter(result.wedge_events.bounce_depth, IntAD(bounce), event_slot, wedge_active);
+                scatter_reduce(ReduceOp::Add, result.wedge_events.count, IntAD(1), zeros<IntAD>(ray_count),
+                               wedge_active);
             }
 
             FloatAD blocker_t = chain.trailing_t;
             if (bounce + 1 < max_bounces) {
                 const IntAD next_slot = slot + IntAD(1);
                 const MaskAD next_valid = chain.bounce_count > IntAD(bounce + 1);
-                blocker_t = select(
-                    next_valid,
-                    gather<FloatAD>(chain.t, next_slot, next_valid),
-                    blocker_t);
+                blocker_t = select(next_valid, gather<FloatAD>(chain.t, next_slot, next_valid), blocker_t);
             }
 
             const FloatAD axis_dir = component(direction, grid.axis);
             const FloatAD safe_axis_dir =
                 axis_dir + select(axis_dir >= FloatAD(0.f), FloatAD(Epsilon), FloatAD(-Epsilon));
-            const FloatAD t_plane =
-                (FloatAD(grid.position) - component(origin, grid.axis)) / safe_axis_dir;
+            const FloatAD t_plane = (FloatAD(grid.position) - component(origin, grid.axis)) / safe_axis_dir;
             const Vector3fAD target = origin + direction * t_plane;
             FloatAD coord0 = zeros<FloatAD>(ray_count);
             FloatAD coord1 = zeros<FloatAD>(ray_count);
             coords_from_point(target, grid.axis, coord0, coord1);
 
-            const MaskAD plane_active =
-                material_active &&
-                (complex_vector_power(field) > FloatAD(0.f)) &&
-                (t_plane > FloatAD(RayEpsilon)) &&
-                (t_plane < blocker_t) &&
-                (coord0 >= FloatAD(grid.coord0_min)) &&
-                (coord0 < FloatAD(grid.coord0_max)) &&
-                (coord1 >= FloatAD(grid.coord1_min)) &&
-                (coord1 < FloatAD(grid.coord1_max));
+            const MaskAD plane_active = material_active && (complex_vector_power(field) > FloatAD(0.f)) &&
+                                        (t_plane > FloatAD(RayEpsilon)) && (t_plane < blocker_t) &&
+                                        (coord0 >= FloatAD(grid.coord0_min)) && (coord0 < FloatAD(grid.coord0_max)) &&
+                                        (coord1 >= FloatAD(grid.coord1_min)) && (coord1 < FloatAD(grid.coord1_max));
             const FloatAD u = (coord0 - FloatAD(grid.coord0_min)) / span0;
             const FloatAD v = (coord1 - FloatAD(grid.coord1_min)) / span1;
             IntAD ix = IntAD(u * FloatAD(grid.resolution0));
@@ -1744,117 +1275,68 @@ AccumResultT<Detached> Scene::accumulate_reflections(
             iy = minimum(maximum(iy, IntAD(0)), IntAD(grid.resolution1 - 1));
             const IntAD cell = iy * IntAD(grid.resolution0) + ix;
 
-            const Vector3fAD target_plane =
-                plane_point(grid.axis, FloatAD(grid.position), coord0, coord1);
-            const FloatAD unfolded_distance =
-                maximum(norm(target_plane - image_source), FloatAD(Epsilon));
+            const Vector3fAD target_plane = plane_point(grid.axis, FloatAD(grid.position), coord0, coord1);
+            const FloatAD unfolded_distance = maximum(norm(target_plane - image_source), FloatAD(Epsilon));
             const FloatAD cos_theta = maximum(abs(axis_dir), FloatAD(Epsilon));
             const FloatAD geometry_power_scale =
-                solid_angle / cell_area *
-                unfolded_distance * unfolded_distance / cos_theta;
+                solid_angle / cell_area * unfolded_distance * unfolded_distance / cos_theta;
             const FloatAD amplitude_scale =
-                wave_gain / unfolded_distance *
-                sqrt(maximum(geometry_power_scale, FloatAD(0.f)));
-            const ComplexADValue phase = {
-                cos(wave_k * unfolded_distance),
-                -sin(wave_k * unfolded_distance)
-            };
+                wave_gain / unfolded_distance * sqrt(maximum(geometry_power_scale, FloatAD(0.f)));
+            const ComplexADValue phase = {cos(wave_k * unfolded_distance), -sin(wave_k * unfolded_distance)};
             const ComplexADValue coeff = complex_scale(phase, amplitude_scale);
             const ComplexVectorAD contribution_field = {
                 field.re * coeff.re - field.im * coeff.im,
                 field.re * coeff.im + field.im * coeff.re,
             };
-            const FloatAD contribution_power =
-                complex_vector_power(contribution_field);
+            const FloatAD contribution_power = complex_vector_power(contribution_field);
             const MaskAD contribution_active =
                 plane_active && drjit::isfinite(contribution_power) && (contribution_power > FloatAD(0.f));
-            scatter_reduce(
-                ReduceOp::Add,
-                result.reflection_field_x.x(),
-                contribution_field.re.x(),
-                cell,
-                contribution_active);
-            scatter_reduce(
-                ReduceOp::Add,
-                result.reflection_field_x.y(),
-                contribution_field.im.x(),
-                cell,
-                contribution_active);
-            scatter_reduce(
-                ReduceOp::Add,
-                result.reflection_field_y.x(),
-                contribution_field.re.y(),
-                cell,
-                contribution_active);
-            scatter_reduce(
-                ReduceOp::Add,
-                result.reflection_field_y.y(),
-                contribution_field.im.y(),
-                cell,
-                contribution_active);
-            scatter_reduce(
-                ReduceOp::Add,
-                result.reflection_field_z.x(),
-                contribution_field.re.z(),
-                cell,
-                contribution_active);
-            scatter_reduce(
-                ReduceOp::Add,
-                result.reflection_field_z.y(),
-                contribution_field.im.z(),
-                cell,
-                contribution_active);
-            scatter_reduce(
-                ReduceOp::Add,
-                result.reflection_power,
-                contribution_power,
-                cell,
-                contribution_active);
-            scatter_reduce(
-                ReduceOp::Add,
-                result.reflection_count,
-                IntAD(1),
-                zeros<IntAD>(ray_count),
-                contribution_active);
+            scatter_reduce(ReduceOp::Add, result.reflection_field_x.x(), contribution_field.re.x(), cell,
+                           contribution_active);
+            scatter_reduce(ReduceOp::Add, result.reflection_field_x.y(), contribution_field.im.x(), cell,
+                           contribution_active);
+            scatter_reduce(ReduceOp::Add, result.reflection_field_y.x(), contribution_field.re.y(), cell,
+                           contribution_active);
+            scatter_reduce(ReduceOp::Add, result.reflection_field_y.y(), contribution_field.im.y(), cell,
+                           contribution_active);
+            scatter_reduce(ReduceOp::Add, result.reflection_field_z.x(), contribution_field.re.z(), cell,
+                           contribution_active);
+            scatter_reduce(ReduceOp::Add, result.reflection_field_z.y(), contribution_field.im.z(), cell,
+                           contribution_active);
+            scatter_reduce(ReduceOp::Add, result.reflection_power, contribution_power, cell, contribution_active);
+            scatter_reduce(ReduceOp::Add, result.reflection_count, IntAD(1), zeros<IntAD>(ray_count),
+                           contribution_active);
 
             const int next_depth = bounce + 1;
             MaskAD continue_active = material_active;
             if (options.rr_depth > 0 && options.rr_prob < 1.f && next_depth >= options.rr_depth) {
                 const FloatAD rr_field_power = complex_vector_power(field);
                 const FloatAD continue_prob =
-                    minimum(maximum(rr_field_power, FloatAD(1e-8f)),
-                            maximum(FloatAD(options.rr_prob), FloatAD(1e-8f)));
-                const FloatAD rr_scale =
-                    FloatAD(1.f) / sqrt(maximum(continue_prob, FloatAD(1e-8f)));
+                    minimum(maximum(rr_field_power, FloatAD(1e-8f)), maximum(FloatAD(options.rr_prob), FloatAD(1e-8f)));
+                const FloatAD rr_scale = FloatAD(1.f) / sqrt(maximum(continue_prob, FloatAD(1e-8f)));
                 field = {
                     select(continue_active, field.re * rr_scale, field.re),
                     select(continue_active, field.im * rr_scale, field.im),
                 };
             }
             if (options.stop_threshold > 0.f) {
-                const FloatAD fspl =
-                    wavelength / (FloatAD(4.f * Pi) * maximum(path_length, FloatAD(Epsilon)));
+                const FloatAD fspl = wavelength / (FloatAD(4.f * Pi) * maximum(path_length, FloatAD(Epsilon)));
                 continue_active =
-                    continue_active &&
-                    (complex_vector_power(field) * fspl * fspl > FloatAD(options.stop_threshold));
+                    continue_active && (complex_vector_power(field) * fspl * fspl > FloatAD(options.stop_threshold));
             }
             current_active = continue_active;
         }
         return result;
     } else {
-        ScopedNativeLaunchStage native_launch_stage(
-            NativeLaunchStage::AccumulateReflections);
+        ScopedNativeLaunchStage native_launch_stage(NativeLaunchStage::AccumulateReflections);
         auto initialize_result_storage = [&]() {
             result.reflection_power = zeros<Float>(grid_cell_count);
             result.reflection_field_x =
-                drjit::Complex<Float>(zeros<Float>(grid_cell_count),
-                                      zeros<Float>(grid_cell_count));
+                drjit::Complex<Float>(zeros<Float>(grid_cell_count), zeros<Float>(grid_cell_count));
             result.reflection_field_y =
-                drjit::Complex<Float>(zeros<Float>(grid_cell_count),
-                                      zeros<Float>(grid_cell_count));
+                drjit::Complex<Float>(zeros<Float>(grid_cell_count), zeros<Float>(grid_cell_count));
             result.reflection_field_z =
-                drjit::Complex<Float>(zeros<Float>(grid_cell_count),
-                                      zeros<Float>(grid_cell_count));
+                drjit::Complex<Float>(zeros<Float>(grid_cell_count), zeros<Float>(grid_cell_count));
             result.reflection_count = full<Int>(0, 1);
             result.wedge_events.capacity = options.wedge_capacity;
             result.wedge_events.count = full<Int>(0, 1);
@@ -1874,8 +1356,7 @@ AccumResultT<Detached> Scene::accumulate_reflections(
             return result;
         }
 
-        require(static_cast<int>(slices(ray.d)) == ray_count &&
-                    static_cast<int>(slices(ray.tmax)) == ray_count,
+        require(static_cast<int>(slices(ray.d)) == ray_count && static_cast<int>(slices(ray.tmax)) == ray_count,
                 "Scene::accumulate_reflections(): ray fields must have matching widths.");
         const int tx_count = static_cast<int>(slices(tx_position));
         require(tx_count == 1 || tx_count == ray_count,
@@ -1885,8 +1366,7 @@ AccumResultT<Detached> Scene::accumulate_reflections(
                 "Scene::accumulate_reflections(): tx_polarization width must be 1 or match ray count.");
 
         const int material_count = static_cast<int>(slices(material.eta_r));
-        require(material_count > 0,
-                "Scene::accumulate_reflections(): material payload must not be empty.");
+        require(material_count > 0, "Scene::accumulate_reflections(): material payload must not be empty.");
         require(static_cast<int>(slices(material.sigma)) == material_count &&
                     static_cast<int>(slices(material.gain)) == material_count &&
                     static_cast<int>(slices(material.mu_r)) == material_count &&
@@ -1898,8 +1378,8 @@ AccumResultT<Detached> Scene::accumulate_reflections(
                 "Scene::accumulate_reflections(): material payload must provide one entry per global primitive.");
 
         const bool cuda_trace = triangle_kind_ == TraceBackendKind::Cuda;
-        const OptixScene *primary_scene = nullptr;
-        const OptixScene *secondary_scene = nullptr;
+        const OptixScene* primary_scene = nullptr;
+        const OptixScene* secondary_scene = nullptr;
         int split_mode = 0;
         if (!cuda_trace) {
             const OptixSceneSelection scenes = select_optix_scenes();
@@ -1910,11 +1390,10 @@ AccumResultT<Detached> Scene::accumulate_reflections(
 
             require(primary_scene != nullptr && primary_scene->is_ready(),
                     "Scene::accumulate_reflections(): OptiX scene is not ready.");
-            require(hitgroup_record_count > 0,
-                    "Scene::accumulate_reflections(): invalid hitgroup record count.");
+            require(hitgroup_record_count > 0, "Scene::accumulate_reflections(): invalid hitgroup record count.");
 
-            ensure_pipeline(reflection_accumulation_pipeline_, primary_scene->context(),
-                            hitgroup_record_count, reflection_accumulation_pipeline_config());
+            ensure_pipeline(reflection_accumulation_pipeline_, primary_scene->context(), hitgroup_record_count,
+                            reflection_accumulation_pipeline_config());
         }
 
         initialize_result_storage();
@@ -1922,58 +1401,39 @@ AccumResultT<Detached> Scene::accumulate_reflections(
         Vector3f tx_detached = tx_position;
         if (tx_count == 1 && ray_count > 1) {
             const Int zero_index = full<Int>(0, ray_count);
-            tx_detached = Vector3f(
-                gather<Float>(tx_position.x(), zero_index),
-                gather<Float>(tx_position.y(), zero_index),
-                gather<Float>(tx_position.z(), zero_index));
+            tx_detached =
+                Vector3f(gather<Float>(tx_position.x(), zero_index), gather<Float>(tx_position.y(), zero_index),
+                         gather<Float>(tx_position.z(), zero_index));
         }
         Vector3f tx_pol_detached = tx_polarization;
         if (tx_pol_count == 1 && ray_count > 1) {
             const Int zero_index = full<Int>(0, ray_count);
-            tx_pol_detached = Vector3f(
-                gather<Float>(tx_polarization.x(), zero_index),
-                gather<Float>(tx_polarization.y(), zero_index),
-                gather<Float>(tx_polarization.z(), zero_index));
+            tx_pol_detached =
+                Vector3f(gather<Float>(tx_polarization.x(), zero_index), gather<Float>(tx_polarization.y(), zero_index),
+                         gather<Float>(tx_polarization.z(), zero_index));
         }
 
         Mask active_detached = sanitize_reflection_active<true>(ray, active);
-        active_detached &= drjit::isfinite(tx_detached.x()) &&
-                           drjit::isfinite(tx_detached.y()) &&
-                           drjit::isfinite(tx_detached.z()) &&
-                           drjit::isfinite(tx_pol_detached.x()) &&
-                           drjit::isfinite(tx_pol_detached.y()) &&
-                           drjit::isfinite(tx_pol_detached.z());
+        active_detached &= drjit::isfinite(tx_detached.x()) && drjit::isfinite(tx_detached.y()) &&
+                           drjit::isfinite(tx_detached.z()) && drjit::isfinite(tx_pol_detached.x()) &&
+                           drjit::isfinite(tx_pol_detached.y()) && drjit::isfinite(tx_pol_detached.z());
         if (drjit::none(active_detached)) {
             return result;
         }
 
-        drjit::eval(ray.o,
-                    ray.d,
-                    ray.tmax,
-                    tx_detached,
-                    tx_pol_detached,
-                    active_detached,
-                    triangle_info_detached_.p0,
-                    triangle_info_detached_.e1,
-                    triangle_info_detached_.e2,
-                    triangle_info_detached_.face_normal,
-                    face_offsets_,
-                    material.eta_r,
-                    material.sigma,
-                    material.gain,
-                    material.mu_r,
-                    material.valid);
+        drjit::eval(ray.o, ray.d, ray.tmax, tx_detached, tx_pol_detached, active_detached, triangle_info_detached_.p0,
+                    triangle_info_detached_.e1, triangle_info_detached_.e2, triangle_info_detached_.face_normal,
+                    face_offsets_, material.eta_r, material.sigma, material.gain, material.mu_r, material.valid);
 
-        AccumRaw raw = allocate_reflection_accumulation_raw(
-            ray_count, max_bounces, grid_cell_count, options.wedge_capacity);
+        AccumRaw raw =
+            allocate_reflection_accumulation_raw(ray_count, max_bounces, grid_cell_count, options.wedge_capacity);
         initialize_reflection_accumulation_raw(raw);
 
         AccumParams params = {};
         params.primary_handle = cuda_trace ? 0ull : primary_scene->ias_handle();
-        params.secondary_handle =
-            (!cuda_trace && secondary_scene != nullptr && secondary_scene->is_ready())
-                ? secondary_scene->ias_handle()
-                : 0ull;
+        params.secondary_handle = (!cuda_trace && secondary_scene != nullptr && secondary_scene->is_ready())
+                                      ? secondary_scene->ias_handle()
+                                      : 0ull;
         params.split_mode = split_mode;
         params.tri_p0_x = triangle_info_detached_.p0.x().data();
         params.tri_p0_y = triangle_info_detached_.p0.y().data();
@@ -1997,7 +1457,7 @@ AccumResultT<Detached> Scene::accumulate_reflections(
         params.ray_dy = ray.d.y().data();
         params.ray_dz = ray.d.z().data();
         params.ray_tmax = ray.tmax.data();
-        params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
+        params.active_mask = reinterpret_cast<const uint8_t*>(active_detached.data());
         params.n_rays = ray_count;
         params.tx_x = tx_detached.x().data();
         params.tx_y = tx_detached.y().data();
@@ -2026,7 +1486,7 @@ AccumResultT<Detached> Scene::accumulate_reflections(
         params.material_sigma = material.sigma.data();
         params.material_gain = material.gain.data();
         params.material_mu_r = material.mu_r.data();
-        params.material_valid = reinterpret_cast<const uint8_t *>(material.valid.data());
+        params.material_valid = reinterpret_cast<const uint8_t*>(material.valid.data());
         params.material_count = material_count;
         params.collect_wedges = options.collect_wedges ? 1 : 0;
         params.collect_wedge_prefixes = options.collect_wedge_prefixes ? 1 : 0;
@@ -2068,53 +1528,34 @@ AccumResultT<Detached> Scene::accumulate_reflections(
         }
 
         result.reflection_power = raw.reflection_power;
-        result.reflection_field_x =
-            drjit::Complex<Float>(raw.field_x_re, raw.field_x_im);
-        result.reflection_field_y =
-            drjit::Complex<Float>(raw.field_y_re, raw.field_y_im);
-        result.reflection_field_z =
-            drjit::Complex<Float>(raw.field_z_re, raw.field_z_im);
+        result.reflection_field_x = drjit::Complex<Float>(raw.field_x_re, raw.field_x_im);
+        result.reflection_field_y = drjit::Complex<Float>(raw.field_y_re, raw.field_y_im);
+        result.reflection_field_z = drjit::Complex<Float>(raw.field_z_re, raw.field_z_im);
         result.reflection_count = raw.reflection_count;
         result.wedge_events.capacity = options.wedge_capacity;
         result.wedge_events.count = raw.wedge_count;
         result.wedge_events.ray_index = raw.wedge_ray_index;
-        result.wedge_events.hit_points =
-            Vector3f(raw.wedge_hit_x, raw.wedge_hit_y, raw.wedge_hit_z);
-        result.wedge_events.normals =
-            Vector3f(raw.wedge_normal_x, raw.wedge_normal_y, raw.wedge_normal_z);
+        result.wedge_events.hit_points = Vector3f(raw.wedge_hit_x, raw.wedge_hit_y, raw.wedge_hit_z);
+        result.wedge_events.normals = Vector3f(raw.wedge_normal_x, raw.wedge_normal_y, raw.wedge_normal_z);
         result.wedge_events.prim_id = raw.wedge_prim_id;
-        result.wedge_events.directions =
-            Vector3f(raw.wedge_dir_x, raw.wedge_dir_y, raw.wedge_dir_z);
-        result.wedge_events.source_points =
-            Vector3f(raw.wedge_source_x, raw.wedge_source_y, raw.wedge_source_z);
+        result.wedge_events.directions = Vector3f(raw.wedge_dir_x, raw.wedge_dir_y, raw.wedge_dir_z);
+        result.wedge_events.source_points = Vector3f(raw.wedge_source_x, raw.wedge_source_y, raw.wedge_source_z);
         result.wedge_events.src_power = raw.wedge_source_power;
-        result.wedge_events.initial_directions = Vector3f(
-            raw.wedge_initial_dir_x,
-            raw.wedge_initial_dir_y,
-            raw.wedge_initial_dir_z);
+        result.wedge_events.initial_directions =
+            Vector3f(raw.wedge_initial_dir_x, raw.wedge_initial_dir_y, raw.wedge_initial_dir_z);
         result.wedge_events.bounce_depth = raw.wedge_bounce_depth;
         return result;
     }
 }
 
-template AccumResult Scene::accumulate_reflections<true>(
-    const Ray &ray,
-    const Vector3f &tx_position,
-    const AccumGrid &grid,
-    const Material &material,
-    int max_bounces,
-    const AccumOptions &options,
-    Mask active,
-    const Vector3f &tx_polarization) const;
-template AccumResultAD Scene::accumulate_reflections<false>(
-    const RayAD &ray,
-    const Vector3fAD &tx_position,
-    const AccumGrid &grid,
-    const MaterialAD &material,
-    int max_bounces,
-    const AccumOptions &options,
-    MaskAD active,
-    const Vector3fAD &tx_polarization) const;
+template AccumResult Scene::accumulate_reflections<true>(const Ray& ray, const Vector3f& tx_position,
+                                                         const AccumGrid& grid, const Material& material,
+                                                         int max_bounces, const AccumOptions& options, Mask active,
+                                                         const Vector3f& tx_polarization) const;
+template AccumResultAD Scene::accumulate_reflections<false>(const RayAD& ray, const Vector3fAD& tx_position,
+                                                            const AccumGrid& grid, const MaterialAD& material,
+                                                            int max_bounces, const AccumOptions& options, MaskAD active,
+                                                            const Vector3fAD& tx_polarization) const;
 
 } // namespace rayd
 
@@ -2164,9 +1605,7 @@ struct ReflEpcRaw {
     Int first_blocked_group;
 };
 
-template <bool Detached>
-ReflEpcT<Detached> init_refl_epc(int ray_count,
-                                                                int max_bounces) {
+template <bool Detached> ReflEpcT<Detached> init_refl_epc(int ray_count, int max_bounces) {
     ReflEpcT<Detached> result;
     result.ray_count = ray_count;
     result.max_bounces = max_bounces;
@@ -2210,23 +1649,18 @@ ReflEpcRaw alloc_refl_epc_raw(int ray_count, int max_bounces) {
 }
 
 template <bool Detached>
-ReflEpcFieldT<Detached> init_refl_epc_field(
-    int ray_count,
-    int max_bounces,
-    const ReflEpcFieldOptionsT<Detached> &options) {
+ReflEpcFieldT<Detached> init_refl_epc_field(int ray_count, int max_bounces,
+                                            const ReflEpcFieldOptionsT<Detached>& options) {
     ReflEpcFieldT<Detached> result;
     result.ray_count = ray_count;
     result.max_bounces = max_bounces;
     const int slot_count = ray_count * max_bounces;
     const bool return_geom = options.return_geom;
     const bool return_endpoints = options.return_endpoints;
-    const bool return_hit_points =
-        return_geom && options.return_hit_points;
+    const bool return_hit_points = return_geom && options.return_hit_points;
     const bool return_normals = return_geom && options.return_normals;
-    const bool return_resolved_prim_ids =
-        return_geom && options.return_resolved_prim_ids;
-    const bool return_surface_group_ids =
-        return_geom && options.return_surface_group_ids;
+    const bool return_resolved_prim_ids = return_geom && options.return_resolved_prim_ids;
+    const bool return_surface_group_ids = return_geom && options.return_surface_group_ids;
 
     result.valid = empty<MaskT<Detached>>(ray_count);
     result.bounce_count = empty<IntT<Detached>>(ray_count);
@@ -2239,18 +1673,12 @@ ReflEpcFieldT<Detached> init_refl_epc_field(
     result.field_z_im = empty<FloatT<Detached>>(ray_count);
 
     if (return_endpoints) {
-        result.tx_pos =
-            Vector3fT<Detached>(empty<FloatT<Detached>>(ray_count),
-                                empty<FloatT<Detached>>(ray_count),
-                                empty<FloatT<Detached>>(ray_count));
-        result.first_hit =
-            Vector3fT<Detached>(empty<FloatT<Detached>>(ray_count),
-                                empty<FloatT<Detached>>(ray_count),
-                                empty<FloatT<Detached>>(ray_count));
-        result.last_hit =
-            Vector3fT<Detached>(empty<FloatT<Detached>>(ray_count),
-                                empty<FloatT<Detached>>(ray_count),
-                                empty<FloatT<Detached>>(ray_count));
+        result.tx_pos = Vector3fT<Detached>(empty<FloatT<Detached>>(ray_count), empty<FloatT<Detached>>(ray_count),
+                                            empty<FloatT<Detached>>(ray_count));
+        result.first_hit = Vector3fT<Detached>(empty<FloatT<Detached>>(ray_count), empty<FloatT<Detached>>(ray_count),
+                                               empty<FloatT<Detached>>(ray_count));
+        result.last_hit = Vector3fT<Detached>(empty<FloatT<Detached>>(ray_count), empty<FloatT<Detached>>(ray_count),
+                                              empty<FloatT<Detached>>(ray_count));
     } else {
         result.tx_pos = zeros<Vector3fT<Detached>>(0);
         result.first_hit = zeros<Vector3fT<Detached>>(0);
@@ -2259,17 +1687,14 @@ ReflEpcFieldT<Detached> init_refl_epc_field(
 
     if (return_hit_points) {
         result.hit_points =
-            Vector3fT<Detached>(empty<FloatT<Detached>>(slot_count),
-                                empty<FloatT<Detached>>(slot_count),
+            Vector3fT<Detached>(empty<FloatT<Detached>>(slot_count), empty<FloatT<Detached>>(slot_count),
                                 empty<FloatT<Detached>>(slot_count));
     } else {
         result.hit_points = zeros<Vector3fT<Detached>>(0);
     }
     if (return_normals) {
-        result.normals =
-            Vector3fT<Detached>(empty<FloatT<Detached>>(slot_count),
-                                empty<FloatT<Detached>>(slot_count),
-                                empty<FloatT<Detached>>(slot_count));
+        result.normals = Vector3fT<Detached>(empty<FloatT<Detached>>(slot_count), empty<FloatT<Detached>>(slot_count),
+                                             empty<FloatT<Detached>>(slot_count));
     } else {
         result.normals = zeros<Vector3fT<Detached>>(0);
     }
@@ -2287,8 +1712,7 @@ ReflEpcFieldT<Detached> init_refl_epc_field(
     return result;
 }
 
-ReflEpcOptions epc_options_from_field_options(
-    const ReflEpcFieldOptions &options) {
+ReflEpcOptions epc_options_from_field_options(const ReflEpcFieldOptions& options) {
     ReflEpcOptions epc_options;
     epc_options.expected_prim_ids = options.expected_prim_ids;
     epc_options.surface_group_id = options.surface_group_id;
@@ -2303,32 +1727,23 @@ ReflEpcOptions epc_options_from_field_options(
 } // namespace
 
 template <bool Detached>
-ReflEpcT<Detached> Scene::trace_refl_epc(
-    const RayT<Detached> &ray,
-    const Vector3fT<Detached> &receiver,
-    int max_bounces,
-    const ReflEpcOptions &options,
-    MaskT<Detached> active) const {
+ReflEpcT<Detached> Scene::trace_refl_epc(const RayT<Detached>& ray, const Vector3fT<Detached>& receiver,
+                                         int max_bounces, const ReflEpcOptions& options, MaskT<Detached> active) const {
     ScopedNativeLaunchStage native_launch_stage(NativeLaunchStage::TraceReflections);
     require(is_ready(), "Scene::trace_refl_epc(): scene is not built.");
-    require(!pending_updates_,
-            "Scene::trace_refl_epc(): scene has pending updates. Call Scene::sync() first.");
-    require(max_bounces > 0,
-            "Scene::trace_refl_epc(): max_bounces must be positive.");
-    require(max_bounces <= ReflEpcMaxBounces,
-            "Scene::trace_refl_epc(): max_bounces exceeds the native EPC limit.");
+    require(!pending_updates_, "Scene::trace_refl_epc(): scene has pending updates. Call Scene::sync() first.");
+    require(max_bounces > 0, "Scene::trace_refl_epc(): max_bounces must be positive.");
+    require(max_bounces <= ReflEpcMaxBounces, "Scene::trace_refl_epc(): max_bounces exceeds the native EPC limit.");
 
     const int ray_count = static_cast<int>(slices(ray.o));
-    ReflEpcT<Detached> result =
-        init_refl_epc<Detached>(ray_count, max_bounces);
+    ReflEpcT<Detached> result = init_refl_epc<Detached>(ray_count, max_bounces);
     if (ray_count == 0) {
         return result;
     }
 
     if constexpr (!Detached) {
-        require(false,
-                "Scene::trace_refl_epc(): native EPC is a non-AD native fast path. "
-                "Pass a non-AD Ray and detached receiver positions.");
+        require(false, "Scene::trace_refl_epc(): native EPC is a non-AD native fast path. "
+                       "Pass a non-AD Ray and detached receiver positions.");
         return result;
     } else {
         const int receiver_count = static_cast<int>(slices(receiver));
@@ -2336,54 +1751,45 @@ ReflEpcT<Detached> Scene::trace_refl_epc(
                 "Scene::trace_refl_epc(): receiver width must be 1 or match ray count.");
         const ReflEpcVisibilityIgnoreMode visibility_ignore_mode =
             parse_refl_epc_vis_ignore(options.visibility_ignore_mode);
-        const bool surface_group_ignore =
-            visibility_ignore_mode == ReflEpcVisibilityIgnoreMode::SurfaceGroup;
+        const bool surface_group_ignore = visibility_ignore_mode == ReflEpcVisibilityIgnoreMode::SurfaceGroup;
         const int slot_count = ray_count * max_bounces;
         const int expected_prim_count = static_cast<int>(slices(options.expected_prim_ids));
         const int surface_group_id_count = static_cast<int>(slices(options.surface_group_id));
         const int surface_group_count = static_cast<int>(slices(options.surface_group_size));
-        const int surface_group_member_count =
-            static_cast<int>(slices(options.surface_group_members));
-        const int final_ignore_group_count =
-            static_cast<int>(slices(options.final_ignore_group_ids));
-        const bool has_surface_groups =
-            surface_group_id_count > 0 ||
-            surface_group_count > 0 ||
-            surface_group_member_count > 0 ||
-            options.surface_max_group_size > 0;
+        const int surface_group_member_count = static_cast<int>(slices(options.surface_group_members));
+        const int final_ignore_group_count = static_cast<int>(slices(options.final_ignore_group_ids));
+        const bool has_surface_groups = surface_group_id_count > 0 || surface_group_count > 0 ||
+                                        surface_group_member_count > 0 || options.surface_max_group_size > 0;
         require(expected_prim_count == 0 || expected_prim_count == slot_count,
                 "Scene::trace_refl_epc(): expected_prim_ids width must be n_rays * max_bounces.");
-        require(final_ignore_group_count == 0 ||
-                    final_ignore_group_count == 1 ||
-                    final_ignore_group_count == ray_count,
+        require(final_ignore_group_count == 0 || final_ignore_group_count == 1 || final_ignore_group_count == ray_count,
                 "Scene::trace_refl_epc(): final_ignore_group_ids width must be 1 or match ray count.");
         if (has_surface_groups) {
-            const int triangle_count =
-                static_cast<int>(slices(triangle_info_detached_.p0));
+            const int triangle_count = static_cast<int>(slices(triangle_info_detached_.p0));
             require(surface_group_id_count == triangle_count,
                     "Scene::trace_refl_epc(): surface_group_id width must match triangle count.");
             require(surface_group_count > 0,
                     "Scene::trace_refl_epc(): surface_group_size must be non-empty when surface groups are provided.");
-            require(options.surface_max_group_size > 0,
-                    "Scene::trace_refl_epc(): surface_max_group_size must be positive when surface groups are provided.");
-            require(surface_group_member_count >=
-                        surface_group_count * options.surface_max_group_size,
-                    "Scene::trace_refl_epc(): surface_group_members must contain surface_group_size * surface_max_group_size entries.");
+            require(
+                options.surface_max_group_size > 0,
+                "Scene::trace_refl_epc(): surface_max_group_size must be positive when surface groups are provided.");
+            require(surface_group_member_count >= surface_group_count * options.surface_max_group_size,
+                    "Scene::trace_refl_epc(): surface_group_members must contain surface_group_size * "
+                    "surface_max_group_size entries.");
         }
         require(!surface_group_ignore || has_surface_groups,
                 "Scene::trace_refl_epc(): visibility_ignore_mode='surface_group' requires surface group tables.");
         require(final_ignore_group_count == 0 || surface_group_ignore,
                 "Scene::trace_refl_epc(): final_ignore_group_ids require visibility_ignore_mode='surface_group'.");
 
-        const Mask active_detached =
-            sanitize_reflection_active<Detached>(ray, active);
+        const Mask active_detached = sanitize_reflection_active<Detached>(ray, active);
         if (drjit::none(active_detached)) {
             return result;
         }
 
         const bool cuda_trace = triangle_kind_ == TraceBackendKind::Cuda;
-        const OptixScene *primary_scene = nullptr;
-        const OptixScene *secondary_scene = nullptr;
+        const OptixScene* primary_scene = nullptr;
+        const OptixScene* secondary_scene = nullptr;
         int split_mode = 0;
         if (!cuda_trace) {
             const OptixSceneSelection scenes = select_optix_scenes();
@@ -2394,25 +1800,18 @@ ReflEpcT<Detached> Scene::trace_refl_epc(
 
             require(primary_scene != nullptr && primary_scene->is_ready(),
                     "Scene::trace_refl_epc(): OptiX scene is not ready.");
-            require(hitgroup_record_count > 0,
-                    "Scene::trace_refl_epc(): invalid hitgroup record count.");
+            require(hitgroup_record_count > 0, "Scene::trace_refl_epc(): invalid hitgroup record count.");
 
-            ensure_pipeline(reflection_epc_pipeline_, primary_scene->context(),
-                            hitgroup_record_count, reflection_epc_pipeline_config());
+            ensure_pipeline(reflection_epc_pipeline_, primary_scene->context(), hitgroup_record_count,
+                            reflection_epc_pipeline_config());
         }
 
-        drjit::eval(ray.o,
-                    ray.d,
-                    ray.tmax,
-                    receiver,
-                    active_detached);
+        drjit::eval(ray.o, ray.d, ray.tmax, receiver, active_detached);
         if (expected_prim_count > 0) {
             drjit::eval(options.expected_prim_ids);
         }
         if (has_surface_groups) {
-            drjit::eval(options.surface_group_id,
-                        options.surface_group_size,
-                        options.surface_group_members);
+            drjit::eval(options.surface_group_id, options.surface_group_size, options.surface_group_members);
         }
         if (final_ignore_group_count > 0) {
             drjit::eval(options.final_ignore_group_ids);
@@ -2424,10 +1823,9 @@ ReflEpcT<Detached> Scene::trace_refl_epc(
 
         ReflEpcParams params = {};
         params.primary_handle = cuda_trace ? 0ull : primary_scene->ias_handle();
-        params.secondary_handle =
-            (!cuda_trace && secondary_scene != nullptr && secondary_scene->is_ready())
-                ? secondary_scene->ias_handle()
-                : 0ull;
+        params.secondary_handle = (!cuda_trace && secondary_scene != nullptr && secondary_scene->is_ready())
+                                      ? secondary_scene->ias_handle()
+                                      : 0ull;
         params.split_mode = split_mode;
         params.tri_p0_x = triangle_info_detached_.p0.x().data();
         params.tri_p0_y = triangle_info_detached_.p0.y().data();
@@ -2444,24 +1842,17 @@ ReflEpcT<Detached> Scene::trace_refl_epc(
         params.face_offsets = face_offsets_.data();
         params.n_meshes = mesh_count_;
         params.n_triangles = static_cast<int>(slices(triangle_info_detached_.p0));
-        params.expected_prim_ids =
-            expected_prim_count > 0 ? options.expected_prim_ids.data() : nullptr;
+        params.expected_prim_ids = expected_prim_count > 0 ? options.expected_prim_ids.data() : nullptr;
         params.expected_prim_count = expected_prim_count;
-        params.surface_group_id =
-            has_surface_groups ? options.surface_group_id.data() : nullptr;
+        params.surface_group_id = has_surface_groups ? options.surface_group_id.data() : nullptr;
         params.surface_group_id_count = surface_group_id_count;
-        params.surface_group_size =
-            has_surface_groups ? options.surface_group_size.data() : nullptr;
+        params.surface_group_size = has_surface_groups ? options.surface_group_size.data() : nullptr;
         params.surface_group_count = surface_group_count;
-        params.surface_group_members =
-            has_surface_groups ? options.surface_group_members.data() : nullptr;
-        params.surface_max_group_size =
-            has_surface_groups ? options.surface_max_group_size : 0;
+        params.surface_group_members = has_surface_groups ? options.surface_group_members.data() : nullptr;
+        params.surface_max_group_size = has_surface_groups ? options.surface_max_group_size : 0;
         params.visibility_ignore_mode =
-            surface_group_ignore ? ReflEpcVisibilityIgnoreSurfaceGroup
-                                 : ReflEpcVisibilityIgnorePrimitive;
-        params.final_ignore_group_ids =
-            final_ignore_group_count > 0 ? options.final_ignore_group_ids.data() : nullptr;
+            surface_group_ignore ? ReflEpcVisibilityIgnoreSurfaceGroup : ReflEpcVisibilityIgnorePrimitive;
+        params.final_ignore_group_ids = final_ignore_group_count > 0 ? options.final_ignore_group_ids.data() : nullptr;
         params.final_ignore_group_count = final_ignore_group_count;
         params.ray_ox = ray.o.x().data();
         params.ray_oy = ray.o.y().data();
@@ -2474,11 +1865,11 @@ ReflEpcT<Detached> Scene::trace_refl_epc(
         params.rx_y = receiver.y().data();
         params.rx_z = receiver.z().data();
         params.rx_count = receiver_count;
-        params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
+        params.active_mask = reinterpret_cast<const uint8_t*>(active_detached.data());
         params.n_rays = ray_count;
         params.max_bounces = max_bounces;
         params.plane_tolerance = options.plane_tolerance;
-        params.out_valid = reinterpret_cast<uint8_t *>(raw.valid.data());
+        params.out_valid = reinterpret_cast<uint8_t*>(raw.valid.data());
         params.out_bounce_count = raw.bounce_count.data();
         params.out_path_length = raw.path_length.data();
         params.out_point_x = raw.point_x.data();
@@ -2504,16 +1895,12 @@ ReflEpcT<Detached> Scene::trace_refl_epc(
         result.valid = raw.valid;
         result.bounce_count = raw.bounce_count;
         result.path_length = raw.path_length;
-        result.reflection_points =
-            Vector3f(raw.point_x, raw.point_y, raw.point_z);
+        result.reflection_points = Vector3f(raw.point_x, raw.point_y, raw.point_z);
         result.prim_ids = raw.trace_prim_ids;
         result.trace_prim_ids = raw.trace_prim_ids;
         result.resolved_prim_ids = raw.resolved_prim_ids;
         result.surface_group_ids = raw.surface_group_ids;
-        result.plane_normals =
-            Vector3f(raw.plane_normal_x,
-                             raw.plane_normal_y,
-                             raw.plane_normal_z);
+        result.plane_normals = Vector3f(raw.plane_normal_x, raw.plane_normal_y, raw.plane_normal_z);
         result.first_blocked_segment = raw.first_blocked_segment;
         result.first_blocked_prim = raw.first_blocked_prim;
         result.first_blocked_group = raw.first_blocked_group;
@@ -2522,39 +1909,27 @@ ReflEpcT<Detached> Scene::trace_refl_epc(
 }
 
 template <bool Detached>
-ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
-    const RayT<Detached> &ray,
-    const Vector3fT<Detached> &receiver,
-    int max_bounces,
-    const ReflEpcFieldOptionsT<Detached> &options,
-    MaskT<Detached> active) const {
+ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(const RayT<Detached>& ray, const Vector3fT<Detached>& receiver,
+                                                    int max_bounces, const ReflEpcFieldOptionsT<Detached>& options,
+                                                    MaskT<Detached> active) const {
     ScopedNativeLaunchStage native_launch_stage(NativeLaunchStage::TraceReflections);
     require(is_ready(), "Scene::trace_refl_epc_field(): scene is not built.");
-    require(!pending_updates_,
-            "Scene::trace_refl_epc_field(): scene has pending updates. Call Scene::sync() first.");
-    require(max_bounces > 0,
-            "Scene::trace_refl_epc_field(): max_bounces must be positive.");
+    require(!pending_updates_, "Scene::trace_refl_epc_field(): scene has pending updates. Call Scene::sync() first.");
+    require(max_bounces > 0, "Scene::trace_refl_epc_field(): max_bounces must be positive.");
     require(max_bounces <= ReflEpcMaxBounces,
             "Scene::trace_refl_epc_field(): max_bounces exceeds the native EPC limit.");
-    require(options.omega > 0.f,
-            "Scene::trace_refl_epc_field(): omega must be positive.");
-    require(options.wavelength > 0.f,
-            "Scene::trace_refl_epc_field(): wavelength must be positive.");
+    require(options.omega > 0.f, "Scene::trace_refl_epc_field(): omega must be positive.");
+    require(options.wavelength > 0.f, "Scene::trace_refl_epc_field(): wavelength must be positive.");
 
     const int ray_count = static_cast<int>(slices(ray.o));
-    ReflEpcFieldT<Detached> result =
-        init_refl_epc_field<Detached>(
-            ray_count,
-            max_bounces,
-            options);
+    ReflEpcFieldT<Detached> result = init_refl_epc_field<Detached>(ray_count, max_bounces, options);
     if (ray_count == 0) {
         return result;
     }
 
     if constexpr (!Detached) {
-        require(false,
-                "Scene::trace_refl_epc_field(): native EPC field is a non-AD native fast path. "
-                "Pass a non-AD Ray and detached receiver positions.");
+        require(false, "Scene::trace_refl_epc_field(): native EPC field is a non-AD native fast path. "
+                       "Pass a non-AD Ray and detached receiver positions.");
         return result;
     } else {
         const int receiver_count = static_cast<int>(slices(receiver));
@@ -2575,27 +1950,16 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
         require(tx_pol_count == 1 || tx_pol_count == ray_count,
                 "Scene::trace_refl_epc_field(): tx_polarization width must be 1 or match ray count.");
 
-        drjit::eval(options.slot_plane_normal,
-                    options.slot_eta_r,
-                    options.slot_mu_r,
-                    options.slot_sigma,
-                    options.slot_gain,
-                    options.tx_polarization);
+        drjit::eval(options.slot_plane_normal, options.slot_eta_r, options.slot_mu_r, options.slot_sigma,
+                    options.slot_gain, options.tx_polarization);
 
-        const ReflEpcOptions epc_options =
-            epc_options_from_field_options(options);
-        const ReflEpc epc =
-            trace_refl_epc<true>(
-                ray,
-                receiver,
-                max_bounces,
-                epc_options,
-                active);
+        const ReflEpcOptions epc_options = epc_options_from_field_options(options);
+        const ReflEpc epc = trace_refl_epc<true>(ray, receiver, max_bounces, epc_options, active);
 
         ReflEpcFieldParams params = {};
         params.n_rays = ray_count;
         params.max_bounces = max_bounces;
-        params.epc_valid = reinterpret_cast<const uint8_t *>(epc.valid.data());
+        params.epc_valid = reinterpret_cast<const uint8_t*>(epc.valid.data());
         params.epc_bounce_count = epc.bounce_count.data();
         params.epc_path_length = epc.path_length.data();
         params.ray_ox = ray.o.x().data();
@@ -2611,14 +1975,10 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
         params.epc_normal_x = epc.plane_normals.x().data();
         params.epc_normal_y = epc.plane_normals.y().data();
         params.epc_normal_z = epc.plane_normals.z().data();
-        const bool return_resolved_prim_ids =
-            options.return_geom && options.return_resolved_prim_ids;
-        const bool return_surface_group_ids =
-            options.return_geom && options.return_surface_group_ids;
-        params.resolved_prim_ids =
-            return_resolved_prim_ids ? epc.resolved_prim_ids.data() : nullptr;
-        params.surface_group_ids =
-            return_surface_group_ids ? epc.surface_group_ids.data() : nullptr;
+        const bool return_resolved_prim_ids = options.return_geom && options.return_resolved_prim_ids;
+        const bool return_surface_group_ids = options.return_geom && options.return_surface_group_ids;
+        params.resolved_prim_ids = return_resolved_prim_ids ? epc.resolved_prim_ids.data() : nullptr;
+        params.surface_group_ids = return_surface_group_ids ? epc.surface_group_ids.data() : nullptr;
         params.slot_normal_x = options.slot_plane_normal.x().data();
         params.slot_normal_y = options.slot_plane_normal.y().data();
         params.slot_normal_z = options.slot_plane_normal.z().data();
@@ -2632,7 +1992,7 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
         params.tx_pol_count = tx_pol_count;
         params.omega = options.omega;
         params.wavelength = options.wavelength;
-        params.out_valid = reinterpret_cast<uint8_t *>(result.valid.data());
+        params.out_valid = reinterpret_cast<uint8_t*>(result.valid.data());
         params.out_bounce_count = result.bounce_count.data();
         params.out_path_length = result.path_length.data();
         params.out_field_x_re = result.field_x_re.data();
@@ -2676,31 +2036,21 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
 }
 
 template <bool Detached>
-ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
-    const Vector3fT<Detached> &tx_position,
-    const Vector3fT<Detached> &receiver,
-    int max_bounces,
-    const ReflEpcFieldOptionsT<Detached> &options,
-    MaskT<Detached> active) const {
+ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(const Vector3fT<Detached>& tx_position,
+                                                    const Vector3fT<Detached>& receiver, int max_bounces,
+                                                    const ReflEpcFieldOptionsT<Detached>& options,
+                                                    MaskT<Detached> active) const {
     ScopedNativeLaunchStage native_launch_stage(NativeLaunchStage::TraceReflections);
     require(is_ready(), "Scene::trace_refl_epc_field(): scene is not built.");
-    require(!pending_updates_,
-            "Scene::trace_refl_epc_field(): scene has pending updates. Call Scene::sync() first.");
-    require(max_bounces > 0,
-            "Scene::trace_refl_epc_field(): max_bounces must be positive.");
+    require(!pending_updates_, "Scene::trace_refl_epc_field(): scene has pending updates. Call Scene::sync() first.");
+    require(max_bounces > 0, "Scene::trace_refl_epc_field(): max_bounces must be positive.");
     require(max_bounces <= ReflEpcMaxBounces,
             "Scene::trace_refl_epc_field(): max_bounces exceeds the native EPC limit.");
-    require(options.omega > 0.f,
-            "Scene::trace_refl_epc_field(): omega must be positive.");
-    require(options.wavelength > 0.f,
-            "Scene::trace_refl_epc_field(): wavelength must be positive.");
+    require(options.omega > 0.f, "Scene::trace_refl_epc_field(): omega must be positive.");
+    require(options.wavelength > 0.f, "Scene::trace_refl_epc_field(): wavelength must be positive.");
 
     const int ray_count = static_cast<int>(slices(tx_position));
-    ReflEpcFieldT<Detached> result =
-        init_refl_epc_field<Detached>(
-            ray_count,
-            max_bounces,
-            options);
+    ReflEpcFieldT<Detached> result = init_refl_epc_field<Detached>(ray_count, max_bounces, options);
     if (ray_count == 0) {
         return result;
     }
@@ -2729,10 +2079,7 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
         require(tx_pol_count == 1 || tx_pol_count == ray_count,
                 "Scene::trace_refl_epc_field(): tx_polarization width must be 1 or match transmitter count.");
 
-        Mask active_detached = sanitize_segment_active<false>(
-            tx_position,
-            receiver,
-            active);
+        Mask active_detached = sanitize_segment_active<false>(tx_position, receiver, active);
         if (drjit::none(active_detached)) {
             result.valid = full<MaskAD>(false, ray_count);
             result.bounce_count = full<IntAD>(0, ray_count);
@@ -2758,147 +2105,94 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
             Vector3fAD im;
         };
 
-        auto complex_add = [](const ComplexADValue &a,
-                              const ComplexADValue &b) -> ComplexADValue {
+        auto complex_add = [](const ComplexADValue& a, const ComplexADValue& b) -> ComplexADValue {
             return {a.re + b.re, a.im + b.im};
         };
-        auto complex_sub = [](const ComplexADValue &a,
-                              const ComplexADValue &b) -> ComplexADValue {
+        auto complex_sub = [](const ComplexADValue& a, const ComplexADValue& b) -> ComplexADValue {
             return {a.re - b.re, a.im - b.im};
         };
-        auto complex_mul = [](const ComplexADValue &a,
-                              const ComplexADValue &b) -> ComplexADValue {
-            return {a.re * b.re - a.im * b.im,
-                    a.re * b.im + a.im * b.re};
+        auto complex_mul = [](const ComplexADValue& a, const ComplexADValue& b) -> ComplexADValue {
+            return {a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re};
         };
-        auto complex_scale = [](const ComplexADValue &a,
-                                const FloatAD &scale) -> ComplexADValue {
+        auto complex_scale = [](const ComplexADValue& a, const FloatAD& scale) -> ComplexADValue {
             return {a.re * scale, a.im * scale};
         };
-        auto complex_div = [](const ComplexADValue &a,
-                              const ComplexADValue &b) -> ComplexADValue {
-            const FloatAD denom =
-                maximum(b.re * b.re + b.im * b.im, FloatAD(Epsilon));
-            return {(a.re * b.re + a.im * b.im) / denom,
-                    (a.im * b.re - a.re * b.im) / denom};
+        auto complex_div = [](const ComplexADValue& a, const ComplexADValue& b) -> ComplexADValue {
+            const FloatAD denom = maximum(b.re * b.re + b.im * b.im, FloatAD(Epsilon));
+            return {(a.re * b.re + a.im * b.im) / denom, (a.im * b.re - a.re * b.im) / denom};
         };
-        auto complex_sqrt = [](const ComplexADValue &a) -> ComplexADValue {
-            const FloatAD mag =
-                sqrt(maximum(a.re * a.re + a.im * a.im, FloatAD(0.f)));
-            const MaskAD positive_real_axis =
-                (abs(a.im) <= FloatAD(Epsilon)) && (a.re > FloatAD(Epsilon));
-            const FloatAD real_part =
-                sqrt(maximum(FloatAD(0.5f) * (mag + a.re), FloatAD(0.f)));
-            const FloatAD imag_abs =
-                sqrt(maximum(FloatAD(0.5f) * (mag - a.re), FloatAD(1e-20f)));
-            const FloatAD imag_sign =
-                select(a.im < FloatAD(0.f), FloatAD(-1.f), FloatAD(1.f));
+        auto complex_sqrt = [](const ComplexADValue& a) -> ComplexADValue {
+            const FloatAD mag = sqrt(maximum(a.re * a.re + a.im * a.im, FloatAD(0.f)));
+            const MaskAD positive_real_axis = (abs(a.im) <= FloatAD(Epsilon)) && (a.re > FloatAD(Epsilon));
+            const FloatAD real_part = sqrt(maximum(FloatAD(0.5f) * (mag + a.re), FloatAD(0.f)));
+            const FloatAD imag_abs = sqrt(maximum(FloatAD(0.5f) * (mag - a.re), FloatAD(1e-20f)));
+            const FloatAD imag_sign = select(a.im < FloatAD(0.f), FloatAD(-1.f), FloatAD(1.f));
             return {
                 select(positive_real_axis, sqrt(a.re), real_part),
                 select(positive_real_axis, FloatAD(0.f), imag_sign * imag_abs),
             };
         };
-        auto normalize_safe = [](const Vector3fAD &value,
-                                 const Vector3fAD &fallback) -> Vector3fAD {
+        auto normalize_safe = [](const Vector3fAD& value, const Vector3fAD& fallback) -> Vector3fAD {
             const FloatAD value_norm = norm(value);
-            return select(value_norm > FloatAD(Epsilon),
-                          value / maximum(value_norm, FloatAD(Epsilon)),
-                          fallback);
+            return select(value_norm > FloatAD(Epsilon), value / maximum(value_norm, FloatAD(Epsilon)), fallback);
         };
-        auto stable_perpendicular = [&](const Vector3fAD &direction,
-                                        const Vector3fAD &preferred) -> Vector3fAD {
-            const Vector3fAD dir =
-                normalize_safe(direction, Vector3fAD(FloatAD(1.f), FloatAD(0.f), FloatAD(0.f)));
+        auto stable_perpendicular = [&](const Vector3fAD& direction, const Vector3fAD& preferred) -> Vector3fAD {
+            const Vector3fAD dir = normalize_safe(direction, Vector3fAD(FloatAD(1.f), FloatAD(0.f), FloatAD(0.f)));
             const Vector3fAD projected = preferred - dot(preferred, dir) * dir;
             const Vector3fAD axis =
-                select(abs(dir.x()) < FloatAD(0.9f),
-                       Vector3fAD(FloatAD(1.f), FloatAD(0.f), FloatAD(0.f)),
+                select(abs(dir.x()) < FloatAD(0.9f), Vector3fAD(FloatAD(1.f), FloatAD(0.f), FloatAD(0.f)),
                        Vector3fAD(FloatAD(0.f), FloatAD(1.f), FloatAD(0.f)));
             const Vector3fAD fallback = axis - dot(axis, dir) * dir;
-            return select(squared_norm(projected) > FloatAD(1e-12f),
-                          normalize_safe(projected, axis),
-                          normalize_safe(fallback,
-                                         Vector3fAD(FloatAD(0.f), FloatAD(0.f), FloatAD(1.f))));
+            return select(squared_norm(projected) > FloatAD(1e-12f), normalize_safe(projected, axis),
+                          normalize_safe(fallback, Vector3fAD(FloatAD(0.f), FloatAD(0.f), FloatAD(1.f))));
         };
-        auto complex_dot_real = [](const ComplexVectorAD &field,
-                                   const Vector3fAD &basis) -> ComplexADValue {
+        auto complex_dot_real = [](const ComplexVectorAD& field, const Vector3fAD& basis) -> ComplexADValue {
             return {dot(field.re, basis), dot(field.im, basis)};
         };
         auto slot_reflection_coefficients =
-            [&](const IntAD &slot,
-                const FloatAD &cos_theta,
-                const MaskAD &slot_active) -> std::pair<ComplexADValue, ComplexADValue> {
-            const FloatAD eta_r =
-                maximum(gather<FloatAD>(options.slot_eta_r, slot, slot_active),
-                        FloatAD(Epsilon));
-            const FloatAD sigma =
-                maximum(gather<FloatAD>(options.slot_sigma, slot, slot_active),
-                        FloatAD(0.f));
+            [&](const IntAD& slot, const FloatAD& cos_theta,
+                const MaskAD& slot_active) -> std::pair<ComplexADValue, ComplexADValue> {
+            const FloatAD eta_r = maximum(gather<FloatAD>(options.slot_eta_r, slot, slot_active), FloatAD(Epsilon));
+            const FloatAD sigma = maximum(gather<FloatAD>(options.slot_sigma, slot, slot_active), FloatAD(0.f));
             const FloatAD gain = gather<FloatAD>(options.slot_gain, slot, slot_active);
-            const FloatAD mu_r =
-                maximum(gather<FloatAD>(options.slot_mu_r, slot, slot_active),
-                        FloatAD(Epsilon));
+            const FloatAD mu_r = maximum(gather<FloatAD>(options.slot_mu_r, slot, slot_active), FloatAD(Epsilon));
             const FloatAD omega = maximum(FloatAD(options.omega), FloatAD(Epsilon));
-            const ComplexADValue eta = {
-                eta_r,
-                -sigma / (omega * FloatAD(8.854187817e-12f))
-            };
+            const ComplexADValue eta = {eta_r, -sigma / (omega * FloatAD(8.854187817e-12f))};
             const ComplexADValue mu = {mu_r, FloatAD(0.f)};
-            const FloatAD cos_clamped =
-                minimum(maximum(abs(cos_theta), FloatAD(Epsilon)), FloatAD(1.f));
-            const FloatAD sin2 =
-                maximum(FloatAD(0.f), FloatAD(1.f) - cos_clamped * cos_clamped);
+            const FloatAD cos_clamped = minimum(maximum(abs(cos_theta), FloatAD(Epsilon)), FloatAD(1.f));
+            const FloatAD sin2 = maximum(FloatAD(0.f), FloatAD(1.f) - cos_clamped * cos_clamped);
             const ComplexADValue a =
-                complex_sqrt(complex_sub(complex_mul(mu, eta),
-                                         ComplexADValue{sin2, FloatAD(0.f)}));
+                complex_sqrt(complex_sub(complex_mul(mu, eta), ComplexADValue{sin2, FloatAD(0.f)}));
             const ComplexADValue mu_cos = {mu_r * cos_clamped, FloatAD(0.f)};
-            const ComplexADValue eta_cos = {eta.re * cos_clamped,
-                                            eta.im * cos_clamped};
+            const ComplexADValue eta_cos = {eta.re * cos_clamped, eta.im * cos_clamped};
             const ComplexADValue r_te =
-                complex_scale(
-                    complex_div(complex_sub(mu_cos, a),
-                                complex_add(mu_cos, a)),
-                    gain);
+                complex_scale(complex_div(complex_sub(mu_cos, a), complex_add(mu_cos, a)), gain);
             const ComplexADValue r_tm =
-                complex_scale(
-                    complex_div(complex_sub(eta_cos, a),
-                                complex_add(eta_cos, a)),
-                    gain);
+                complex_scale(complex_div(complex_sub(eta_cos, a), complex_add(eta_cos, a)), gain);
             return {r_te, r_tm};
         };
-        auto reflect_field_vector =
-            [&](const ComplexVectorAD &field,
-                const Vector3fAD &incident_dir,
-                const Vector3fAD &slot_normal,
-                const IntAD &slot,
-                const MaskAD &slot_active) -> ComplexVectorAD {
+        auto reflect_field_vector = [&](const ComplexVectorAD& field, const Vector3fAD& incident_dir,
+                                        const Vector3fAD& slot_normal, const IntAD& slot,
+                                        const MaskAD& slot_active) -> ComplexVectorAD {
             const Vector3fAD incident_hat =
-                normalize_safe(incident_dir,
-                               Vector3fAD(FloatAD(1.f), FloatAD(0.f), FloatAD(0.f)));
-            Vector3fAD normal_hat =
-                normalize_safe(slot_normal,
-                               Vector3fAD(FloatAD(0.f), FloatAD(0.f), FloatAD(1.f)));
-            normal_hat = select(dot(incident_hat, normal_hat) > FloatAD(0.f),
-                                -normal_hat,
-                                normal_hat);
+                normalize_safe(incident_dir, Vector3fAD(FloatAD(1.f), FloatAD(0.f), FloatAD(0.f)));
+            Vector3fAD normal_hat = normalize_safe(slot_normal, Vector3fAD(FloatAD(0.f), FloatAD(0.f), FloatAD(1.f)));
+            normal_hat = select(dot(incident_hat, normal_hat) > FloatAD(0.f), -normal_hat, normal_hat);
             const FloatAD dot_dn = dot(incident_hat, normal_hat);
             const Vector3fAD reflected_dir =
-                normalize_safe(incident_hat - FloatAD(2.f) * dot_dn * normal_hat,
-                               -incident_hat);
+                normalize_safe(incident_hat - FloatAD(2.f) * dot_dn * normal_hat, -incident_hat);
             Vector3fAD s_hat = cross(normal_hat, incident_hat);
             s_hat = select(squared_norm(s_hat) > FloatAD(1e-12f),
                            normalize_safe(s_hat, stable_perpendicular(incident_hat, normal_hat)),
                            stable_perpendicular(incident_hat, normal_hat));
             Vector3fAD p_in_hat = cross(s_hat, incident_hat);
-            p_in_hat =
-                select(squared_norm(p_in_hat) > FloatAD(1e-12f),
-                       normalize_safe(p_in_hat, stable_perpendicular(incident_hat, normal_hat)),
-                       stable_perpendicular(incident_hat, normal_hat));
+            p_in_hat = select(squared_norm(p_in_hat) > FloatAD(1e-12f),
+                              normalize_safe(p_in_hat, stable_perpendicular(incident_hat, normal_hat)),
+                              stable_perpendicular(incident_hat, normal_hat));
             Vector3fAD p_out_hat = cross(s_hat, reflected_dir);
-            p_out_hat =
-                select(squared_norm(p_out_hat) > FloatAD(1e-12f),
-                       normalize_safe(p_out_hat, stable_perpendicular(reflected_dir, normal_hat)),
-                       stable_perpendicular(reflected_dir, normal_hat));
+            p_out_hat = select(squared_norm(p_out_hat) > FloatAD(1e-12f),
+                               normalize_safe(p_out_hat, stable_perpendicular(reflected_dir, normal_hat)),
+                               stable_perpendicular(reflected_dir, normal_hat));
 
             const auto [r_te, r_tm] =
                 slot_reflection_coefficients(slot, abs(dot(incident_hat, normal_hat)), slot_active);
@@ -2920,21 +2214,14 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
         for (int bounce = 0; bounce < max_bounces; ++bounce) {
             const Int slot = slot_base + Int(bounce);
             const IntAD slot_ad = IntAD(slot);
-            Vector3fAD plane_point =
-                gather<Vector3fAD>(options.slot_plane_point, slot_ad, active_ad);
-            Vector3fAD plane_normal =
-                normalize_safe(gather<Vector3fAD>(options.slot_plane_normal, slot_ad, active_ad),
-                               Vector3fAD(FloatAD(0.f), FloatAD(0.f), FloatAD(1.f)));
-            const Int expected_prim =
-                gather<Int>(options.expected_prim_ids, slot, active_detached);
-            valid = valid && MaskAD(expected_prim >= Int(0)) &&
-                    (squared_norm(plane_normal) > FloatAD(0.f));
-            const FloatAD plane_distance =
-                dot(images.back() - plane_point, plane_normal);
+            Vector3fAD plane_point = gather<Vector3fAD>(options.slot_plane_point, slot_ad, active_ad);
+            Vector3fAD plane_normal = normalize_safe(gather<Vector3fAD>(options.slot_plane_normal, slot_ad, active_ad),
+                                                     Vector3fAD(FloatAD(0.f), FloatAD(0.f), FloatAD(1.f)));
+            const Int expected_prim = gather<Int>(options.expected_prim_ids, slot, active_detached);
+            valid = valid && MaskAD(expected_prim >= Int(0)) && (squared_norm(plane_normal) > FloatAD(0.f));
+            const FloatAD plane_distance = dot(images.back() - plane_point, plane_normal);
             images.push_back(
-                select(valid,
-                       images.back() - FloatAD(2.f) * plane_distance * plane_normal,
-                       images.back()));
+                select(valid, images.back() - FloatAD(2.f) * plane_distance * plane_normal, images.back()));
         }
 
         Vector3fAD rx = receiver;
@@ -2947,27 +2234,18 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
         for (int bounce = max_bounces - 1; bounce >= 0; --bounce) {
             const Int slot = slot_base + Int(bounce);
             const IntAD slot_ad = IntAD(slot);
-            const Vector3fAD plane_point =
-                gather<Vector3fAD>(options.slot_plane_point, slot_ad, active_ad);
+            const Vector3fAD plane_point = gather<Vector3fAD>(options.slot_plane_point, slot_ad, active_ad);
             const Vector3fAD plane_normal =
                 normalize_safe(gather<Vector3fAD>(options.slot_plane_normal, slot_ad, active_ad),
                                Vector3fAD(FloatAD(0.f), FloatAD(0.f), FloatAD(1.f)));
             const Vector3fAD line = target - images[static_cast<size_t>(bounce + 1)];
             const FloatAD denom = dot(line, plane_normal);
-            const FloatAD t =
-                dot(plane_point - images[static_cast<size_t>(bounce + 1)], plane_normal) /
-                denom;
-            const MaskAD hit_valid =
-                valid &&
-                drjit::isfinite(t) &&
-                (abs(denom) > FloatAD(Epsilon)) &&
-                (t > FloatAD(0.f)) &&
-                (t < FloatAD(1.f));
-            const Vector3fAD hit =
-                images[static_cast<size_t>(bounce + 1)] + t * line;
+            const FloatAD t = dot(plane_point - images[static_cast<size_t>(bounce + 1)], plane_normal) / denom;
+            const MaskAD hit_valid = valid && drjit::isfinite(t) && (abs(denom) > FloatAD(Epsilon)) &&
+                                     (t > FloatAD(0.f)) && (t < FloatAD(1.f));
+            const Vector3fAD hit = images[static_cast<size_t>(bounce + 1)] + t * line;
             hits[static_cast<size_t>(bounce)] = select(hit_valid, hit, zeros<Vector3fAD>(ray_count));
-            normals[static_cast<size_t>(bounce)] =
-                select(hit_valid, plane_normal, zeros<Vector3fAD>(ray_count));
+            normals[static_cast<size_t>(bounce)] = select(hit_valid, plane_normal, zeros<Vector3fAD>(ray_count));
             if (options.return_geom && options.return_hit_points) {
                 scatter(result.hit_points, hits[static_cast<size_t>(bounce)], slot_ad, hit_valid);
             }
@@ -2988,15 +2266,11 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
         path_length += norm(rx - previous);
         valid = valid && (path_length > FloatAD(Epsilon)) && drjit::isfinite(path_length);
 
-        const Int pol_idx =
-            tx_pol_count == 1 ? zeros<Int>(ray_count) : arange<Int>(ray_count);
-        const Vector3fAD tx_pol =
-            gather<Vector3fAD>(options.tx_polarization, IntAD(pol_idx), active_ad);
+        const Int pol_idx = tx_pol_count == 1 ? zeros<Int>(ray_count) : arange<Int>(ray_count);
+        const Vector3fAD tx_pol = gather<Vector3fAD>(options.tx_polarization, IntAD(pol_idx), active_ad);
         const Vector3fAD first_dir =
-            normalize_safe(hits.front() - tx_position,
-                           Vector3fAD(FloatAD(1.f), FloatAD(0.f), FloatAD(0.f)));
-        const Vector3fAD transverse_pol =
-            stable_perpendicular(first_dir, tx_pol);
+            normalize_safe(hits.front() - tx_position, Vector3fAD(FloatAD(1.f), FloatAD(0.f), FloatAD(0.f)));
+        const Vector3fAD transverse_pol = stable_perpendicular(first_dir, tx_pol);
         ComplexVectorAD field = {
             transverse_pol,
             zeros<Vector3fAD>(ray_count),
@@ -3007,41 +2281,24 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
             const IntAD slot_ad = IntAD(slot);
             const Vector3fAD hit = hits[static_cast<size_t>(bounce)];
             const Vector3fAD incident_dir =
-                normalize_safe(hit - field_previous,
-                               Vector3fAD(FloatAD(1.f), FloatAD(0.f), FloatAD(0.f)));
-            field = reflect_field_vector(
-                field,
-                incident_dir,
-                normals[static_cast<size_t>(bounce)],
-                slot_ad,
-                active_ad);
+                normalize_safe(hit - field_previous, Vector3fAD(FloatAD(1.f), FloatAD(0.f), FloatAD(0.f)));
+            field = reflect_field_vector(field, incident_dir, normals[static_cast<size_t>(bounce)], slot_ad, active_ad);
             field_previous = hit;
         }
-        const FloatAD wave_k =
-            FloatAD(2.f * Pi) / maximum(FloatAD(options.wavelength), FloatAD(Epsilon));
+        const FloatAD wave_k = FloatAD(2.f * Pi) / maximum(FloatAD(options.wavelength), FloatAD(Epsilon));
         const FloatAD phase = -wave_k * path_length;
         const FloatAD amplitude =
-            FloatAD(options.wavelength) /
-            (FloatAD(4.f * Pi) * maximum(path_length, FloatAD(Epsilon)));
+            FloatAD(options.wavelength) / (FloatAD(4.f * Pi) * maximum(path_length, FloatAD(Epsilon)));
         const FloatAD phase_cos = cos(phase);
         const FloatAD phase_sin = sin(phase);
-        const Vector3fAD out_re =
-            amplitude * (field.re * phase_cos - field.im * phase_sin);
-        const Vector3fAD out_im =
-            amplitude * (field.re * phase_sin + field.im * phase_cos);
-        valid = valid &&
-                drjit::isfinite(out_re.x()) &&
-                drjit::isfinite(out_re.y()) &&
-                drjit::isfinite(out_re.z()) &&
-                drjit::isfinite(out_im.x()) &&
-                drjit::isfinite(out_im.y()) &&
-                drjit::isfinite(out_im.z());
+        const Vector3fAD out_re = amplitude * (field.re * phase_cos - field.im * phase_sin);
+        const Vector3fAD out_im = amplitude * (field.re * phase_sin + field.im * phase_cos);
+        valid = valid && drjit::isfinite(out_re.x()) && drjit::isfinite(out_re.y()) && drjit::isfinite(out_re.z()) &&
+                drjit::isfinite(out_im.x()) && drjit::isfinite(out_im.y()) && drjit::isfinite(out_im.z());
 
         result.valid = valid;
-        result.bounce_count =
-            select(valid, full<IntAD>(max_bounces, ray_count), full<IntAD>(0, ray_count));
-        result.path_length =
-            select(valid, path_length, full<FloatAD>(Infinity, ray_count));
+        result.bounce_count = select(valid, full<IntAD>(max_bounces, ray_count), full<IntAD>(0, ray_count));
+        result.path_length = select(valid, path_length, full<FloatAD>(Infinity, ray_count));
         result.field_x_re = select(valid, out_re.x(), FloatAD(0.f));
         result.field_x_im = select(valid, out_im.x(), FloatAD(0.f));
         result.field_y_re = select(valid, out_re.y(), FloatAD(0.f));
@@ -3084,54 +2341,43 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
 
         const ReflEpcVisibilityIgnoreMode visibility_ignore_mode =
             parse_refl_epc_vis_ignore(options.visibility_ignore_mode);
-        const bool surface_group_ignore =
-            visibility_ignore_mode == ReflEpcVisibilityIgnoreMode::SurfaceGroup;
+        const bool surface_group_ignore = visibility_ignore_mode == ReflEpcVisibilityIgnoreMode::SurfaceGroup;
         const int surface_group_id_count = static_cast<int>(slices(options.surface_group_id));
         const int surface_group_count = static_cast<int>(slices(options.surface_group_size));
-        const int surface_group_member_count =
-            static_cast<int>(slices(options.surface_group_members));
-        const int final_ignore_group_count =
-            static_cast<int>(slices(options.final_ignore_group_ids));
-        const bool has_surface_groups =
-            surface_group_id_count > 0 ||
-            surface_group_count > 0 ||
-            surface_group_member_count > 0 ||
-            options.surface_max_group_size > 0;
-        require(final_ignore_group_count == 0 ||
-                    final_ignore_group_count == 1 ||
-                    final_ignore_group_count == ray_count,
+        const int surface_group_member_count = static_cast<int>(slices(options.surface_group_members));
+        const int final_ignore_group_count = static_cast<int>(slices(options.final_ignore_group_ids));
+        const bool has_surface_groups = surface_group_id_count > 0 || surface_group_count > 0 ||
+                                        surface_group_member_count > 0 || options.surface_max_group_size > 0;
+        require(final_ignore_group_count == 0 || final_ignore_group_count == 1 || final_ignore_group_count == ray_count,
                 "Scene::trace_refl_epc_field(): final_ignore_group_ids width must be 1 or match transmitter count.");
         if (has_surface_groups) {
-            const int triangle_count =
-                static_cast<int>(slices(triangle_info_detached_.p0));
+            const int triangle_count = static_cast<int>(slices(triangle_info_detached_.p0));
             require(surface_group_id_count == triangle_count,
                     "Scene::trace_refl_epc_field(): surface_group_id width must match triangle count.");
-            require(surface_group_count > 0,
-                    "Scene::trace_refl_epc_field(): surface_group_size must be non-empty when surface groups are provided.");
-            require(options.surface_max_group_size > 0,
-                    "Scene::trace_refl_epc_field(): surface_max_group_size must be positive when surface groups are provided.");
-            require(surface_group_member_count >=
-                        surface_group_count * options.surface_max_group_size,
-                    "Scene::trace_refl_epc_field(): surface_group_members must contain surface_group_size * surface_max_group_size entries.");
+            require(surface_group_count > 0, "Scene::trace_refl_epc_field(): surface_group_size must be non-empty when "
+                                             "surface groups are provided.");
+            require(options.surface_max_group_size > 0, "Scene::trace_refl_epc_field(): surface_max_group_size must be "
+                                                        "positive when surface groups are provided.");
+            require(surface_group_member_count >= surface_group_count * options.surface_max_group_size,
+                    "Scene::trace_refl_epc_field(): surface_group_members must contain surface_group_size * "
+                    "surface_max_group_size entries.");
         }
         require(!surface_group_ignore || has_surface_groups,
                 "Scene::trace_refl_epc_field(): visibility_ignore_mode='surface_group' requires surface group tables.");
-        require(final_ignore_group_count == 0 || surface_group_ignore,
-                "Scene::trace_refl_epc_field(): final_ignore_group_ids require visibility_ignore_mode='surface_group'.");
+        require(
+            final_ignore_group_count == 0 || surface_group_ignore,
+            "Scene::trace_refl_epc_field(): final_ignore_group_ids require visibility_ignore_mode='surface_group'.");
 
-        Mask active_detached = sanitize_segment_active<Detached>(
-            tx_position,
-            receiver,
-            active);
+        Mask active_detached = sanitize_segment_active<Detached>(tx_position, receiver, active);
         if (drjit::none(active_detached)) {
             return result;
         }
 
         const bool cuda_trace = triangle_kind_ == TraceBackendKind::Cuda;
-        const OptixScene *primary_scene = nullptr;
-        const OptixScene *secondary_scene = nullptr;
+        const OptixScene* primary_scene = nullptr;
+        const OptixScene* secondary_scene = nullptr;
         int split_mode = 0;
-        std::shared_ptr<OptixLaunchPipeline> *epc_pipeline = nullptr;
+        std::shared_ptr<OptixLaunchPipeline>* epc_pipeline = nullptr;
         if (!cuda_trace) {
             const OptixSceneSelection scenes = select_optix_scenes();
             primary_scene = scenes.primary;
@@ -3140,34 +2386,22 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
             const int hitgroup_record_count = scenes.hitgroup_record_count;
             require(primary_scene != nullptr && primary_scene->is_ready(),
                     "Scene::trace_refl_epc_field(): OptiX scene is not ready.");
-            require(hitgroup_record_count > 0,
-                    "Scene::trace_refl_epc_field(): invalid hitgroup record count.");
+            require(hitgroup_record_count > 0, "Scene::trace_refl_epc_field(): invalid hitgroup record count.");
 
-            epc_pipeline = split_mode == 0 ? &reflection_epc_direct_primary_pipeline_
-                                           : &reflection_epc_direct_pipeline_;
-            const OptixPipelineConfig epc_pipeline_config =
-                split_mode == 0 ? reflection_epc_direct_primary_pipeline_config()
-                                : reflection_epc_direct_pipeline_config();
+            epc_pipeline =
+                split_mode == 0 ? &reflection_epc_direct_primary_pipeline_ : &reflection_epc_direct_pipeline_;
+            const OptixPipelineConfig epc_pipeline_config = split_mode == 0
+                                                                ? reflection_epc_direct_primary_pipeline_config()
+                                                                : reflection_epc_direct_pipeline_config();
 
-            ensure_pipeline(*epc_pipeline, primary_scene->context(),
-                            hitgroup_record_count, epc_pipeline_config);
+            ensure_pipeline(*epc_pipeline, primary_scene->context(), hitgroup_record_count, epc_pipeline_config);
         }
 
-        drjit::eval(tx_position,
-                    receiver,
-                    active_detached,
-                    options.expected_prim_ids,
-                    options.slot_plane_point,
-                    options.slot_plane_normal,
-                    options.slot_eta_r,
-                    options.slot_mu_r,
-                    options.slot_sigma,
-                    options.slot_gain,
-                    options.tx_polarization);
+        drjit::eval(tx_position, receiver, active_detached, options.expected_prim_ids, options.slot_plane_point,
+                    options.slot_plane_normal, options.slot_eta_r, options.slot_mu_r, options.slot_sigma,
+                    options.slot_gain, options.tx_polarization);
         if (has_surface_groups) {
-            drjit::eval(options.surface_group_id,
-                        options.surface_group_size,
-                        options.surface_group_members);
+            drjit::eval(options.surface_group_id, options.surface_group_size, options.surface_group_members);
         }
         if (final_ignore_group_count > 0) {
             drjit::eval(options.final_ignore_group_ids);
@@ -3178,10 +2412,9 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
         ReflEpcRaw raw = alloc_refl_epc_raw(ray_count, max_bounces);
         ReflEpcParams epc_params = {};
         epc_params.primary_handle = cuda_trace ? 0ull : primary_scene->ias_handle();
-        epc_params.secondary_handle =
-            (!cuda_trace && secondary_scene != nullptr && secondary_scene->is_ready())
-                ? secondary_scene->ias_handle()
-                : 0ull;
+        epc_params.secondary_handle = (!cuda_trace && secondary_scene != nullptr && secondary_scene->is_ready())
+                                          ? secondary_scene->ias_handle()
+                                          : 0ull;
         epc_params.split_mode = split_mode;
         epc_params.tri_p0_x = triangle_info_detached_.p0.x().data();
         epc_params.tri_p0_y = triangle_info_detached_.p0.y().data();
@@ -3200,19 +2433,14 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
         epc_params.n_triangles = static_cast<int>(slices(triangle_info_detached_.p0));
         epc_params.expected_prim_ids = options.expected_prim_ids.data();
         epc_params.expected_prim_count = expected_prim_count;
-        epc_params.surface_group_id =
-            has_surface_groups ? options.surface_group_id.data() : nullptr;
+        epc_params.surface_group_id = has_surface_groups ? options.surface_group_id.data() : nullptr;
         epc_params.surface_group_id_count = surface_group_id_count;
-        epc_params.surface_group_size =
-            has_surface_groups ? options.surface_group_size.data() : nullptr;
+        epc_params.surface_group_size = has_surface_groups ? options.surface_group_size.data() : nullptr;
         epc_params.surface_group_count = surface_group_count;
-        epc_params.surface_group_members =
-            has_surface_groups ? options.surface_group_members.data() : nullptr;
-        epc_params.surface_max_group_size =
-            has_surface_groups ? options.surface_max_group_size : 0;
+        epc_params.surface_group_members = has_surface_groups ? options.surface_group_members.data() : nullptr;
+        epc_params.surface_max_group_size = has_surface_groups ? options.surface_max_group_size : 0;
         epc_params.visibility_ignore_mode =
-            surface_group_ignore ? ReflEpcVisibilityIgnoreSurfaceGroup
-                                 : ReflEpcVisibilityIgnorePrimitive;
+            surface_group_ignore ? ReflEpcVisibilityIgnoreSurfaceGroup : ReflEpcVisibilityIgnorePrimitive;
         epc_params.final_ignore_group_ids =
             final_ignore_group_count > 0 ? options.final_ignore_group_ids.data() : nullptr;
         epc_params.final_ignore_group_count = final_ignore_group_count;
@@ -3233,11 +2461,11 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
         epc_params.rx_y = receiver.y().data();
         epc_params.rx_z = receiver.z().data();
         epc_params.rx_count = receiver_count;
-        epc_params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
+        epc_params.active_mask = reinterpret_cast<const uint8_t*>(active_detached.data());
         epc_params.n_rays = ray_count;
         epc_params.max_bounces = max_bounces;
         epc_params.plane_tolerance = options.plane_tolerance;
-        epc_params.out_valid = reinterpret_cast<uint8_t *>(raw.valid.data());
+        epc_params.out_valid = reinterpret_cast<uint8_t*>(raw.valid.data());
         epc_params.out_bounce_count = raw.bounce_count.data();
         epc_params.out_path_length = raw.path_length.data();
         epc_params.out_point_x = raw.point_x.data();
@@ -3263,7 +2491,7 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
         ReflEpcFieldParams field_params = {};
         field_params.n_rays = ray_count;
         field_params.max_bounces = max_bounces;
-        field_params.epc_valid = reinterpret_cast<const uint8_t *>(raw.valid.data());
+        field_params.epc_valid = reinterpret_cast<const uint8_t*>(raw.valid.data());
         field_params.epc_bounce_count = raw.bounce_count.data();
         field_params.epc_path_length = raw.path_length.data();
         field_params.ray_ox = tx_position.x().data();
@@ -3279,14 +2507,10 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
         field_params.epc_normal_x = raw.plane_normal_x.data();
         field_params.epc_normal_y = raw.plane_normal_y.data();
         field_params.epc_normal_z = raw.plane_normal_z.data();
-        const bool return_resolved_prim_ids =
-            options.return_geom && options.return_resolved_prim_ids;
-        const bool return_surface_group_ids =
-            options.return_geom && options.return_surface_group_ids;
-        field_params.resolved_prim_ids =
-            return_resolved_prim_ids ? raw.resolved_prim_ids.data() : nullptr;
-        field_params.surface_group_ids =
-            return_surface_group_ids ? raw.surface_group_ids.data() : nullptr;
+        const bool return_resolved_prim_ids = options.return_geom && options.return_resolved_prim_ids;
+        const bool return_surface_group_ids = options.return_geom && options.return_surface_group_ids;
+        field_params.resolved_prim_ids = return_resolved_prim_ids ? raw.resolved_prim_ids.data() : nullptr;
+        field_params.surface_group_ids = return_surface_group_ids ? raw.surface_group_ids.data() : nullptr;
         field_params.slot_normal_x = options.slot_plane_normal.x().data();
         field_params.slot_normal_y = options.slot_plane_normal.y().data();
         field_params.slot_normal_z = options.slot_plane_normal.z().data();
@@ -3300,7 +2524,7 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
         field_params.tx_pol_count = tx_pol_count;
         field_params.omega = options.omega;
         field_params.wavelength = options.wavelength;
-        field_params.out_valid = reinterpret_cast<uint8_t *>(result.valid.data());
+        field_params.out_valid = reinterpret_cast<uint8_t*>(result.valid.data());
         field_params.out_bounce_count = result.bounce_count.data();
         field_params.out_path_length = result.path_length.data();
         field_params.out_field_x_re = result.field_x_re.data();
@@ -3343,41 +2567,20 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
     }
 }
 
-template ReflEpc Scene::trace_refl_epc<true>(
-    const Ray &ray,
-    const Vector3f &receiver,
-    int max_bounces,
-    const ReflEpcOptions &options,
-    Mask active) const;
-template ReflEpcAD Scene::trace_refl_epc<false>(
-    const RayAD &ray,
-    const Vector3fAD &receiver,
-    int max_bounces,
-    const ReflEpcOptions &options,
-    MaskAD active) const;
-template ReflEpcField Scene::trace_refl_epc_field<true>(
-    const Ray &ray,
-    const Vector3f &receiver,
-    int max_bounces,
-    const ReflEpcFieldOptions &options,
-    Mask active) const;
-template ReflEpcFieldAD Scene::trace_refl_epc_field<false>(
-    const RayAD &ray,
-    const Vector3fAD &receiver,
-    int max_bounces,
-    const ReflEpcFieldOptionsAD &options,
-    MaskAD active) const;
-template ReflEpcField Scene::trace_refl_epc_field<true>(
-    const Vector3f &tx_position,
-    const Vector3f &receiver,
-    int max_bounces,
-    const ReflEpcFieldOptions &options,
-    Mask active) const;
-template ReflEpcFieldAD Scene::trace_refl_epc_field<false>(
-    const Vector3fAD &tx_position,
-    const Vector3fAD &receiver,
-    int max_bounces,
-    const ReflEpcFieldOptionsAD &options,
-    MaskAD active) const;
+template ReflEpc Scene::trace_refl_epc<true>(const Ray& ray, const Vector3f& receiver, int max_bounces,
+                                             const ReflEpcOptions& options, Mask active) const;
+template ReflEpcAD Scene::trace_refl_epc<false>(const RayAD& ray, const Vector3fAD& receiver, int max_bounces,
+                                                const ReflEpcOptions& options, MaskAD active) const;
+template ReflEpcField Scene::trace_refl_epc_field<true>(const Ray& ray, const Vector3f& receiver, int max_bounces,
+                                                        const ReflEpcFieldOptions& options, Mask active) const;
+template ReflEpcFieldAD Scene::trace_refl_epc_field<false>(const RayAD& ray, const Vector3fAD& receiver,
+                                                           int max_bounces, const ReflEpcFieldOptionsAD& options,
+                                                           MaskAD active) const;
+template ReflEpcField Scene::trace_refl_epc_field<true>(const Vector3f& tx_position, const Vector3f& receiver,
+                                                        int max_bounces, const ReflEpcFieldOptions& options,
+                                                        Mask active) const;
+template ReflEpcFieldAD Scene::trace_refl_epc_field<false>(const Vector3fAD& tx_position, const Vector3fAD& receiver,
+                                                           int max_bounces, const ReflEpcFieldOptionsAD& options,
+                                                           MaskAD active) const;
 
 } // namespace rayd

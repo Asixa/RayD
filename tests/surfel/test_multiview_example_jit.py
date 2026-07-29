@@ -68,12 +68,7 @@ class SurfelMultiviewColorExampleTests(unittest.TestCase):
         mask[[2, 5, 7, 11]] = 1.0
         view = {"mask": mask, "pixel_count": 16}
 
-        indices = module.select_training_pixel_indices(
-            view,
-            batch_size=10,
-            rng=rng,
-            foreground_fraction=0.5,
-        )
+        indices = module.select_training_pixel_indices(view, batch_size=10, rng=rng, foreground_fraction=0.5)
 
         self.assertEqual(indices.shape, (10,))
         self.assertTrue(np.all(indices >= 0))
@@ -83,7 +78,7 @@ class SurfelMultiviewColorExampleTests(unittest.TestCase):
     def test_native_training_defaults_disable_fixed_screen_pruning(self):
         source = EXAMPLE.read_text(encoding="utf-8")
 
-        self.assertIn('parser.add_argument("--max-screen-radius", type=float, default=0.0', source)
+        self.assertRegex(source, r'parser\.add_argument\(\s*"--max-screen-radius",\s*type=float,\s*default=0\.0')
 
     def test_metrics_record_full_resolution_mse(self):
         source = EXAMPLE.read_text(encoding="utf-8")
@@ -109,15 +104,15 @@ class SurfelMultiviewColorExampleTests(unittest.TestCase):
         source = EXAMPLE.read_text(encoding="utf-8")
 
         self.assertIn('view["ray_origins"][indices]', source)
-        self.assertIn('rays_ad = None', source)
-        self.assertIn('target_ad = None', source)
+        self.assertIn("rays_ad = None", source)
+        self.assertIn("target_ad = None", source)
 
     def test_capacity_probe_can_skip_full_resolution_previews(self):
         source = EXAMPLE.read_text(encoding="utf-8")
 
         self.assertIn('choices=["none", "gif", "mp4", "both"]', source)
         self.assertIn("--final-render", source)
-        self.assertIn("if args.video_format != \"none\"", source)
+        self.assertIn('if args.video_format != "none"', source)
 
     def test_dense_multiview_options_use_configurable_candidate_hits(self):
         source = EXAMPLE.read_text(encoding="utf-8")
@@ -161,12 +156,7 @@ class SurfelMultiviewColorExampleTests(unittest.TestCase):
 
     def test_random_initializer_returns_2dgs_field(self):
         module = load_example_module()
-        args = SimpleNamespace(
-            surfels=16,
-            seed=5,
-            random_radius=1.25,
-            initial_scale=0.08,
-        )
+        args = SimpleNamespace(surfels=16, seed=5, random_radius=1.25, initial_scale=0.08)
 
         centers, colors, tangent_u, tangent_v, info = module.initialize_random_surfel_field(args)
 
@@ -195,7 +185,9 @@ class SurfelMultiviewColorExampleTests(unittest.TestCase):
         source = EXAMPLE.read_text(encoding="utf-8")
         self.assertIn("self.opacity_values = ad.Float(opacity.tolist())", source)
         self.assertIn("dr.enable_grad(self.opacity_values)", source)
-        self.assertIn("self.opacity_values, self.opacity_momentum, self.opacity_velocity = self.optimizer_step_param", source)
+        self.assertIn(
+            "self.opacity_values, self.opacity_momentum, self.opacity_velocity = self.optimizer_step_param", source
+        )
         self.assertIn("--fit-opacity", source)
 
     def test_geometry_is_gpu_resident_and_trainable(self):
@@ -206,7 +198,9 @@ class SurfelMultiviewColorExampleTests(unittest.TestCase):
         self.assertIn("dr.enable_grad(self.tangent_u_values)", source)
         self.assertIn("dr.enable_grad(self.tangent_v_values)", source)
         self.assertIn("self.rebuild_train_scene()", source)
-        self.assertIn("self.center_values, self.center_momentum, self.center_velocity = self.optimizer_step_param", source)
+        self.assertIn(
+            "self.center_values, self.center_momentum, self.center_velocity = self.optimizer_step_param", source
+        )
 
     def test_geometry_updates_use_surfel_scene_update_geometry(self):
         source = EXAMPLE.read_text(encoding="utf-8")
@@ -237,21 +231,9 @@ class SurfelMultiviewColorExampleTests(unittest.TestCase):
 
     def test_densify_and_prune_clones_splits_and_removes_opacity_outliers(self):
         module = load_example_module()
-        centers = np.array([
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [2.0, 0.0, 0.0],
-        ], dtype=np.float32)
-        tangent_u = np.array([
-            [0.05, 0.0, 0.0],
-            [0.4, 0.0, 0.0],
-            [0.1, 0.0, 0.0],
-        ], dtype=np.float32)
-        tangent_v = np.array([
-            [0.0, 0.05, 0.0],
-            [0.0, 0.4, 0.0],
-            [0.0, 0.1, 0.0],
-        ], dtype=np.float32)
+        centers = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]], dtype=np.float32)
+        tangent_u = np.array([[0.05, 0.0, 0.0], [0.4, 0.0, 0.0], [0.1, 0.0, 0.0]], dtype=np.float32)
+        tangent_v = np.array([[0.0, 0.05, 0.0], [0.0, 0.4, 0.0], [0.0, 0.1, 0.0]], dtype=np.float32)
         opacity = np.array([0.5, 0.6, 0.001], dtype=np.float32)
         values = np.arange(9, dtype=np.float32)
         grad_norm = np.array([0.2, 0.3, 0.0], dtype=np.float32)
@@ -270,15 +252,7 @@ class SurfelMultiviewColorExampleTests(unittest.TestCase):
         )
 
         result = module.densify_and_prune_surfel_arrays(
-            centers,
-            tangent_u,
-            tangent_v,
-            opacity,
-            values,
-            degree=0,
-            grad_norm=grad_norm,
-            args=args,
-            seed=9,
+            centers, tangent_u, tangent_v, opacity, values, degree=0, grad_norm=grad_norm, args=args, seed=9
         )
 
         self.assertEqual(result["stats"]["pruned"], 2)
@@ -297,10 +271,12 @@ class SurfelMultiviewColorExampleTests(unittest.TestCase):
         tangent_u = np.tile(np.array([[0.2, 0.0, 0.0]], dtype=np.float32), (count, 1))
         tangent_v = np.tile(np.array([[0.0, 0.2, 0.0]], dtype=np.float32), (count, 1))
         opacity = np.full((count,), 0.1, dtype=np.float32)
-        views = [{
-            "ray_origins": np.array([[0.0, 0.0, 1.0]], dtype=np.float32),
-            "ray_directions": np.array([[0.0, 0.0, -1.0]], dtype=np.float32),
-        }]
+        views = [
+            {
+                "ray_origins": np.array([[0.0, 0.0, 1.0]], dtype=np.float32),
+                "ray_directions": np.array([[0.0, 0.0, -1.0]], dtype=np.float32),
+            }
+        ]
         args = SimpleNamespace(
             max_candidate_hits=0,
             min_candidate_hits=256,
@@ -311,14 +287,7 @@ class SurfelMultiviewColorExampleTests(unittest.TestCase):
             seed=3,
         )
 
-        estimate = module.estimate_candidate_hit_capacity(
-            centers,
-            tangent_u,
-            tangent_v,
-            opacity,
-            views,
-            args,
-        )
+        estimate = module.estimate_candidate_hit_capacity(centers, tangent_u, tangent_v, opacity, views, args)
 
         self.assertGreaterEqual(estimate["capacity"], 256)
         self.assertEqual(estimate["capacity"] & (estimate["capacity"] - 1), 0)

@@ -42,16 +42,11 @@ def quat(axis: tuple[float, float, float], angle: float, like: Tensor) -> Tensor
 
 # Bake an analytic world-space SDF onto the vertex-centred grid of an oriented box.
 def bake(
-    field: Callable[[Tensor], Tensor],
-    shape: tuple[int, int, int],
-    position: Tensor,
-    rotation: Tensor,
-    scale: Tensor,
+    field: Callable[[Tensor], Tensor], shape: tuple[int, int, int], position: Tensor, rotation: Tensor, scale: Tensor
 ) -> Tensor:
     position, rotation, scale = position.detach(), rotation.detach(), scale.detach()
     axes = [
-        torch.linspace(-0.5, 0.5, n, dtype=position.dtype, device=position.device) * s
-        for n, s in zip(shape, scale)
+        torch.linspace(-0.5, 0.5, n, dtype=position.dtype, device=position.device) * s for n, s in zip(shape, scale)
     ]
     local = torch.stack(torch.meshgrid(*axes, indexing="ij"), dim=-1).reshape(-1, 3)
     world = local @ ref.rotation_matrix(rotation).transpose(0, 1) + position
@@ -61,9 +56,7 @@ def bake(
 
 
 # Smallest positive ray/sphere root, or `+inf` when the ray misses.
-def sphere_hit_t(
-    origins: Tensor, directions: Tensor, centre: Tensor, radius: float
-) -> Tensor:
+def sphere_hit_t(origins: Tensor, directions: Tensor, centre: Tensor, radius: float) -> Tensor:
     w = directions / directions.norm(dim=-1, keepdim=True)
     oc = origins - centre
     b = (oc * w).sum(-1)
@@ -79,17 +72,13 @@ def sphere_case(device: str, dtype: torch.dtype, size: int = 97) -> ref.SdfGridR
     position = torch.zeros(3, device=device, dtype=dtype)
     rotation = torch.tensor(IDENTITY_QUAT, device=device, dtype=dtype)
     scale = torch.full((3,), 2.0, device=device, dtype=dtype)
-    values = bake(
-        lambda p: sphere_sdf(p, position, 0.5), (size, size, size), position, rotation, scale
-    )
+    values = bake(lambda p: sphere_sdf(p, position, 0.5), (size, size, size), position, rotation, scale)
     return ref.SdfGridRef(values, position, rotation, scale)
 
 
 # Rays fired along `+z` from `z = -3` at the given transverse offsets.
 def z_rays(offsets: list[float], device: str, dtype: torch.dtype) -> tuple[Tensor, Tensor]:
-    origins = torch.tensor(
-        [[b, 0.0, -3.0] for b in offsets], device=device, dtype=dtype
-    )
+    origins = torch.tensor([[b, 0.0, -3.0] for b in offsets], device=device, dtype=dtype)
     directions = torch.zeros_like(origins)
     directions[:, 2] = 1.0
     return origins, directions
@@ -110,18 +99,11 @@ class SdfReferenceForwardTests(unittest.TestCase):
         self.assertTrue(bool(res.hit_mask.all()))
         expected = sphere_hit_t(origins, directions, grid.position, 0.5)
         torch.testing.assert_close(res.t, expected, atol=1e-3, rtol=0.0)
+        torch.testing.assert_close(res.position, origins + res.t.unsqueeze(-1) * directions, atol=1e-6, rtol=0.0)
         torch.testing.assert_close(
-            res.position, origins + res.t.unsqueeze(-1) * directions, atol=1e-6, rtol=0.0
+            res.normal, res.position / res.position.norm(dim=-1, keepdim=True), atol=5e-2, rtol=0.0
         )
-        torch.testing.assert_close(
-            res.normal,
-            res.position / res.position.norm(dim=-1, keepdim=True),
-            atol=5e-2,
-            rtol=0.0,
-        )
-        torch.testing.assert_close(
-            res.normal.norm(dim=-1), torch.ones(4, device=self.device), atol=1e-5, rtol=0.0
-        )
+        torch.testing.assert_close(res.normal.norm(dim=-1), torch.ones(4, device=self.device), atol=1e-5, rtol=0.0)
         self.assertEqual(res.steps.dtype, torch.int32)
         self.assertTrue(bool((res.steps > 0).all()))
 
@@ -131,22 +113,15 @@ class SdfReferenceForwardTests(unittest.TestCase):
         rotation = torch.tensor(IDENTITY_QUAT, device=self.device, dtype=self.dtype)
         scale = torch.full((3,), 2.0, device=self.device, dtype=self.dtype)
         half = torch.full((3,), 0.4, device=self.device, dtype=self.dtype)
-        values = bake(
-            lambda p: box_sdf(p, position, half), (65, 65, 65), position, rotation, scale
-        )
+        values = bake(lambda p: box_sdf(p, position, half), (65, 65, 65), position, rotation, scale)
         grid = ref.SdfGridRef(values, position, rotation, scale)
         origins, directions = z_rays([0.0, 0.1], self.device, self.dtype)
 
         res = ref.intersect(grid, origins, directions)
         self.assertTrue(bool(res.hit_mask.all()))
+        torch.testing.assert_close(res.t, torch.full((2,), 2.6, device=self.device), atol=1e-4, rtol=0.0)
         torch.testing.assert_close(
-            res.t, torch.full((2,), 2.6, device=self.device), atol=1e-4, rtol=0.0
-        )
-        torch.testing.assert_close(
-            res.normal,
-            torch.tensor([[0.0, 0.0, -1.0]] * 2, device=self.device),
-            atol=1e-5,
-            rtol=0.0,
+            res.normal, torch.tensor([[0.0, 0.0, -1.0]] * 2, device=self.device), atol=1e-5, rtol=0.0
         )
 
     def test_ray_starting_inside_marches_outward(self) -> None:
@@ -156,13 +131,9 @@ class SdfReferenceForwardTests(unittest.TestCase):
 
         res = ref.intersect(grid, origins, directions)
         self.assertTrue(bool(res.hit_mask.all()))
-        torch.testing.assert_close(
-            res.t, torch.full((1,), 0.5, device=self.device), atol=1e-3, rtol=0.0
-        )
+        torch.testing.assert_close(res.t, torch.full((1,), 0.5, device=self.device), atol=1e-3, rtol=0.0)
         # The gradient of a signed distance field points outward on both sides.
-        torch.testing.assert_close(
-            res.normal, directions, atol=5e-2, rtol=0.0
-        )
+        torch.testing.assert_close(res.normal, directions, atol=5e-2, rtol=0.0)
 
     def test_missed_lanes_are_bitwise_inert(self) -> None:
         grid = sphere_case(self.device, self.dtype)
@@ -173,9 +144,7 @@ class SdfReferenceForwardTests(unittest.TestCase):
         origins, directions = z_rays([0.0, 0.7, 5.0], self.device, self.dtype)
 
         res = ref.intersect(grid, origins, directions)
-        torch.testing.assert_close(
-            res.hit_mask, torch.tensor([True, False, False], device=self.device)
-        )
+        torch.testing.assert_close(res.hit_mask, torch.tensor([True, False, False], device=self.device))
         missed = res.t[1:].detach()
         self.assertTrue(bool((missed == float("inf")).all()))
         zero = torch.zeros(2, 3, device=self.device)
@@ -204,39 +173,28 @@ class SdfReferenceForwardTests(unittest.TestCase):
         origins, directions = z_rays([0.0], self.device, self.dtype)
 
         self.assertTrue(bool(ref.intersect(grid, origins, directions).hit_mask.all()))
-        clipped = ref.intersect(
-            grid, origins, directions, ref.TraceConfig(tmax=2.0)
-        )
+        clipped = ref.intersect(grid, origins, directions, ref.TraceConfig(tmax=2.0))
         self.assertFalse(bool(clipped.hit_mask.any()))
         self.assertEqual(float(clipped.t[0]), float("inf"))
 
     def test_non_eikonal_field_recovers_through_bisection(self) -> None:
         """Tests the pure-PyTorch SDF intersection oracle."""
         grid = sphere_case(self.device, self.dtype)
-        scaled = ref.SdfGridRef(
-            2.0 * grid.values, grid.position, grid.rotation, grid.scale
-        )
+        scaled = ref.SdfGridRef(2.0 * grid.values, grid.position, grid.rotation, grid.scale)
         origins, directions = z_rays([0.0, 0.15, 0.3], self.device, self.dtype)
 
         tape = ref.march(scaled, origins, directions, ref.TraceConfig())
         self.assertTrue(bool(tape.bisected.all()))
         res = ref.reattach(scaled, origins, directions, tape)
         self.assertTrue(bool(res.hit_mask.all()))
-        torch.testing.assert_close(
-            res.t,
-            sphere_hit_t(origins, directions, grid.position, 0.5),
-            atol=1e-3,
-            rtol=0.0,
-        )
+        torch.testing.assert_close(res.t, sphere_hit_t(origins, directions, grid.position, 0.5), atol=1e-3, rtol=0.0)
 
     def test_rotated_non_uniform_box_clips_and_maps_axes(self) -> None:
         position = torch.tensor([0.3, -0.2, 0.1], device=self.device, dtype=self.dtype)
         rotation = quat((0.0, 0.0, 1.0), math.radians(40.0), position)
         scale = torch.tensor([2.0, 0.5, 1.2], device=self.device, dtype=self.dtype)
         rot = ref.rotation_matrix(rotation)
-        values = bake(
-            lambda p: sphere_sdf(p, position, 0.8), (65, 33, 49), position, rotation, scale
-        )
+        values = bake(lambda p: sphere_sdf(p, position, 0.8), (65, 33, 49), position, rotation, scale)
         grid = ref.SdfGridRef(values, position, rotation, scale)
 
         def local_ray(start: tuple[float, float, float], axis: tuple[float, float, float]):
@@ -256,22 +214,14 @@ class SdfReferenceForwardTests(unittest.TestCase):
         self.assertTrue(self.crosses_world_bound(grid, rot, outside_o, outside_d))
 
         res = ref.intersect(
-            grid,
-            torch.cat([origins, blocked_o, outside_o]),
-            torch.cat([directions, blocked_d, outside_d]),
+            grid, torch.cat([origins, blocked_o, outside_o]), torch.cat([directions, blocked_d, outside_d])
         )
-        torch.testing.assert_close(
-            res.hit_mask, torch.tensor([True, False, False], device=self.device)
-        )
-        torch.testing.assert_close(
-            res.t[:1], torch.full((1,), 2.2, device=self.device), atol=2e-3, rtol=0.0
-        )
+        torch.testing.assert_close(res.hit_mask, torch.tensor([True, False, False], device=self.device))
+        torch.testing.assert_close(res.t[:1], torch.full((1,), 2.2, device=self.device), atol=2e-3, rtol=0.0)
         self.assertEqual(int(res.steps[2]), 0)
 
     # Slab test against the world-axis-aligned bound of the oriented box.
-    def crosses_world_bound(
-        self, grid: ref.SdfGridRef, rot: Tensor, origins: Tensor, directions: Tensor
-    ) -> bool:
+    def crosses_world_bound(self, grid: ref.SdfGridRef, rot: Tensor, origins: Tensor, directions: Tensor) -> bool:
         half = rot.abs() @ (0.5 * grid.scale)
         t_a = (grid.position - half - origins) / directions
         t_b = (grid.position + half - origins) / directions
@@ -332,18 +282,12 @@ class SdfReferenceGradientTests(unittest.TestCase):
         position = torch.tensor([0.1, -0.2, 0.05], device=self.device, dtype=self.dtype)
         rotation = 1.3 * quat((0.3, 0.5, 0.8), 0.7, position)  # deliberately unnormalized
         scale = torch.tensor([2.0, 1.4, 1.6], device=self.device, dtype=self.dtype)
-        values = bake(
-            lambda p: sphere_sdf(p, position, 0.45), (33, 33, 33), position, rotation, scale
-        )
+        values = bake(lambda p: sphere_sdf(p, position, 0.45), (33, 33, 33), position, rotation, scale)
         origins = position + torch.tensor(
-            [[0.05, -0.1, -2.0], [-0.12, 0.08, -2.0], [0.0, 0.15, -2.0]],
-            device=self.device,
-            dtype=self.dtype,
+            [[0.05, -0.1, -2.0], [-0.12, 0.08, -2.0], [0.0, 0.15, -2.0]], device=self.device, dtype=self.dtype
         )
         directions = 1.7 * torch.tensor(  # deliberately unnormalized
-            [[0.02, 0.01, 1.0], [-0.03, 0.02, 1.0], [0.0, -0.04, 1.0]],
-            device=self.device,
-            dtype=self.dtype,
+            [[0.02, 0.01, 1.0], [-0.03, 0.02, 1.0], [0.0, -0.04, 1.0]], device=self.device, dtype=self.dtype
         )
         tensors = [values, position, rotation, scale, origins, directions]
         for tensor in tensors:
@@ -357,11 +301,7 @@ class SdfReferenceGradientTests(unittest.TestCase):
     def test_gradcheck_on_the_frozen_tape(self) -> None:
         case = self.make_case()
         small = bake(
-            lambda p: sphere_sdf(p, case.position, 0.45),
-            (9, 8, 7),
-            case.position,
-            case.rotation,
-            case.scale,
+            lambda p: sphere_sdf(p, case.position, 0.45), (9, 8, 7), case.position, case.rotation, case.scale
         ).requires_grad_(True)
         grid = ref.SdfGridRef(small, case.position, case.rotation, case.scale)
         origins = case.origins[:2].detach().clone().requires_grad_(True)
@@ -384,19 +324,13 @@ class SdfReferenceGradientTests(unittest.TestCase):
         )
 
     # Central differences of a fully re-marched forward pass on selected entries.
-    def check_finite_difference(
-        self, field: str, h: float = 1e-4, atol: float = 1e-5
-    ) -> None:
+    def check_finite_difference(self, field: str, h: float = 1e-4, atol: float = 1e-5) -> None:
         case = self.make_case()
         case.loss().backward()
         tensor: Tensor = getattr(case, field)
         analytic = tensor.grad.reshape(-1).clone()
         flat = tensor.detach().reshape(-1)
-        chosen = (
-            analytic.nonzero().reshape(-1)
-            if field == "values"
-            else torch.arange(flat.numel(), device=self.device)
-        )
+        chosen = analytic.nonzero().reshape(-1) if field == "values" else torch.arange(flat.numel(), device=self.device)
         self.assertGreater(chosen.numel(), 0)
         # A finite-difference match against an all-zero gradient proves nothing.
         self.assertGreater(float(analytic[chosen].abs().max()), 1e-3)
@@ -411,9 +345,7 @@ class SdfReferenceGradientTests(unittest.TestCase):
                 minus = case.loss()
                 flat[index] = original
                 numeric[index] = (plus - minus) / (2.0 * h)
-        torch.testing.assert_close(
-            numeric[chosen], analytic[chosen], atol=atol, rtol=1e-4
-        )
+        torch.testing.assert_close(numeric[chosen], analytic[chosen], atol=atol, rtol=1e-4)
 
     def test_finite_difference_values(self) -> None:
         self.check_finite_difference("values")
@@ -436,25 +368,16 @@ class SdfReferenceGradientTests(unittest.TestCase):
     def test_grazing_rays_keep_every_gradient_finite(self) -> None:
         """Tests the pure-PyTorch SDF intersection oracle."""
         grid = sphere_case(self.device, self.dtype, size=65)
-        tensors = [
-            grid.values.clone(),
-            grid.position.clone(),
-            grid.rotation.clone(),
-            grid.scale.clone(),
-        ]
+        tensors = [grid.values.clone(), grid.position.clone(), grid.rotation.clone(), grid.scale.clone()]
         offsets = torch.linspace(0.45, 0.55, 21, device=self.device, dtype=self.dtype)
-        origins = torch.stack(
-            [offsets, torch.zeros_like(offsets), torch.full_like(offsets, -3.0)], dim=-1
-        )
+        origins = torch.stack([offsets, torch.zeros_like(offsets), torch.full_like(offsets, -3.0)], dim=-1)
         directions = torch.zeros_like(origins)
         directions[:, 2] = 1.0
         rays = [origins, directions]
         for tensor in tensors + rays:
             tensor.requires_grad_(True)
 
-        res = ref.intersect(
-            ref.SdfGridRef(*tensors), *rays, ref.TraceConfig(max_steps=256)
-        )
+        res = ref.intersect(ref.SdfGridRef(*tensors), *rays, ref.TraceConfig(max_steps=256))
         self.assertTrue(bool(res.hit_mask.any()))
         self.assertFalse(bool(res.hit_mask.all()))
         finite_t = torch.where(res.hit_mask, res.t, torch.zeros_like(res.t))
@@ -463,10 +386,7 @@ class SdfReferenceGradientTests(unittest.TestCase):
         self.assertTrue(bool(torch.isfinite(res.normal).all()))
 
         (finite_t.sum() + res.position.sum() + res.normal.sum()).backward()
-        for name, tensor in zip(
-            ("values", "position", "rotation", "scale", "origins", "directions"),
-            tensors + rays,
-        ):
+        for name, tensor in zip(("values", "position", "rotation", "scale", "origins", "directions"), tensors + rays):
             self.assertTrue(bool(torch.isfinite(tensor.grad).all()), msg=name)
 
     def test_zero_denominator_takes_the_signed_grazing_clamp(self) -> None:
@@ -497,12 +417,7 @@ class SdfReferenceGradientTests(unittest.TestCase):
         self.assertTrue(torch.equal(res.normal, torch.zeros(1, 3, device=self.device)))
         res.t.sum().backward()
         self.assertTrue(bool(torch.isfinite(values.grad).all()))
-        torch.testing.assert_close(
-            values.grad.sum(),
-            values.new_tensor(-1.0 / ref.EPS_GRAZE),
-            atol=0.0,
-            rtol=1e-9,
-        )
+        torch.testing.assert_close(values.grad.sum(), values.new_tensor(-1.0 / ref.EPS_GRAZE), atol=0.0, rtol=1e-9)
 
 
 if __name__ == "__main__":

@@ -32,11 +32,7 @@ from typing import Any
 THIS_DIR = Path(__file__).resolve().parent
 ROOT = Path(__file__).resolve().parents[2]
 THIS_DIR_NORM = os.path.normcase(os.path.abspath(THIS_DIR))
-sys.path = [
-    entry
-    for entry in sys.path
-    if os.path.normcase(os.path.abspath(entry or ".")) != THIS_DIR_NORM
-]
+sys.path = [entry for entry in sys.path if os.path.normcase(os.path.abspath(entry or ".")) != THIS_DIR_NORM]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -61,18 +57,13 @@ LAUNCH_COUNT_FIELDS = (
     "native_optix_launches",
     "native_optix_accel_operations",
 )
-LAUNCH_TOTAL_FIELDS = tuple(
-    field for field in LAUNCH_COUNT_FIELDS if field != "drjit_optix_launches"
-)
+LAUNCH_TOTAL_FIELDS = tuple(field for field in LAUNCH_COUNT_FIELDS if field != "drjit_optix_launches")
 
 
 def case_id(dimensions: dict[str, Any]) -> str:
     return "-".join(
         str(dimensions[key])
-        for key in (
-            "edge_count", "query_count", "query_kind", "top_k",
-            "update_mode", "mask", "distribution",
-        )
+        for key in ("edge_count", "query_count", "query_kind", "top_k", "update_mode", "mask", "distribution")
     )
 
 
@@ -96,9 +87,9 @@ def _run_command(command: list[str]) -> str:
 
 
 def collect_environment() -> dict[str, str]:
-    gpu_lines = _run_command([
-        "nvidia-smi", "--query-gpu=name,compute_cap,driver_version", "--format=csv,noheader",
-    ]).splitlines()
+    gpu_lines = _run_command(
+        ["nvidia-smi", "--query-gpu=name,compute_cap,driver_version", "--format=csv,noheader"]
+    ).splitlines()
     if not gpu_lines:
         raise ContractError("nvidia-smi returned no GPU")
     gpu_name, compute_capability, driver_version = [part.strip() for part in gpu_lines[0].split(",")]
@@ -146,8 +137,10 @@ def _worker_command(dimensions: dict[str, Any], matrix_path: Path) -> list[str]:
     return [
         sys.executable,
         str(Path(__file__).resolve()),
-        "--matrix", str(matrix_path),
-        "--worker-case", json.dumps(dimensions, separators=(",", ":")),
+        "--matrix",
+        str(matrix_path),
+        "--worker-case",
+        json.dumps(dimensions, separators=(",", ":")),
     ]
 
 
@@ -162,28 +155,26 @@ def run_worker(dimensions: dict[str, Any], matrix_path: Path) -> dict[str, Any]:
     )
     for line in reversed(result.stdout.splitlines()):
         if line.startswith(WORKER_PREFIX):
-            payload = json.loads(line[len(WORKER_PREFIX):])
+            payload = json.loads(line[len(WORKER_PREFIX) :])
             if result.returncode != 0 or "error" in payload:
-                raise ContractError(
-                    f"{case_id(dimensions)}: {payload.get('error', 'worker failed')}"
-                )
+                raise ContractError(f"{case_id(dimensions)}: {payload.get('error', 'worker failed')}")
             return payload
     raise ContractError(
-        f"{case_id(dimensions)}: "
-        f"{result.stderr.strip() or 'worker returned no machine-readable payload'}"
+        f"{case_id(dimensions)}: {result.stderr.strip() or 'worker returned no machine-readable payload'}"
     )
 
 
 def aggregate_case(dimensions: dict[str, Any], sample: dict[str, Any]) -> dict[str, Any]:
     performance = {}
     units = {
-        "hot_query_ms": "ms", "build_ms": "ms", "refit_ms": "ms",
-        "peak_device_memory_bytes": "bytes", "cold_create_ms": "ms",
+        "hot_query_ms": "ms",
+        "build_ms": "ms",
+        "refit_ms": "ms",
+        "peak_device_memory_bytes": "bytes",
+        "cold_create_ms": "ms",
     }
     for metric, unit in units.items():
-        performance[metric] = summarize(
-            [float(value) for value in sample["performance"][metric]], unit
-        )
+        performance[metric] = summarize([float(value) for value in sample["performance"][metric]], unit)
     return {
         "case_id": case_id(dimensions),
         "dimensions": dimensions,
@@ -244,14 +235,16 @@ def _mesh_components(edge_count: int, distribution: str, seed: int) -> list[dict
                 zs.append(0.0)
             else:
                 raise ContractError(f"unsupported distribution: {distribution}")
-        components.append({
-            "x": xs,
-            "y": ys,
-            "z": zs,
-            "i0": list(range(triangle_count)),
-            "i1": list(range(1, triangle_count + 1)),
-            "i2": list(range(2, triangle_count + 2)),
-        })
+        components.append(
+            {
+                "x": xs,
+                "y": ys,
+                "z": zs,
+                "i0": list(range(triangle_count)),
+                "i1": list(range(1, triangle_count + 1)),
+                "i2": list(range(2, triangle_count + 2)),
+            }
+        )
     return components
 
 
@@ -292,8 +285,7 @@ def _build_scene(components: list[dict[str, list[Any]]], dynamic: bool, cuda: An
     mesh_ids = []
     for data in components:
         mesh = rayd.Mesh(
-            cuda.Array3f(data["x"], data["y"], data["z"]),
-            cuda.Array3i(data["i0"], data["i1"], data["i2"]),
+            cuda.Array3f(data["x"], data["y"], data["z"]), cuda.Array3i(data["i0"], data["i1"], data["i2"])
         )
         mesh_ids.append(scene.add_mesh(mesh, dynamic=dynamic))
     scene.build()
@@ -308,7 +300,9 @@ def _edge_mask(edge_count: int, name: str, seed: int, cuda: Any) -> Any:
     return cuda.Bool(values)
 
 
-def _make_query(dimensions: dict[str, Any], query_data: dict[str, list[float]], cuda: Any, rayd: Any, shift: float = 0.0) -> Any:
+def _make_query(
+    dimensions: dict[str, Any], query_data: dict[str, list[float]], cuda: Any, rayd: Any, shift: float = 0.0
+) -> Any:
     tangent = (0.37, -0.23, 0.11)
     points = cuda.Array3f(
         [value + shift * tangent[0] for value in query_data["x"]],
@@ -345,8 +339,7 @@ def _launch_counts(history: list[dict[str, Any]], native: dict[str, Any]) -> dic
         "native_cub_launches": sum(int(native.get(name, 0)) for name in ("cub_reduce", "cub_sort", "cub_scan")),
         "native_optix_launches": int(native.get("optix_launch", 0)),
         "native_optix_accel_operations": (
-            int(native.get("optix_accel_build", 0))
-            + int(native.get("optix_accel_compact", 0))
+            int(native.get("optix_accel_build", 0)) + int(native.get("optix_accel_compact", 0))
         ),
     }
     counts["total_observed_launches"] = sum(counts[name] for name in LAUNCH_TOTAL_FIELDS)
@@ -354,11 +347,7 @@ def _launch_counts(history: list[dict[str, Any]], native: dict[str, Any]) -> dic
 
 
 def _audit_stage(
-    operation: Any,
-    dr: Any,
-    rayd: Any,
-    native_stage: str,
-    materialize: Any | None = None,
+    operation: Any, dr: Any, rayd: Any, native_stage: str, materialize: Any | None = None
 ) -> tuple[dict[str, int], Any]:
     """Count launches in one timing-isolated operation using both audit surfaces."""
     dr.kernel_history_clear()
@@ -384,10 +373,7 @@ def _collect_launch_audit(
     rayd: Any,
 ) -> dict[str, Any]:
     build_counts, built = _audit_stage(
-        lambda: _build_scene(components, dimensions["update_mode"] != "static", cuda, rayd),
-        dr,
-        rayd,
-        "build",
+        lambda: _build_scene(components, dimensions["update_mode"] != "static", cuda, rayd), dr, rayd, "build"
     )
     scene, mesh_ids = built
     _apply_mask(scene, dimensions, matrix, cuda, dr)
@@ -415,12 +401,7 @@ def _collect_launch_audit(
 
     _measure_refit(scene, mesh_ids, components, dimensions, cuda, dr)
     _prepare_refit(scene, mesh_ids, components, dimensions, cuda)
-    refit_counts, _ = _audit_stage(
-        scene.sync,
-        dr,
-        rayd,
-        "sync",
-    )
+    refit_counts, _ = _audit_stage(scene.sync, dr, rayd, "sync")
     stages["refit"] = refit_counts
     return {
         "method": "independent_stable_audit",
@@ -460,7 +441,9 @@ def _scalar(value: Any) -> float:
         return float(value[0])
 
 
-def _ad_errors(scene: Any, dimensions: dict[str, Any], query_data: dict[str, list[float]], dr: Any, cuda: Any, ad: Any, rayd: Any) -> dict[str, float]:
+def _ad_errors(
+    scene: Any, dimensions: dict[str, Any], query_data: dict[str, list[float]], dr: Any, cuda: Any, ad: Any, rayd: Any
+) -> dict[str, float]:
     tangent = (0.37, -0.23, 0.11)
     fixed = _query(scene, dimensions, _make_query(dimensions, query_data, cuda, rayd))
     if dimensions["query_kind"] == "point":
@@ -517,9 +500,7 @@ def _cuda_runtime_candidates() -> list[str]:
         if root:
             candidates.extend(Path(root).glob("bin/cudart64_*.dll"))
     candidates.extend((Path(sys.prefix) / "Library" / "bin").glob("cudart64_*.dll"))
-    candidates.extend(
-        Path("C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA").glob("v*/bin/cudart64_*.dll")
-    )
+    candidates.extend(Path("C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA").glob("v*/bin/cudart64_*.dll"))
     names = [os.fspath(path) for path in sorted(set(candidates), reverse=True)]
     names.append("cudart64_12.dll")
     return names
@@ -557,22 +538,33 @@ def _apply_mask(scene: Any, dimensions: dict[str, Any], matrix: dict[str, Any], 
     dr.sync_thread()
 
 
-def _prepare_refit(scene: Any, mesh_ids: list[int], components: list[dict[str, list[Any]]], dimensions: dict[str, Any], cuda: Any) -> None:
+def _prepare_refit(
+    scene: Any, mesh_ids: list[int], components: list[dict[str, list[Any]]], dimensions: dict[str, Any], cuda: Any
+) -> None:
     mode = dimensions["update_mode"]
     fraction = {
-        "static": 0.0, "full_refit": 1.0, "dirty_refit_1pct": 0.01,
-        "dirty_refit_10pct": 0.10, "dirty_refit_100pct": 1.0,
+        "static": 0.0,
+        "full_refit": 1.0,
+        "dirty_refit_1pct": 0.01,
+        "dirty_refit_10pct": 0.10,
+        "dirty_refit_100pct": 1.0,
     }[mode]
     selected = int(round(len(mesh_ids) * fraction))
     for index in range(selected):
         data = components[index]
         scene.update_mesh_vertices(
-            mesh_ids[index],
-            cuda.Array3f(data["x"], data["y"], [value + 0.001 for value in data["z"]]),
+            mesh_ids[index], cuda.Array3f(data["x"], data["y"], [value + 0.001 for value in data["z"]])
         )
 
 
-def _measure_refit(scene: Any, mesh_ids: list[int], components: list[dict[str, list[Any]]], dimensions: dict[str, Any], cuda: Any, dr: Any) -> float:
+def _measure_refit(
+    scene: Any,
+    mesh_ids: list[int],
+    components: list[dict[str, list[Any]]],
+    dimensions: dict[str, Any],
+    cuda: Any,
+    dr: Any,
+) -> float:
     _prepare_refit(scene, mesh_ids, components, dimensions, cuda)
     start = time.perf_counter()
     scene.sync()
@@ -607,13 +599,17 @@ def _cold_samples(dimensions: dict[str, Any], matrix_path: Path, count: int) -> 
     memory_samples = []
     for _ in range(count):
         command = [
-            sys.executable, str(Path(__file__).resolve()), "--matrix", str(matrix_path),
-            "--cold-case", json.dumps(dimensions, separators=(",", ":")),
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "--matrix",
+            str(matrix_path),
+            "--cold-case",
+            json.dumps(dimensions, separators=(",", ":")),
         ]
         result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False)
         for line in reversed(result.stdout.splitlines()):
             if line.startswith(COLD_PREFIX):
-                payload = json.loads(line[len(COLD_PREFIX):])
+                payload = json.loads(line[len(COLD_PREFIX) :])
                 if "error" in payload:
                     raise ContractError(payload["error"])
                 cold_samples.append(float(payload["cold_create_ms"]))
@@ -625,7 +621,7 @@ def _cold_samples(dimensions: dict[str, Any], matrix_path: Path, count: int) -> 
 
 
 def collect_case_sample(
-    dimensions: dict[str, Any], matrix: dict[str, Any], matrix_path: Path = MATRIX_PATH,
+    dimensions: dict[str, Any], matrix: dict[str, Any], matrix_path: Path = MATRIX_PATH
 ) -> dict[str, Any]:
     _configure_refit(dimensions)
     dr, cuda, ad, rayd = _load_backend()
@@ -674,9 +670,7 @@ def collect_case_sample(
             "peak_device_memory_bytes": memory_samples,
             "cold_create_ms": cold_samples,
         },
-        "launch_audit": _collect_launch_audit(
-            components, dimensions, query_data, matrix, dr, cuda, rayd
-        ),
+        "launch_audit": _collect_launch_audit(components, dimensions, query_data, matrix, dr, cuda, rayd),
         "correctness": _correctness(result, dimensions, dr),
         "ad": _ad_errors(scene, dimensions, query_data, dr, cuda, ad, rayd),
     }

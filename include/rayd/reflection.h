@@ -33,12 +33,9 @@ struct ReflectionTraceTapeResult {
     at::Tensor active_ctx;
 };
 
-ReflectionTraceResult trace_reflections_forward(
-    const SceneResource &scene,
-    const ReflectionTraceRequest &request);
-ReflectionTraceTapeResult trace_reflections_forward_tape(
-    const SceneResource &scene,
-    const ReflectionTraceRequest &request);
+ReflectionTraceResult trace_reflections_forward(const SceneResource& scene, const ReflectionTraceRequest& request);
+ReflectionTraceTapeResult trace_reflections_forward_tape(const SceneResource& scene,
+                                                         const ReflectionTraceRequest& request);
 
 struct ReflectionTraceBackwardRequest {
     RayBatch rays;
@@ -58,9 +55,8 @@ struct ReflectionTraceBackwardResult {
     at::Tensor grad_ray_tmax;
 };
 
-ReflectionTraceBackwardResult trace_reflections_backward(
-    const SceneResource &scene,
-    const ReflectionTraceBackwardRequest &request);
+ReflectionTraceBackwardResult trace_reflections_backward(const SceneResource& scene,
+                                                         const ReflectionTraceBackwardRequest& request);
 
 struct ReflectionTraceJvpRequest {
     at::Tensor ray_o;
@@ -81,10 +77,7 @@ struct ReflectionTraceJvpResult {
     at::Tensor tangent_image_sources;
 };
 
-ReflectionTraceJvpResult trace_reflections_jvp(
-    const SceneResource &scene,
-    const ReflectionTraceJvpRequest &request);
-
+ReflectionTraceJvpResult trace_reflections_jvp(const SceneResource& scene, const ReflectionTraceJvpRequest& request);
 
 struct ReflectionAccumulationConfig {
     RayBatch rays;
@@ -127,9 +120,8 @@ struct ReflectionAccumulationResult {
     at::Tensor wedge_bounce_depth;
 };
 
-ReflectionAccumulationResult reflection_accumulation_forward(
-    const SceneResource &scene,
-    const ReflectionAccumulationConfig &config);
+ReflectionAccumulationResult reflection_accumulation_forward(const SceneResource& scene,
+                                                             const ReflectionAccumulationConfig& config);
 
 struct ReflectionEpcRequest {
     at::Tensor source;
@@ -155,9 +147,7 @@ struct ReflectionEpcResult {
     at::Tensor normals;
 };
 
-ReflectionEpcResult reflection_epc_paths_forward(
-    const SceneResource &scene,
-    const ReflectionEpcRequest &request);
+ReflectionEpcResult reflection_epc_paths_forward(const SceneResource& scene, const ReflectionEpcRequest& request);
 
 struct ReflectionEpcBackwardRequest {
     at::Tensor source;
@@ -181,9 +171,8 @@ struct ReflectionEpcBackwardResult {
     at::Tensor grad_receiver;
 };
 
-ReflectionEpcBackwardResult reflection_epc_paths_backward(
-    const SceneResource &scene,
-    const ReflectionEpcBackwardRequest &request);
+ReflectionEpcBackwardResult reflection_epc_paths_backward(const SceneResource& scene,
+                                                          const ReflectionEpcBackwardRequest& request);
 
 struct ReflectionEpcJvpRequest {
     at::Tensor source;
@@ -204,16 +193,9 @@ struct ReflectionEpcJvpResult {
     at::Tensor tangent_path_length;
 };
 
-ReflectionEpcJvpResult reflection_epc_paths_jvp(
-    const SceneResource &scene,
-    const ReflectionEpcJvpRequest &request);
+ReflectionEpcJvpResult reflection_epc_paths_jvp(const SceneResource& scene, const ReflectionEpcJvpRequest& request);
 
-at::Tensor scene_face_normals_backward(
-    const SceneResource &scene,
-    const at::Tensor &grad_face_normals);
-at::Tensor scene_face_normals_jvp(
-    const SceneResource &scene,
-    const at::Tensor &tangent_vertices);
-
+at::Tensor scene_face_normals_backward(const SceneResource& scene, const at::Tensor& grad_face_normals);
+at::Tensor scene_face_normals_jvp(const SceneResource& scene, const at::Tensor& tangent_vertices);
 
 } // namespace rayd::torch
