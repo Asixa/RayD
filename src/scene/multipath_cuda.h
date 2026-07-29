@@ -3,9 +3,8 @@
 
 #pragma once
 
-#include <rayd/reflection/trace_params.h>
-#include <rayd/reflection/epc_params.h>
-#include <rayd/visibility/segment_params.h>
+#include <src/reflection/reflection_internal.h>
+#include <src/visibility/segment_visibility.cuh>
 #include <src/reflection/accum_params.h>
 #include <src/diffraction/paths_params.h>
 #include <src/diffraction/accum_params.h>

@@ -1,12 +1,12 @@
 // Copyright Xingyu Chen.
 // Implements scene support for triangle bvh Dr.Jit.
 
-#include <rayd/jit/triangle_bvh_gpu.h>
+#include <rayd/jit/scene.h>
 
 #include <rayd/jit/native_launch_audit.h>
-#include <rayd/bvh/build.h>
-#include <rayd/bvh/topology.h>
-#include <rayd/bvh/triangle_query.h>
+#include <src/bvh_build.h>
+#include <src/bvh_topology.h>
+#include <src/bvh_triangle_query.h>
 
 #include <algorithm>
 #include <cstdint>

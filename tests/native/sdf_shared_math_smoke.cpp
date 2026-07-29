@@ -5,8 +5,7 @@
 #include <limits>
 #include <vector>
 
-#include <rayd/sdf/grid_sdf.cuh>
-#include <rayd/sdf/sphere_trace.h>
+#include <src/sdf_device.cuh>
 
 namespace {
 

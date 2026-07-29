@@ -64,7 +64,7 @@ class Adr0030CapacityRowValidityTests(unittest.TestCase):
                 "diffraction_wedge_backward_kernel": ("if (!valid[index])", "load_wedge_row"),
                 "diffraction_wedge_jvp_kernel": ("if (!valid[index])", "load_wedge_row"),
             },
-            "transmission/transmission.cu": {
+            "transmission.cu": {
                 "transmission_sequence_kernel": ("if (!path_valid[index])", "load3(source"),
                 "transmission_sequence_backward_kernel": ("if (!path_valid[index])", "transmission_chain_eval"),
                 "transmission_sequence_jvp_kernel": ("if (!path_valid[index])", "transmission_chain_eval"),
@@ -115,7 +115,7 @@ class Adr0030CapacityRowValidityTests(unittest.TestCase):
             read(RF_SOURCE / path)
             for path in (
                 "diffraction/wedge.cu",
-                "transmission/transmission.cu",
+                "transmission.cu",
                 "scattering/table.cu",
                 "scattering/table_ad.cu",
                 "scattering/ensemble.cu",

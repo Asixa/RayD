@@ -35,7 +35,7 @@ visibility.h
 
 `rayd/detail` retains a subdirectory only for a module with at least two headers. Singleton groups are flattened to `contracts.h`, `field_math.h`, `field_transport.cuh`, `scattering_table.cuh`, and `vec3.h`. Existing `rayd::shared` namespaces remain unchanged: this decision changes physical and include ownership, not numerical code or C++ symbol namespaces.
 
-The Torch-only device derivative header moves to `src/field_transport/ad.cuh`. It remains in the passive source bundle through the `src` tree but is not part of the integration header set.
+The Torch-only device derivative header moves to `src/field_transport_ad.cuh`. It remains in the passive source bundle through the `src` tree but is not part of the integration header set.
 
 The durable integration include is `rayd/integration.h`. Its identity remains `rayd.torch.integration` and `kIntegrationApiVersion` becomes `8`. The integration header set contains the eight Torch public headers; `path_exchange.h` is bundled as a separate backend-neutral public contract. No forwarding headers, aliases, duplicate trees, or compatibility include roots preserve the retired paths.
 

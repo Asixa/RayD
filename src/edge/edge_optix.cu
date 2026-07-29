@@ -7,8 +7,8 @@
 #include <rayd/math.h>
 #include <src/edge/optix_params.h>
 #include <rayd/contracts.h>
-#include <rayd/edge/edge_distance.h>
-#include <rayd/edge/optix_device.cuh>
+#include <src/edge/edge_distance.h>
+#include <src/edge/edge_optix_device.cuh>
 
 namespace rayd::torch_backend {
 

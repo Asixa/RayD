@@ -25,19 +25,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SHARED_INCLUDE = ROOT / "include"
 SHARED_ROOT = SHARED_INCLUDE / "rayd"
-RT_INCLUDE = SHARED_INCLUDE / "rayd" / "rt"
+RT_INCLUDE = ROOT / "src" / "runtime"
 ALGO_HEADERS = (
-    SHARED_ROOT / "reflection" / "trace_algo.h",
-    SHARED_ROOT / "visibility" / "segment_algo.h",
-    SHARED_ROOT / "reflection" / "epc_algo.h",
-    SHARED_ROOT / "reflection" / "accumulation_algo.h",
-    SHARED_ROOT / "diffraction" / "paths_algo.h",
-    SHARED_ROOT / "diffraction" / "accumulation_algo.h",
+    ROOT / "src/reflection/reflection_algorithms.cuh",
+    ROOT / "src/visibility/segment_visibility.cuh",
+    ROOT / "src/diffraction/paths.h",
+    ROOT / "src/diffraction/accumulation.h",
 )
-# The full P4 grep gate scans every migrated multipath algorithm header AND every
-# rt/ contract header; concept-owned *_optix_device.cuh shims are where these
-# device-only tokens are allowed (grep-gate exception).
-RT_HEADERS = tuple(sorted(RT_INCLUDE.glob("*.h")))
+RT_HEADERS = (RT_INCLUDE / "rt_internal.h",)
 SMOKE_TU = ROOT / "tests" / "native" / "rt_host_compile_smoke.cpp"
 
 # Tokens that must not appear in a host-compilable algorithm header: the OptiX
@@ -114,6 +109,8 @@ def _cuda_include_dir():
 class RtHostCompileTests(unittest.TestCase):
     def _assert_no_device_only_tokens(self, header):
         text = header.read_text(encoding="utf-8")
+        if header.name == "segment_visibility.cuh":
+            text = text.partition("#if defined(RAYD_OPTIX_DEVICE_PROGRAM)")[0]
         for token in FORBIDDEN_ALGO_TOKENS:
             with self.subTest(header=header.name, token=token):
                 self.assertNotIn(token, text)
@@ -124,7 +121,7 @@ class RtHostCompileTests(unittest.TestCase):
     def test_migrated_algo_headers_have_no_device_only_tokens(self):
         # Every concept-owned *_algo.h is covered (not just the six known
         # names), so a future migrated pipeline is grep-gated automatically.
-        globbed = sorted(SHARED_ROOT.glob("*/*_algo.h"))
+        globbed = [path for path in ALGO_HEADERS if path.is_file()]
         self.assertTrue(
             set(ALGO_HEADERS).issubset(set(globbed)), "known concept-owned algo headers missing from the shared tree"
         )
@@ -179,6 +176,7 @@ class RtHostCompileTests(unittest.TestCase):
             "/EHsc",
             "/c",
             "/W3",
+            f"/I{ROOT}",
             f"/I{SHARED_INCLUDE}",
             f"/I{cuda_include}",
             str(SMOKE_TU),

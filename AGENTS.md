@@ -20,9 +20,9 @@ The repository root is a meta-distribution and builds no native code. Build a ba
 
 ## Architecture
 
-- `include/rayd/*.h`: flat default Torch typed API plus the backend-neutral `path_exchange.h` contract
+- `include/rayd/*`: flat public Torch and backend-neutral API; `include/rayd/jit/*` is its only subdirectory
 - `include/rayd/jit/*.h`, `src/**/*_jit.*`: flat Dr.Jit C++ API and its CUDA/OptiX implementations
-- `include/rayd/`, `src/**/*_shared.*`: backend-neutral contracts, math, edge BVH core, and accumulation kernels; only multi-file modules retain subdirectories
+- `src/`: all private native headers and implementations; only real multi-file modules retain concept subdirectories
 - `contracts/`: machine-readable public API and operation manifests
 - `Scene`: mesh container plus OptiX acceleration structure
 - `Mesh`: raw triangle mesh input, transforms, edge topology, secondary edge query data
@@ -278,13 +278,18 @@ owner.
 
 ## Source Layout, Math Ownership, and File Headers
 
-- `include/rayd/` has no `detail/` container. Public Torch headers and small shared single-file modules live at the root; multi-file concepts use one direct concept directory; Dr.Jit public headers live only in `include/rayd/jit/`.
+- `include/rayd/` contains public API only. Its default Torch and shared headers are flat at the root; its only subdirectory is the flat Dr.Jit public surface at `include/rayd/jit/`.
+- Private native headers live beside their owners in `src/`. Public headers never include private `src/` headers.
+- Fold a private header into its production consumer when it has only one, unless a native compile test independently validates it as a host/device boundary. Keep a direct `src/<concept>/` directory only for a real multi-file module; one- and two-file concepts stay flat under `src/`.
+- There is no maximum file length. Split by responsibility or shared ownership, never to satisfy a line-count target.
+- Header moves are direct: do not retain forwarding headers, compatibility include paths, or duplicate declarations.
 - `include/rayd/math.h` is the sole owner of reusable math primitives and functions. It owns vector, complex, dual-scalar, matrix, quaternion, CUDA `float3`, and common scalar/vector operations used by more than one implementation.
+- `include/rayd/utd.h` is the sole public owner of UTD domain types and algorithms. Diffraction launch ABI and backend implementation headers remain private under `src/diffraction/`.
 - Do not redeclare simple math types or primitive operations in concept files. Use `math.h` directly or introduce a local type alias when a domain name improves readability. Domain files may own domain records and algorithms whose meaning is not generic math.
 - Production files under `include/` and `src/` must not use another filename containing `math`; choose a domain responsibility such as `utd.h`, `edge_distance.h`, or `derivatives.cuh`.
 - Every maintained Python, C, C++, CUDA source, and header starts with `Copyright Xingyu Chen.` followed by one plain-English sentence describing the file. Use `#` for Python and `//` for native code, keep the sentence concise, and do not put an ADR identifier in the file header.
 - Generated headers under `generated/` are exempt from manual file headers. Regenerate them from their governed sources instead of editing them by hand.
-- `tests/test_source_file_standards.py` enforces these rules. Update the implementation and the test together when the maintained source surface changes.
+- `tests/test_concept_axis_layout.py` and `tests/test_source_file_standards.py` enforce these rules. Update the implementation and the tests together when the maintained source surface changes.
 
 ## Code Formatting and Duplication Control
 

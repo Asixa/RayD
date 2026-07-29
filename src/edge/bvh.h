@@ -6,7 +6,7 @@
 #include <ATen/ATen.h>
 #include <cuda_runtime_api.h>
 
-#include <rayd/edge/bvh_types.h>
+#include <src/edge/bvh_types.h>
 
 #include <cstddef>
 #include <cstdint>

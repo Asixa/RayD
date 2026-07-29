@@ -17,10 +17,9 @@
 #include <src/scene/multipath_cuda.h>
 #include <src/reflection/accum_reduce.h>
 #include <src/reflection/accum_params.h>
-#include <src/reflection/dedup.h>
+#include <src/reflection/reflection_internal.h>
 #include <src/reflection/epc_field.h>
-#include <src/reflection/epc_params.h>
-#include <src/reflection/trace_params.h>
+#include <src/reflection/reflection_internal.h>
 #include <src/scene/cache.h>
 #include <src/bindings/tensor_contract.h>
 #include <rayd/reflection.h>
@@ -1900,14 +1899,13 @@ ReflectionEpcJvpResult reflection_epc_paths_jvp(const SceneResource& scene, cons
 
 } // namespace rayd::torch
 
-// ---- merged from src/reflection/pipeline_part.cpp ----
+// OptiX reflection pipeline setup.
 
 #include <src/reflection/pipeline.h>
 
 #include <src/reflection/accum_params.h>
-#include <src/reflection/epc_params.h>
-#include <src/reflection/trace_params.h>
-#include <rayd/rt/optix_pipeline_contracts.h>
+#include <src/reflection/reflection_internal.h>
+#include <src/runtime/rt_internal.h>
 #include <rayd/reflection/accumulation_torch_ptx.h>
 #include <rayd/reflection/epc_torch_ptx.h>
 #include <rayd/reflection/trace_torch_ptx.h>

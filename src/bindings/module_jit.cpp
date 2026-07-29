@@ -11,8 +11,7 @@
 #include <nanobind/stl/vector.h>
 #include <drjit/python.h>
 
-#include <rayd/jit/ray.h>
-#include <rayd/jit/transform.h>
+#include <rayd/jit/core.h>
 #include <rayd/jit/edge.h>
 #include <rayd/jit/visibility.h>
 #include <rayd/jit/mesh.h>

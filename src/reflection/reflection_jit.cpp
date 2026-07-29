@@ -9,10 +9,10 @@
 #include <string>
 #include <vector>
 
-#include <rayd/jit/ray.h>
+#include <rayd/jit/core.h>
 #include "scene_internal_jit.h"
 #include <src/diffraction/accumulation_ad_jit.h>
-#include <src/reflection/dedup_jit.h>
+#include <src/reflection/reflection_internal.h>
 #include <src/reflection/epc_field_jit.h>
 #include <src/runtime/optix_pipelines_jit.h>
 #include <rayd/jit/native_launch_audit.h>
@@ -782,10 +782,10 @@ template ReflectionTraceAD Scene::trace_bounces<false>(const RayAD& ray, int max
 #include <string>
 #include <vector>
 
-#include <rayd/jit/ray.h>
+#include <rayd/jit/core.h>
 #include "scene_internal_jit.h"
 #include <src/diffraction/accumulation_ad_jit.h>
-#include <src/reflection/dedup_jit.h>
+#include <src/reflection/reflection_internal.h>
 #include <src/reflection/epc_field_jit.h>
 #include <src/runtime/optix_pipelines_jit.h>
 #include <rayd/jit/native_launch_audit.h>
@@ -1568,10 +1568,10 @@ template AccumResultAD Scene::accumulate_reflections<false>(const RayAD& ray, co
 #include <string>
 #include <vector>
 
-#include <rayd/jit/ray.h>
+#include <rayd/jit/core.h>
 #include "scene_internal_jit.h"
 #include <src/diffraction/accumulation_ad_jit.h>
-#include <src/reflection/dedup_jit.h>
+#include <src/reflection/reflection_internal.h>
 #include <src/reflection/epc_field_jit.h>
 #include <src/runtime/optix_pipelines_jit.h>
 #include <rayd/jit/native_launch_audit.h>

@@ -342,12 +342,12 @@ SegmentPenetrationJvpResult segment_penetration_jvp(const SegmentPenetrationJvpR
 
 } // namespace rayd::torch
 
-// ---- merged from src/penetration/pipeline_part.cpp ----
+// OptiX penetration pipeline setup.
 
 #include <src/penetration/segment_penetration_kernels.h>
 #include <src/penetration/segment_penetration_params.h>
 
-#include <rayd/rt/optix_pipeline_contracts.h>
+#include <src/runtime/rt_internal.h>
 #include <rayd/penetration/segment_torch_ptx.h>
 
 namespace rayd::torch_backend {

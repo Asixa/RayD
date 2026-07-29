@@ -2,7 +2,7 @@
 // Implements edge support for edge bvh.
 
 #include <src/edge/bvh.h>
-#include <rayd/edge/edge_aabb.h>
+#include <src/edge/bvh_build.h>
 #include <cub/device/device_radix_sort.cuh>
 #include <cub/device/device_reduce.cuh>
 

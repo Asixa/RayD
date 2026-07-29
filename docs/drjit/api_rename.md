@@ -19,7 +19,7 @@ C++ follows the same convention. Each type `X` is defined as a template
 / `XAD` (AD) are the two concrete instantiations (`include/rayd/jit/core.h:23-30`).
 There is no `RayDetached` alias. The foundational `Float` / `Vector*f` /
 `Matrix4f` aliases follow the same rule: `Float` is non-AD and `FloatAD` is the
-autodiff variant (`include/rayd/jit/types.h:25-26, 78-79, 87-88`).
+autodiff variant (`include/rayd/jit/core.h:25-26, 78-79, 87-88`).
 
 ## 2. Python class renames
 

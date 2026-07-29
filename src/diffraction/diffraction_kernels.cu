@@ -85,7 +85,7 @@ void init_dfr_path_outputs_cuda(int64_t capacity, at::Tensor& out_count, at::Ten
 
 } // namespace rayd::torch_backend
 
-// ---- merged from src/diffraction/accum_reduce_part.cu ----
+// Diffraction accumulation reduction kernels.
 
 #include <src/diffraction/accum_reduce.h>
 #include <src/runtime/optix_context.h>
@@ -387,7 +387,7 @@ void reduce_dfr_coherent_accum_staged_cuda(int64_t sample_count, int64_t cell_co
 
 } // namespace rayd::torch_backend
 
-// ---- merged from src/diffraction/accum_ad_part.cu ----
+// Diffraction accumulation derivative kernels.
 
 #include <src/diffraction/accum_ad.h>
 
@@ -481,7 +481,7 @@ static __forceinline__ __device__ float material_gain_for_prim(const DfrChainAcc
 #define RAYD_DFR_AD_SUFFIX_FACE_PRIM(P, F, S, HAS_THIRD, SECOND, THIRD)                                                \
     read_i32_strided_or_default((P).F, (P).S, (HAS_THIRD) ? (THIRD) : (SECOND), -1)
 
-#include <rayd/diffraction/accumulation_ad_device.cuh>
+#include <src/diffraction/accumulation_ad.cuh>
 
 static __forceinline__ __device__ void add_chain_unit_vjp(const DfrChainAccumADParams& params, const ChainPrimal& p,
                                                           float grad_contribution, float* ptr, int stride, int index,
@@ -518,7 +518,9 @@ static __forceinline__ __device__ void add_unit_vjp_strided(const DfrDirectAccum
 #define RAYD_DFR_AD_ADD_CHAIN_UNIT_VJP(P, PR, G, F, S, I, T) add_chain_unit_vjp((P), (PR), (G), (P).F, (P).S, (I), (T))
 #define RAYD_DFR_AD_ADD_CHAIN_UNIT_VJP_DENSE(P, PR, G, F, I, T) add_chain_unit_vjp((P), (PR), (G), (P).F, 1, (I), (T))
 
-#include <rayd/diffraction/accumulation_ad_vjp_device.cuh>
+#define RAYD_DFR_AD_VJP_PHASE
+#include <src/diffraction/accumulation_ad.cuh>
+#undef RAYD_DFR_AD_VJP_PHASE
 
 __global__ void dfr_direct_accum_jvp_kernel(DfrDirectAccumADParams params) {
     const int lane = params.lane_offset + static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);

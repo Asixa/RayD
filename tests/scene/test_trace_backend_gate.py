@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -29,6 +30,12 @@ def _run_fresh(body: str, *, disable_optix: bool | str) -> subprocess.CompletedP
     env = os.environ.copy()
     python_root = str(Path(__file__).resolve().parents[2] / "python")
     env["PYTHONPATH"] = os.pathsep.join(part for part in (python_root, env.get("PYTHONPATH", "")) if part)
+    extension = importlib.util.find_spec("rayd.torch._C")
+    if extension is not None and extension.origin:
+        native_root = Path(extension.origin).resolve().parent
+        library_suffix = ".dll" if sys.platform == "win32" else ".dylib" if sys.platform == "darwin" else ".so"
+        env.setdefault("RAYD_TORCH_LEGACY_LIBRARY", str(native_root / f"_legacy_ops{library_suffix}"))
+        env.setdefault("RAYD_TORCH_STABLE_LIBRARY", str(native_root / f"_stable_ops{library_suffix}"))
     if isinstance(disable_optix, str):
         env["RAYD_DISABLE_OPTIX"] = disable_optix
     elif disable_optix:

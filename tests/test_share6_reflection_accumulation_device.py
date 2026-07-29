@@ -9,8 +9,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARED = ROOT / "include/rayd/reflection/accumulation_optix_device.cuh"
-ALGO = ROOT / "include/rayd/reflection/accumulation_algo.h"
+SHARED = ROOT / "src/reflection/reflection_accumulation_optix.cuh"
+ALGO = ROOT / "src/reflection/reflection_algorithms.cuh"
 DRJIT = ROOT / "src/reflection/accumulation_optix_jit.cu"
 TORCH = ROOT / "src/reflection/accumulation_optix.cu"
 
@@ -42,7 +42,7 @@ class SharedReflectionAccumulationDeviceTests(unittest.TestCase):
         entry_tokens = ("void closest_hit()", "void miss()", "void raygen(const Params& params)")
         for token in entry_tokens:
             self.assertIn(token, self.shared)
-        self.assertIn("accumulation_algo.h", self.shared)
+        self.assertIn("reflection_algorithms.cuh", self.shared)
         # The former file-local HitPayload duplication dissolved into the
         # canonical shared types; forbid it from reappearing.
         self.assertIn("TriangleHit", self.algo)

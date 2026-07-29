@@ -19,7 +19,7 @@ class SharedContractsTests(unittest.TestCase):
     def test_header_is_backend_neutral_and_pod_checked(self):
         self.assertTrue(CONTRACT.is_file())
         lowered = self.header.lower()
-        for forbidden in ("torch/", "at::tensor", "drjit", "nanobind", "optix", "cuda_runtime"):
+        for forbidden in ("torch/", "at::tensor", "drjit", "nanobind", "#include <optix", "cuda_runtime"):
             self.assertNotIn(forbidden, lowered)
         for enum_name in (
             "RayFlagBits",

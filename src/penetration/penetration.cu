@@ -1,5 +1,5 @@
 // Copyright Xingyu Chen.
-// Implements penetration support for penetration.
+// Implements penetration kernels and derivatives.
 
 #include <src/penetration/segment_penetration_kernels.h>
 
@@ -78,21 +78,6 @@ __device__ float3 solve_columns(float3 c0, float3 c1, float3 c2, float3 rhs) {
 __device__ float3 solve_transpose(float3 c0, float3 c1, float3 c2, float3 rhs) {
     return solve_columns(make_float3(c0.x, c1.x, c2.x), make_float3(c0.y, c1.y, c2.y), make_float3(c0.z, c1.z, c2.z),
                          rhs);
-}
-
-__device__ float3 unit_normal(float3 e1, float3 e2, float* length) {
-    const float3 raw = cross3(e1, e2);
-    const float norm = sqrtf(fmaxf(dot3(raw, raw), 1.0e-20f));
-    if (length != nullptr)
-        *length = norm;
-    return mul3(1.0f / norm, raw);
-}
-
-__device__ float3 normal_jvp(float3 e1, float3 e2, float3 de1, float3 de2) {
-    float length = 0.0f;
-    const float3 normal = unit_normal(e1, e2, &length);
-    const float3 draw = add3(cross3(de1, e2), cross3(e1, de2));
-    return mul3(1.0f / length, sub3(draw, mul3(dot3(normal, draw), normal)));
 }
 
 __device__ float3 normalized_vjp(float3 value, float floor, float3 gradient) {
@@ -277,7 +262,7 @@ __global__ void backward_kernel(
             add3(selected_normal_gradient, load3_3d(grad_geometric_normal, segment, slot, grad_geometric_normal_stride0,
                                                     grad_geometric_normal_stride1, grad_geometric_normal_stride2));
         float normal_length = 0.0f;
-        const float3 face_n = unit_normal(e1, e2, &normal_length);
+        const float3 face_n = ::rayd::shared::math::triangle_unit_normal(e1, e2, &normal_length);
         const float3 raw_normal_gradient =
             mul3(1.0f / normal_length, sub3(normal_gradient, mul3(dot3(face_n, normal_gradient), face_n)));
         const float3 grad_e1 = cross3(e2, raw_normal_gradient);
@@ -385,7 +370,7 @@ __global__ void jvp_kernel(const float* vertices, const int* faces, const float*
         const float hit_tangent = solve_columns(mul3(-1.0f, direction), e1, e2, rhs).x;
         const float3 position_tangent =
             add3(current_origin_tangent, add3(mul3(hit_tangent, direction), mul3(hit_t, ddirection)));
-        const float3 geo_tangent = normal_jvp(e1, e2, de1, de2);
+        const float3 geo_tangent = ::rayd::shared::math::triangle_unit_normal_jvp(e1, e2, de1, de2);
         const float3 selected_normal_tangent =
             policy == SegmentPenetrationEnumeratedFullDistance
                 ? normalized_jvp(load3(geometric_normal, row, 3, 1), 1.0e-9f, geo_tangent)

@@ -4,7 +4,7 @@
 #include <src/edge/kernels.h>
 #include <src/edge/optix_params.h>
 #include <src/runtime/optix_context.h>
-#include <rayd/edge/edge_distance.h>
+#include <src/edge/edge_distance.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>
@@ -611,14 +611,9 @@ EdgeRayForwardOutputs edge_ray_forward_cuda(const SceneCache& scene, const at::T
 
 } // namespace rayd::torch_backend
 
-// ---- merged from src/edge/edge_backward_part.cu ----
+// Edge-query backward and tangent kernels.
 
-#include <src/edge/kernels.h>
 #include <rayd/math.h>
-#include <rayd/edge/edge_distance.h>
-
-#include <ATen/cuda/CUDAContext.h>
-#include <cuda_runtime.h>
 
 namespace rayd::torch_backend {
 
@@ -986,24 +981,14 @@ EdgeRayJvpOutputs edge_ray_jvp_optional_cuda(const at::Tensor& vertices, const a
 
 } // namespace rayd::torch_backend
 
-// ---- merged from src/edge/edge_topk_part.cu ----
+// Top-k edge-query kernels and launchers.
 
-#include <src/edge/kernels.h>
-#include <src/runtime/optix_context.h>
 #include <src/scene/cache.h>
 
-#include <rayd/edge/bvh_query.h>
-#include <rayd/edge/edge_distance.h>
+#include <src/edge/bvh_query.h>
 
-#include <ATen/cuda/CUDAContext.h>
-#include <cuda_runtime.h>
-#include <math_constants.h>
-
-#include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <stdexcept>
-#include <string>
 
 namespace rayd::torch_backend {
 

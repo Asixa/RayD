@@ -1,10 +1,172 @@
 // Copyright Xingyu Chen.
-// Declares the Dr.Jit surfel API.
+// Declares the Dr.Jit surfel API and its OptiX launch contracts.
 
 #pragma once
 
-#include <rayd/jit/ray.h>
-#include <rayd/jit/surfel_optix.h>
+#include <cstdint>
+#include <rayd/jit/core.h>
+#include <rayd/jit/optix.h>
+
+namespace rayd {
+
+struct SurfelOptixState;
+
+/// Raw closest-hit result from the surfel triangle GAS. Detached by design:
+/// SurfelScene re-gathers AD surfel parameters and recomputes hit attributes.
+struct SurfelOptixIntersection {
+    void reserve(int64_t size);
+
+    int64_t m_size = 0;
+    Int triangle_id;      ///< GAS primitive id; -1 when no hit.
+    Vector2f barycentric; ///< Built-in triangle barycentric (u, v).
+    Float t;              ///< Hit distance; Infinity when no hit.
+};
+
+/// Detached alpha-composite result computed by the native surfel pipeline.
+struct SurfelOptixComposite {
+    void reserve(int64_t size);
+
+    int64_t m_size = 0;
+    int hit_capacity = 0;
+    Float intensity;
+    Float channels;
+    Vector3f normal;
+    Float alpha;
+    Float transmittance;
+    Float depth;
+    Int surfel_id; ///< Flat [ray_count, hit_capacity] sorted candidate ids.
+    Float hit_t;   ///< Flat [ray_count, hit_capacity] analytic candidate depth.
+    Float hit_alpha;
+    Float hit_value;
+    Int candidate_count;
+    Mask candidate_buffer_full;
+};
+
+/// Standalone OptiX triangle GAS used by the surfel module.
+class SurfelOptixScene {
+  public:
+    SurfelOptixScene();
+    ~SurfelOptixScene();
+
+    SurfelOptixScene(const SurfelOptixScene&) = delete;
+    SurfelOptixScene& operator=(const SurfelOptixScene&) = delete;
+
+    void build(const Float& vertex_buffer, const Int& face_buffer, int vertex_count, int triangle_count,
+               bool build_hitobject_pipeline = true);
+    bool is_ready() const;
+
+    template <bool Detached>
+    SurfelOptixIntersection intersect(const RayT<Detached>& ray, MaskT<Detached>& active) const;
+
+    template <bool Detached>
+    SurfelOptixIntersection intersect(const RayT<Detached>& ray, const FloatT<Detached>& t_min,
+                                      MaskT<Detached>& active) const;
+
+    template <bool Detached>
+    SurfelOptixIntersection trace_analytic_candidates(const RayT<Detached>& ray, const Int& triangle_to_surfel_id,
+                                                      const Vector3f& center, const Vector3f& tangent_u,
+                                                      const Vector3f& tangent_v, const Float& opacity, float alpha_min,
+                                                      float alpha_cap, int max_candidate_hits, bool face_forward,
+                                                      MaskT<Detached>& active) const;
+
+    template <bool Detached>
+    SurfelOptixComposite composite_alpha(const RayT<Detached>& ray, const Int& triangle_to_surfel_id,
+                                         const Vector3f& center, const Vector3f& tangent_u, const Vector3f& tangent_v,
+                                         const Float& opacity, const Float& value, float alpha_min, float alpha_cap,
+                                         int max_candidate_hits, bool collect_candidate_stats,
+                                         bool continue_after_full_buffer, float transmittance_min,
+                                         int max_trace_segments, bool face_forward, MaskT<Detached> active) const;
+
+    template <bool Detached>
+    SurfelOptixComposite render(const RayT<Detached>& ray, const Int& triangle_to_surfel_id, const Vector3f& center,
+                                const Vector3f& tangent_u, const Vector3f& tangent_v, const Float& opacity,
+                                const Float& appearance_values, int appearance_channel_count, int color_model,
+                                int appearance_sh_degree, int sh_degree, int render_channel_count, bool output_normal,
+                                const ScalarVector3f& background_rgb, float alpha_min, float alpha_cap,
+                                int max_candidate_hits, bool collect_candidate_stats, bool continue_after_full_buffer,
+                                float transmittance_min, int max_trace_segments, bool face_forward,
+                                MaskT<Detached> active) const;
+
+  private:
+    SurfelOptixState* m_accel = nullptr;
+};
+
+} // namespace rayd
+
+namespace rayd {
+
+/// Host/device ABI for the native surfel trace pipeline.
+/// All pointers refer to CUDA device arrays owned by Dr.Jit or RayD.
+struct SurfelTraceParams {
+    uint64_t handle = 0;
+
+    const float* ray_ox = nullptr;
+    const float* ray_oy = nullptr;
+    const float* ray_oz = nullptr;
+    const float* ray_dx = nullptr;
+    const float* ray_dy = nullptr;
+    const float* ray_dz = nullptr;
+    const float* ray_tmax = nullptr;
+    const uint8_t* active_mask = nullptr;
+    int ray_count = 0;
+
+    const int* triangle_to_surfel_id = nullptr;
+    int triangle_count = 0;
+    int surfel_count = 0;
+
+    const float* center_x = nullptr;
+    const float* center_y = nullptr;
+    const float* center_z = nullptr;
+    const float* tangent_u_x = nullptr;
+    const float* tangent_u_y = nullptr;
+    const float* tangent_u_z = nullptr;
+    const float* tangent_v_x = nullptr;
+    const float* tangent_v_y = nullptr;
+    const float* tangent_v_z = nullptr;
+    const float* opacity = nullptr;
+    const float* value = nullptr;
+    const float* appearance_values = nullptr;
+    int appearance_channel_count = 1;
+    int color_model = 0;
+    int appearance_sh_degree = 0;
+    int sh_degree = 0;
+    int render_channel_count = 1;
+    int output_normal = 0;
+    float background_rgb[3] = {0.0f, 0.0f, 0.0f};
+
+    float alpha_min = 1.0f / 255.0f;
+    float alpha_cap = 0.99f;
+    float ray_epsilon = 1.0e-3f;
+    float tmax_fallback = 1.0e8f;
+    int max_candidate_hits = 8;
+    int face_forward = 1;
+    int collect_candidate_stats = 0;
+    int continue_after_full_buffer = 0;
+    float transmittance_min = 0.03f;
+    int max_trace_segments = 1;
+
+    int* out_triangle_id = nullptr;
+    float* out_proxy_t = nullptr;
+    uint8_t* out_valid = nullptr;
+
+    int composite_hit_capacity = 8;
+    int* scratch_surfel_id = nullptr;
+    float* scratch_t = nullptr;
+    float* scratch_alpha = nullptr;
+    float* scratch_value = nullptr;
+    float* out_intensity = nullptr;
+    float* out_channels = nullptr;
+    float* out_normal_x = nullptr;
+    float* out_normal_y = nullptr;
+    float* out_normal_z = nullptr;
+    float* out_alpha = nullptr;
+    float* out_transmittance = nullptr;
+    float* out_depth = nullptr;
+    int* out_candidate_count = nullptr;
+    uint8_t* out_candidate_buffer_full = nullptr;
+};
+
+} // namespace rayd
 
 namespace rayd {
 

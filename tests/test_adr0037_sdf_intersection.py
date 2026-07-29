@@ -19,8 +19,8 @@ PLAN_PATH = ROOT / "docs" / "dev" / "sdf_intersection_plan.md"
 OPERATIONS_PATH = ROOT / "contracts" / "operations.json"
 PUBLIC_API_PATH = ROOT / "contracts" / "public_api.json"
 COMPILE_POLICY_PATH = ROOT / "contracts" / "compile_policy.json"
-SPHERE_TRACE_PATH = ROOT / "include" / "rayd" / "sdf" / "sphere_trace.h"
-DEVICE_MATH_PATH = ROOT / "src" / "sdf" / "derivatives.cuh"
+SPHERE_TRACE_PATH = ROOT / "src" / "sdf_device.cuh"
+DEVICE_MATH_PATH = ROOT / "src" / "sdf_device.cuh"
 TORCH_PACKAGE = ROOT / "python" / "rayd" / "_impl"
 CAPABILITY_MODULES = {
     "drjit": ROOT / "python" / "rayd" / "_impl" / "capabilities_jit.py",
@@ -496,7 +496,7 @@ class Adr0037ContractStateTests(AdrTestCase):
         self.assertTrue(backends["torch"]["capabilities"][CAPABILITY])
 
     def test_no_sdf_translation_unit_may_leave_the_nvcc_default_profile(self) -> None:
-        units = [unit for unit in self.compile_policy["translation_units"] if "/sdf/" in unit["source"]]
+        units = [unit for unit in self.compile_policy["translation_units"] if unit["source"] == "src/sdf.cu"]
         self.assertTrue(units, "the SDF translation units are not declared at all")
         for unit in units:
             with self.subTest(unit=f"{unit['backend']}:{unit['unit']}"):

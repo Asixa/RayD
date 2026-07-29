@@ -1,7 +1,7 @@
 // Copyright Xingyu Chen.
 // Exercises share6 accumulation headers coexist in a native smoke test.
 
-#include <rayd/diffraction/accumulation_optix_device.cuh>
-#include <rayd/reflection/accumulation_optix_device.cuh>
+#include <src/diffraction/accumulation_optix.cuh>
+#include <src/reflection/reflection_accumulation_optix.cuh>
 
 extern "C" __global__ void share6_accumulation_headers_coexist() {}

@@ -88,13 +88,11 @@ class ConceptAxisLayoutTests(unittest.TestCase):
                 "contracts.h",
                 "field_transport.cuh",
                 "math.h",
+                "utd.h",
                 "scattering_table.cuh",
             },
         )
-        self.assertEqual(
-            {path.name for path in include_root.iterdir() if path.is_dir()},
-            {"bvh", "diffraction", "edge", "jit", "reflection", "rt", "scene", "sdf", "transmission", "visibility"},
-        )
+        self.assertEqual({path.name for path in include_root.iterdir() if path.is_dir()}, {"jit"})
 
         jit_root = include_root / "jit"
         self.assertEqual([path for path in jit_root.iterdir() if path.is_dir()], [])
@@ -102,33 +100,14 @@ class ConceptAxisLayoutTests(unittest.TestCase):
             {path.name for path in jit_root.iterdir() if path.is_file()},
             {
                 "core.h",
-                "cuda_trace_backend.h",
-                "diffraction_accumulation.h",
-                "diffraction_paths.h",
+                "diffraction.h",
                 "edge.h",
-                "edge_bvh.h",
-                "edge_bvh_config.h",
-                "edge_optix_params.h",
                 "mesh.h",
                 "native_launch_audit.h",
                 "optix.h",
-                "optix_trace_backend.h",
-                "ray.h",
-                "reflection_accumulation.h",
-                "reflection_epc.h",
-                "reflection_trace.h",
+                "reflection.h",
                 "scene.h",
-                "scene_edge.h",
-                "scene_edge_optix.h",
-                "scene_optix.h",
                 "surfel.h",
-                "surfel_optix.h",
-                "surfel_trace_params.h",
-                "trace_backend.h",
-                "transform.h",
-                "triangle_bvh_gpu.h",
-                "types.h",
-                "utils.h",
                 "visibility.h",
             },
         )
@@ -139,54 +118,95 @@ class ConceptAxisLayoutTests(unittest.TestCase):
         self.assertFalse(any(include_root.rglob("drjit.h")))
         self.assertFalse((include_root / "shared").exists())
 
-    def test_torch_backend_private_headers_are_concept_owned(self):
-        expected = {
-            "src/bindings/tensor_contract.h",
-            "src/camera/camera.h",
-            "src/camera/camera_kernels.cuh",
-            "src/diffraction/accum_ad.h",
-            "src/diffraction/accum_params.h",
-            "src/diffraction/accum_reduce.h",
-            "src/diffraction/common.h",
-            "src/diffraction/paths_init.h",
-            "src/diffraction/paths_params.h",
-            "src/diffraction/pipeline.h",
-            "src/edge/bvh.h",
-            "src/edge/kernels.h",
-            "src/edge/optix_params.h",
-            "src/penetration/segment_penetration_kernels.h",
-            "src/penetration/segment_penetration_params.h",
-            "src/reflection/accum_params.h",
-            "src/reflection/accum_reduce.h",
-            "src/reflection/dedup.h",
-            "src/reflection/epc_field.h",
-            "src/reflection/epc_params.h",
-            "src/reflection/kernels.h",
-            "src/reflection/pipeline.h",
-            "src/reflection/trace_params.h",
-            "src/runtime/diagnostics.h",
-            "src/runtime/native_compat.h",
-            "src/runtime/optix_context.h",
-            "src/runtime/optix_pipeline.h",
-            "src/scene/cache.h",
-            "src/scene/cache_kernels.h",
-            "src/scene/geometry_kernels.h",
-            "src/scene/multipath_cuda.h",
-            "src/scene/optix_intersect_params.h",
-            "src/scene/triangle_bvh.h",
-            "src/sdf/derivatives.cuh",
-            "src/sdf/kernels.h",
-            "src/visibility/axial_edge_visibility_params.h",
-            "src/visibility/visibility.h",
-            "src/visibility/visibility_params.h",
-        }
-        actual = set()
-        for path in (ROOT / "src").rglob("*"):
-            if path.suffix not in {".h", ".cuh"}:
+    def test_public_headers_do_not_reach_private_sources(self):
+        offenders = []
+        for path in (ROOT / "include" / "rayd").rglob("*"):
+            if not path.is_file() or path.suffix.lower() not in {".h", ".hpp", ".cuh"}:
                 continue
-            if "namespace rayd::torch_backend" in path.read_text(encoding="utf-8"):
-                actual.add(path.relative_to(ROOT).as_posix())
-        self.assertEqual(actual, expected)
+            for target in re.findall(r'#\s*include\s*[<"]([^>"]+)[>"]', path.read_text(encoding="utf-8")):
+                normalized = target.replace("\\", "/")
+                if normalized.startswith("src/") or "/src/" in normalized or ".." in normalized.split("/"):
+                    offenders.append(f"{path.relative_to(ROOT).as_posix()}: {target}")
+        self.assertEqual(offenders, [])
+
+    def test_public_headers_are_not_forwarders(self):
+        offenders = []
+        for path in (ROOT / "include" / "rayd").rglob("*"):
+            if not path.is_file() or path.suffix.lower() not in {".h", ".hpp", ".cuh"}:
+                continue
+            text = re.sub(r"/\*.*?\*/", "", path.read_text(encoding="utf-8"), flags=re.DOTALL)
+            text = re.sub(r"//.*", "", text)
+            body = [
+                line
+                for line in text.splitlines()
+                if line.strip()
+                and not re.match(r"\s*#\s*pragma\s+once\b", line)
+                and not re.match(r"\s*#\s*include\b", line)
+            ]
+            if not body:
+                offenders.append(path.relative_to(ROOT).as_posix())
+        self.assertEqual(offenders, [], "public forwarding headers are forbidden")
+
+    def test_src_directories_are_real_multifile_modules(self):
+        native_suffixes = {".c", ".cc", ".cpp", ".cxx", ".cu", ".cuh", ".h", ".hpp"}
+        offenders = {}
+        for directory in (ROOT / "src").iterdir():
+            if not directory.is_dir():
+                continue
+            native_files = [
+                path for path in directory.iterdir() if path.is_file() and path.suffix.lower() in native_suffixes
+            ]
+            if native_files and len(native_files) < 3:
+                offenders[directory.relative_to(ROOT).as_posix()] = sorted(path.name for path in native_files)
+        self.assertEqual(offenders, {}, "one- and two-file native concepts belong directly under src/")
+
+    def test_private_headers_have_multiple_production_consumers(self):
+        native_suffixes = {".c", ".cc", ".cpp", ".cxx", ".cu", ".cuh", ".h", ".hpp"}
+        src_root = ROOT / "src"
+        production_sources = [
+            path for path in src_root.rglob("*") if path.is_file() and path.suffix.lower() in native_suffixes
+        ]
+        native_test_sources = [
+            path
+            for path in (ROOT / "tests" / "native").rglob("*")
+            if path.is_file() and path.suffix.lower() in native_suffixes
+        ]
+        sources = production_sources + native_test_sources
+        headers = [path for path in production_sources if path.suffix.lower() in {".h", ".hpp", ".cuh"}]
+        basename_counts = {}
+        for header in headers:
+            basename_counts[header.name] = basename_counts.get(header.name, 0) + 1
+        include_re = re.compile(r'#\s*include\s*[<"]([^>"]+)[>"]')
+        include_tokens = {
+            source: {target.replace("\\", "/") for target in include_re.findall(source.read_text(encoding="utf-8"))}
+            for source in sources
+        }
+        consumers = {}
+        for header in headers:
+            relative_root = header.relative_to(ROOT).as_posix()
+            relative_src = header.relative_to(src_root).as_posix()
+            spellings = {relative_root, relative_src}
+            if basename_counts[header.name] == 1:
+                spellings.add(header.name)
+            consumers[header] = {
+                source
+                for source, tokens in include_tokens.items()
+                if source != header and any(token in spellings or Path(token).name in spellings for token in tokens)
+            }
+        offenders = {
+            path.relative_to(ROOT).as_posix(): len(users) for path, users in consumers.items() if len(users) < 2
+        }
+        self.assertEqual(offenders, {}, "single-consumer private headers must be folded into their consumer")
+
+    def test_torch_backend_private_headers_are_concept_owned(self):
+        namespace = "namespace rayd::torch_backend"
+        private_headers = []
+        for path in (ROOT / "src").rglob("*"):
+            if path.is_file() and path.suffix.lower() in {".h", ".hpp", ".cuh"}:
+                if namespace in path.read_text(encoding="utf-8"):
+                    private_headers.append(path.relative_to(ROOT).as_posix())
+
+        self.assertTrue(private_headers)
         self.assertFalse((ROOT / "include/rayd/torch").exists())
 
     def test_torch_generated_ptx_headers_are_concept_owned(self):
@@ -216,8 +236,8 @@ class ConceptAxisLayoutTests(unittest.TestCase):
 
     def test_shared_physical_sources_have_one_root_owner(self):
         expected = {
-            "src/bvh/build_shared.cu",
-            "src/bvh/triangle_query_shared.cu",
+            "src/bvh_build_shared.cu",
+            "src/bvh_triangle_query_shared.cu",
             "src/edge/edge_shared.cu",
             "src/reflection/dedup_shared.cu",
             "src/scene/packing_shared.cu",

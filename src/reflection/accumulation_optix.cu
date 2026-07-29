@@ -6,7 +6,7 @@
 
 #include <rayd/math.h>
 #include <src/reflection/accum_params.h>
-#include <rayd/reflection/accumulation_optix_device.cuh>
+#include <src/reflection/reflection_accumulation_optix.cuh>
 
 namespace rayd::torch_backend {
 

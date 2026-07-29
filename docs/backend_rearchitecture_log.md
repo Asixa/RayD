@@ -114,7 +114,7 @@ The plan remains authoritative for goals and gates; the facts below are authorit
 ### Design decisions
 
 - **`TraceBackend` is host-lifecycle only.** The abstract base
-  (`backends/drjit/include/rayd/jit/trace_backend.h`) carries just `kind()`,
+  (`backends/drjit/include/rayd/jit/scene.h`) carries just `kind()`,
   `capabilities()`, `is_ready()` — three per-*batch* host virtuals. The POD batch
   trace methods from doc §5 are deliberately **not** added yet (they are the
   eager-axis P3 concern); adding them now would risk a virtual landing in a

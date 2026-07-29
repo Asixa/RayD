@@ -3,7 +3,7 @@
 
 """Enforcement gate for the per-translation-unit CUDA numeric flag contract.
 
-`include/rayd/rt/numeric_policy.h` freezes the two backends'
+`include/rayd/math.h` freezes the two backends'
 epsilon and sentinel divergences. It says nothing about the *compiler* numeric
 flags, and the two backends compile the same shared device-math headers under
 four different nvcc numeric profiles. `contracts/compile_policy.json`
@@ -44,7 +44,7 @@ TORCH = ROOT / "torch"
 CONTRACT_PATH = ROOT / "contracts" / "compile_policy.json"
 SCHEMA_PATH = ROOT / "contracts" / "compile_policy.schema.json"
 ADR_PATH = ROOT / "docs" / "adr" / "0035-cuda-compile-flag-policy.md"
-NUMERIC_POLICY = ROOT / "include" / "rayd" / "rt" / "numeric_policy.h"
+NUMERIC_POLICY = ROOT / "include" / "rayd" / "math.h"
 
 # Only flags that change device arithmetic. Anything else (-std, include dirs,
 # --extended-lambda, -Xcompiler, gencode) is out of scope by contract.

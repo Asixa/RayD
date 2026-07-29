@@ -17,10 +17,9 @@
 #include <src/reflection/pipeline.h>
 #include <src/runtime/optix_context.h>
 #include <src/reflection/accum_params.h>
-#include <src/reflection/dedup.h>
+#include <src/reflection/reflection_internal.h>
 #include <src/reflection/epc_field.h>
-#include <src/reflection/epc_params.h>
-#include <src/reflection/trace_params.h>
+#include <src/reflection/reflection_internal.h>
 #include <src/visibility/visibility_params.h>
 #include <src/scene/cache.h>
 #include <src/scene/multipath_cuda.h>
@@ -2756,13 +2755,13 @@ CoherentDiffractionResult diffraction_coherent_accumulation_forward(const SceneR
 
 } // namespace rayd::torch
 
-// ---- merged from src/diffraction/pipeline_part.cpp ----
+// OptiX diffraction pipeline setup.
 
 #include <src/diffraction/pipeline.h>
 
 #include <src/diffraction/accum_params.h>
 #include <src/diffraction/paths_params.h>
-#include <rayd/rt/optix_pipeline_contracts.h>
+#include <src/runtime/rt_internal.h>
 #include <rayd/diffraction/accumulation_torch_ptx.h>
 #include <rayd/diffraction/paths_torch_ptx.h>
 

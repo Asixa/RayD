@@ -202,7 +202,7 @@ rayd::torch::ScatteringEnsembleEvalResult rayd::torch::scattering_ensemble_eval(
                                          request.material_slot, request.coefficient, request.threshold);
 }
 
-// ---- merged from src/scattering/ensemble_ad_part.cu ----
+// Native derivatives for ensemble scattering.
 
 // ADR-014 op 1: native JVP/VJP companions of the Kirchhoff ensemble scattering
 // row physics (kernels/scattering_ensemble.cu). The forward is untouched; these

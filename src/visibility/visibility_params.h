@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include <rayd/visibility/segment_params.h>
+#include <src/visibility/segment_visibility.cuh>
 
 namespace rayd::torch_backend {
 

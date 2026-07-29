@@ -1,11 +1,11 @@
 // Copyright Xingyu Chen.
 // Implements edge support for edge bvh Dr.Jit.
 
-#include <rayd/jit/edge_bvh.h>
-#include <rayd/jit/edge_bvh_config.h>
+#include <rayd/jit/edge.h>
+#include <src/edge/edge_bvh_jit.h>
 #include <rayd/jit/native_launch_audit.h>
-#include <rayd/edge/bvh_build.h>
-#include <rayd/edge/edge_aabb.h>
+#include <src/edge/bvh_build.h>
+#include <src/bvh_build.h>
 
 #include <algorithm>
 #include <cstdlib>

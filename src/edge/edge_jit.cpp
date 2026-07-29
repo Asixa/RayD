@@ -10,19 +10,19 @@
 #include <drjit-core/jit.h>
 #include <drjit/while_loop.h>
 
-#include <rayd/jit/edge_bvh.h>
-#include <rayd/jit/edge_bvh_config.h>
+#include <src/bvh_host.h>
+#include <src/bvh_topology.h>
+#include <src/edge/edge_bvh_jit.h>
+#include <src/runtime/rt_internal.h>
 
-#include <rayd/bvh/host_topology.h>
-
-#include <rayd/jit/scene_edge.h>
-#include <rayd/jit/utils.h>
+#include <rayd/jit/edge.h>
+#include <rayd/jit/core.h>
 
 namespace rayd {
 
 namespace {
 
-constexpr size_t EdgeBVHTraversalStackSize = static_cast<size_t>(shared::edge::kBvhTraversalStackDepth);
+constexpr size_t EdgeBVHTraversalStackSize = static_cast<size_t>(shared::bvh::kBvhTraversalStackDepth);
 constexpr int EdgeBVHPackedBoundsStride = 6;
 constexpr int EdgeBVHPackedChildrenStride = 2;
 constexpr size_t EdgeBVHDirtyRefitMinPrimitives = 65536;
@@ -198,7 +198,7 @@ float bbox_overlap_surface_area(const ScalarVector3f& a_min, const ScalarVector3
 
 /// Host-side dense BVH after compaction: topology, leaf primitives, and per-node
 /// bounds. The compaction and its preorder emission are the primitive-agnostic
-/// host algorithms shared through <rayd/bvh/host_topology.h>.
+/// host algorithms shared through <src/bvh_host.h>.
 using CompactedEdgeBVH = shared::bvh::HostCompactedBvh<ScalarVector3f>;
 
 float bbox_cost_inflated(const ScalarVector3f& bbox_min, const ScalarVector3f& bbox_max, float inflation) {
@@ -1684,7 +1684,6 @@ template ClosestEdgeCandidate SceneEdge::nearest_edge<false>(const RayAD& ray, M
 } // namespace rayd
 
 // Consolidated scene-edge OptiX host facade.
-#include <rayd/jit/scene_edge_optix.h>
 
 #include <algorithm>
 #include <cmath>
@@ -1697,8 +1696,6 @@ template ClosestEdgeCandidate SceneEdge::nearest_edge<false>(const RayAD& ray, M
 
 #include <rayd/jit/optix.h>
 
-#include <rayd/jit/edge_bvh.h>
-#include <rayd/jit/edge_optix_params.h>
 #include <edge_optix_ptx.h>
 #include <rayd/jit/native_launch_audit.h>
 

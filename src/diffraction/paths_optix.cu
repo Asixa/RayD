@@ -6,7 +6,7 @@
 
 #include <rayd/math.h>
 #include <src/diffraction/paths_params.h>
-#include <rayd/diffraction/utd.h>
+#include <rayd/utd.h>
 
 namespace rayd::torch_backend {
 

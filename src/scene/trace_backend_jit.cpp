@@ -1,7 +1,7 @@
 // Copyright Xingyu Chen.
 // Implements scene support for trace backend Dr.Jit.
 
-#include <rayd/jit/cuda_trace_backend.h>
+#include <rayd/jit/scene.h>
 
 #include <algorithm>
 #include <vector>
@@ -10,11 +10,11 @@
 
 #include <rayd/jit/native_launch_audit.h>
 #include <src/scene/cuda_multipath_gpu_jit.h>
-#include <rayd/jit/triangle_bvh_gpu.h>
-#include <rayd/jit/utils.h>
+#include <rayd/jit/scene.h>
+#include <rayd/jit/core.h>
 
-#include <rayd/bvh/host_topology.h>
-#include <rayd/bvh/topology.h>
+#include <src/bvh_host.h>
+#include <src/bvh_topology.h>
 
 namespace rayd {
 
@@ -628,7 +628,7 @@ template MaskAD CudaTraceBackend::shadow_test<false>(const RayAD&, MaskAD) const
 } // namespace rayd
 
 // Consolidated OptiX trace backend implementation.
-#include <rayd/jit/optix_trace_backend.h>
+#include <rayd/jit/scene.h>
 
 #include <algorithm>
 #include <cctype>

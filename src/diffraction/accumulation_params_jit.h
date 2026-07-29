@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <type_traits>
 
-#include <rayd/diffraction/contracts.h>
+#include <src/diffraction/contracts.h>
 
 namespace rayd {
 

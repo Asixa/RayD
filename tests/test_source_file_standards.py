@@ -1,5 +1,5 @@
 # Copyright Xingyu Chen.
-# Tests source file ownership and opening header standards.
+# Tests source ownership, layout, and opening headers.
 
 from __future__ import annotations
 
@@ -16,7 +16,12 @@ NATIVE_SUFFIXES = MAINTAINED_SUFFIXES - {".py", ".pyi"}
 
 
 def tracked_files() -> list[Path]:
-    result = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, check=True, capture_output=True)
+    result = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    )
     paths = []
     for raw in result.stdout.split(b"\0"):
         if not raw:
@@ -75,6 +80,51 @@ class SourceFileStandardsTests(unittest.TestCase):
                 if path == ROOT / "include" / "rayd" / "math.h":
                     continue
                 if declaration.search(path.read_text(encoding="utf-8")):
+                    offenders.append(path.relative_to(ROOT).as_posix())
+        self.assertEqual(offenders, [])
+
+    def test_shared_triangle_normal_and_dual_scalar_have_one_owner(self):
+        math_header = (ROOT / "include" / "rayd" / "math.h").read_text(encoding="utf-8")
+        self.assertIn("triangle_unit_normal", math_header)
+        self.assertIn("triangle_unit_normal_jvp", math_header)
+
+        for relative in (
+            "src/penetration/penetration.cu",
+            "src/reflection/reflection_kernels.cu",
+            "src/scene/intersection.cu",
+        ):
+            source = (ROOT / relative).read_text(encoding="utf-8")
+            self.assertIn("shared::math::triangle_unit_normal", source)
+            self.assertNotRegex(source, r"__device__\s+float3\s+(?:unit_normal|normal_from_edges|normal_jvp)\s*\(")
+
+        field_ad = (ROOT / "src" / "field_transport_ad.cuh").read_text(encoding="utf-8")
+        self.assertIn("using DualF = utd::Dual;", field_ad)
+        self.assertNotRegex(field_ad, r"\bstruct\s+DualF\b")
+
+    def test_native_sources_have_no_adjacent_duplicate_includes(self):
+        offenders = []
+        for root in (ROOT / "include", ROOT / "src"):
+            for path in root.rglob("*"):
+                if not path.is_file() or path.suffix.lower() not in NATIVE_SUFFIXES:
+                    continue
+                previous_include = None
+                for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                    stripped = line.strip()
+                    if stripped.startswith("#include"):
+                        if stripped == previous_include:
+                            offenders.append(f"{path.relative_to(ROOT).as_posix()}:{line_number}: {stripped}")
+                        previous_include = stripped
+                    else:
+                        previous_include = None
+        self.assertEqual(offenders, [])
+
+    def test_native_comments_do_not_contain_merge_history(self):
+        offenders = []
+        for root in (ROOT / "include", ROOT / "src"):
+            for path in root.rglob("*"):
+                if not path.is_file() or path.suffix.lower() not in NATIVE_SUFFIXES:
+                    continue
+                if "merged from" in path.read_text(encoding="utf-8").lower():
                     offenders.append(path.relative_to(ROOT).as_posix())
         self.assertEqual(offenders, [])
 

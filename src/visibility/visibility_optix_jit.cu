@@ -1,8 +1,10 @@
 // Copyright Xingyu Chen.
 // Implements visibility support for visibility optix Dr.Jit.
 
+#define RAYD_OPTIX_DEVICE_PROGRAM 1
+
 #include <src/visibility/segment_params_jit.h>
-#include <rayd/visibility/segment_optix_device.cuh>
+#include <src/visibility/segment_visibility.cuh>
 
 namespace rayd {
 

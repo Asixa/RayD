@@ -9,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACTS_H = ROOT / "include" / "rayd" / "contracts.h"
-POLICY_H = ROOT / "include" / "rayd" / "rt" / "numeric_policy.h"
+POLICY_H = ROOT / "include" / "rayd" / "math.h"
 OPERATIONS = json.loads((ROOT / "contracts" / "operations.json").read_text(encoding="utf-8"))
 
 

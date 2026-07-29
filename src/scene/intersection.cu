@@ -1,5 +1,5 @@
 // Copyright Xingyu Chen.
-// Implements scene support for intersection.
+// Implements scene intersection CUDA kernels and derivatives.
 
 #include <src/scene/geometry_kernels.h>
 #include <rayd/contracts.h>
@@ -366,7 +366,7 @@ at::Tensor intersect_forward_t_only_cuda(const SceneCache& scene, const at::Tens
 
 } // namespace rayd::torch_backend
 
-// ---- merged from src/scene/intersection_backward_part.cu ----
+// Intersection backward and tangent kernels.
 
 #include <src/scene/geometry_kernels.h>
 #include <rayd/math.h>
@@ -451,21 +451,6 @@ __device__ float3 solve_transpose_columns(float3 c0, float3 c1, float3 c2, float
     return solve_columns(r0, r1, r2, rhs);
 }
 
-__device__ float3 normal_from_edges(float3 e1, float3 e2, float* length_out) {
-    const float3 q = cross3(e1, e2);
-    float length = sqrtf(fmaxf(dot3(q, q), 1e-20f));
-    if (length_out != nullptr)
-        *length_out = length;
-    return mul3(1.f / length, q);
-}
-
-__device__ float3 normal_jvp(float3 e1, float3 e2, float3 de1, float3 de2) {
-    float length = 0.f;
-    const float3 n = normal_from_edges(e1, e2, &length);
-    const float3 dq = add3(cross3(de1, e2), cross3(e1, de2));
-    return mul3(1.f / length, sub3(dq, mul3(dot3(n, dq), n)));
-}
-
 __global__ void intersect_backward_kernel(
     const float* __restrict__ vertices, const int* __restrict__ faces, const float* __restrict__ ray_o,
     const float* __restrict__ ray_d, const bool* __restrict__ active, const int* __restrict__ tape_prim_id,
@@ -522,7 +507,7 @@ __global__ void intersect_backward_kernel(
     const float3 gp = read_vec3_or_zero(grad_p, ray_idx, grad_p_stride0, grad_p_stride1);
     const float3 gn = add3(read_vec3_or_zero(grad_n, ray_idx, grad_n_stride0, grad_n_stride1),
                            read_vec3_or_zero(grad_geo_n, ray_idx, grad_geo_n_stride0, grad_geo_n_stride1));
-    const float3 normal = normal_from_edges(e1, e2, nullptr);
+    const float3 normal = ::rayd::shared::math::triangle_unit_normal(e1, e2, nullptr);
     const float normal_length = sqrtf(fmaxf(dot3(cross3(e1, e2), cross3(e1, e2)), 1e-20f));
     const float3 gq = mul3(1.f / normal_length, sub3(gn, mul3(dot3(normal, gn), normal)));
     const float3 ge1_normal = cross3(e2, gq);
@@ -851,7 +836,7 @@ __global__ void intersect_jvp_kernel(
         tangent_p[ray_idx * 3 + 2] = dp.z;
     }
     if (want_normal) {
-        const float3 dn = normal_jvp(e1, e2, de1, de2);
+        const float3 dn = ::rayd::shared::math::triangle_unit_normal_jvp(e1, e2, de1, de2);
         if (want_shading) {
             tangent_n[ray_idx * 3 + 0] = dn.x;
             tangent_n[ray_idx * 3 + 1] = dn.y;

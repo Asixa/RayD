@@ -6,9 +6,15 @@
 #define RAYD_OPTIX_TARGET_VERSION 80100
 #define RAYD_OPTIX_TARGET_ABI 93
 
+#if defined(__CUDACC__) && (defined(OPTIX_OPTIX_H) || defined(__optix_optix_h__))
+#define RAYD_JIT_OPTIX_SDK_DEVICE_HEADER_ACTIVE 1
+#endif
+
+#if !defined(RAYD_JIT_OPTIX_SDK_DEVICE_HEADER_ACTIVE)
+
 #include <drjit-core/optix.h>
 
-#include <rayd/rt/optix_sbt.h>
+#include <rayd/contracts.h>
 
 #include <string>
 
@@ -369,3 +375,5 @@ OptixProgramGroup make_hitgroup(OptixDeviceContext context, OptixModule module, 
 void* make_sbt_record(OptixProgramGroup group);
 
 } // namespace rayd
+
+#endif

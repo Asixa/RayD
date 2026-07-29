@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARED = ROOT / "include" / "rayd" / "diffraction"
+SHARED = ROOT / "src" / "diffraction"
 
 
 class Share4DiffractionOptixContractsTests(unittest.TestCase):
@@ -15,6 +15,7 @@ class Share4DiffractionOptixContractsTests(unittest.TestCase):
     def setUpClass(cls):
         cls.contract_path = SHARED / "contracts.h"
         cls.contract = cls.contract_path.read_text(encoding="utf-8")
+        cls.public_contract = (ROOT / "include/rayd/contracts.h").read_text(encoding="utf-8")
         cls.path_headers = (
             ROOT / "src" / "diffraction" / "paths_params_jit.h",
             ROOT / "src" / "diffraction" / "paths_params.h",
@@ -58,13 +59,10 @@ class Share4DiffractionOptixContractsTests(unittest.TestCase):
             "DiffractionAccumOutputField::Count) == 29u",
             "DiffractionAccumTapeField::Count) == 5u",
         ):
-            self.assertIn(token, self.contract)
+            self.assertIn(token, self.public_contract + self.contract)
 
     def test_backend_public_enums_derive_from_shared_values(self):
-        headers = (
-            ROOT / "include" / "rayd" / "jit" / "diffraction_accumulation.h",
-            ROOT / "src" / "diffraction" / "common.h",
-        )
+        headers = (ROOT / "include" / "rayd" / "jit" / "diffraction.h", ROOT / "src" / "diffraction" / "common.h")
         combined = "\n".join(path.read_text(encoding="utf-8") for path in headers)
         self.assertGreaterEqual(combined.count("DiffractionStrategyBit::"), 6)
         self.assertGreaterEqual(combined.count("DiffractionSampleSequence::"), 4)
@@ -74,7 +72,7 @@ class Share4DiffractionOptixContractsTests(unittest.TestCase):
     def test_path_params_validate_only_common_sub_layouts(self):
         for path in self.path_headers:
             source = path.read_text(encoding="utf-8")
-            self.assertIn("<rayd/diffraction/contracts.h>", source)
+            self.assertIn("<src/diffraction/contracts.h>", source)
             self.assertIn("is_standard_layout_v<DfrPathParams>", source)
             self.assertEqual(source.count("RAYD_ASSERT_DFR_PATH_PREFIX("), 19)
             self.assertEqual(source.count("RAYD_ASSERT_DFR_PATH_TAIL("), 7)
@@ -92,7 +90,7 @@ class Share4DiffractionOptixContractsTests(unittest.TestCase):
     def test_accum_params_validate_grid_output_and_tape_sub_layouts(self):
         for path in self.accum_headers:
             source = path.read_text(encoding="utf-8")
-            self.assertIn("<rayd/diffraction/contracts.h>", source)
+            self.assertIn("<src/diffraction/contracts.h>", source)
             self.assertIn("is_standard_layout_v<DfrAccumParams>", source)
             self.assertEqual(source.count("RAYD_ASSERT_DFR_GRID("), 10)
             self.assertEqual(source.count("RAYD_ASSERT_DFR_ACCUM_OUTPUT("), 30)

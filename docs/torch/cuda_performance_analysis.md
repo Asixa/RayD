@@ -757,7 +757,7 @@ Target of record: `build_ms` - 1550 (native, grid 192) / - 142 (grid 64 vs RayD 
 
 - Location: [trace_optix.cu:187-216](../src/torch_ext/reflection/trace_optix.cu#L187), feeding
   ~24 independent SoA output arrays defined in
-  [trace_params.h:44-67](../../src/reflection/trace_params.h#L44).
+  [trace_params.h:44-67](../../src/reflection/reflection_internal.h#L44).
 - Original problem: outputs were indexed `slot = ray_index * B + bounce`. For a fixed
   bounce, adjacent threads wrote addresses that differed by `B`, so each warp store could
   degenerate into many transactions.

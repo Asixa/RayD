@@ -5,7 +5,7 @@
 #include <optix_device.h>
 
 #include <src/reflection/accumulation_params_jit.h>
-#include <rayd/reflection/accumulation_optix_device.cuh>
+#include <src/reflection/reflection_accumulation_optix.cuh>
 
 namespace rayd {
 

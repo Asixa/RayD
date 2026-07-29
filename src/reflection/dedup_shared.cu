@@ -1,7 +1,7 @@
 // Copyright Xingyu Chen.
 // Implements reflection support for dedup shared.
 
-#include <rayd/reflection/dedup.h>
+#include <src/reflection/reflection_internal.h>
 
 #include <cuda_runtime.h>
 

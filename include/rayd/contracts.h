@@ -1,8 +1,9 @@
 // Copyright Xingyu Chen.
-// Declares the Torch contracts API.
+// Declares backend-neutral scalar and SBT ABI contracts.
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <type_traits>
 
@@ -12,6 +13,15 @@ namespace rayd::shared {
 // units without pulling in either backend.
 inline constexpr std::int32_t InvalidSignedId = -1;
 inline constexpr std::uint32_t InvalidUnsignedId = 0xffffffffu;
+inline constexpr std::int32_t BvhTreeletMaxLeaves = 7;
+inline constexpr std::int32_t BvhTreeletMinPrimitives = 65536;
+inline constexpr std::int32_t BvhTreeletMaxPrimitives = 500000;
+inline constexpr std::int32_t BvhTreeletMinSubtreeLeaves = 32;
+inline constexpr float BvhTreeletCostInflationRatio = 1e-4f;
+inline constexpr std::int32_t BvhLeafSize = 4;
+inline constexpr std::int32_t BvhTopKMax = 16;
+inline constexpr std::int32_t BvhTraversalStackDepth = 64;
+inline constexpr std::int32_t EdgeOptixTopKMax = 16;
 
 inline constexpr float GeneralEpsilon = 1.0e-5f;
 inline constexpr float RayEpsilon = 1.0e-3f;
@@ -104,3 +114,39 @@ static_assert(static_cast<std::uint8_t>(NearestRayEdgeField::Count) == 9u);
 static_assert(static_cast<std::uint8_t>(NearestEdgesTopKField::Count) == 9u);
 
 } // namespace rayd::shared
+namespace rayd::shared::optix {
+
+enum class DiffractionStrategyBit : std::int32_t {
+    Direct = 1 << 0,
+    Keller = 1 << 1,
+    SuffixReflection = 1 << 2,
+};
+
+enum class DiffractionSampleSequence : std::int32_t {
+    Hash = 0,
+    Sobol = 1,
+};
+
+enum class DiffractionReceiverModel : std::int32_t {
+    MatchedIsotropic = 0,
+};
+
+inline constexpr std::size_t SbtRecordAlignment = 16u;
+inline constexpr std::size_t SbtRecordHeaderSize = 32u;
+
+template <typename T> struct alignas(SbtRecordAlignment) SbtRecord {
+    std::byte header[SbtRecordHeaderSize];
+    T data;
+};
+
+struct alignas(SbtRecordAlignment) EmptySbtRecord {
+    std::byte header[SbtRecordHeaderSize];
+};
+
+static_assert(std::is_standard_layout_v<EmptySbtRecord>);
+static_assert(std::is_trivially_copyable_v<EmptySbtRecord>);
+static_assert(alignof(EmptySbtRecord) == SbtRecordAlignment);
+static_assert(sizeof(EmptySbtRecord) == SbtRecordHeaderSize);
+static_assert(offsetof(SbtRecord<std::uint32_t>, data) == SbtRecordHeaderSize);
+
+} // namespace rayd::shared::optix

@@ -5,7 +5,7 @@
 
 #include <cstdint>
 
-#include <rayd/edge/optix_contracts.h>
+#include <src/edge/optix_contracts.h>
 
 namespace rayd::torch_backend {
 

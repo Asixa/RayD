@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <type_traits>
 
-#include <rayd/scene/packing.h>
+#include <src/scene/scene_internal.h>
 
 using rayd::shared::scene::GlobalGeometryPackingParams;
 using rayd::shared::scene::GlobalVertexTangentPackingParams;

@@ -9,18 +9,19 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class SharedHeaderTests(unittest.TestCase):
-    def test_utd_headers_have_one_canonical_copy(self):
-        canonical = ROOT / "include" / "rayd" / "diffraction"
-        self.assertTrue((canonical / "utd.h").is_file())
-        self.assertTrue((canonical / "utd_types.h").is_file())
-        self.assertFalse((ROOT / "include" / "rayd" / "utd").exists())
+    def test_utd_has_one_canonical_public_owner(self):
+        canonical = ROOT / "include" / "rayd" / "utd.h"
+        self.assertTrue(canonical.is_file())
+        self.assertFalse((ROOT / "include" / "rayd" / "diffraction").exists())
+        text = canonical.read_text(encoding="utf-8")
+        self.assertIn("namespace rayd::shared::diffraction", text)
+        self.assertIn("first_order_diffraction_parameter", text)
 
     def test_backends_use_canonical_include(self):
-        diffraction = ROOT / "include" / "rayd" / "diffraction"
-        shared_algo = (diffraction / "accumulation_algo.h").read_text(encoding="utf-8")
-        self.assertIn("<rayd/diffraction/utd.h>", shared_algo)
+        shared_algo = (ROOT / "src" / "diffraction" / "accumulation.h").read_text(encoding="utf-8")
+        self.assertIn("<rayd/utd.h>", shared_algo)
         self.assertNotIn("<utd/", shared_algo)
-        shared_device = (diffraction / "accumulation_optix_device.cuh").read_text(encoding="utf-8")
+        shared_device = (ROOT / "src" / "diffraction" / "accumulation_optix.cuh").read_text(encoding="utf-8")
         self.assertNotIn("<utd/", shared_device)
 
         sources = [
@@ -29,7 +30,7 @@ class SharedHeaderTests(unittest.TestCase):
         ]
         for source in sources:
             text = source.read_text(encoding="utf-8")
-            self.assertIn("<rayd/diffraction/accumulation_optix_device.cuh>", text)
+            self.assertIn("<src/diffraction/accumulation_optix.cuh>", text)
             self.assertNotIn("<utd/", text)
 
 

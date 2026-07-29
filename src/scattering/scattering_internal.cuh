@@ -99,7 +99,7 @@ inline int64_t check_scattering_chain_ensemble_request(const ScatteringChainEnse
 
 #include <optional>
 
-#include <src/field_transport/ad.cuh>
+#include <src/field_transport_ad.cuh>
 
 // Backward / JVP companion kernels for the field transport forwards
 // (plan 07 AD-1 materials/frequency, AD-2 geometry). Fixed-topology contract:

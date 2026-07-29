@@ -248,7 +248,7 @@ SceneEdgeRecordsResult scene_edge_records(const SceneResource& scene) {
 
 } // namespace rayd::torch
 
-// ---- merged from src/scene/scene_cache_part.cpp ----
+// Scene cache and acceleration-structure lifecycle.
 
 #include <src/scene/cache.h>
 #include <src/runtime/optix_context.h>
@@ -256,9 +256,9 @@ SceneEdgeRecordsResult scene_edge_records(const SceneResource& scene) {
 #include <src/edge/bvh.h>
 #include <src/scene/cache_kernels.h>
 #include <src/scene/triangle_bvh.h>
-#include <rayd/bvh/build.h>
-#include <rayd/bvh/host_topology.h>
-#include <rayd/edge/bvh_build.h>
+#include <src/bvh_build.h>
+#include <src/bvh_host.h>
+#include <src/edge/bvh_build.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>

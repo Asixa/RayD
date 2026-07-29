@@ -1,10 +1,9 @@
 // Copyright Xingyu Chen.
 // Implements edge support for edge shared.
 
-#include <rayd/edge/bvh_build.h>
+#include <src/edge/bvh_build.h>
 
-#include <rayd/bvh/build.h>
-#include <rayd/bvh/refit.h>
+#include <src/bvh_build.h>
 
 namespace rayd::shared::edge {
 namespace {
@@ -86,13 +85,13 @@ void launch_refit_selected_internal_nodes_async(const InternalNodeRefitParams& p
 
 } // namespace rayd::shared::edge
 
-#include <rayd/edge/bvh_query.h>
+#include <src/edge/bvh_query.h>
 
 #include <cuda_runtime.h>
 #include <math_constants.h>
 
-#include <rayd/bvh/traversal_common.cuh>
-#include <rayd/edge/edge_distance.h>
+#include <src/bvh_query_device.cuh>
+#include <src/edge/edge_distance.h>
 #include <rayd/math.h>
 
 namespace rayd::shared::edge {
@@ -262,7 +261,7 @@ __device__ __forceinline__ void initialize_output(const EdgeQueryOutputView& out
 }
 
 // The depth-major stack push/load helpers and the near/far tie-break are shared
-// with any BVH consumer via <rayd/bvh/traversal_common.cuh>; the edge
+// with any BVH consumer via <src/bvh_query_device.cuh>; the edge
 // query calls bvh::stack_push / bvh::stack_load / bvh::near_child_is_left so the
 // coalesced indexing and traversal order stay bitwise identical.
 
@@ -483,10 +482,6 @@ void launch_ray_bvh_query_async(const RayBvhQueryParams& params) {
 
 } // namespace rayd::shared::edge
 
-#include <rayd/edge/edge_aabb.h>
-
-#include <cuda_runtime.h>
-
 namespace rayd::shared::edge {
 namespace aabb_detail {
 
@@ -529,14 +524,6 @@ void launch_edge_aabb(int edge_count, const float* edge_p0_x, const float* edge_
 }
 
 } // namespace rayd::shared::edge
-
-#include <rayd/edge/edge_distance.h>
-
-#include <cuda_runtime.h>
-#include <math_constants.h>
-
-#include <rayd/edge/edge_distance.h>
-#include <rayd/math.h>
 
 namespace rayd::shared::edge {
 namespace distance_detail {

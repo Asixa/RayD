@@ -318,7 +318,7 @@ rayd::torch::ScatteringPatchIntegralEvalResult rayd::torch::scattering_patch_int
                                                p.heights, p.quad_a, p.quad_b, p.quad_w, p.k0);
 }
 
-// ---- merged from src/scattering/patch_ad_part.cu ----
+// Native derivatives for coherent patch scattering.
 
 // ADR-014 op 2 companions: VJP/JVP of the realization-coherent phase-screen
 // patch integral (forward in scattering_patch_integral.cu).

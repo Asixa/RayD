@@ -8,21 +8,14 @@
 #include <src/diffraction/accumulation_params_jit.h>
 #include <src/diffraction/paths_params_jit.h>
 #include <src/reflection/accumulation_params_jit.h>
-#include <rayd/reflection/epc_params.h>
-#include <rayd/reflection/trace_params.h>
-#include <rayd/visibility/segment_params.h>
+#include <src/reflection/reflection_internal.h>
+#include <src/visibility/segment_visibility.cuh>
 
-// Host/device seam for the CUDA fused multipath executor (P4 Stage D). The
-// launchers below run the migrated, traverser-templated multipath algorithm
-// bodies (concept-owned shared/*/*_algo.h) with Traverser = CudaBvhTraverser over the
-// scene-level triangle BVH, one thread per lane (the lane index is the former
-// optixGetLaunchIndex). They are the pure-CUDA counterpart of the OptiX
-// pipeline launches in scene_multipath.cpp; each owns its own non-blocking
-// stream and traversal-stack scratch and synchronizes before returning, exactly
-// like the P3 triangle_bvh.cu query launchers.
-//
-// This header is host-safe (the params structs are POD with std::uint64_t
-// handles) so both cuda_trace_backend.cpp and cuda_multipath.cu include it.
+// Host/device seam for CUDA fused multipath execution. These launchers run
+// shared traversal algorithms over the scene-level triangle BVH, one thread per
+// lane. Each owns its non-blocking stream and traversal scratch and synchronizes
+// before returning. Host-safe POD parameters keep the host and device launch
+// contracts identical.
 
 namespace rayd {
 

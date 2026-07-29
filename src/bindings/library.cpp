@@ -73,7 +73,7 @@ int64_t handle(const ScenePtr& scene) {
 // destruction runs from Python teardown under the GIL. Releasing the GIL
 // around the native body would need refcounted scene ownership first.
 
-// Existing pybind entry points kept as compatibility wrappers during migration.
+// Python-facing wrappers translate optional values and tuple results around the native operators.
 py::tuple intersect_forward_op(int64_t, at::Tensor, at::Tensor, at::Tensor, py::object);
 py::tuple intersect_forward_flags_op(int64_t, at::Tensor, at::Tensor, at::Tensor, py::object, int64_t);
 at::Tensor intersect_forward_t_op(int64_t, at::Tensor, at::Tensor, at::Tensor, py::object);

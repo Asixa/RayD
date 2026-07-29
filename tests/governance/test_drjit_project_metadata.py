@@ -175,10 +175,10 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertNotIn("launch_segment_visibility_detached(", body)
         self.assertIn("out_visible_b", body)
         self.assertIn("segment_pair_visibility_pipeline_config", source)
-        shared_segment_source = (WORKSPACE_ROOT / "include" / "rayd" / "visibility" / "segment_algo.h").read_text(
+        shared_segment_source = (WORKSPACE_ROOT / "src" / "visibility" / "segment_visibility.cuh").read_text(
             encoding="utf-8"
         )
-        self.assertIn("<rayd/visibility/segment_optix_device.cuh>", segment_source)
+        self.assertIn("<src/visibility/segment_visibility.cuh>", segment_source)
         self.assertIn("params.out_first_blocked_prim[ray]", shared_segment_source)
 
     def test_public_optix_cold_create_matrix_covers_multipath_apis(self):

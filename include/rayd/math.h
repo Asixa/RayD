@@ -9,13 +9,56 @@
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <type_traits>
 
 #include <rayd/contracts.h>
-#include <rayd/rt/numeric_policy.h>
-#include <rayd/rt/qualifiers.h>
+
+#if defined(__CUDACC__)
+#define RAYD_DEVICE __device__ __forceinline__
+#define RAYD_HOST_DEVICE __host__ __device__ __forceinline__
+#else
+#define RAYD_DEVICE inline
+#define RAYD_HOST_DEVICE inline
+#endif
 
 #define RAYD_MATH_INLINE RAYD_HOST_DEVICE
+
+namespace rayd::shared::rt {
+
+// Numeric constants are frozen with their translation-unit profiles in contracts/compile_policy.json.
+struct NumericPolicy {
+    float ray_tmin;
+    float shadow_tmin;
+    float endpoint_offset;
+    float parallel_epsilon;
+    bool watertight_triangles;
+};
+
+inline constexpr NumericPolicy kDrJitLegacyProfile{RayEpsilon, ShadowEpsilon, 1.0e-5f, 1.0e-7f, false};
+inline constexpr NumericPolicy kTorchLegacyProfile{SmallEpsilon, 1.0e-5f, 1.0e-5f, 1.0e-7f, false};
+
+inline constexpr float kMultipathTraceTMin = 1.0e-5f;
+inline constexpr float kTraceTMaxFinite = 1.0e8f;
+inline constexpr float kMultipathRayBias = 1.0e-5f;
+inline constexpr float kMinSegmentLength = 2.0e-5f;
+inline constexpr float kEpcBarycentricSlack = 1.0e-4f;
+inline constexpr float kNormalizeFloor = 1.0e-12f;
+inline constexpr float kEdgeDistanceEpsilon = 1.0e-7f;
+inline constexpr float kSurfelEndpointOffset = ShadowEpsilon;
+inline constexpr float kMissDistance = std::numeric_limits<float>::infinity();
+inline constexpr float kReflectionTraceMissDistance = 1.0e8f;
+
+static_assert(kDrJitLegacyProfile.ray_tmin == RayEpsilon);
+static_assert(kDrJitLegacyProfile.shadow_tmin == ShadowEpsilon);
+static_assert(kTorchLegacyProfile.ray_tmin == SmallEpsilon);
+static_assert(kSurfelEndpointOffset == ShadowEpsilon);
+static_assert(kMultipathTraceTMin == GeneralEpsilon);
+static_assert(kReflectionTraceMissDistance == kTraceTMaxFinite);
+static_assert(kDrJitLegacyProfile.ray_tmin != kTorchLegacyProfile.ray_tmin);
+static_assert(kReflectionTraceMissDistance != kMissDistance);
+
+} // namespace rayd::shared::rt
 
 namespace rayd::shared::math {
 
@@ -80,6 +123,20 @@ template <typename V> RAYD_MATH_INLINE constexpr V cross(V a, V b) {
     };
 }
 
+template <typename V> RAYD_MATH_INLINE V triangle_unit_normal(V edge1, V edge2, float* length = nullptr) {
+    const V raw = cross(edge1, edge2);
+    const float norm = sqrtf(fmaxf(dot(raw, raw), 1.0e-20f));
+    if (length != nullptr)
+        *length = norm;
+    return scale(raw, 1.0f / norm);
+}
+
+template <typename V> RAYD_MATH_INLINE V triangle_unit_normal_jvp(V edge1, V edge2, V edge1_tangent, V edge2_tangent) {
+    float length = 0.0f;
+    const V normal = triangle_unit_normal(edge1, edge2, &length);
+    const V raw_tangent = add(cross(edge1_tangent, edge2), cross(edge1, edge2_tangent));
+    return scale(subtract(raw_tangent, scale(normal, dot(normal, raw_tangent))), 1.0f / length);
+}
 template <typename T> RAYD_MATH_INLINE Vec3<T> load_vec3(const T* values, std::int64_t index) {
     const std::int64_t base = index * 3;
     return {values[base], values[base + 1], values[base + 2]};

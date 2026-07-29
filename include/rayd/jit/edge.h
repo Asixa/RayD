@@ -1,10 +1,18 @@
 // Copyright Xingyu Chen.
-// Declares the Dr.Jit edge API.
+// Declares the Dr.Jit edge-query API and its native launch contracts.
 
 #pragma once
 
+#include <algorithm>
+#include <cctype>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <stdexcept>
+#include <string>
+#include <vector>
+#include <rayd/contracts.h>
 #include <rayd/jit/core.h>
-#include <rayd/jit/ray.h>
 
 namespace rayd {
 
@@ -170,6 +178,319 @@ struct SceneEdgeTopology {
 
     DRJIT_STRUCT(SceneEdgeTopology, v0, v1, v0_global, v1_global, face0_local, face1_local, face0_global, face1_global,
                  opposite_vertex0, opposite_vertex1, opposite_vertex0_global, opposite_vertex1_global)
+};
+
+} // namespace rayd
+
+namespace rayd {
+
+// Retained edge-BVH build controls after configuration convergence. GpuTreelet
+// plus Overlap is the product path. None is a benchmark-only pure-LBVH baseline,
+// while Serial is a deterministic debug mode without a performance commitment.
+
+/// Optional optimization pass applied after the initial BVH build.
+enum class EdgeBVHPostBuildStrategy {
+    None,      ///< Benchmark/reference pure-LBVH baseline only.
+    GpuTreelet ///< GPU treelet reoptimization (default).
+};
+
+/// Whether build stages run serially or overlap across CUDA streams.
+enum class EdgeBVHBuildStreamMode {
+    Serial, ///< Deterministic debug mode.
+    Overlap ///< Product default.
+};
+
+constexpr EdgeBVHPostBuildStrategy EdgeBVHDefaultPostBuildStrategy = EdgeBVHPostBuildStrategy::GpuTreelet;
+constexpr EdgeBVHBuildStreamMode EdgeBVHDefaultBuildStreamMode = EdgeBVHBuildStreamMode::Overlap;
+constexpr int EdgeBVHLeafSize = shared::BvhLeafSize;
+
+/// Lower-case an env-var value and map '-' to '_' so mode names compare uniformly.
+inline std::string normalize_edge_bvh_mode_value(const char* value) {
+    std::string normalized = value != nullptr ? std::string(value) : std::string();
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char ch) -> char {
+        if (ch == '-') {
+            return '_';
+        }
+        return static_cast<char>(std::tolower(ch));
+    });
+    return normalized;
+}
+
+// The active_* readers each resolve their mode once from the named environment
+// variable (falling back to the default above) and cache the result for the process.
+
+/// Post-build strategy from RAYD_EDGE_BVH_POST_BUILD_STRATEGY.
+inline EdgeBVHPostBuildStrategy active_edge_bvh_post_build_strategy() {
+    static const EdgeBVHPostBuildStrategy value = []() {
+        const char* raw = std::getenv("RAYD_EDGE_BVH_POST_BUILD_STRATEGY");
+        const std::string normalized = normalize_edge_bvh_mode_value(raw);
+        if (normalized.empty()) {
+            return EdgeBVHDefaultPostBuildStrategy;
+        }
+        if (normalized == "none") {
+            return EdgeBVHPostBuildStrategy::None;
+        }
+        if (normalized == "gpu_treelet") {
+            return EdgeBVHPostBuildStrategy::GpuTreelet;
+        }
+        throw std::runtime_error("Invalid RAYD_EDGE_BVH_POST_BUILD_STRATEGY. Expected one of: none, gpu_treelet.");
+    }();
+    return value;
+}
+
+/// Build stream mode from RAYD_EDGE_BVH_BUILD_STREAM_MODE.
+inline EdgeBVHBuildStreamMode active_edge_bvh_build_stream_mode() {
+    static const EdgeBVHBuildStreamMode value = []() {
+        const char* raw = std::getenv("RAYD_EDGE_BVH_BUILD_STREAM_MODE");
+        const std::string normalized = normalize_edge_bvh_mode_value(raw);
+        if (normalized.empty()) {
+            return EdgeBVHDefaultBuildStreamMode;
+        }
+        if (normalized == "serial") {
+            return EdgeBVHBuildStreamMode::Serial;
+        }
+        if (normalized == "overlap") {
+            return EdgeBVHBuildStreamMode::Overlap;
+        }
+        throw std::runtime_error("Invalid RAYD_EDGE_BVH_BUILD_STREAM_MODE. Expected one of: serial, overlap.");
+    }();
+    return value;
+}
+
+// Treelet reoptimization thresholds (GpuTreelet post-build strategy).
+constexpr int EdgeBVHTreeletMaxLeaves = shared::BvhTreeletMaxLeaves;
+constexpr int EdgeBVHTreeletMinPrimitives = shared::BvhTreeletMinPrimitives;
+constexpr int EdgeBVHTreeletMaxPrimitives = shared::BvhTreeletMaxPrimitives;
+constexpr int EdgeBVHTreeletMinSubtreeLeaves = shared::BvhTreeletMinSubtreeLeaves;
+constexpr float EdgeBVHTreeletCostInflationRatio = shared::BvhTreeletCostInflationRatio;
+
+} // namespace rayd
+
+namespace rayd {
+
+/// Maximum k supported by the OptiX top-k edge intersection program.
+constexpr int EdgeOptixTopKMax = shared::EdgeOptixTopKMax;
+
+/// Launch parameters for the OptiX edge-query programs (point / ray / top-k).
+/// Inputs are flat SoA device pointers; \p k selects point vs. top-k semantics.
+struct EdgeOptixQueryParams {
+    uint64_t handle = 0; ///< Traversable handle of the edge GAS.
+
+    const float* edge_p0_x = nullptr; ///< Edge start x (one per edge).
+    const float* edge_p0_y = nullptr;
+    const float* edge_p0_z = nullptr;
+    const float* edge_e1_x = nullptr; ///< Edge vector x (start + e1 is the far endpoint).
+    const float* edge_e1_y = nullptr;
+    const float* edge_e1_z = nullptr;
+    const uint8_t* edge_mask = nullptr; ///< Per-edge active flag, or null for all-active.
+    int edge_count = 0;
+    float search_radius = 0.0f; ///< Distance cutoff; hits beyond this are rejected.
+
+    const float* query_x = nullptr; ///< Query point / ray origin x (one per query).
+    const float* query_y = nullptr;
+    const float* query_z = nullptr;
+    const float* ray_dx = nullptr; ///< RayAD direction x (ray queries only).
+    const float* ray_dy = nullptr;
+    const float* ray_dz = nullptr;
+    const float* ray_tmax = nullptr;      ///< Per-ray max parameter (ray queries only).
+    const uint8_t* active_mask = nullptr; ///< Per-query active flag.
+    int query_count = 0;
+    int k = 0; ///< Neighbors per query; results in query_count * k order.
+
+    int* out_edge_ids = nullptr;      ///< Winning edge id(s).
+    float* out_distance_sq = nullptr; ///< Squared distance to the winner(s).
+    float* out_ray_t = nullptr;       ///< RayAD parameter at closest approach (ray queries).
+    float* out_edge_t = nullptr;      ///< Closest-point parameter along the edge.
+    uint8_t* out_valid = nullptr;     ///< Whether each output slot holds a hit.
+};
+
+} // namespace rayd
+
+namespace rayd {
+
+/// Contiguous span [offset, offset + count) of edge primitives changed since the last refit.
+struct EdgeDirtyRange {
+    int offset = 0;
+    int count = 0;
+};
+
+/// Broad-phase winner of a nearest-edge query (detached; squared distance, scene-global id).
+struct ClosestEdgeCandidate {
+    Int global_edge_id;
+    Float distance_sq;
+};
+
+/// Broad-phase winners of a k-nearest-edges query, laid out as query_count * k slots.
+struct ClosestEdgeTopKCandidate {
+    int query_count = 0;
+    int k = 0;
+    Mask is_valid;       ///< Whether each slot holds a valid edge.
+    Int global_edge_ids; ///< Scene-global edge id per slot.
+    Float distance_sq;   ///< Squared distance per slot.
+};
+
+/// Structural and quality metrics of a built edge BVH (for diagnostics/tuning).
+struct SceneEdgeBVHStats {
+    int primitive_count = 0; ///< Number of edge primitives.
+    int node_count = 0;      ///< Total BVH nodes.
+    int internal_node_count = 0;
+    int leaf_node_count = 0;
+    int max_height = 0;        ///< Maximum root-to-leaf depth.
+    int refit_level_count = 0; ///< Number of levels touched during refit.
+    int min_leaf_size = 0;
+    int max_leaf_size = 0;
+    double avg_leaf_size = 0.0;
+    double root_surface_area = 0.0;
+    double internal_surface_area_sum = 0.0;
+    double sibling_overlap_surface_area_sum = 0.0;
+    double sibling_overlap_surface_area_avg = 0.0;
+    double normalized_sibling_overlap = 0.0; ///< Sibling overlap normalized by root area (BVH quality).
+    std::vector<int> leaf_size_histogram;    ///< Count of leaves by primitive count.
+};
+
+/// Custom Dr.Jit/CUDA BVH over scene-global edges; the default nearest-edge backend.
+class SceneEdge {
+  public:
+    SceneEdge() = default;
+    ~SceneEdge() = default;
+
+    /// Build the BVH over all edges in \p edge_info (all edges active).
+    void build(const SecondaryEdgeInfoAD& edge_info);
+    /// Build while retaining dynamic-refit state only when \p allow_refit is true.
+    void build(const SecondaryEdgeInfoAD& edge_info, bool allow_refit);
+    /// Build the BVH, restricting queries to edges where \p mask is true.
+    void build(const SecondaryEdgeInfoAD& edge_info, const Mask& mask);
+    /// Masked build with optional dynamic-refit state retention.
+    void build(const SecondaryEdgeInfoAD& edge_info, const Mask& mask, bool allow_refit);
+    /// Update the per-edge active mask without rebuilding the tree.
+    void set_mask(const Mask& mask);
+    /// Refit node bounds after the edges in \p dirty_ranges moved (topology unchanged).
+    void refit(const SecondaryEdgeInfoAD& edge_info, const std::vector<EdgeDirtyRange>& dirty_ranges);
+    /// Refit node bounds after the edges at \p primitive_indices moved.
+    void refit(const SecondaryEdgeInfoAD& edge_info, const Int& primitive_indices);
+    /// Force evaluation of the lazily built BVH device buffers.
+    void materialize() const;
+    /// Translate internal BVH primitive ids to scene-global edge ids; \p valid gates the gather.
+    Int map_to_global(const Int& bvh_ids, const Mask& valid) const;
+    bool is_ready() const { return ready_; }
+    bool has_edges() const { return primitive_count_ > 0; }
+    SceneEdgeBVHStats stats() const;
+
+    /// Nearest active edge to each query point; clears \p active lanes that find none.
+    template <bool Detached>
+    ClosestEdgeCandidate nearest_edge(const Vector3fT<Detached>& point, MaskT<Detached>& active) const;
+
+    /// The \p k nearest active edges to each query point (results in query_count * k order).
+    template <bool Detached>
+    ClosestEdgeTopKCandidate nearest_edges(const Vector3fT<Detached>& point, int k, MaskT<Detached>& active) const;
+
+    /// Nearest active edge to each ray; uses segment semantics on [0, tmax] when tmax is finite.
+    template <bool Detached>
+    ClosestEdgeCandidate nearest_edge(const RayT<Detached>& ray, MaskT<Detached>& active) const;
+
+  private:
+    void build_bvh(const SecondaryEdgeInfoAD& edge_info, bool allow_refit);
+    void set_all_active_state();
+    void update_active_counts_from_mask(const Mask& mask);
+    Int refit_leaf_nodes_from_primitive_indices(const SecondaryEdgeInfoAD& edge_info, const Int& primitive_indices);
+    void refit_internal_nodes_full();
+    void refit_internal_nodes_dirty(const std::vector<Int>& dirty_leaf_chunks);
+    ClosestEdgeCandidate nearest_edge_point_detached(const Vector3f& point, const Mask& active) const;
+    ClosestEdgeTopKCandidate nearest_edges_point_detached(const Vector3f& point, int k, const Mask& active) const;
+    ClosestEdgeCandidate nearest_edge_finite_ray_detached(const Vector3f& origin, const Vector3f& segment,
+                                                          const Mask& active) const;
+    ClosestEdgeCandidate nearest_edge_infinite_ray_detached(const Vector3f& origin, const Vector3f& direction,
+                                                            const Mask& active) const;
+    void scatter_node_bounds(const Int& node_indices, const Vector3f& bbox_min, const Vector3f& bbox_max);
+    Int gather_node_left_child(const Int& node_indices, const Mask& active) const;
+    Int gather_node_right_child(const Int& node_indices, const Mask& active) const;
+    Int gather_node_active_count(const Int& node_indices, const Mask& active) const;
+    Vector3f gather_node_bbox_min(const Int& node_indices, const Mask& active) const;
+    Vector3f gather_node_bbox_max(const Int& node_indices, const Mask& active) const;
+
+    int primitive_count_ = 0;
+    int node_count_ = 0;
+    bool ready_ = false;
+    bool all_active_ = true;
+    bool refit_enabled_ = true;
+
+    Vector3f edge_p0_;
+    Vector3f edge_e1_;
+    Vector3f primitive_bbox_min_;
+    Vector3f primitive_bbox_max_;
+    Vector3f node_bbox_min_;
+    Vector3f node_bbox_max_;
+    Int left_child_;
+    Int right_child_;
+    Int leaf_primitives_;
+    Int primitive_leaf_node_;
+    Int leaf_nodes_;
+    Int primitive_active_flags_;
+    Int node_active_count_;
+    Int node_subtree_primitive_count_;
+    Int node_parent_;
+    Int dirty_node_marks_;
+    Int dirty_level_nodes_;
+    Int dirty_level_count_;
+
+    int active_primitive_count_ = 0;
+    int full_refit_node_count_ = 0;
+    std::vector<Int> refit_levels_;
+};
+
+} // namespace rayd
+
+namespace rayd {
+
+struct EdgeOptixState;
+
+/// Experimental OptiX edge backend: edges are custom AABB primitives traversed by
+/// OptiX. Mirrors the SceneEdge query surface; selected via EdgeBVHBackend::Optix.
+class SceneEdgeOptix {
+  public:
+    SceneEdgeOptix();
+    ~SceneEdgeOptix();
+
+    SceneEdgeOptix(const SceneEdgeOptix&) = delete;
+    SceneEdgeOptix& operator=(const SceneEdgeOptix&) = delete;
+
+    /// Build the custom-AABB GAS over the edges in \p edge_info, masked by \p mask.
+    void build(const SecondaryEdgeInfoAD& edge_info, const Mask& mask);
+    /// Update the per-edge active mask without rebuilding the GAS.
+    void set_mask(const Mask& mask);
+    /// Refit the GAS after the edges in \p dirty_ranges moved.
+    void refit(const SecondaryEdgeInfoAD& edge_info, const std::vector<EdgeDirtyRange>& dirty_ranges);
+    bool is_ready() const { return ready_; }
+    bool has_edges() const { return primitive_count_ > 0; }
+    SceneEdgeBVHStats stats() const;
+
+    /// Nearest active edge to each query point; clears \p active lanes that find none.
+    template <bool Detached>
+    ClosestEdgeCandidate nearest_edge(const Vector3fT<Detached>& point, MaskT<Detached>& active) const;
+
+    /// Nearest active edge to each query ray.
+    template <bool Detached>
+    ClosestEdgeCandidate nearest_edge(const RayT<Detached>& ray, MaskT<Detached>& active) const;
+
+    /// The \p k nearest active edges to each query point.
+    template <bool Detached>
+    ClosestEdgeTopKCandidate nearest_edges(const Vector3fT<Detached>& point, int k, MaskT<Detached>& active) const;
+
+  private:
+    void build_gases(bool update);
+    void ensure_pipeline();
+    void refresh_geometry(const SecondaryEdgeInfoAD& edge_info);
+    /// Per-edge OptiX AABB inflation radius, sized to bound the nearest-edge search.
+    std::vector<float> compute_search_radii(const SecondaryEdgeInfoAD& edge_info) const;
+
+    EdgeOptixState* state_ = nullptr;
+    int primitive_count_ = 0;
+    bool ready_ = false;
+    std::vector<float> search_radii_;
+
+    Vector3f edge_p0_;
+    Vector3f edge_e1_;
+    Mask edge_mask_;
 };
 
 } // namespace rayd

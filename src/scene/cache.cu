@@ -4,7 +4,7 @@
 #include <src/scene/cache_kernels.h>
 #include <rayd/math.h>
 #include <src/runtime/optix_context.h>
-#include <rayd/scene/packing.h>
+#include <src/scene/scene_internal.h>
 
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>

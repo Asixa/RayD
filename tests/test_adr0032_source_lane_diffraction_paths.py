@@ -46,7 +46,7 @@ class Adr0032SourceLaneDiffractionPathTests(unittest.TestCase):
         self.assertIn("static_cast<int>(config.layout)", typed)
 
     def test_shared_exporter_uses_lane_only_for_source_lane(self):
-        shared = read(ROOT / "include" / "rayd" / "diffraction" / "paths_algo.h")
+        shared = read(TORCH_SOURCE / "diffraction" / "paths.h")
         reserve = shared.split("RAYD_DEVICE int reserve_path_output", 1)[1]
         reserve = reserve.split("/// Combined first-order", 1)[0]
         self.assertIn("path_output_layout(params, 0) == kOutputLayoutSourceLane", reserve)

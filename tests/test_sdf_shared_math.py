@@ -16,9 +16,7 @@ from tests.test_rt_host_compile import _msvc_environment
 
 ROOT = Path(__file__).resolve().parents[1]
 SHARED_INCLUDE = ROOT / "include"
-SDF_INCLUDE = SHARED_INCLUDE / "rayd" / "sdf"
-GRID_HEADER = SDF_INCLUDE / "grid_sdf.cuh"
-TRACE_HEADER = SDF_INCLUDE / "sphere_trace.h"
+SDF_HEADER = ROOT / "src" / "sdf_device.cuh"
 SMOKE_TU = ROOT / "tests" / "native" / "sdf_shared_math_smoke.cpp"
 PTX_SOURCES = ROOT / "drjit" / "ptx_sources.json"
 
@@ -58,30 +56,29 @@ def locate_cl(env):
 
 
 class SdfSharedHeaderTests(unittest.TestCase):
-    def test_both_headers_exist_in_the_shared_tree(self):
-        self.assertTrue(GRID_HEADER.is_file())
-        self.assertTrue(TRACE_HEADER.is_file())
+    def test_consolidated_private_header_exists(self):
+        self.assertTrue(SDF_HEADER.is_file())
 
     def test_headers_are_backend_neutral(self):
-        for path in (GRID_HEADER, TRACE_HEADER):
+        for path in (SDF_HEADER,):
             source = path.read_text(encoding="utf-8")
             for forbidden in FORBIDDEN_TOKENS:
                 self.assertNotIn(forbidden, source, f"{forbidden} in {path.relative_to(ROOT)}")
             self.assertIsNone(FLOAT3_TOKEN.search(source), f"float3 in {path.relative_to(ROOT)}")
 
     def test_headers_spell_the_shared_host_device_qualifier(self):
-        for path in (GRID_HEADER, TRACE_HEADER):
+        for path in (SDF_HEADER,):
             source = path.read_text(encoding="utf-8")
-            self.assertIn("<rayd/rt/qualifiers.h>", source)
+            self.assertIn("<rayd/math.h>", source)
             self.assertIn("RAYD_HOST_DEVICE", source)
             # `__device__` must only ever arrive through the shared macro.
             self.assertNotIn("__device__ ", source)
 
     def test_grid_and_trace_surfaces_are_complete(self):
-        grid = GRID_HEADER.read_text(encoding="utf-8")
+        grid = SDF_HEADER.read_text(encoding="utf-8")
         for symbol in ("grid_cells", "grid_coord", "base_index", "trilinear_cell", "sample_cell", "local_gradient"):
             self.assertIn(symbol, grid)
-        trace = TRACE_HEADER.read_text(encoding="utf-8")
+        trace = SDF_HEADER.read_text(encoding="utf-8")
         for symbol in (
             "make_placement",
             "world_to_local_point",
@@ -96,7 +93,7 @@ class SdfSharedHeaderTests(unittest.TestCase):
             self.assertIn(symbol, trace)
 
     def test_trace_header_declares_the_adr0037_constants(self):
-        trace = TRACE_HEADER.read_text(encoding="utf-8")
+        trace = SDF_HEADER.read_text(encoding="utf-8")
         for declaration in (
             "kSdfEpsNorm = 1.0e-12f",
             "kSdfEpsParallel = 1.0e-7f",
@@ -112,7 +109,7 @@ class SdfSharedHeaderTests(unittest.TestCase):
         # `*_ptx.h` headers (ADR-0037 section 9, repository PTX identity rule).
         record = json.loads(PTX_SOURCES.read_text(encoding="utf-8"))
         closure = {source for module in record["modules"].values() for source in module["sources"]}
-        for path in (GRID_HEADER, TRACE_HEADER):
+        for path in (SDF_HEADER,):
             relative = path.relative_to(ROOT).as_posix()
             self.assertNotIn(relative, closure)
 
@@ -139,6 +136,7 @@ class SdfHostSmokeTests(unittest.TestCase):
             "/EHsc",
             "/W3",
             f"/I{SHARED_INCLUDE}",
+            f"/I{ROOT}",
             str(SMOKE_TU),
             f"/Fo{out_dir}\\",
             f"/Fe{executable}",

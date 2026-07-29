@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include <rayd/diffraction/utd.h>
+#include <rayd/utd.h>
 
 namespace rayd::shared::field_transport {
 

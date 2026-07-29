@@ -573,16 +573,16 @@ documented breaking migration; no accidental compatibility shell is added.
 | --- | --- |
 | `backends/*/src/scene/*` intersection/cache/lifecycle | unsuffixed Torch files beside `src/scene/*_jit.*` Dr.Jit variants |
 | Dr.Jit scene multipath wrapper files | `src/{visibility,reflection,diffraction}/*_jit.cpp` |
-| `backends/*/.../edge/*` + `shared/{bvh,edge}` | `src/{bvh,edge}/` with adjacent shared/backend variants |
+| `backends/*/.../edge/*` + `shared/{bvh,edge}` | root-level `src/bvh_*` core files plus the multi-file `src/edge/` owner |
 | backend reflection trees + shared reflection/multipath/OptiX pieces | `src/reflection/` and `include/rayd/shared/reflection/` |
 | backend diffraction trees + shared UTD/diffraction pieces | `src/diffraction/` and `include/rayd/shared/diffraction/` |
-| Torch `torch_ext/rf/layer_stack*` and `transmission_sequence*` | `src/transmission/` with unsuffixed Torch files; passive-complex/medium/Fresnel/layer-stack helpers move to `include/rayd/shared/transmission/` |
+| Torch `torch_ext/rf/layer_stack*` and `transmission_sequence*` | `src/transmission.cu` plus the private `src/transmission_device.cuh` owner |
 | Torch `torch_ext/rf/scattering*` | `src/scattering/` with unsuffixed Torch files; table math moves to `include/rayd/shared/scattering/` |
 | Torch `torch_ext/rf/diffraction_wedge.cu` | existing `src/diffraction/` owner beside the other diffraction implementations |
 | cross-concept `field_transport.cuh` and `field_transport_ad.cuh` | flat, explicitly named shared primitives; they do not justify an `rf/` directory |
 | Torch penetration | `src/visibility/penetration*.*` or `src/penetration/` if its compile profile justifies a separate concept |
-| Torch SDF + shared SDF math | `src/sdf/` plus `include/rayd/shared/sdf/` |
-| Dr.Jit surfel | `src/surfel/*_jit.*` |
+| Torch SDF + shared SDF math | root-level `src/sdf.{cpp,cu}`, `src/sdf_internal.h`, and `src/sdf_device.cuh` |
+| Dr.Jit surfel | root-level `src/surfel_jit.cpp` and `src/surfel_optix_jit.cu` |
 | nanobind/Torch module/dispatcher entry files | unsuffixed Torch entry files plus `src/bindings/*_jit.*` Dr.Jit entries |
 | backend/common OptiX and tensor helpers | concept owner first; truly cross-concept runtime code in `src/runtime/` |
 
@@ -595,7 +595,7 @@ differently:
   API version 7 for this source-path break;
 - the current `rayd/torch/rf/*` and `rayd/shared/rf/*` leaf paths are removed,
   because retaining them would preserve the umbrella this plan is eliminating;
-- transmission headers move under `rayd/shared/transmission/` and `rayd/transmission/torch.h`;
+- the public transmission API is `rayd/transmission.h`, while device algorithms stay private in `src/transmission_device.cuh`;
 - scattering headers move under `rayd/shared/scattering/` and `rayd/scattering/torch.h`;
 - UTD and wedge-field headers move under the existing diffraction owner;
 - genuinely cross-concept field transport uses the explicit flat names

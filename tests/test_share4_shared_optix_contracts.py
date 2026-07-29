@@ -7,16 +7,16 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-REFLECTION = ROOT / "include/rayd/reflection"
-VISIBILITY = ROOT / "include/rayd/visibility"
+REFLECTION = ROOT / "src/reflection"
+VISIBILITY = ROOT / "src/visibility"
 
 
 class Share4SharedOptixContractsTests(unittest.TestCase):
     def test_shared_contract_headers_are_backend_neutral_pods(self):
         for path, struct_name in (
-            (REFLECTION / "trace_params.h", "ReflectionTraceParams"),
-            (VISIBILITY / "segment_params.h", "SegmentVisibilityParams"),
-            (REFLECTION / "epc_params.h", "ReflEpcParams"),
+            (REFLECTION / "reflection_internal.h", "ReflectionTraceParams"),
+            (VISIBILITY / "segment_visibility.cuh", "SegmentVisibilityParams"),
+            (REFLECTION / "reflection_internal.h", "ReflEpcParams"),
         ):
             source = path.read_text(encoding="utf-8")
             self.assertIn(f"struct {struct_name}", source)
@@ -27,22 +27,21 @@ class Share4SharedOptixContractsTests(unittest.TestCase):
             self.assertNotIn("drjit", source.lower())
 
     def test_backend_headers_are_thin_shared_aliases(self):
-        headers = (
-            ("src/reflection/trace_params_jit.h", "rayd/reflection/", "ReflectionTraceParams"),
-            ("src/reflection/trace_params.h", "rayd/reflection/", "ReflectionTraceParams"),
-            ("src/visibility/segment_params_jit.h", "rayd/visibility/", "SegmentVisibilityParams"),
-            ("src/visibility/visibility_params.h", "rayd/visibility/", "SegmentVisibilityParams"),
-            ("src/reflection/epc_params_jit.h", "rayd/reflection/", "ReflEpcParams"),
-            ("src/reflection/epc_params.h", "rayd/reflection/", "ReflEpcParams"),
-        )
-        for relative, owner, type_name in headers:
+        reflection = (REFLECTION / "reflection_internal.h").read_text(encoding="utf-8")
+        self.assertEqual(reflection.count("struct ReflectionTraceParams"), 1)
+        self.assertEqual(reflection.count("struct ReflEpcParams"), 1)
+        self.assertEqual(reflection.count("using ReflectionTraceParams = shared::optix::ReflectionTraceParams;"), 2)
+        self.assertEqual(reflection.count("using ReflEpcParams = shared::optix::ReflEpcParams;"), 2)
+        self.assertNotIn("rayd/reflection/", reflection)
+
+        for relative in ("src/visibility/segment_params_jit.h", "src/visibility/visibility_params.h"):
             source = (ROOT / relative).read_text(encoding="utf-8")
-            self.assertIn(owner, source)
-            self.assertIn(f"using {type_name} = shared::optix::{type_name};", source)
-            self.assertNotIn(f"struct {type_name}", source)
+            self.assertIn("src/visibility/segment_visibility.cuh", source)
+            self.assertIn("using SegmentVisibilityParams = shared::optix::SegmentVisibilityParams;", source)
+            self.assertNotIn("struct SegmentVisibilityParams", source)
 
     def test_shared_trace_superset_preserves_backend_specific_optional_fields(self):
-        source = (REFLECTION / "trace_params.h").read_text(encoding="utf-8")
+        source = (REFLECTION / "reflection_internal.h").read_text(encoding="utf-8")
         for field in (
             "tri_p0_x",
             "tri_p0_packed",
@@ -56,12 +55,12 @@ class Share4SharedOptixContractsTests(unittest.TestCase):
         ):
             self.assertRegex(source, rf"\b{field}\b")
 
-        visibility = (VISIBILITY / "segment_params.h").read_text(encoding="utf-8")
+        visibility = (VISIBILITY / "segment_visibility.cuh").read_text(encoding="utf-8")
         for field in ("start_aos", "start_x", "sample_fractions", "out_first_blocked_prim", "out_t"):
             self.assertRegex(visibility, rf"\b{field}\b")
 
     def test_device_programs_have_one_shared_implementation(self):
-        helper = (REFLECTION / "optix_hit.h").read_text(encoding="utf-8")
+        helper = (REFLECTION / "reflection_optix_common.cuh").read_text(encoding="utf-8")
         for symbol in (
             "TriangleHitPayload",
             "VisibilityPayload",
@@ -71,37 +70,35 @@ class Share4SharedOptixContractsTests(unittest.TestCase):
         ):
             self.assertIn(symbol, helper)
 
-        primitive_id = (ROOT / "include/rayd/rt/optix_primitive_id.h").read_text(encoding="utf-8")
+        primitive_id = (ROOT / "src/runtime/rt_device.cuh").read_text(encoding="utf-8")
         self.assertIn("global_primitive_id", primitive_id)
-        self.assertIn("rayd/rt/optix_primitive_id.h", helper)
-        self.assertIn(
-            "rayd/rt/optix_primitive_id.h", (VISIBILITY / "segment_optix_device.cuh").read_text(encoding="utf-8")
-        )
+        self.assertIn("src/runtime/rt_device.cuh", helper)
+        self.assertIn("src/runtime/rt_device.cuh", (VISIBILITY / "segment_visibility.cuh").read_text(encoding="utf-8"))
 
         shared_programs = (
-            (REFLECTION / "trace_optix_device.cuh", "reflection_trace_raygen"),
-            (REFLECTION / "epc_optix_device.cuh", "run_reflection_epc_raygen"),
-            (VISIBILITY / "segment_optix_device.cuh", "raygen_segment_chain"),
+            (REFLECTION / "reflection_trace_optix.cuh", "reflection_trace_raygen"),
+            (REFLECTION / "reflection_epc_optix.cuh", "run_reflection_epc_raygen"),
+            (VISIBILITY / "segment_visibility.cuh", "raygen_segment_chain"),
         )
         for path, entry in shared_programs:
             source = path.read_text(encoding="utf-8")
             self.assertIn(entry, source)
 
-        reflection_trace = (REFLECTION / "trace_optix_device.cuh").read_text(encoding="utf-8")
-        self.assertIn("rayd/reflection/optix_traverser.h", reflection_trace)
+        reflection_trace = (REFLECTION / "reflection_trace_optix.cuh").read_text(encoding="utf-8")
+        self.assertIn("src/reflection/reflection_optix_common.cuh", reflection_trace)
         self.assertIn("OptixTraverser", reflection_trace)
-        traverser = (REFLECTION / "optix_traverser.h").read_text(encoding="utf-8")
+        traverser = (REFLECTION / "reflection_optix_common.cuh").read_text(encoding="utf-8")
         self.assertIn("optixTrace", traverser)
-        for path in (REFLECTION / "epc_optix_device.cuh", VISIBILITY / "segment_optix_device.cuh"):
+        for path in (REFLECTION / "reflection_epc_optix.cuh", VISIBILITY / "segment_visibility.cuh"):
             self.assertIn("optixTrace", path.read_text(encoding="utf-8"))
 
         adapters = (
-            ("src/reflection/trace_optix_jit.cu", "rayd/reflection/trace_optix_device.cuh"),
-            ("src/reflection/trace_optix.cu", "rayd/reflection/trace_optix_device.cuh"),
-            ("src/reflection/epc_optix_jit.cu", "rayd/reflection/epc_optix_device.cuh"),
-            ("src/reflection/epc_optix.cu", "rayd/reflection/epc_optix_device.cuh"),
-            ("src/visibility/visibility_optix_jit.cu", "rayd/visibility/segment_optix_device.cuh"),
-            ("src/visibility/visibility_optix.cu", "rayd/visibility/segment_optix_device.cuh"),
+            ("src/reflection/trace_optix_jit.cu", "src/reflection/reflection_trace_optix.cuh"),
+            ("src/reflection/trace_optix.cu", "src/reflection/reflection_trace_optix.cuh"),
+            ("src/reflection/epc_optix_jit.cu", "src/reflection/reflection_epc_optix.cuh"),
+            ("src/reflection/epc_optix.cu", "src/reflection/reflection_epc_optix.cuh"),
+            ("src/visibility/visibility_optix_jit.cu", "src/visibility/segment_visibility.cuh"),
+            ("src/visibility/visibility_optix.cu", "src/visibility/segment_visibility.cuh"),
         )
         for relative, shared_header in adapters:
             source = (ROOT / relative).read_text(encoding="utf-8")
@@ -130,17 +127,23 @@ class Share4SharedOptixContractsTests(unittest.TestCase):
     def test_ptx_builds_depend_on_shared_device_programs(self):
         drjit_cmake = (ROOT / "drjit/CMakeLists.txt").read_text(encoding="utf-8")
         torch_cmake = (ROOT / "torch/CMakeLists.txt").read_text(encoding="utf-8")
-        for header in ("trace_optix_device.cuh", "epc_optix_device.cuh", "segment_optix_device.cuh"):
+        for header in ("reflection_trace_optix.cuh", "reflection_epc_optix.cuh", "segment_visibility.cuh"):
             self.assertGreaterEqual(drjit_cmake.count(header), 1)
             self.assertGreaterEqual(torch_cmake.count(header), 1)
 
     def test_shared_headers_do_not_take_host_pipeline_ownership(self):
-        paths = (
-            tuple(REFLECTION.glob("*.h"))
-            + tuple(REFLECTION.glob("*.cuh"))
-            + tuple(VISIBILITY.glob("*.h"))
-            + tuple(VISIBILITY.glob("*.cuh"))
-        )
+        paths = tuple(
+            REFLECTION / name
+            for name in (
+                "reflection_internal.h",
+                "reflection_algorithms.cuh",
+                "reflection_optix_common.cuh",
+                "reflection_trace_optix.cuh",
+                "reflection_accumulation_optix.cuh",
+                "reflection_epc_optix.cuh",
+                "epc_field_fragment.cuh",
+            )
+        ) + (VISIBILITY / "segment_visibility.cuh",)
         source = "\n".join(path.read_text(encoding="utf-8") for path in paths)
         for forbidden in (
             "OptixPipeline",

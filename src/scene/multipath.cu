@@ -5,14 +5,13 @@
 
 #include <src/scene/cache.h>
 #include <rayd/math.h>
-#include <rayd/bvh/cuda_bvh_traverser.h>
-#include <rayd/reflection/accumulation_algo.h>
-#include <rayd/reflection/epc_algo.h>
-#include <rayd/diffraction/paths_algo.h>
-#include <rayd/diffraction/accumulation_algo.h>
-#include <rayd/reflection/trace_algo.h>
-#include <rayd/visibility/segment_algo.h>
-#include <rayd/rt/traverser.h>
+#include <src/bvh_query_device.cuh>
+#include <src/reflection/reflection_algorithms.cuh>
+#include <src/diffraction/paths.h>
+#include <src/diffraction/accumulation.h>
+#include <src/reflection/reflection_algorithms.cuh>
+#include <src/visibility/segment_visibility.cuh>
+#include <src/runtime/rt_device.cuh>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>

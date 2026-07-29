@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CONFIG = ROOT / "include" / "rayd" / "jit" / "edge_bvh_config.h"
+CONFIG = ROOT / "include" / "rayd" / "jit" / "edge.h"
 BUILD_SOURCE = ROOT / "src" / "edge" / "edge_bvh_jit.cu"
 SCENE_SOURCE = ROOT / "src" / "edge" / "edge_jit.cpp"
 BENCHMARK = ROOT / "benchmarks" / "drjit" / "benchmark_edge_bvh_stages.py"

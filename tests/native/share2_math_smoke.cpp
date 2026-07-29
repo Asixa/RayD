@@ -3,8 +3,8 @@
 
 #include <cmath>
 
-#include <rayd/edge/edge_distance.h>
-#include <rayd/reflection/reflection_geometry.h>
+#include <src/edge/edge_distance.h>
+#include <src/reflection/reflection_algorithms.cuh>
 
 namespace {
 

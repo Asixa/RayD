@@ -12,19 +12,18 @@ SHARED = ROOT / "include" / "rayd"
 
 
 class SharedFieldMathTests(unittest.TestCase):
-    def test_utd_uses_rayd_namespace_with_compatibility_alias(self):
-        types = (SHARED / "diffraction" / "utd_types.h").read_text(encoding="utf-8")
-        math_header = (SHARED / "diffraction" / "utd.h").read_text(encoding="utf-8")
+    def test_utd_uses_only_the_rayd_namespace(self):
+        types = (SHARED / "utd.h").read_text(encoding="utf-8")
+        math_header = types
         self.assertIn("namespace rayd::shared::diffraction", types)
         self.assertIn("namespace rayd::shared::diffraction", math_header)
-        self.assertIn("namespace native_ext = ::rayd::shared::diffraction", types)
-        self.assertNotIn("namespace witwin::channel::native_ext {", types)
+        self.assertNotIn("namespace witwin::channel", types)
 
     def test_accumulation_backends_delegate_diffraction_parameter(self):
         # Since P4c the algorithm body (and its UTD delegation) lives in the
         # host-compilable algo header; the device header keeps the OptiX layer.
-        shared_algo = (SHARED / "diffraction" / "accumulation_algo.h").read_text(encoding="utf-8")
-        self.assertIn("<rayd/diffraction/utd.h>", shared_algo)
+        shared_algo = (ROOT / "src" / "diffraction" / "accumulation.h").read_text(encoding="utf-8")
+        self.assertIn("<rayd/utd.h>", shared_algo)
         self.assertIn("::rayd::shared::diffraction::first_order_diffraction_parameter(", shared_algo)
 
         paths = (
@@ -33,7 +32,7 @@ class SharedFieldMathTests(unittest.TestCase):
         )
         for path in paths:
             source = path.read_text(encoding="utf-8")
-            self.assertIn("<rayd/diffraction/accumulation_optix_device.cuh>", source)
+            self.assertIn("<src/diffraction/accumulation_optix.cuh>", source)
             self.assertNotIn("first_order_diffraction_parameter", source)
             self.assertNotIn("rotate_around_axis", source)
 
@@ -45,7 +44,7 @@ class SharedFieldMathTests(unittest.TestCase):
         self.assertIn("propagation_phase", header)
         self.assertIn("is_standard_layout_v<Complexf>", header)
 
-        shared_reflection_algo = (SHARED / "reflection" / "accumulation_algo.h").read_text(encoding="utf-8")
+        shared_reflection_algo = (ROOT / "src" / "reflection" / "reflection_algorithms.cuh").read_text(encoding="utf-8")
         self.assertIn("field::fresnel_reflection_coefficients(", shared_reflection_algo)
 
         accumulation_adapters = (
@@ -54,7 +53,7 @@ class SharedFieldMathTests(unittest.TestCase):
         )
         for path in accumulation_adapters:
             source = path.read_text(encoding="utf-8")
-            self.assertIn("<rayd/reflection/accumulation_optix_device.cuh>", source)
+            self.assertIn("<src/reflection/reflection_accumulation_optix.cuh>", source)
             self.assertNotIn("fresnel_reflection_coefficients", source)
             self.assertNotIn("kEpsilon0", source)
             self.assertNotIn("struct Complex {", source)

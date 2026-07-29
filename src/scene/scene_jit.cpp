@@ -10,7 +10,7 @@
 #include <utility>
 #include <vector>
 
-#include <rayd/jit/transform.h>
+#include <rayd/jit/core.h>
 #include <rayd/jit/mesh.h>
 
 namespace rayd {
@@ -452,9 +452,9 @@ std::string Mesh::to_string() const {
 #include <string>
 #include <vector>
 
-#include <rayd/jit/ray.h>
+#include <rayd/jit/core.h>
 #include <rayd/jit/scene.h>
-#include <rayd/jit/scene_edge.h>
+#include <rayd/jit/edge.h>
 #include <rayd/jit/native_launch_audit.h>
 
 namespace rayd {
@@ -1910,7 +1910,7 @@ template NearestEdgesTopKAD Scene::nearest_edges<false>(const Vector3fAD& point,
 } // namespace rayd
 
 // Consolidated scene intersection implementation.
-#include <rayd/jit/ray.h>
+#include <rayd/jit/core.h>
 #include <rayd/jit/scene.h>
 
 namespace rayd {
@@ -2113,12 +2113,12 @@ template IntersectionAD Scene::intersect<false>(const RayAD& ray, MaskAD active,
 #include <string>
 #include <vector>
 
-#include <rayd/jit/ray.h>
+#include <rayd/jit/core.h>
 #include <rayd/jit/mesh.h>
-#include <rayd/jit/scene_optix.h>
+#include <rayd/jit/scene.h>
 
 #include <rayd/jit/native_launch_audit.h>
-#include <rayd/scene/optix_contracts.h>
+#include <src/scene/scene_internal.h>
 
 namespace rayd {
 

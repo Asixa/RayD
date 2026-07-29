@@ -69,10 +69,33 @@ class SourceBundleTests(unittest.TestCase):
                 if path.is_file()
             }
             self.assertEqual(described, actual)
+            expected_include = {
+                "include/rayd/contracts.h",
+                "include/rayd/diffraction.h",
+                "include/rayd/field_transport.cuh",
+                "include/rayd/integration.h",
+                "include/rayd/math.h",
+                "include/rayd/path_exchange.h",
+                "include/rayd/penetration.h",
+                "include/rayd/reflection.h",
+                "include/rayd/scattering.h",
+                "include/rayd/scattering_table.cuh",
+                "include/rayd/scene.h",
+                "include/rayd/transmission.h",
+                "include/rayd/utd.h",
+                "include/rayd/visibility.h",
+            }
+            expected_src = {
+                path.relative_to(ROOT).as_posix() for path in (ROOT / "src").rglob("*") if path.is_file()
+            }
+            self.assertEqual({path for path in actual if path.startswith("include/")}, expected_include)
+            self.assertEqual({path for path in actual if path.startswith("src/")}, expected_src)
             self.assertIn("torch/CMakeLists.txt", actual)
             self.assertIn("include/rayd/integration.h", actual)
             self.assertIn("include/rayd/path_exchange.h", actual)
-            self.assertIn("src/field_transport/ad.cuh", actual)
+            self.assertIn("include/rayd/utd.h", actual)
+            self.assertIn("src/field_transport_ad.cuh", actual)
+            self.assertIn("src/edge/edge_bvh_jit.h", actual)
             self.assertFalse(any(path.startswith("include/rayd/jit/") for path in actual))
             self.assertTrue(any(path.startswith("src/") for path in actual))
             self.assertTrue(any(path.startswith("include/") for path in actual))
@@ -83,9 +106,18 @@ class SourceBundleTests(unittest.TestCase):
             self.assertFalse(any("__pycache__" in path for path in actual))
             self.assertFalse(any(Path(path).is_absolute() for path in actual))
 
+            bundled_cmake = (source_root / "torch" / "CMakeLists.txt").read_text()
+            self.assertFalse((source_root / "torch" / "scripts" / "generate_source_bundle.py").exists())
+            self.assertIn('if(EXISTS "${RAYD_TORCH_SOURCE_BUNDLE_GENERATOR}")', bundled_cmake)
+            self.assertIn("set(RAYD_TORCH_INSTALL_SOURCE_BUNDLE_DEFAULT OFF)", bundled_cmake)
+            self.assertIn("${RAYD_TORCH_INSTALL_SOURCE_BUNDLE_DEFAULT})", bundled_cmake)
+            self.assertIn("RAYD_TORCH_INSTALL_SOURCE_BUNDLE=ON requires ", bundled_cmake)
+
     def test_cmake_installs_fixed_passive_metadata_location(self):
         cmake = (ROOT / "torch" / "CMakeLists.txt").read_text()
+        self.assertTrue(SCRIPT.is_file())
         self.assertIn("RAYD_TORCH_INSTALL_SOURCE_BUNDLE", cmake)
+        self.assertIn("set(RAYD_TORCH_INSTALL_SOURCE_BUNDLE_DEFAULT ON)", cmake)
         self.assertIn("scripts/generate_source_bundle.py", cmake)
         self.assertIn("DESTINATION rayd/torch/_source", cmake)
 

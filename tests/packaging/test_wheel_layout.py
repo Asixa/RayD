@@ -25,6 +25,14 @@ class WheelLayoutTests(unittest.TestCase):
         "include/rayd/transmission.h",
         "include/rayd/visibility.h",
     }
+    TORCH_SOURCE_HEADERS = INTEGRATION_HEADERS | {
+        "include/rayd/contracts.h",
+        "include/rayd/field_transport.cuh",
+        "include/rayd/math.h",
+        "include/rayd/path_exchange.h",
+        "include/rayd/scattering_table.cuh",
+        "include/rayd/utd.h",
+    }
 
     @classmethod
     def setUpClass(cls):
@@ -56,29 +64,24 @@ class WheelLayoutTests(unittest.TestCase):
         for wheel in (self.drjit_wheel, self.torch_wheel):
             self.assertNotIn("rayd/__init__.py", self.names(wheel))
 
-    def test_drjit_wheel_contains_flat_jit_and_shared_concept_headers(self):
+    def test_drjit_wheel_contains_only_flat_jit_and_neutral_dependency_headers(self):
         source_root = Path(__file__).resolve().parents[2] / "include" / "rayd"
         wheel_prefix = "rayd/drjit/include/rayd/"
-        root_headers = {"path_exchange.h", "contracts.h", "field_transport.cuh", "math.h", "scattering_table.cuh"}
-        shared_directories = {
-            "bvh",
-            "diffraction",
-            "edge",
-            "reflection",
-            "rt",
-            "scene",
-            "sdf",
-            "transmission",
-            "visibility",
+        root_headers = {
+            "path_exchange.h",
+            "contracts.h",
+            "field_transport.cuh",
+            "math.h",
+            "scattering_table.cuh",
+            "utd.h",
         }
 
         expected = set(root_headers)
-        for directory in {"jit", *shared_directories}:
-            expected.update(
-                path.relative_to(source_root).as_posix()
-                for path in (source_root / directory).rglob("*")
-                if path.is_file() and path.suffix in {".h", ".cuh"}
-            )
+        expected.update(
+            path.relative_to(source_root).as_posix()
+            for path in (source_root / "jit").rglob("*")
+            if path.is_file() and path.suffix in {".h", ".cuh"}
+        )
 
         actual = {
             name.removeprefix(wheel_prefix)
@@ -90,17 +93,11 @@ class WheelLayoutTests(unittest.TestCase):
         root_files = {name for name in actual if len(PurePosixPath(name).parts) == 1}
         root_directories = {PurePosixPath(name).parts[0] for name in actual if len(PurePosixPath(name).parts) > 1}
         self.assertEqual(root_files, root_headers)
-        self.assertEqual(root_directories, {"jit", *shared_directories})
+        self.assertEqual(root_directories, {"jit"})
 
         jit_headers = {name for name in actual if name.startswith("jit/")}
         self.assertTrue(jit_headers)
         self.assertTrue(all(PurePosixPath(name).parent == PurePosixPath("jit") for name in jit_headers), jit_headers)
-        for directory in shared_directories:
-            concept_headers = {name for name in actual if name.startswith(f"{directory}/")}
-            self.assertTrue(concept_headers, directory)
-            self.assertTrue(
-                all(PurePosixPath(name).parent == PurePosixPath(directory) for name in concept_headers), concept_headers
-            )
 
         torch_root_headers = {name.removeprefix("include/rayd/") for name in self.INTEGRATION_HEADERS}
         self.assertTrue(actual.isdisjoint(torch_root_headers))
@@ -162,6 +159,9 @@ class WheelLayoutTests(unittest.TestCase):
             self.assertEqual(len(paths), len(set(paths)))
             manifest_by_path = {entry["path"]: entry for entry in entries}
             self.assertIn("include/rayd/path_exchange.h", manifest_by_path)
+            self.assertEqual(
+                {path for path in paths if path.startswith("include/rayd/")}, self.TORCH_SOURCE_HEADERS
+            )
             self.assertFalse(any(path.startswith("include/rayd/jit/") for path in paths))
             for source_path in paths:
                 with self.subTest(source_path=source_path):

@@ -7,14 +7,14 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-INCLUDE_DIR = ROOT / "include" / "rayd" / "edge"
+INCLUDE_DIR = ROOT / "src" / "edge"
 SOURCE_DIR = ROOT / "src" / "edge"
 CONTRACT_HEADERS = ("bvh_types.h", "bvh_build.h", "bvh_query.h", "edge_distance.h")
 # P3 Stage A extracted the primitive-agnostic machinery into shared/bvh/. The
 # raw-pointer/caller-owned and enqueue-only contracts now also cover the core.
-BVH_CORE_INCLUDE_DIR = ROOT / "include" / "rayd" / "bvh"
-BVH_CORE_SOURCE_DIR = ROOT / "src" / "bvh"
-BVH_CORE_HEADERS = ("topology.h", "build.h", "refit.h")
+BVH_CORE_INCLUDE_DIR = ROOT / "src"
+BVH_CORE_SOURCE_DIR = ROOT / "src"
+BVH_CORE_HEADERS = ("bvh_topology.h", "bvh_build.h")
 
 
 class BVH4SharedEdgeCoreTests(unittest.TestCase):
@@ -78,7 +78,7 @@ class BVH4SharedEdgeCoreTests(unittest.TestCase):
             "drjit",
             "nanobind",
         )
-        for path in (SOURCE_DIR / "edge_shared.cu", BVH_CORE_SOURCE_DIR / "build_shared.cu"):
+        for path in (SOURCE_DIR / "edge_shared.cu", BVH_CORE_SOURCE_DIR / "bvh_build_shared.cu"):
             source = path.read_text(encoding="utf-8")
             for token in forbidden:
                 self.assertNotIn(token, source)

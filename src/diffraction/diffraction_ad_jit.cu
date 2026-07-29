@@ -41,7 +41,7 @@ using namespace shared::cuda_math;
 #define RAYD_DFR_AD_MATERIAL_GAIN_OR_ONE(P, I) ((P).material_gain != nullptr ? (P).material_gain[(I)] : 1.f)
 #define RAYD_DFR_AD_SUFFIX_FACE_PRIM(P, F, S, HAS_THIRD, SECOND, THIRD) ((HAS_THIRD) ? (P).F[(THIRD)] : (P).F[(SECOND)])
 
-#include <rayd/diffraction/accumulation_ad_device.cuh>
+#include <src/diffraction/accumulation_ad.cuh>
 
 static __forceinline__ __device__ void add_chain_unit_vjp(const DfrChainAccumADParams& params, const ChainPrimal& p,
                                                           float grad_contribution, float* ptr, int index,
@@ -69,7 +69,9 @@ static __forceinline__ __device__ void add_unit_vjp(const DfrDirectAccumADParams
 #define RAYD_DFR_AD_ADD_CHAIN_UNIT_VJP(P, PR, G, F, S, I, T) add_chain_unit_vjp((P), (PR), (G), (P).F, (I), (T))
 #define RAYD_DFR_AD_ADD_CHAIN_UNIT_VJP_DENSE(P, PR, G, F, I, T) add_chain_unit_vjp((P), (PR), (G), (P).F, (I), (T))
 
-#include <rayd/diffraction/accumulation_ad_vjp_device.cuh>
+#define RAYD_DFR_AD_VJP_PHASE
+#include <src/diffraction/accumulation_ad.cuh>
+#undef RAYD_DFR_AD_VJP_PHASE
 
 __global__ void dfr_direct_accum_jvp_kernel(DfrDirectAccumADParams params) {
     const int lane = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);

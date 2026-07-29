@@ -4,7 +4,7 @@
 #pragma once
 
 #include <src/diffraction/common.h>
-#include <rayd/diffraction/contracts.h>
+#include <src/diffraction/contracts.h>
 
 #include <cstddef>
 #include <cstdint>

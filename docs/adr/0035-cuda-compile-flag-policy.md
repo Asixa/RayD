@@ -100,9 +100,9 @@ divergent, so silently "fixing" one fails instead of passing.
 - `D2` Ray-tracing PTX targets `compute_70` in Dr.Jit and `compute_75` in Torch.
 - `D3` `shared/utd/utd_math.h` is compiled under three profiles inside the Torch
   backend alone: `fast_math`, `nvcc_default`, and `no_fmad`.
-- `D4` `shared/bvh/triangle_intersect.h` is `fast_math` through the Dr.Jit fused
+- `D4` `src/bvh_query_device.cuh` is `fast_math` through the Dr.Jit fused
   executor and `nvcc_default` through the shared triangle-query unit.
-- `D5` `shared/edge/edge_distance_math.h` is `fast_math` in both backends'
+- `D5` `src/edge/edge_distance.h` is `fast_math` in both backends'
   edge PTX modules and `nvcc_default` in the custom-BVH query units that serve
   the same public query.
 - `D6` `shared/field_math.h` is `fast_math` in the reflection-accumulation PTX

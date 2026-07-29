@@ -59,7 +59,7 @@ class Adr0031RequiredDiffractionPathValidityTests(unittest.TestCase):
 
     def test_device_paths_have_no_implicit_all_valid_branch(self):
         optix = read(TORCH_SOURCE / "diffraction" / "paths_optix.cu")
-        shared = read(ROOT / "include" / "rayd" / "diffraction" / "paths_algo.h")
+        shared = read(TORCH_SOURCE / "diffraction" / "paths.h")
         for source in (optix, shared):
             self.assertIn("return params.active_mask[state_idx] != 0u;", source)
             self.assertNotIn("params.active_mask == nullptr", source)

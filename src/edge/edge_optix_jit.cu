@@ -4,10 +4,10 @@
 #include <optix.h>
 #include <optix_device.h>
 
-#include <rayd/jit/edge_optix_params.h>
+#include <rayd/jit/edge.h>
 #include <rayd/contracts.h>
-#include <rayd/edge/edge_distance.h>
-#include <rayd/edge/optix_device.cuh>
+#include <src/edge/edge_distance.h>
+#include <src/edge/edge_optix_device.cuh>
 
 namespace rayd {
 

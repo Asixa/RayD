@@ -75,10 +75,17 @@ option(RAYD_TORCH_BUILD_NATIVE "Build the RayD Torch extension." ON)
 option(RAYD_TORCH_BUILD_PYTHON_MODULE "Build the rayd.torch Python extension module." ON)
 option(RAYD_TORCH_BUILD_CPP_TESTS "Build direct C++ tests for the typed integration API." OFF)
 option(RAYD_TORCH_OPTIX_FAST_MATH "Compile embedded OptiX PTX with --use_fast_math." ON)
+set(RAYD_TORCH_SOURCE_BUNDLE_GENERATOR
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_source_bundle.py")
+if(EXISTS "${RAYD_TORCH_SOURCE_BUNDLE_GENERATOR}")
+    set(RAYD_TORCH_INSTALL_SOURCE_BUNDLE_DEFAULT ON)
+else()
+    set(RAYD_TORCH_INSTALL_SOURCE_BUNDLE_DEFAULT OFF)
+endif()
 option(
     RAYD_TORCH_INSTALL_SOURCE_BUNDLE
     "Install the integrity-described source bundle for same-graph downstream builds."
-    ON)
+    ${RAYD_TORCH_INSTALL_SOURCE_BUNDLE_DEFAULT})
 set(
     RAYD_SOURCE_COMMIT
     ""
@@ -95,11 +102,18 @@ if(BUILD_TESTING AND RAYD_TORCH_BUILD_CPP_TESTS)
 endif()
 
 if(RAYD_TORCH_INSTALL_SOURCE_BUNDLE)
+    if(NOT EXISTS "${RAYD_TORCH_SOURCE_BUNDLE_GENERATOR}")
+        message(FATAL_ERROR
+            "RAYD_TORCH_INSTALL_SOURCE_BUNDLE=ON requires "
+            "scripts/generate_source_bundle.py, which is intentionally absent "
+            "from the passive source bundle. Configure the repository checkout "
+            "to generate a bundle, or leave this option OFF when consuming one.")
+    endif()
     set(RAYD_TORCH_SOURCE_BUNDLE "${CMAKE_CURRENT_BINARY_DIR}/rayd-source-bundle")
     set(
         RAYD_TORCH_SOURCE_BUNDLE_COMMAND
         "${Python_EXECUTABLE}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_source_bundle.py"
+        "${RAYD_TORCH_SOURCE_BUNDLE_GENERATOR}"
         --workspace "${RAYD_ROOT_DIR}"
         --output "${RAYD_TORCH_SOURCE_BUNDLE}"
         --distribution-version "${PROJECT_VERSION}")
@@ -363,11 +377,9 @@ if(RAYD_TORCH_BUILD_NATIVE)
             -I "${OPTIX_INCLUDE_DIR}"
             ${RAYD_TORCH_OPTIX_NVCC_FLAGS}
         DEPENDS
-            ${RAYD_ROOT_DIR}/src/scene/intersection_optix.cu
             ${RAYD_ROOT_DIR}/src/scene/optix_intersect_params.h
             "${RAYD_INCLUDE_DIR}/rayd/contracts.h"
-            "${RAYD_INCLUDE_DIR}/rayd/scene/optix_contracts.h"
-            "${RAYD_INCLUDE_DIR}/rayd/scene/optix_device.cuh"
+            "${RAYD_ROOT_DIR}/src/scene/scene_internal.h"
         DEPFILE "${RAYD_TORCH_OPTIX_PTX}.d"
         VERBATIM
     )
@@ -404,10 +416,10 @@ if(RAYD_TORCH_BUILD_NATIVE)
             ${RAYD_ROOT_DIR}/src/edge/edge_optix.cu
             ${RAYD_ROOT_DIR}/src/edge/optix_params.h
             "${RAYD_INCLUDE_DIR}/rayd/contracts.h"
-            "${RAYD_INCLUDE_DIR}/rayd/edge/edge_distance.h"
+            "${RAYD_ROOT_DIR}/src/edge/edge_distance.h"
             "${RAYD_INCLUDE_DIR}/rayd/math.h"
-            "${RAYD_INCLUDE_DIR}/rayd/edge/optix_contracts.h"
-            "${RAYD_INCLUDE_DIR}/rayd/edge/optix_device.cuh"
+            "${RAYD_ROOT_DIR}/src/edge/optix_contracts.h"
+            "${RAYD_ROOT_DIR}/src/edge/edge_optix_device.cuh"
         DEPFILE "${RAYD_TORCH_EDGE_OPTIX_POINT_RAY_PTX}.d"
         VERBATIM
     )
@@ -443,10 +455,10 @@ if(RAYD_TORCH_BUILD_NATIVE)
             ${RAYD_ROOT_DIR}/src/edge/edge_optix.cu
             ${RAYD_ROOT_DIR}/src/edge/optix_params.h
             "${RAYD_INCLUDE_DIR}/rayd/contracts.h"
-            "${RAYD_INCLUDE_DIR}/rayd/edge/edge_distance.h"
+            "${RAYD_ROOT_DIR}/src/edge/edge_distance.h"
             "${RAYD_INCLUDE_DIR}/rayd/math.h"
-            "${RAYD_INCLUDE_DIR}/rayd/edge/optix_contracts.h"
-            "${RAYD_INCLUDE_DIR}/rayd/edge/optix_device.cuh"
+            "${RAYD_ROOT_DIR}/src/edge/optix_contracts.h"
+            "${RAYD_ROOT_DIR}/src/edge/edge_optix_device.cuh"
         DEPFILE "${RAYD_TORCH_EDGE_OPTIX_TOPK_PTX}.d"
         VERBATIM
     )
@@ -483,18 +495,12 @@ if(RAYD_TORCH_BUILD_NATIVE)
             -I "${OPTIX_INCLUDE_DIR}"
             ${RAYD_TORCH_OPTIX_NVCC_FLAGS}
         DEPENDS
-            ${RAYD_ROOT_DIR}/src/reflection/trace_optix.cu
-            ${RAYD_ROOT_DIR}/src/reflection/trace_params.h
+            ${RAYD_ROOT_DIR}/src/reflection/reflection_internal.h
             "${RAYD_INCLUDE_DIR}/rayd/math.h"
-            "${RAYD_INCLUDE_DIR}/rayd/reflection/reflection_geometry.h"
-            "${RAYD_INCLUDE_DIR}/rayd/reflection/optix_hit.h"
-            "${RAYD_INCLUDE_DIR}/rayd/reflection/optix_traverser.h"
-            "${RAYD_INCLUDE_DIR}/rayd/reflection/trace_params.h"
-            "${RAYD_INCLUDE_DIR}/rayd/reflection/trace_optix_device.cuh"
-            "${RAYD_INCLUDE_DIR}/rayd/reflection/trace_algo.h"
-            "${RAYD_INCLUDE_DIR}/rayd/rt/qualifiers.h"
-            "${RAYD_INCLUDE_DIR}/rayd/rt/traverser.h"
-            "${RAYD_INCLUDE_DIR}/rayd/rt/numeric_policy.h"
+            "${RAYD_ROOT_DIR}/src/reflection/reflection_algorithms.cuh"
+            "${RAYD_ROOT_DIR}/src/reflection/reflection_optix_common.cuh"
+            "${RAYD_ROOT_DIR}/src/reflection/reflection_trace_optix.cuh"
+            "${RAYD_ROOT_DIR}/src/runtime/rt_device.cuh"
         DEPFILE "${RAYD_TORCH_REFLECTION_TRACE_PTX}.d"
         VERBATIM
     )
@@ -529,13 +535,9 @@ if(RAYD_TORCH_BUILD_NATIVE)
         DEPENDS
             ${RAYD_ROOT_DIR}/src/visibility/visibility_optix.cu
             ${RAYD_ROOT_DIR}/src/visibility/visibility_params.h
-            "${RAYD_INCLUDE_DIR}/rayd/visibility/segment_params.h"
-            "${RAYD_INCLUDE_DIR}/rayd/visibility/segment_optix_device.cuh"
-            "${RAYD_INCLUDE_DIR}/rayd/visibility/segment_algo.h"
+            "${RAYD_ROOT_DIR}/src/visibility/segment_visibility.cuh"
             "${RAYD_INCLUDE_DIR}/rayd/math.h"
-            "${RAYD_INCLUDE_DIR}/rayd/rt/qualifiers.h"
-            "${RAYD_INCLUDE_DIR}/rayd/rt/traverser.h"
-            "${RAYD_INCLUDE_DIR}/rayd/rt/numeric_policy.h"
+            "${RAYD_ROOT_DIR}/src/runtime/rt_device.cuh"
         DEPFILE "${RAYD_TORCH_SEGMENT_VISIBILITY_PTX}.d"
         VERBATIM
     )
@@ -571,12 +573,8 @@ if(RAYD_TORCH_BUILD_NATIVE)
             ${RAYD_ROOT_DIR}/src/visibility/axial_edge_visibility_optix.cu
             ${RAYD_ROOT_DIR}/src/visibility/axial_edge_visibility_params.h
             "${RAYD_INCLUDE_DIR}/rayd/math.h"
-            "${RAYD_INCLUDE_DIR}/rayd/visibility/segment_algo.h"
-            "${RAYD_INCLUDE_DIR}/rayd/visibility/segment_optix_device.cuh"
-            "${RAYD_INCLUDE_DIR}/rayd/visibility/segment_params.h"
-            "${RAYD_INCLUDE_DIR}/rayd/rt/numeric_policy.h"
-            "${RAYD_INCLUDE_DIR}/rayd/rt/qualifiers.h"
-            "${RAYD_INCLUDE_DIR}/rayd/rt/traverser.h"
+            "${RAYD_ROOT_DIR}/src/visibility/segment_visibility.cuh"
+            "${RAYD_ROOT_DIR}/src/runtime/rt_device.cuh"
         DEPFILE "${RAYD_TORCH_AXIAL_EDGE_VISIBILITY_PTX}.d"
         VERBATIM
     )
@@ -611,19 +609,13 @@ if(RAYD_TORCH_BUILD_NATIVE)
             -I "${OPTIX_INCLUDE_DIR}"
             ${RAYD_TORCH_OPTIX_NVCC_FLAGS}
         DEPENDS
-            ${RAYD_ROOT_DIR}/src/reflection/epc_optix.cu
-            ${RAYD_ROOT_DIR}/src/reflection/epc_params.h
+            ${RAYD_ROOT_DIR}/src/reflection/reflection_internal.h
             "${RAYD_INCLUDE_DIR}/rayd/contracts.h"
-            "${RAYD_INCLUDE_DIR}/rayd/reflection/optix_hit.h"
-            "${RAYD_INCLUDE_DIR}/rayd/reflection/epc_params.h"
-            "${RAYD_INCLUDE_DIR}/rayd/reflection/epc_optix_device.cuh"
-            "${RAYD_INCLUDE_DIR}/rayd/reflection/epc_algo.h"
+            "${RAYD_ROOT_DIR}/src/reflection/reflection_optix_common.cuh"
+            "${RAYD_ROOT_DIR}/src/reflection/reflection_epc_optix.cuh"
+            "${RAYD_ROOT_DIR}/src/reflection/reflection_algorithms.cuh"
             "${RAYD_INCLUDE_DIR}/rayd/math.h"
-            "${RAYD_INCLUDE_DIR}/rayd/reflection/reflection_geometry.h"
-            "${RAYD_INCLUDE_DIR}/rayd/reflection/epc_chain.h"
-            "${RAYD_INCLUDE_DIR}/rayd/rt/qualifiers.h"
-            "${RAYD_INCLUDE_DIR}/rayd/rt/traverser.h"
-            "${RAYD_INCLUDE_DIR}/rayd/rt/numeric_policy.h"
+            "${RAYD_ROOT_DIR}/src/runtime/rt_device.cuh"
         DEPFILE "${RAYD_TORCH_REFLECTION_EPC_PTX}.d"
         VERBATIM
     )
@@ -656,11 +648,9 @@ if(RAYD_TORCH_BUILD_NATIVE)
             -I "${OPTIX_INCLUDE_DIR}"
             ${RAYD_TORCH_OPTIX_NVCC_FLAGS}
         DEPENDS
-            ${RAYD_ROOT_DIR}/src/reflection/accumulation_optix.cu
             ${RAYD_INCLUDE_DIR}/rayd/math.h
             ${RAYD_ROOT_DIR}/src/reflection/accum_params.h
             "${RAYD_INCLUDE_DIR}/rayd/contracts.h"
-            "${RAYD_INCLUDE_DIR}/rayd/math.h"
         DEPFILE "${RAYD_TORCH_REFLECTION_ACCUMULATION_PTX}.d"
         VERBATIM
     )
@@ -696,9 +686,8 @@ if(RAYD_TORCH_BUILD_NATIVE)
             ${RAYD_ROOT_DIR}/src/diffraction/paths_optix.cu
             ${RAYD_ROOT_DIR}/src/diffraction/common.h
             ${RAYD_ROOT_DIR}/src/diffraction/paths_params.h
-            "${RAYD_INCLUDE_DIR}/rayd/diffraction/utd.h"
-            "${RAYD_INCLUDE_DIR}/rayd/diffraction/utd_types.h"
-            "${RAYD_INCLUDE_DIR}/rayd/diffraction/contracts.h"
+            "${RAYD_INCLUDE_DIR}/rayd/utd.h"
+            "${RAYD_ROOT_DIR}/src/diffraction/contracts.h"
         DEPFILE "${RAYD_TORCH_DIFFRACTION_PATHS_PTX}.d"
         VERBATIM
     )
@@ -734,9 +723,8 @@ if(RAYD_TORCH_BUILD_NATIVE)
             ${RAYD_ROOT_DIR}/src/diffraction/accumulation_optix.cu
             ${RAYD_ROOT_DIR}/src/diffraction/common.h
             ${RAYD_ROOT_DIR}/src/diffraction/accum_params.h
-            "${RAYD_INCLUDE_DIR}/rayd/diffraction/utd.h"
-            "${RAYD_INCLUDE_DIR}/rayd/diffraction/utd_types.h"
-            "${RAYD_INCLUDE_DIR}/rayd/diffraction/contracts.h"
+            "${RAYD_INCLUDE_DIR}/rayd/utd.h"
+            "${RAYD_ROOT_DIR}/src/diffraction/contracts.h"
         DEPFILE "${RAYD_TORCH_DIFFRACTION_ACCUMULATION_PTX}.d"
         VERBATIM
     )
@@ -810,22 +798,22 @@ if(RAYD_TORCH_BUILD_NATIVE)
         ${RAYD_ROOT_DIR}/src/reflection/reflection.cpp
         ${RAYD_ROOT_DIR}/src/diffraction/diffraction.cpp
         ${RAYD_ROOT_DIR}/src/penetration/penetration.cpp
-        ${RAYD_ROOT_DIR}/src/sdf/sdf.cpp
+        ${RAYD_ROOT_DIR}/src/sdf.cpp
         ${RAYD_ROOT_DIR}/src/scene/cache.cu
         ${RAYD_ROOT_DIR}/src/scene/packing_shared.cu
         ${RAYD_ROOT_DIR}/src/scene/intersection.cu
         ${RAYD_ROOT_DIR}/src/scene/triangle_bvh.cu
         ${RAYD_ROOT_DIR}/src/scene/multipath.cu
         ${RAYD_ROOT_DIR}/src/penetration/penetration.cu
-        ${RAYD_ROOT_DIR}/src/bvh/build_shared.cu
-        ${RAYD_ROOT_DIR}/src/bvh/triangle_query_shared.cu
+        ${RAYD_ROOT_DIR}/src/bvh_build_shared.cu
+        ${RAYD_ROOT_DIR}/src/bvh_triangle_query_shared.cu
         ${RAYD_ROOT_DIR}/src/edge/edge_shared.cu
         ${RAYD_ROOT_DIR}/src/edge/edge_bvh.cu
         ${RAYD_ROOT_DIR}/src/edge/edge_queries.cu
         ${RAYD_ROOT_DIR}/src/visibility/visibility_ad.cu
         ${RAYD_ROOT_DIR}/src/reflection/reflection_kernels.cu
         ${RAYD_ROOT_DIR}/src/reflection/dedup_shared.cu
-        ${RAYD_ROOT_DIR}/src/transmission/transmission.cu
+        ${RAYD_ROOT_DIR}/src/transmission.cu
         ${RAYD_ROOT_DIR}/src/diffraction/wedge.cu
         ${RAYD_ROOT_DIR}/src/scattering/table.cu
         ${RAYD_ROOT_DIR}/src/scattering/table_ad.cu
@@ -836,7 +824,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
         ${RAYD_ROOT_DIR}/src/diffraction/diffraction_kernels.cu
         ${RAYD_ROOT_DIR}/src/runtime/diagnostics.cu
         ${RAYD_ROOT_DIR}/src/camera/camera.cu
-        ${RAYD_ROOT_DIR}/src/sdf/sdf.cu
+        ${RAYD_ROOT_DIR}/src/sdf.cu
     )
 
     # ADR-0035 profile: fast_math, and divergence D3: this is the only Torch

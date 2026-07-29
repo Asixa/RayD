@@ -1,7 +1,7 @@
 // Copyright Xingyu Chen.
 // Implements scene support for packing shared.
 
-#include <rayd/scene/packing.h>
+#include <src/scene/scene_internal.h>
 
 #include <cuda_runtime.h>
 

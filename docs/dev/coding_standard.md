@@ -16,11 +16,21 @@ This document defines the maintained source layout, formatting, comment, math ow
 
 ## Source layout and ownership
 
-- `include/rayd/` has no `detail/` layer. Small shared headers live directly under `rayd`; only multi-file concepts keep
-  a direct concept directory.
-- Torch's default typed headers live under `include/rayd/`. Dr.Jit public headers live under `include/rayd/jit/`.
-- Native implementation files live under the matching concept in `src/`; backend suffixes identify variants without
-  recreating backend directory trees.
+- `include/rayd/` is public API only. Its default Torch and shared headers are flat at the root, and its only
+  subdirectory is the flat Dr.Jit surface at `include/rayd/jit/`.
+- Private native headers live beside their owners in `src/`; public headers must not include anything from `src/`.
+- A private header used by only one production file is part of that file unless a native compile test independently
+  validates it as a host/device boundary. Otherwise, fold it into the consumer instead of leaving a fragment header.
+- Keep a direct `src/<concept>/` directory only for a real multi-file module. One- and two-file concepts stay flat under
+  `src/`; do not recreate backend directory trees.
+- Native implementation files use backend suffixes for variants. Shared implementation files use a responsibility name
+  or `_shared` suffix only when both backends compile the same physical source.
+- There is no maximum file length. Split a file only when the pieces have distinct ownership or multiple consumers, not
+  to satisfy a line-count target.
+- Renames and consolidation are direct. Do not retain forwarding headers, compatibility include paths, or duplicate
+  declarations.
+- Consolidated native files use current responsibility comments, never `merged from` markers, and must not retain
+  adjacent duplicate includes.
 - Python frontends live under `python/rayd/torch/` and `python/rayd/drjit/`. Shared private implementation belongs under
   `python/rayd/_impl/` only when both independently installable distributions can package it without conflicting file
   ownership.
@@ -28,6 +38,7 @@ This document defines the maintained source layout, formatting, comment, math ow
 ## Math ownership
 
 - `include/rayd/math.h` is the only production file whose name contains `math`.
+- `include/rayd/utd.h` uniquely owns shared UTD domain types and algorithms; diffraction launch and backend headers are private under `src/diffraction/`.
 - Put reusable vector, complex, matrix, quaternion, dual-scalar, CUDA `float3`, and primitive scalar/vector operations
   in `math.h`.
 - Concept files may own domain records and algorithms, but must not redeclare simple math types or copy primitive math

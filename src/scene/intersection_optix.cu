@@ -2,10 +2,25 @@
 // Implements scene support for intersection optix.
 
 #include <src/scene/optix_intersect_params.h>
+#include <src/scene/scene_internal.h>
+
 #include <rayd/contracts.h>
-#include <rayd/scene/optix_device.cuh>
 
 #include <optix_device.h>
+
+namespace rayd::shared::optix {
+
+static __forceinline__ __device__ void set_scene_intersection_payload(float ray_t, unsigned int shape_id,
+                                                                      float barycentric_u, float barycentric_v,
+                                                                      unsigned int local_primitive_id) {
+    optixSetPayload_0(__float_as_uint(ray_t));
+    optixSetPayload_1(shape_id);
+    optixSetPayload_2(__float_as_uint(barycentric_u));
+    optixSetPayload_3(__float_as_uint(barycentric_v));
+    optixSetPayload_4(local_primitive_id);
+}
+
+} // namespace rayd::shared::optix
 
 extern "C" {
 __constant__ rayd::torch_backend::OptixIntersectParams params;

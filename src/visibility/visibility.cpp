@@ -18,14 +18,13 @@
 #include <src/reflection/accum_reduce.h>
 #include <src/reflection/accum_params.h>
 #include <src/visibility/axial_edge_visibility_params.h>
-#include <src/reflection/dedup.h>
+#include <src/reflection/reflection_internal.h>
 #include <src/reflection/epc_field.h>
-#include <src/reflection/epc_params.h>
-#include <src/reflection/trace_params.h>
+#include <src/reflection/reflection_internal.h>
 #include <src/visibility/visibility.h>
 #include <src/visibility/visibility_params.h>
 #include <rayd/visibility.h>
-#include <rayd/rt/optix_pipeline_contracts.h>
+#include <src/runtime/rt_internal.h>
 #include <rayd/visibility/segment_torch_ptx.h>
 #include <rayd/visibility/axial_edge_torch_ptx.h>
 #include <src/scene/cache.h>

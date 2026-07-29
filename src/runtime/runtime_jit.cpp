@@ -692,7 +692,7 @@ bool native_launch_audit_timing_enabled() {
 #include <cuda_runtime_api.h>
 
 #include <rayd/jit/native_launch_audit.h>
-#include <rayd/rt/optix_pipeline_contracts.h>
+#include <src/runtime/rt_internal.h>
 
 #include <reflection_trace_ptx.h>
 #include <reflection_epc_ptx.h>
@@ -700,8 +700,7 @@ bool native_launch_audit_timing_enabled() {
 #include <diffraction_accumulation_ptx.h>
 #include <diffraction_paths_ptx.h>
 #include <segment_visibility_ptx.h>
-#include <src/reflection/trace_params_jit.h>
-#include <src/reflection/epc_params_jit.h>
+#include <src/reflection/reflection_internal.h>
 #include <src/reflection/accumulation_params_jit.h>
 #include <src/diffraction/accumulation_params_jit.h>
 #include <src/diffraction/paths_params_jit.h>
@@ -1227,10 +1226,10 @@ OptixPipelineConfig segment_chain_visibility_pipeline_config() {
 #include <string>
 #include <vector>
 
-#include <rayd/jit/ray.h>
+#include <rayd/jit/core.h>
 #include "scene_internal_jit.h"
 #include <src/diffraction/accumulation_ad_jit.h>
-#include <src/reflection/dedup_jit.h>
+#include <src/reflection/reflection_internal.h>
 #include <src/reflection/epc_field_jit.h>
 #include <src/runtime/optix_pipelines_jit.h>
 #include <rayd/jit/native_launch_audit.h>

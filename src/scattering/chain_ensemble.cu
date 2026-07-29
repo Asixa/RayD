@@ -300,7 +300,7 @@ ScatteringChainEnsembleEvalResult scattering_chain_ensemble_eval(const Scatterin
 
 } // namespace rayd::torch
 
-// ---- merged from src/scattering/chain_ensemble_ad_part.cu ----
+// Native derivatives for ensemble scattering chains.
 
 // ADR-021 Op A AD companions: scattering_chain_ensemble_eval_backward / _jvp.
 //

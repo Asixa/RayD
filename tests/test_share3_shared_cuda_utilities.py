@@ -21,9 +21,9 @@ def _is_build_output(path: Path) -> bool:
 
 
 UNITS = {
-    "aabb": (SHARED_INCLUDE / "edge" / "edge_aabb.h", SHARED_SOURCE / "edge" / "edge_shared.cu"),
-    "dedup": (SHARED_INCLUDE / "reflection" / "dedup.h", SHARED_SOURCE / "reflection" / "dedup_shared.cu"),
-    "packing": (SHARED_INCLUDE / "scene" / "packing.h", SHARED_SOURCE / "scene" / "packing_shared.cu"),
+    "aabb": (SHARED_SOURCE / "edge" / "bvh_build.h", SHARED_SOURCE / "edge" / "edge_shared.cu"),
+    "dedup": (SHARED_SOURCE / "reflection" / "reflection_internal.h", SHARED_SOURCE / "reflection" / "dedup_shared.cu"),
+    "packing": (SHARED_SOURCE / "scene" / "scene_internal.h", SHARED_SOURCE / "scene" / "packing_shared.cu"),
 }
 
 
@@ -168,11 +168,11 @@ class Share3SharedCudaUtilitiesTests(unittest.TestCase):
             "torch_packing": ROOT / "src" / "scene" / "cache.cu",
         }
         caller_text = {name: path.read_text(encoding="utf-8") for name, path in callers.items()}
-        self.assertIn("<rayd/edge/edge_aabb.h>", caller_text["drjit_aabb"])
-        self.assertIn("<rayd/edge/edge_aabb.h>", caller_text["torch_aabb"])
-        self.assertIn("<rayd/reflection/dedup.h>", caller_text["drjit_dedup"])
-        self.assertIn("<rayd/reflection/dedup.h>", caller_text["torch_dedup"])
-        self.assertIn("<rayd/scene/packing.h>", caller_text["torch_packing"])
+        self.assertIn("<src/edge/bvh_build.h>", caller_text["drjit_aabb"])
+        self.assertIn("<src/edge/bvh_build.h>", caller_text["torch_aabb"])
+        self.assertIn("<src/reflection/reflection_internal.h>", caller_text["drjit_dedup"])
+        self.assertIn("<src/reflection/reflection_internal.h>", caller_text["torch_dedup"])
+        self.assertIn("<src/scene/scene_internal.h>", caller_text["torch_packing"])
 
     def test_aabb_reference_covers_reversed_degenerate_and_negative_inflation(self):
         def reference(p0, edge, inflation):

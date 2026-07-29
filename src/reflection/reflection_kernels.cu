@@ -1,5 +1,5 @@
 // Copyright Xingyu Chen.
-// Implements reflection support for reflection kernels.
+// Implements reflection and EPC CUDA kernels.
 
 #include <src/scene/geometry_kernels.h>
 #include <src/reflection/kernels.h>
@@ -139,21 +139,6 @@ __device__ float3 read_grad_image_or_zero(const float* base, int64_t stride0, in
                                          base[ray_idx * stride0 + bounce * stride1 + 2 * stride2]);
 }
 
-__device__ float3 normal_from_edges(float3 e1, float3 e2, float* length_out) {
-    const float3 q = cross3(e1, e2);
-    const float length = sqrtf(fmaxf(dot3(q, q), 1e-20f));
-    if (length_out != nullptr)
-        *length_out = length;
-    return mul3(1.f / length, q);
-}
-
-__device__ float3 normal_jvp(float3 e1, float3 e2, float3 de1, float3 de2) {
-    float length = 0.f;
-    const float3 n = normal_from_edges(e1, e2, &length);
-    const float3 dq = add3(cross3(de1, e2), cross3(e1, de2));
-    return mul3(1.f / length, sub3(dq, mul3(dot3(n, dq), n)));
-}
-
 __global__ void reflection_chain_state_kernel(const float* __restrict__ ray_o, const float* __restrict__ ray_d,
                                               const float* __restrict__ tape_hit_points,
                                               const float* __restrict__ tape_normals,
@@ -249,7 +234,7 @@ __global__ void reflection_chain_backward_kernel(
         const float3 v2 = make_f3(vertices + i2 * 3);
         const float3 e1 = sub3(v1, v0);
         const float3 e2 = sub3(v2, v0);
-        const float3 raw_normal = normal_from_edges(e1, e2, nullptr);
+        const float3 raw_normal = ::rayd::shared::math::triangle_unit_normal(e1, e2, nullptr);
         const float sign = dot3(raw_normal, normal) >= 0.f ? 1.f : -1.f;
         const float3 grad_raw_n = mul3(sign, grad_signed_n);
 
@@ -346,9 +331,9 @@ __global__ void reflection_chain_jvp_kernel(
             const float3 dy = solve_columns(mul3(-1.f, direction), e1, e2, rhs);
             tangent_hit_t = dy.x;
             tangent_hit = add3(tangent_origin, add3(mul3(dy.x, direction), mul3(solved_t, tangent_direction)));
-            const float3 raw_normal = normal_from_edges(e1, e2, nullptr);
+            const float3 raw_normal = ::rayd::shared::math::triangle_unit_normal(e1, e2, nullptr);
             const float sign = dot3(raw_normal, normal) >= 0.f ? 1.f : -1.f;
-            tangent_normal = mul3(sign, normal_jvp(e1, e2, de1, de2));
+            tangent_normal = mul3(sign, ::rayd::shared::math::triangle_unit_normal_jvp(e1, e2, de1, de2));
         }
         tangent_t[ray_bounce_index(ray_idx, bounce, max_bounces)] = active_b ? tangent_hit_t : 0.f;
 
@@ -700,10 +685,9 @@ ReflEpcJvpOutputs refl_epc_jvp_cuda(const at::Tensor& vertices, const at::Tensor
 
 } // namespace rayd::torch_backend
 
-// ---- merged from src/reflection/dedup_part.cu ----
+// Reflection-path deduplication kernels.
 
-#include <src/reflection/dedup.h>
-#include <rayd/reflection/dedup.h>
+#include <src/reflection/reflection_internal.h>
 
 #include <c10/cuda/CUDAGuard.h>
 #include <cuda_runtime.h>
@@ -1011,7 +995,7 @@ int reflection_dedup_gpu(int device_index, int n_rays, int max_bounces, const in
 
 } // namespace rayd::torch_backend
 
-// ---- merged from src/reflection/epc_field_part.cu ----
+// Equivalent-path-correction field kernels.
 
 #include <src/reflection/epc_field.h>
 #include <rayd/contracts.h>
@@ -1022,7 +1006,6 @@ int reflection_dedup_gpu(int device_index, int n_rays, int max_bounces, const in
 #include <algorithm>
 #include <string>
 
-#include <rayd/math.h>
 #include <rayd/math.h>
 #include <src/runtime/native_compat.h>
 
@@ -1153,7 +1136,7 @@ __global__ void reflection_epc_forward_setup_kernel(ReflEpcForwardSetupParams pa
         (P).out_field_z_im[(RAY)] = (FIELD).z.im;                                                                      \
     }
 
-#include <rayd/reflection/epc_field_device.cuh>
+#include <src/reflection/epc_field_fragment.cuh>
 
 void check_cuda_last_error(const char* message) {
     check_cuda_call(cudaGetLastError(), message);
@@ -1200,7 +1183,7 @@ void reflection_epc_field_gpu(const ReflEpcFieldParams& params, int device_index
 
 } // namespace rayd::torch_backend
 
-// ---- merged from src/reflection/epc_geometry_ad_part.cu ----
+// Equivalent-path-correction geometry derivatives.
 
 // Fixed-winner geometry adjoint / tangent of the reflection EPC path export
 // (direct-plane mode) and of the scene's unit face-normal table.
@@ -1209,7 +1192,7 @@ void reflection_epc_field_gpu(const ReflEpcFieldParams& params, int device_index
 // raygen solves for an already-selected plane sequence: mirror the source
 // through each plane, walk back from the receiver intersecting each plane,
 // sum the segment lengths. That chain lives in
-// include/rayd/reflection/epc_chain.h together with its
+// src/reflection/reflection_algorithms.cuh together with its
 // reverse-mode companion, so the math here has exactly one implementation.
 // Which primitive each bounce hits, the containment test and the visibility
 // casts are frozen discovery decisions: invalid rows contribute nothing and
@@ -1217,8 +1200,8 @@ void reflection_epc_field_gpu(const ReflEpcFieldParams& params, int device_index
 
 #include <src/reflection/kernels.h>
 #include <rayd/math.h>
-#include <rayd/reflection/epc_params.h>
-#include <rayd/reflection/epc_chain.h>
+#include <src/reflection/reflection_internal.h>
+#include <src/reflection/reflection_algorithms.cuh>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>
@@ -1621,7 +1604,7 @@ at::Tensor scene_face_normals_jvp_cuda(const at::Tensor& vertices, const at::Ten
 
 } // namespace rayd::torch_backend
 
-// ---- merged from src/reflection/accum_reduce_part.cu ----
+// Reflection accumulation reduction kernels.
 
 #include <src/reflection/accum_reduce.h>
 #include <src/runtime/optix_context.h>

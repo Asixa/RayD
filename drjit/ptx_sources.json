@@ -5,34 +5,31 @@
     "sources_committed_after_header": {
       "diffraction_accumulation": [
         "src/diffraction/accumulation_params_jit.h @2634aa1",
-        "include/rayd/diffraction/accumulation_algo.h @2634aa1",
-        "include/rayd/diffraction/utd.h @346416f",
-        "include/rayd/diffraction/utd_types.h @346416f"
+        "src/diffraction/accumulation.h @2634aa1",
+        "include/rayd/utd.h @346416f"
       ],
       "diffraction_paths": [
         "src/diffraction/paths_params_jit.h @2634aa1",
-        "include/rayd/diffraction/paths_algo.h @cf51e4c",
-        "include/rayd/diffraction/utd.h @346416f",
-        "include/rayd/diffraction/utd_types.h @346416f"
+        "src/diffraction/paths.h @cf51e4c",
+        "include/rayd/utd.h @346416f"
       ],
       "edge_optix": [
-        "include/rayd/edge/edge_distance.h @3cf3fb1",
+        "src/edge/edge_distance.h @3cf3fb1",
         "include/rayd/math.h @a139d93",
-        "include/rayd/rt/numeric_policy.h @3cf3fb1",
-        "include/rayd/rt/qualifiers.h @a139d93"
+        "include/rayd/math.h @3cf3fb1"
       ],
       "reflection_accumulation": [
         "src/reflection/accumulation_params_jit.h @2634aa1",
-        "include/rayd/reflection/accumulation_algo.h @2634aa1"
+        "src/reflection/reflection_algorithms.cuh @2634aa1"
       ],
       "reflection_epc": [
-        "include/rayd/reflection/epc_algo.h @2634aa1"
+        "src/reflection/reflection_algorithms.cuh @2634aa1"
       ],
       "reflection_trace": [
-        "include/rayd/reflection/trace_algo.h @2634aa1"
+        "src/reflection/reflection_algorithms.cuh @2634aa1"
       ],
       "segment_visibility": [
-        "include/rayd/visibility/segment_algo.h @2634aa1"
+        "src/visibility/segment_visibility.cuh @2634aa1"
       ],
       "surfel_trace": []
     },
@@ -56,6 +53,9 @@
         "drjit/complex.h",
         "drjit/jit.h",
         "drjit/matrix.h",
+        "drjit/quaternion.h",
+        "drjit/sphere.h",
+        "drjit/transform.h",
         "limits",
         "optix.h",
         "optix_device.h",
@@ -71,24 +71,19 @@
       "header_sha256": "d658ee0f7f752e11571e19ea1d23ec8f042b5a1799a27b7a1dfd28f2dd4d8094",
       "option": "RAYD_REGENERATE_DIFFRACTION_ACCUMULATION_PTX",
       "regeneration_verified": true,
-      "source_sha256": "78ec55d3cba3c12c112bcdd679be3ba601a06521867c973fd6197f0974a3899a",
+      "source_sha256": "62de06c6371279e4cf7489276a662d6cf2899419e4285c28a71dc6986e5df3f8",
       "sources": [
         "include/rayd/contracts.h",
-        "include/rayd/diffraction/accumulation_algo.h",
-        "include/rayd/diffraction/accumulation_optix_device.cuh",
-        "include/rayd/diffraction/contracts.h",
-        "include/rayd/diffraction/utd.h",
-        "include/rayd/diffraction/utd_types.h",
         "include/rayd/jit/core.h",
-        "include/rayd/jit/diffraction_accumulation.h",
-        "include/rayd/jit/types.h",
-        "include/rayd/jit/utils.h",
+        "include/rayd/jit/diffraction.h",
         "include/rayd/math.h",
-        "include/rayd/rt/numeric_policy.h",
-        "include/rayd/rt/qualifiers.h",
-        "include/rayd/rt/traverser.h",
+        "include/rayd/utd.h",
+        "src/diffraction/accumulation.h",
+        "src/diffraction/accumulation_optix.cuh",
         "src/diffraction/accumulation_optix_jit.cu",
-        "src/diffraction/accumulation_params_jit.h"
+        "src/diffraction/accumulation_params_jit.h",
+        "src/diffraction/contracts.h",
+        "src/runtime/rt_device.cuh"
       ],
       "variable": "diffraction_accumulation_ptx"
     },
@@ -105,6 +100,9 @@
         "drjit/complex.h",
         "drjit/jit.h",
         "drjit/matrix.h",
+        "drjit/quaternion.h",
+        "drjit/sphere.h",
+        "drjit/transform.h",
         "limits",
         "optix.h",
         "optix_device.h",
@@ -120,59 +118,67 @@
       "header_sha256": "b67d7faf4994fc0e260d5bfd58299d9bf9dfa9ac8e5948778c1f1c597c41d4f8",
       "option": "RAYD_REGENERATE_DIFFRACTION_PATHS_PTX",
       "regeneration_verified": true,
-      "source_sha256": "fa0701c5a55f2d69a566c21b19786aeb6b67b8d3d2f75f77f4fe4f208f59f188",
+      "source_sha256": "b37e47c56ee0afc8d87ab5035c2f937c2c602da01e1a5ef2b2f864b25c1057ef",
       "sources": [
         "include/rayd/contracts.h",
-        "include/rayd/diffraction/contracts.h",
-        "include/rayd/diffraction/paths_algo.h",
-        "include/rayd/diffraction/paths_optix_device.cuh",
-        "include/rayd/diffraction/utd.h",
-        "include/rayd/diffraction/utd_types.h",
         "include/rayd/jit/core.h",
-        "include/rayd/jit/diffraction_accumulation.h",
-        "include/rayd/jit/diffraction_paths.h",
-        "include/rayd/jit/types.h",
-        "include/rayd/jit/utils.h",
+        "include/rayd/jit/diffraction.h",
         "include/rayd/math.h",
-        "include/rayd/rt/numeric_policy.h",
-        "include/rayd/rt/qualifiers.h",
-        "include/rayd/rt/traverser.h",
+        "include/rayd/utd.h",
+        "src/diffraction/contracts.h",
+        "src/diffraction/paths.h",
         "src/diffraction/paths_optix_jit.cu",
-        "src/diffraction/paths_params_jit.h"
+        "src/diffraction/paths_params_jit.h",
+        "src/runtime/rt_device.cuh"
       ],
       "variable": "diffraction_paths_ptx"
     },
     "edge_optix": {
       "cu": "src/edge/edge_optix_jit.cu",
       "external_includes": [
+        "algorithm",
+        "array",
+        "cctype",
         "cmath",
         "cstddef",
         "cstdint",
+        "cstdlib",
         "cuda_runtime.h",
         "cuda_runtime_api.h",
+        "drjit/array.h",
+        "drjit/autodiff.h",
+        "drjit/jit.h",
+        "drjit/matrix.h",
+        "drjit/quaternion.h",
+        "drjit/sphere.h",
+        "drjit/transform.h",
         "limits",
         "optix.h",
         "optix_device.h",
-        "type_traits"
+        "stdexcept",
+        "string",
+        "string_view",
+        "tuple",
+        "type_traits",
+        "vector"
       ],
       "header": "generated/drjit/ptx/edge_optix_ptx.h",
       "header_sha256": "53357fc7c514121854e87cfd93d77d35ca1efc02ab0084bff56d0db3d0db14cc",
       "option": "RAYD_REGENERATE_EDGE_OPTIX_PTX",
       "regeneration_verified": true,
-      "source_sha256": "6539e5e181d9327abf9a96388208bdf4093e148557b7fb1e6dd0a02c242e2130",
+      "source_sha256": "a91b43f3c31617ee11f987a74146e76580638cad46d2e98491afbd1c2167f903",
       "sources": [
-        "include/rayd/bvh/topology.h",
         "include/rayd/contracts.h",
-        "include/rayd/edge/bvh_types.h",
-        "include/rayd/edge/edge_distance.h",
-        "include/rayd/edge/optix_contracts.h",
-        "include/rayd/edge/optix_device.cuh",
-        "include/rayd/jit/edge_optix_params.h",
+        "include/rayd/jit/core.h",
+        "include/rayd/jit/edge.h",
         "include/rayd/math.h",
-        "include/rayd/rt/numeric_policy.h",
-        "include/rayd/rt/optix_pipeline_contracts.h",
-        "include/rayd/rt/qualifiers.h",
-        "src/edge/edge_optix_jit.cu"
+        "src/bvh_topology.h",
+        "src/edge/bvh_types.h",
+        "src/edge/edge_distance.h",
+        "src/edge/edge_optix_device.cuh",
+        "src/edge/edge_optix_jit.cu",
+        "src/edge/optix_contracts.h",
+        "src/runtime/rt_internal.h"
       ],
       "variable": "edge_optix_ptx"
     },
@@ -180,32 +186,33 @@
       "cu": "src/reflection/accumulation_optix_jit.cu",
       "external_includes": [
         "cmath",
+        "cstddef",
         "cstdint",
+        "cstring",
         "cuda_runtime.h",
+        "cuda_runtime_api.h",
         "limits",
         "optix.h",
         "optix_device.h",
         "type_traits",
-        "utility"
+        "utility",
+        "vector_types.h"
       ],
       "header": "generated/drjit/ptx/reflection_accumulation_ptx.h",
       "header_sha256": "02eb4361307d143cea13651b75df0b48ff77473de2636d2916e892578b636a06",
       "option": "RAYD_REGENERATE_REFLECTION_ACCUMULATION_PTX",
       "regeneration_verified": true,
-      "source_sha256": "819c793f1dba3a6be9cb5f7ab24dad1991447f1588cf294c3a4e8caa23422cf0",
+      "source_sha256": "a3afc22576e17bfa7b4060e049139bed1174b68550caeb0ba4ae660bf6202e9e",
       "sources": [
         "include/rayd/contracts.h",
         "include/rayd/math.h",
-        "include/rayd/reflection/accumulation_algo.h",
-        "include/rayd/reflection/accumulation_optix_device.cuh",
-        "include/rayd/reflection/optix_hit.h",
-        "include/rayd/reflection/optix_traverser.h",
-        "include/rayd/rt/numeric_policy.h",
-        "include/rayd/rt/optix_primitive_id.h",
-        "include/rayd/rt/qualifiers.h",
-        "include/rayd/rt/traverser.h",
         "src/reflection/accumulation_optix_jit.cu",
-        "src/reflection/accumulation_params_jit.h"
+        "src/reflection/accumulation_params_jit.h",
+        "src/reflection/reflection_accumulation_optix.cuh",
+        "src/reflection/reflection_algorithms.cuh",
+        "src/reflection/reflection_internal.h",
+        "src/reflection/reflection_optix_common.cuh",
+        "src/runtime/rt_device.cuh"
       ],
       "variable": "reflection_accumulation_ptx"
     },
@@ -213,35 +220,32 @@
       "cu": "src/reflection/epc_optix_jit.cu",
       "external_includes": [
         "cmath",
+        "cstddef",
         "cstdint",
         "cstring",
         "cuda_runtime.h",
+        "cuda_runtime_api.h",
         "limits",
         "optix.h",
         "optix_device.h",
         "type_traits",
-        "utility"
+        "utility",
+        "vector_types.h"
       ],
       "header": "generated/drjit/ptx/reflection_epc_ptx.h",
       "header_sha256": "8ca5efaed885f0ea457332058524de8063cb04c17cdb39d0df412ba7a5d75fe8",
       "option": "RAYD_REGENERATE_REFLECTION_EPC_PTX",
       "regeneration_verified": true,
-      "source_sha256": "564124bb33028fae7852c2b194776cd5fd8f03e829b608f5ac2d615f5a80f2c6",
+      "source_sha256": "1616bfdbc7b6f9c2d5d09ee44c8f9896a46d80948b48bdfa1314315044a70b3c",
       "sources": [
         "include/rayd/contracts.h",
         "include/rayd/math.h",
-        "include/rayd/reflection/epc_algo.h",
-        "include/rayd/reflection/epc_chain.h",
-        "include/rayd/reflection/epc_optix_device.cuh",
-        "include/rayd/reflection/epc_params.h",
-        "include/rayd/reflection/optix_hit.h",
-        "include/rayd/reflection/reflection_geometry.h",
-        "include/rayd/rt/numeric_policy.h",
-        "include/rayd/rt/optix_primitive_id.h",
-        "include/rayd/rt/qualifiers.h",
-        "include/rayd/rt/traverser.h",
         "src/reflection/epc_optix_jit.cu",
-        "src/reflection/epc_params_jit.h"
+        "src/reflection/reflection_algorithms.cuh",
+        "src/reflection/reflection_epc_optix.cuh",
+        "src/reflection/reflection_internal.h",
+        "src/reflection/reflection_optix_common.cuh",
+        "src/runtime/rt_device.cuh"
       ],
       "variable": "reflection_epc_ptx"
     },
@@ -249,8 +253,11 @@
       "cu": "src/reflection/trace_optix_jit.cu",
       "external_includes": [
         "cmath",
+        "cstddef",
         "cstdint",
+        "cstring",
         "cuda_runtime.h",
+        "cuda_runtime_api.h",
         "limits",
         "optix.h",
         "optix_device.h",
@@ -262,22 +269,16 @@
       "header_sha256": "8e08830fcf47630d90adb04f3fcb80994437eb68869187a8e049e13e699d638f",
       "option": "RAYD_REGENERATE_REFLECTION_TRACE_PTX",
       "regeneration_verified": true,
-      "source_sha256": "624ff760c60451335f8b6d1d9cc391a3808ae71155c4902cba1fc174925b54bf",
+      "source_sha256": "e03ca70d7aa6228d43b8eb9b84b6b4c1ad67babd05589f65b359819ce86472fa",
       "sources": [
         "include/rayd/contracts.h",
         "include/rayd/math.h",
-        "include/rayd/reflection/optix_hit.h",
-        "include/rayd/reflection/optix_traverser.h",
-        "include/rayd/reflection/reflection_geometry.h",
-        "include/rayd/reflection/trace_algo.h",
-        "include/rayd/reflection/trace_optix_device.cuh",
-        "include/rayd/reflection/trace_params.h",
-        "include/rayd/rt/numeric_policy.h",
-        "include/rayd/rt/optix_primitive_id.h",
-        "include/rayd/rt/qualifiers.h",
-        "include/rayd/rt/traverser.h",
+        "src/reflection/reflection_algorithms.cuh",
+        "src/reflection/reflection_internal.h",
+        "src/reflection/reflection_optix_common.cuh",
+        "src/reflection/reflection_trace_optix.cuh",
         "src/reflection/trace_optix_jit.cu",
-        "src/reflection/trace_params_jit.h"
+        "src/runtime/rt_device.cuh"
       ],
       "variable": "reflection_trace_ptx"
     },
@@ -285,6 +286,7 @@
       "cu": "src/visibility/visibility_optix_jit.cu",
       "external_includes": [
         "cmath",
+        "cstddef",
         "cstdint",
         "cstring",
         "cuda_runtime.h",
@@ -298,45 +300,55 @@
       "header_sha256": "d62a3d679bccc82c78a72526deba203d9764b1ddae053ed0ebdc517860bc4156",
       "option": "RAYD_REGENERATE_SEGMENT_VISIBILITY_PTX",
       "regeneration_verified": true,
-      "source_sha256": "cd131285305b6e4860df0d8468825cc94e1c9a6c5204ca0c27a99343b88fd806",
+      "source_sha256": "919ce084346ded960db27702cd92712d908a9743f69763745efb21a1f61cacf5",
       "sources": [
         "include/rayd/contracts.h",
         "include/rayd/math.h",
-        "include/rayd/rt/numeric_policy.h",
-        "include/rayd/rt/optix_primitive_id.h",
-        "include/rayd/rt/qualifiers.h",
-        "include/rayd/rt/traverser.h",
-        "include/rayd/visibility/segment_algo.h",
-        "include/rayd/visibility/segment_optix_device.cuh",
-        "include/rayd/visibility/segment_params.h",
+        "src/runtime/rt_device.cuh",
         "src/visibility/segment_params_jit.h",
+        "src/visibility/segment_visibility.cuh",
         "src/visibility/visibility_optix_jit.cu"
       ],
       "variable": "segment_visibility_ptx"
     },
     "surfel_trace": {
-      "cu": "src/surfel/surfel_optix_jit.cu",
+      "cu": "src/surfel_optix_jit.cu",
       "external_includes": [
+        "array",
         "cmath",
+        "cstddef",
         "cstdint",
         "cuda_runtime.h",
+        "drjit-core/optix.h",
+        "drjit/array.h",
+        "drjit/autodiff.h",
+        "drjit/jit.h",
+        "drjit/matrix.h",
+        "drjit/quaternion.h",
+        "drjit/sphere.h",
+        "drjit/transform.h",
         "limits",
         "optix.h",
         "optix_device.h",
-        "type_traits"
+        "stdexcept",
+        "string",
+        "string_view",
+        "tuple",
+        "type_traits",
+        "vector"
       ],
       "header": "generated/drjit/ptx/surfel_trace_ptx.h",
       "header_sha256": "21ed6124af392b08e9600185bd357376f7a643b04fcee6628e7061be490b04d0",
       "option": "RAYD_REGENERATE_SURFEL_TRACE_PTX",
       "regeneration_verified": true,
-      "source_sha256": "589e413f60b1fb3c2ea6e2162b869c2e2bbf7e1f37477e2537e49b9eb0fdeabf",
+      "source_sha256": "866dfdb8c706477daa3cb8e707788e272bdce951eaede2d7a5fa55f1ec7f0316",
       "sources": [
         "include/rayd/contracts.h",
-        "include/rayd/jit/surfel_trace_params.h",
+        "include/rayd/jit/core.h",
+        "include/rayd/jit/optix.h",
+        "include/rayd/jit/surfel.h",
         "include/rayd/math.h",
-        "include/rayd/rt/numeric_policy.h",
-        "include/rayd/rt/qualifiers.h",
-        "src/surfel/surfel_optix_jit.cu"
+        "src/surfel_optix_jit.cu"
       ],
       "variable": "surfel_trace_ptx"
     }

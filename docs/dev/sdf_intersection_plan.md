@@ -121,12 +121,12 @@ oracle for the CUDA kernels; it must NOT ship in the product package.
 - Do NOT modify any existing shared header.
 
 ### Phase 3a — Torch backend native (CUDA + C++ + registration + build)
-- `src/sdf/kernels.h`: `SdfIntersectForwardOutputs`
+- `src/sdf_internal.h`: `SdfIntersectForwardOutputs`
   (t, hit_mask, steps, tape: frozen hit t / bracket data), launcher decls
   forward/backward/jvp.
-- `src/sdf/sdf.cu` (forward, VJP, and JVP kernels) (VJP + JVP; JVP
+- `src/sdf.cu` (forward, VJP, and JVP kernels) (VJP + JVP; JVP
   may live in backward.cu or its own TU).
-- `src/sdf/sdf.cpp`: validation (`tensor_check.h`),
+- `src/sdf.cpp`: validation (`tensor_check.h`),
   op bodies, GIL-free `_impl` functions.
 - `src/bindings/library.cpp`: schema `m.def` +
   `TORCH_LIBRARY_IMPL(rayd_torch, CUDA, ...)` impls (`sdf_intersect_forward`,

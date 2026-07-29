@@ -1,8 +1,7 @@
 // Copyright Xingyu Chen.
 // Implements reflection support for reflection kernels Dr.Jit.
 
-#include <src/reflection/dedup_jit.h>
-#include <rayd/reflection/dedup.h>
+#include <src/reflection/reflection_internal.h>
 
 #include <cuda_runtime.h>
 #include <cub/cub.cuh>
@@ -370,7 +369,7 @@ static __forceinline__ __device__ void store_zero_field(const ReflEpcFieldParams
     (P).out_field_z_re[(RAY)] = (FIELD).z.re;                                                                          \
     (P).out_field_z_im[(RAY)] = (FIELD).z.im;
 
-#include <rayd/reflection/epc_field_device.cuh>
+#include <src/reflection/epc_field_fragment.cuh>
 
 void check_epc_field_cuda_call(cudaError_t error, const char* message) {
     require(error == cudaSuccess, std::string(message) + ": " + cudaGetErrorString(error));

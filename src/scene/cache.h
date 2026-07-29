@@ -6,9 +6,9 @@
 #include <ATen/ATen.h>
 #include <torch/custom_class.h>
 #include <optix.h>
-#include <rayd/bvh/topology.h>
-#include <rayd/bvh/triangle_query.h>
-#include <rayd/edge/bvh_types.h>
+#include <src/bvh_topology.h>
+#include <src/bvh_triangle_query.h>
+#include <src/edge/bvh_types.h>
 
 #include <cstdint>
 #include <memory>

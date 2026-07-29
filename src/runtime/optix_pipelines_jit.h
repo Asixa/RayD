@@ -9,8 +9,7 @@
 
 #include <rayd/jit/optix.h>
 #include <rayd/jit/core.h>
-#include <src/reflection/trace_params_jit.h>
-#include <src/reflection/epc_params_jit.h>
+#include <src/reflection/reflection_internal.h>
 #include <src/reflection/accumulation_params_jit.h>
 #include <src/diffraction/accumulation_params_jit.h>
 #include <src/diffraction/paths_params_jit.h>

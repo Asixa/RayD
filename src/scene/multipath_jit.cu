@@ -10,33 +10,23 @@
 
 #include <rayd/jit/native_launch_audit.h>
 
-#include <rayd/bvh/cuda_bvh_traverser.h>
-#include <rayd/bvh/topology.h>
-#include <rayd/bvh/triangle_query.h>
-#include <rayd/math.h>
+#include <src/bvh_query_device.cuh>
+#include <src/bvh_topology.h>
+#include <src/bvh_triangle_query.h>
 #include <rayd/math.h>
 #include <src/diffraction/accumulation_params_jit.h>
 #include <src/diffraction/paths_params_jit.h>
-#include <rayd/diffraction/accumulation_algo.h>
-#include <rayd/diffraction/paths_algo.h>
-#include <rayd/reflection/accumulation_algo.h>
-#include <rayd/reflection/epc_algo.h>
-#include <rayd/reflection/trace_algo.h>
-#include <rayd/visibility/segment_algo.h>
-#include <rayd/rt/traverser.h>
+#include <src/diffraction/accumulation.h>
+#include <src/diffraction/paths.h>
+#include <src/reflection/reflection_algorithms.cuh>
+#include <src/visibility/segment_visibility.cuh>
+#include <src/runtime/rt_device.cuh>
 
-// CUDA fused multipath executor (P4 Stage D). Each launcher runs the migrated,
-// traverser-templated multipath algorithm body (concept-owned shared/*/*_algo.h) with
-// Traverser = shared::bvh::CudaBvhTraverser over the scene-level triangle BVH,
-// one thread per lane (the lane index is the former optixGetLaunchIndex). This is
-// the pure-CUDA counterpart of the OptiX pipeline launches in scene_multipath.cpp.
-//
-// The CUDA backend has a single scene-level BVH (no static/dynamic split and no
-// IAS), so every kernel forces the single-scene traversal path: split_mode is 0,
-// and the "secondary" traverser is a copy of the primary that the algorithm never
-// consults. The traversal-stack scratch and the non-blocking stream are owned
-// here and synchronized before returning, exactly like the P3 triangle_bvh.cu
-// query launchers.
+// CUDA fused multipath launchers run shared traversal algorithms with
+// CudaBvhTraverser over the scene-level triangle BVH, one thread per lane.
+// The CUDA backend uses one scene-level BVH, so every kernel selects the
+// single-scene traversal path. This translation unit owns traversal scratch and
+// the non-blocking stream and synchronizes before returning.
 
 namespace rayd {
 

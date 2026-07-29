@@ -46,8 +46,8 @@ class SurfelBackendDecisionTests(unittest.TestCase):
         self.assertFalse(evidence["reuse"]["host_scene_owner_backend_neutral"])
         self.assertFalse(evidence["reuse"]["ad_replay_backend_neutral"])
 
-        self.assertTrue((ROOT / "src/surfel/surfel_optix_jit.cu").is_file())
-        self.assertTrue((ROOT / "src/surfel/surfel_jit.cpp").is_file())
+        self.assertTrue((ROOT / "src/surfel_optix_jit.cu").is_file())
+        self.assertTrue((ROOT / "src/surfel_jit.cpp").is_file())
         torch_frontend_sources = ROOT / "torch" / "src"
         self.assertFalse(torch_frontend_sources.exists())
         torch_cmake = (ROOT / "torch" / "CMakeLists.txt").read_text(encoding="utf-8")

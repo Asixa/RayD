@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include <rayd/diffraction/contracts.h>
+#include <src/diffraction/contracts.h>
 
 namespace rayd::torch_backend {
 

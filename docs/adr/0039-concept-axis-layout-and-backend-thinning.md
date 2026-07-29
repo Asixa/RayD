@@ -24,7 +24,7 @@ The generic `rf/` source umbrella and ownership namespace are retired in the sam
 - passive complex, medium, Fresnel, layer-stack, and transmission sequence code is owned by `rayd/{shared,torch}/transmission` and `rayd::shared::transmission`;
 - resident-table, ensemble, patch, and chain scattering code is owned by `rayd/scattering.h`, `rayd/detail/scattering_table.cuh`, `src/scattering`, and the corresponding scattering namespaces;
 - UTD and wedge-field code is owned by diffraction, with backend-neutral UTD code under `rayd/detail/diffraction` and `rayd::shared::diffraction`;
-- genuinely cross-concept field transport uses `rayd/detail/field_transport.cuh` and `src/field_transport/ad.cuh` owners.
+- genuinely cross-concept field transport uses `rayd/detail/field_transport.cuh` and `src/field_transport_ad.cuh` owners.
 
 No forwarding `rf/` headers, namespace aliases, copied helpers, runtime owner selection, or compatibility shims are added. Channel must update its direct includes, qualified names, RayD pin, and source-manifest digest atomically before the renamed source ABI is active downstream.
 

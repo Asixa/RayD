@@ -4,9 +4,9 @@
 #include <optix.h>
 #include <optix_device.h>
 
-#include <src/reflection/trace_params_jit.h>
-#include <rayd/reflection/optix_hit.h>
-#include <rayd/reflection/trace_optix_device.cuh>
+#include <src/reflection/reflection_internal.h>
+#include <src/reflection/reflection_optix_common.cuh>
+#include <src/reflection/reflection_trace_optix.cuh>
 
 namespace rayd {
 

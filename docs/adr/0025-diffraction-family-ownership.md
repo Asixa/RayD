@@ -7,8 +7,8 @@
 
 > **ADR-0039/0040 supersession.** The `rayd/torch/rf/diffraction.h` path below is
 > historical. The canonical public owner is
-> `include/rayd/diffraction.h`, with shared UTD contracts under
-> `include/rayd/detail/diffraction/`. Numerical, derivative, activation,
+> `include/rayd/diffraction.h`; the shared UTD domain has one public owner in
+> `include/rayd/utd.h`, while launch and algorithm internals live in `src/diffraction/`. Numerical, derivative, activation,
 > rollback, and downstream atomic-switch clauses remain in force.
 ## Context
 

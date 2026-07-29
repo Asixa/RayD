@@ -5,9 +5,9 @@
 #include <cstdint>
 #include <type_traits>
 
-#include <rayd/edge/optix_contracts.h>
-#include <rayd/rt/optix_sbt.h>
-#include <rayd/scene/optix_contracts.h>
+#include <src/edge/optix_contracts.h>
+#include <rayd/contracts.h>
+#include <src/scene/scene_internal.h>
 
 using namespace rayd::shared::optix;
 
