@@ -110,8 +110,8 @@ edges, visibility, and multipath query results.
 | Reflection tracing and accumulation | Yes | Yes |
 | EPC path and field queries | Yes | Yes |
 | Direct and chained diffraction | Yes | Yes |
-| Surfel primitives | Yes | No |
-| SDF grid intersection | No | Yes |
+| Surfel primitives | Yes | Yes |
+| SDF grid intersection | Yes | Yes |
 | Reverse-mode AD | Yes | Yes |
 | Forward-mode AD | Yes | Yes |
 | `torch.compile` integration | No | Yes |
@@ -152,25 +152,34 @@ The Dr.Jit backend additionally exposes:
 - `scene.shadow_test(ray)`
 - `scene.trace_refl_epc(...)`: EPC path geometry
 - `scene.accumulate_reflections(...)`: reflected field/power accumulation
-- surfel intersection, compositing, and rendering primitives
+- surfel rendering primitives (intersection, LOS, reflection, and alpha
+  compositing are cross-backend)
 
 Torch reaches reflection accumulation and EPC path geometry through the
 dispatcher ops `torch.ops.rayd_torch.reflection_accumulation_forward` and
 `reflection_epc_paths_forward` rather than through `Scene` methods.
 
-The Torch backend additionally exposes a standalone differentiable signed
-distance field query:
+Both backends expose standalone differentiable signed-distance-field queries:
 
 - `SdfGrid(values, position, rotation, scale)`: a caller-owned dense grid of
   vertex-centred world-metric distances placed by an oriented box
 - `sdf_intersect(grid, origins, directions, ...)`: sphere-traced intersection
   returning `t`, `hit_mask`, `position`, `normal`, and a `steps` diagnostic
+- `grid.visible(...)` and `grid.trace_reflections(...)`: SDF-only LOS and
+  specular reflection
 
 Gradients and tangents reach the grid values, the box transform, and the rays
-through the frozen-winner implicit function theorem. The primitive is
-standalone: it uses no OptiX, does not join a `Scene`, and does not mix with
-triangle geometry. See
-[`ADR-0037`](docs/adr/0037-differentiable-sdf-intersection.md).
+through the frozen-winner implicit function theorem. Torch uses the existing
+CUDA dispatcher and Dr.Jit launches the shared sphere march on its current CUDA
+stream. The primitive stays standalone and does not join a triangle `Scene`.
+
+Both backends also expose standalone surfels. Surfel LOS and reflection use the
+accepted analytic Gaussian hit; `composite_alpha(...)` (and Torch's
+`transmittance(...)` convenience method) provides transmission. The closed
+scope is intentional: SDF participates only in LOS/reflection, surfel in
+LOS/reflection/transmission, and neither participates in diffraction. See
+[`ADR-0037`](docs/adr/0037-differentiable-sdf-intersection.md) and
+[`ADR-0042`](docs/adr/0042-cross-backend-implicit-geometry.md).
 
 ## Differentiation Contract
 

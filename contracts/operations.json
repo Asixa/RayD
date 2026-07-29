@@ -8,6 +8,16 @@
     "diffraction_chain", "surfel", "sdf_intersect",
     "reverse_ad", "forward_ad", "torch_compile", "multi_device_replicated"
   ],
+  "standalone_geometry_scope": {
+    "sdf": {
+      "affects": ["visibility", "reflection_trace"],
+      "does_not_affect": ["transmission", "diffraction_direct", "diffraction_chain"]
+    },
+    "surfel": {
+      "affects": ["visibility", "reflection_trace", "transmission"],
+      "does_not_affect": ["diffraction_direct", "diffraction_chain"]
+    }
+  },
   "constants": {
     "invalid_signed_id": -1,
     "invalid_unsigned_id": 4294967295,
@@ -52,14 +62,15 @@
         "shadow_tmin": 1e-5,
         "endpoint_offset": 1e-5,
         "parallel_epsilon": 1e-7,
-        "watertight_triangles": false
+        "watertight_triangles": false,
+        "surfel_endpoint_offset": 1e-3
       }
     },
     "notes": [
       "drjit scene intersect and shadow_test use ray_tmin = RayEpsilon (1e-3); torch intersect uses ray_tmin = SmallEpsilon (1e-6). Frozen legacy divergence.",
       "torch has no scene-level shadow_test; its shadow_tmin (1e-5) comes from the shared segment-visibility TraceTMin used by visibility queries.",
       "endpoint_offset is the shared segment-visibility RayBias (1e-5) on both backends.",
-      "surfel_endpoint_offset (1e-3, ShadowEpsilon) is a drjit-only exception: surfel visibility offsets both segment endpoints by ShadowEpsilon rather than the 1e-5 RayBias.",
+      "surfel_endpoint_offset (1e-3, ShadowEpsilon) is a cross-backend exception: surfel visibility offsets both segment endpoints by ShadowEpsilon rather than the 1e-5 RayBias.",
       "watertight_triangles is false everywhere: OptiX builtin triangles with flags 0, no watertight intersection exists in any backend."
     ]
   },
@@ -156,7 +167,7 @@
       },
       "differentiable_fields": ["t", "position", "normal"],
       "backend_fields": {
-        "drjit": [],
+        "drjit": ["t", "hit_mask", "position", "normal", "steps"],
         "torch": ["t", "hit_mask", "position", "normal", "steps"]
       },
       "miss": {"t": "inf", "hit_mask": false, "position": 0.0, "normal": 0.0},
@@ -291,7 +302,7 @@
     "sdf_intersect": {
       "shardability": {"class": "per_ray", "torch_multi_device": "single_device", "note": "ADR-0037 keeps the primitive standalone with no Scene membership, so the replicated layer never sees it."},
       "record": "docs/adr/0037-differentiable-sdf-intersection.md",
-      "integration": {"drjit": [], "torch": ["eager_native"]},
+      "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
       "inputs": [
         "values", "position", "rotation", "scale", "origins", "directions",
         "tmax", "max_steps", "relaxation", "eps_hit"

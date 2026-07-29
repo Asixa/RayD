@@ -145,6 +145,15 @@
     },
     {
       "backend": "drjit",
+      "unit": "sdf_jit",
+      "source": "src/sdf_jit.cu",
+      "kind": "object",
+      "target": "rayd_core",
+      "profile": "nvcc_default",
+      "default_enabled": true
+    },
+    {
+      "backend": "drjit",
       "unit": "cuda_multipath",
       "source": "src/scene/multipath_jit.cu",
       "kind": "object",

@@ -107,7 +107,7 @@ class SharedOperationContractTests(unittest.TestCase):
         self.assertFalse(drjit["watertight_triangles"])
         self.assertFalse(torch["watertight_triangles"])
         self.assertEqual(drjit["surfel_endpoint_offset"], 1e-3)
-        self.assertNotIn("surfel_endpoint_offset", torch)
+        self.assertEqual(torch["surfel_endpoint_offset"], 1e-3)
         self.assertTrue(CONTRACT["numeric_policy"]["notes"])
 
     def test_miss_sentinels(self):
@@ -138,9 +138,7 @@ class SharedOperationContractTests(unittest.TestCase):
             "reflection_accumulation": {"drjit": ["eager_native"], "torch": ["eager_native"]},
             "diffraction_direct": {"drjit": ["eager_native"], "torch": ["eager_native"]},
             "diffraction_chain": {"drjit": ["eager_native"], "torch": ["eager_native"]},
-            # ADR-0037 keeps the SDF primitive Torch-only in v1; the empty
-            # Dr.Jit list is the declaration, not a missing entry.
-            "sdf_intersect": {"drjit": [], "torch": ["eager_native"]},
+            "sdf_intersect": {"drjit": ["eager_native"], "torch": ["eager_native"]},
         }
         operations = CONTRACT["operations"]
         self.assertEqual(set(expected), set(operations))

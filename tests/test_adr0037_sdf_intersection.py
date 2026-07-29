@@ -96,7 +96,7 @@ class Adr0037RecordTests(AdrTestCase):
         head = self.adr.splitlines()[:6]
         self.assertEqual(head[0], "# ADR-0037: Differentiable SDF ray intersection")
         self.assertRegex(head[2], r"^- Status: Accepted(?:; .+)?$")
-        self.assertIn("ADR-0041", head[2])
+        self.assertIn("ADR-0042", head[2])
         self.assertEqual(head[3], "- Date: 2026-07-26")
         self.assertEqual(head[4], "- Decision ID: `differentiable-sdf-intersection`")
         self.assertTrue(head[5].startswith("- Scope:"))
@@ -107,8 +107,7 @@ class Adr0037RecordTests(AdrTestCase):
             "| [0037](0037-differentiable-sdf-intersection.md) "
             "| Differentiable SDF ray intersection "
             "| `differentiable-sdf-intersection` | 2026-07-26 "
-            "| Accepted; integration include and API-version clauses "
-            "superseded by ADR-0041 |",
+            "| Accepted; backend-only scope superseded by ADR-0042 |",
             index,
         )
         # The sequence sentence must cover 0037; later ADRs extend the range
@@ -491,8 +490,8 @@ class Adr0037ContractStateTests(AdrTestCase):
         self.assertEqual(metadata["stability"], "provisional")
         self.assertTrue(metadata["summary"])
         backends = self.public_api["backends"]
-        # Section 9: Torch only in v1, and the Dr.Jit port is Phase 5 backlog.
-        self.assertFalse(backends["drjit"]["capabilities"][CAPABILITY])
+        # ADR-0042 supersedes the original Torch-only backend scope.
+        self.assertTrue(backends["drjit"]["capabilities"][CAPABILITY])
         self.assertTrue(backends["torch"]["capabilities"][CAPABILITY])
 
     def test_no_sdf_translation_unit_may_leave_the_nvcc_default_profile(self) -> None:
@@ -519,8 +518,8 @@ class Adr0037OperationContractTests(AdrTestCase):
                 return line.split("|")[2].strip().strip("`")
         raise AssertionError(f"ADR-0037 numeric table has no row {name!r}")
 
-    def test_operation_is_torch_only_and_names_its_record(self) -> None:
-        self.assertEqual(self.operation["integration"], {"drjit": [], "torch": ["eager_native"]})
+    def test_operation_is_cross_backend_and_names_its_numeric_record(self) -> None:
+        self.assertEqual(self.operation["integration"], {"drjit": ["eager_native"], "torch": ["eager_native"]})
         self.assertEqual(self.operation["record"], "docs/adr/0037-differentiable-sdf-intersection.md")
         self.assertTrue((ROOT / self.operation["record"]).is_file())
 
@@ -568,16 +567,14 @@ class Adr0037OperationContractTests(AdrTestCase):
         self.assertPhrase("derived on the device", policy["eps_hit_default"])
         self.assertPhrase("min_i(scale_i / (N_i - 1))", policy["eps_hit_default"])
 
-    def test_result_fields_match_the_public_torch_result_type(self) -> None:
+    def test_result_fields_match_both_public_result_types(self) -> None:
         source = read(TORCH_PACKAGE / "geometry.py")
         start = source.index("class SdfIntersection:")
         block = source[start : source.index("@dataclass", start)]
         fields = re.findall(r"^    ([a-z][a-z0-9_]*): torch\.Tensor$", block, re.M)
         self.assertEqual(fields, self.result["canonical_fields"])
         self.assertEqual(fields, self.result["backend_fields"]["torch"])
-        # The Dr.Jit port is Phase 5; declaring fields for it would claim a
-        # surface that does not exist.
-        self.assertEqual(self.result["backend_fields"]["drjit"], [])
+        self.assertEqual(fields, self.result["backend_fields"]["drjit"])
         self.assertEqual(self.result["differentiable_fields"], ["t", "position", "normal"])
         self.assertEqual(set(self.result["field_types"]), set(fields))
 
@@ -625,27 +622,24 @@ class Adr0037CapabilityModuleTests(AdrTestCase):
     def setUp(self) -> None:
         self.sources = {backend: read(path) for backend, path in CAPABILITY_MODULES.items()}
 
-    def test_each_backend_declares_the_capability_with_its_own_value(self) -> None:
-        self.assertIn(f'"{CAPABILITY}": False,', self.sources["drjit"])
+    def test_each_backend_declares_the_capability_true(self) -> None:
+        self.assertIn(f'"{CAPABILITY}": True,', self.sources["drjit"])
         self.assertIn(f'"{CAPABILITY}": True,', self.sources["torch"])
         for backend, source in self.sources.items():
             with self.subTest(backend=backend):
                 self.assertIn(f'"{CAPABILITY}": ("core", "provisional"),', source)
 
-    def test_this_records_line_is_one_of_the_enumerated_divergences(self) -> None:
-        # ADR-0038 added a fifth divergent line (`multi_device_replicated`), so
-        # the count belongs to ADR-0036 and to the ADR-0038 guard; what this
-        # record still owns is that `sdf_intersect` is one of them, in position.
+    def test_sdf_is_no_longer_a_capability_divergence(self) -> None:
         drjit = self.sources["drjit"].splitlines()
         torch = self.sources["torch"].splitlines()
         self.assertEqual(len(drjit), len(torch))
         divergent = [left.strip().split(":")[0].strip() for left, right in zip(drjit, torch) if left != right]
-        self.assertEqual(divergent[:4], ['_BACKEND = "drjit"', '"surfel"', f'"{CAPABILITY}"', '"torch_compile"'])
+        self.assertEqual(divergent, ['_BACKEND = "drjit"', '"torch_compile"', '"multi_device_replicated"'])
 
     def test_adr0036_was_amended_rather_than_left_false(self) -> None:
         adr0036 = read(ADR0036_PATH)
-        self.assertPhrase(f'`"{CAPABILITY}"` (`False` versus `True`, per ADR-0037)', adr0036)
-        self.assertNoPhrase("diverges on exactly three lines", adr0036)
+        self.assertPhrase("ADR-0042 aligns", adr0036)
+        self.assertNoPhrase("diverges on exactly five lines", adr0036)
         self.assertNoPhrase("diverges on exactly four lines", adr0036)
         self.assertNoPhrase("ADR-0037 adds a fourth divergent line", adr0036)
 

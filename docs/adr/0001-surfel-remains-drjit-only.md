@@ -1,6 +1,6 @@
 # ADR-0001: Keep surfel support Dr.Jit-only
 
-- Status: Accepted
+- Status: Superseded by ADR-0042
 - Date: 2026-07-11
 - Decision ID: `F5-surfel-backend-scope`
 - Scope: Phase F5 of `docs/archived/rayd_improvement_plan.md`

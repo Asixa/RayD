@@ -1,5 +1,9 @@
 # Differentiable SDF Intersection — Implementation Plan
 
+> Historical Torch-only implementation plan. ADR-0042 adds the Dr.Jit backend
+> and the standalone LOS/reflection methods without changing ADR-0037's march
+> or derivative contract.
+
 Status: COMPLETED (Phases 0-4; Phase 5 remains a recorded backlog, DO NOT implement).
 Branch: `wt/sdf-intersection`. Owner: RayD Torch backend.
 

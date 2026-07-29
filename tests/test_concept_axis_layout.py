@@ -107,6 +107,7 @@ class ConceptAxisLayoutTests(unittest.TestCase):
                 "optix.h",
                 "reflection.h",
                 "scene.h",
+                "sdf.h",
                 "surfel.h",
                 "visibility.h",
             },
@@ -251,8 +252,8 @@ class ConceptAxisLayoutTests(unittest.TestCase):
         contract = json.loads((ROOT / "contracts" / "compile_policy.json").read_text(encoding="utf-8"))
         units = contract["translation_units"]
         identities = {(entry["backend"], entry["unit"]) for entry in units}
-        self.assertEqual(len(units), 80)
-        self.assertEqual(len(identities), 80)
+        self.assertEqual(len(units), 81)
+        self.assertEqual(len(identities), 81)
         self.assertEqual({entry["backend"] for entry in units}, {"drjit", "torch"})
         for entry in units:
             with self.subTest(unit=f"{entry['backend']}/{entry['unit']}"):

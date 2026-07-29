@@ -341,7 +341,7 @@
       "header_sha256": "21ed6124af392b08e9600185bd357376f7a643b04fcee6628e7061be490b04d0",
       "option": "RAYD_REGENERATE_SURFEL_TRACE_PTX",
       "regeneration_verified": true,
-      "source_sha256": "c9d9f1fdcf53fd7a64be3fd9a093e34e5d455b21a50d39b68d740a0e38b4948b",
+      "source_sha256": "c536cc41d12a2400afea922ba012c5318ca2e6f93aed6d9eb23be8049034b90f",
       "sources": [
         "include/rayd/contracts.h",
         "include/rayd/jit/core.h",

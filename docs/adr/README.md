@@ -2,14 +2,14 @@
 
 Every accepted RayD decision record lives in this directory as
 `NNNN-<slug>.md`. The sequence is not contiguous: it runs `0001`, `0002`, then
-`0025`, `0026`, then `0028`-`0041`. The gaps are deliberate. This file records
+`0025`, `0026`, then `0028`-`0042`. The gaps are deliberate. This file records
 why, so the sequence is not "tidied" by a later reader.
 
 ## Index
 
 | ADR | Title | Decision ID | Date | Status |
 | --- | --- | --- | --- | --- |
-| [0001](0001-surfel-remains-drjit-only.md) | Keep surfel support Dr.Jit-only | `F5-surfel-backend-scope` | 2026-07-11 | Accepted |
+| [0001](0001-surfel-remains-drjit-only.md) | Keep surfel support Dr.Jit-only | `F5-surfel-backend-scope` | 2026-07-11 | Superseded by ADR-0042 |
 | [0002](0002-shared-rf-transmission-ownership.md) | Shared RF primitives and transmission ownership | `shared-rf-transmission-ownership` | 2026-07-19 | Accepted; source path and ownership-namespace clauses superseded by ADR-0039 |
 | [0025](0025-diffraction-family-ownership.md) | Diffraction operation-family ownership | `diffraction-operation-family-ownership` | 2026-07-19 | Accepted; source path and ownership-namespace clauses superseded by ADR-0039 |
 | [0026](0026-generic-scattering-runtime-ownership.md) | Generic scattering runtime ownership | `generic-scattering-runtime-ownership` | 2026-07-19 | Accepted; source path and ownership-namespace clauses superseded by ADR-0039 |
@@ -22,11 +22,12 @@ why, so the sequence is not "tidied" by a later reader.
 | [0034](0034-validated-package-source-discovery.md) | Validated package source discovery | `validated-package-source-discovery` | 2026-07-22 | Accepted; internal source-bundle layout and ABI identity schema amended by ADR-0039, ADR-0040, and ADR-0041 |
 | [0035](0035-cuda-compile-flag-policy.md) | Per-translation-unit CUDA numeric compile-flag policy | `cuda-numeric-compile-flag-policy` | 2026-07-24 | Accepted |
 | [0036](0036-backend-mirrored-python-modules.md) | Backend-mirrored Python modules | `backend-mirrored-python-modules` | 2026-07-25 | Superseded by ADR-0039 |
-| [0037](0037-differentiable-sdf-intersection.md) | Differentiable SDF ray intersection | `differentiable-sdf-intersection` | 2026-07-26 | Accepted; integration include and API-version clauses superseded by ADR-0041 |
+| [0037](0037-differentiable-sdf-intersection.md) | Differentiable SDF ray intersection | `differentiable-sdf-intersection` | 2026-07-26 | Accepted; backend-only scope superseded by ADR-0042 |
 | [0038](0038-replicated-multi-device-execution.md) | Replicated multi-device and chunked execution | `replicated-multi-device-execution` | 2026-07-27 | Accepted |
 | [0039](0039-concept-axis-layout-and-backend-thinning.md) | Concept-axis source layout and thin backend frontends | `concept-axis-layout-and-backend-thinning` | 2026-07-28 | Accepted; installed-header clauses superseded by ADR-0041 |
 | [0040](0040-internal-header-and-python-frontend-layout.md) | Internal-header ownership and centralized Python frontends | `internal-header-and-python-frontend-layout` | 2026-07-28 | Accepted; installed-header and source-header-set clauses superseded by ADR-0041 |
 | [0041](0041-flat-default-and-jit-header-layout.md) | Flat default and JIT header layout | `flat-default-and-jit-header-layout` | 2026-07-28 | Accepted |
+| [0042](0042-cross-backend-implicit-geometry.md) | Cross-backend implicit and surfel geometry | `cross-backend-implicit-geometry` | 2026-07-29 | Accepted |
 
 Every row is copied from the target file's own five-line header block. Status,
 date, and decision ID are owned by the ADR, not by this index.

@@ -6,6 +6,7 @@
 #include <cmath>
 
 #include <rayd/jit/surfel.h>
+#include <rayd/jit/reflection.h>
 
 namespace rayd {
 
@@ -225,6 +226,31 @@ template <bool Detached> Vector3fT<Detached> normalized_view_direction(const Ray
     const FloatT<Detached> len_sq = squared_norm(view);
     return view / sqrt(select(len_sq > FloatT<Detached>(1e-16f), len_sq, FloatT<Detached>(1.f))) +
            zeros<Vector3fT<Detached>>(ray_count);
+}
+
+template <bool Detached> ReflectionChainT<Detached> initialize_surfel_chain(int ray_count, int max_bounces) {
+    ReflectionChainT<Detached> result;
+    result.max_bounces = max_bounces;
+    result.ray_count = ray_count;
+    const int slot_count = ray_count * max_bounces;
+    result.bounce_count = zeros<IntT<Detached>>(ray_count);
+    result.discovery_count = zeros<IntT<Detached>>(ray_count);
+    result.representative_ray_index = full<IntT<Detached>>(-1, ray_count);
+    result.t = full<FloatT<Detached>>(Infinity, slot_count);
+    result.hit_points = zeros<Vector3fT<Detached>>(slot_count);
+    result.geo_normals = zeros<Vector3fT<Detached>>(slot_count);
+    result.image_sources = zeros<Vector3fT<Detached>>(slot_count);
+    result.plane_points = zeros<Vector3fT<Detached>>(slot_count);
+    result.plane_normals = zeros<Vector3fT<Detached>>(slot_count);
+    result.shape_ids = full<IntT<Detached>>(-1, slot_count);
+    result.prim_ids = full<IntT<Detached>>(-1, slot_count);
+    result.local_prim_ids = full<IntT<Detached>>(-1, slot_count);
+    result.global_prim_ids = full<IntT<Detached>>(-1, slot_count);
+    result.trailing_t = full<FloatT<Detached>>(Infinity, ray_count);
+    result.trailing_prim = full<IntT<Detached>>(-1, ray_count);
+    result.trailing_dir = zeros<Vector3fT<Detached>>(ray_count);
+    result.trailing_origin = zeros<Vector3fT<Detached>>(ray_count);
+    return result;
 }
 
 } // namespace
@@ -932,6 +958,61 @@ MaskT<Detached> SurfelScene::visible(const Vector3fT<Detached>& start, const Vec
     return trace_active && !hit;
 }
 
+template <bool Detached>
+ReflectionChainT<Detached> SurfelScene::trace_reflections(const RayT<Detached>& ray, int max_bounces,
+                                                          MaskT<Detached> active) const {
+    require(ready_, "SurfelScene::trace_reflections(): scene is not built.");
+    require(max_bounces >= 0, "SurfelScene::trace_reflections(): max_bounces must be non-negative.");
+    const int ray_count = static_cast<int>(slices(ray.o));
+    ReflectionChainT<Detached> result = initialize_surfel_chain<Detached>(ray_count, max_bounces);
+    if (ray_count == 0 || max_bounces == 0)
+        return result;
+
+    const FloatT<Detached> direction_length = maximum(sqrt(dot(ray.d, ray.d)), FloatT<Detached>(1.0e-12f));
+    RayT<Detached> current_ray(ray.o, ray.d / direction_length, ray.tmax);
+    MaskT<Detached> current_active = active;
+    Vector3fT<Detached> current_image_source = ray.o;
+    const Int slot_base = arange<Int>(ray_count) * max_bounces;
+    const IntT<Detached> one = full<IntT<Detached>>(1, ray_count);
+    const IntT<Detached> zero = zeros<IntT<Detached>>(ray_count);
+
+    for (int bounce = 0; bounce < max_bounces; ++bounce) {
+        const SurfelIntersectionT<Detached> hit = intersect<Detached>(current_ray, current_active);
+        const MaskT<Detached> bounce_hit = current_active && hit.is_valid();
+        const Vector3fT<Detached> normal = select(dot(current_ray.d, hit.n) > 0.0f, -hit.n, hit.n);
+        const FloatT<Detached> plane_distance = dot(current_image_source - hit.p, normal);
+        const Vector3fT<Detached> image_source = current_image_source - 2.0f * plane_distance * normal;
+        const IntT<Detached> slot = IntT<Detached>(slot_base + bounce);
+        const IntT<Detached> shape_id = zeros<IntT<Detached>>(ray_count);
+        scatter(result.t, hit.t, slot, bounce_hit);
+        scatter(result.hit_points, hit.p, slot, bounce_hit);
+        scatter(result.geo_normals, normal, slot, bounce_hit);
+        scatter(result.image_sources, image_source, slot, bounce_hit);
+        scatter(result.plane_points, hit.p, slot, bounce_hit);
+        scatter(result.plane_normals, normal, slot, bounce_hit);
+        scatter(result.shape_ids, shape_id, slot, bounce_hit);
+        scatter(result.prim_ids, hit.surfel_id, slot, bounce_hit);
+        scatter(result.local_prim_ids, hit.surfel_id, slot, bounce_hit);
+        scatter(result.global_prim_ids, hit.surfel_id, slot, bounce_hit);
+        result.bounce_count += select(bounce_hit, one, zero);
+
+        const Vector3fT<Detached> reflected_direction = current_ray.d - 2.0f * dot(current_ray.d, normal) * normal;
+        current_ray.o = select(bounce_hit, hit.p + FloatT<Detached>(RayEpsilon) * reflected_direction, current_ray.o);
+        current_ray.d = select(bounce_hit, reflected_direction, current_ray.d);
+        current_ray.tmax = select(bounce_hit, full<FloatT<Detached>>(Infinity, ray_count), current_ray.tmax);
+        current_image_source = select(bounce_hit, image_source, current_image_source);
+        current_active = bounce_hit;
+    }
+
+    const MaskT<Detached> valid = result.bounce_count > 0;
+    result.discovery_count = select(valid, one, zero);
+    result.representative_ray_index =
+        select(valid, IntT<Detached>(arange<Int>(ray_count)), full<IntT<Detached>>(-1, ray_count));
+    result.trailing_dir = select(valid, current_ray.d, zeros<Vector3fT<Detached>>(ray_count));
+    result.trailing_origin = select(valid, current_ray.o, zeros<Vector3fT<Detached>>(ray_count));
+    return result;
+}
+
 template SurfelIntersection SurfelScene::intersect<true>(const Ray& ray, Mask active) const;
 template SurfelIntersectionAD SurfelScene::intersect<false>(const RayAD& ray, MaskAD active) const;
 template SurfelComposite SurfelScene::composite_alpha<true>(const Ray& ray, Mask active) const;
@@ -946,6 +1027,9 @@ template Mask SurfelScene::shadow_test<true>(const Ray& ray, Mask active) const;
 template MaskAD SurfelScene::shadow_test<false>(const RayAD& ray, MaskAD active) const;
 template Mask SurfelScene::visible<true>(const Vector3f& start, const Vector3f& end, Mask active) const;
 template MaskAD SurfelScene::visible<false>(const Vector3fAD& start, const Vector3fAD& end, MaskAD active) const;
+template ReflectionChain SurfelScene::trace_reflections<true>(const Ray& ray, int max_bounces, Mask active) const;
+template ReflectionChainAD SurfelScene::trace_reflections<false>(const RayAD& ray, int max_bounces,
+                                                                 MaskAD active) const;
 
 } // namespace rayd
 

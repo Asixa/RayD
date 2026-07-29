@@ -15,7 +15,7 @@ namespace rayd::torch_backend {
 
 namespace {
 
-namespace sm = sdf_math;
+namespace sm = shared::sdf_math;
 
 // ADR-0037 section 5: the `operations.json` `distance` miss sentinel, and the
 // only non-finite value any output of this operation may carry. It is spelled
@@ -52,37 +52,23 @@ __global__ void sdf_intersect_forward_kernel(
                       sm::vmath::make_vec3(origins[ray * 3 + 0], origins[ray * 3 + 1], origins[ray * 3 + 2]),
                       sm::vmath::make_vec3(directions[ray * 3 + 0], directions[ray * 3 + 1], directions[ray * 3 + 2]),
                       sm::core::GridExtent{nx, ny, nz});
-    if (!lane.usable)
+    const sm::ForwardResult result = sm::intersect_forward(values, lane, tmax, max_steps, relaxation, eps_hit_request);
+    out_steps[ray] = result.steps;
+    if (!result.hit)
         return;
 
-    const sm::core::Interval interval =
-        sm::core::clip_ray_to_box(lane.local_origin, lane.local_direction, lane.scale, tmax);
-    if (!interval.valid)
-        return;
-
-    sm::GridSampler sampler = sm::make_sampler(values, lane);
-    sm::core::MarchConfig config{
-        interval.t_lo, interval.t_hi, sm::core::resolve_eps_hit(eps_hit_request, lane.scale, lane.cells),
-        relaxation,    max_steps,
-    };
-    const sm::core::MarchResult march = sm::core::sphere_trace(sampler, config);
-    out_steps[ray] = march.steps;
-    if (!march.hit)
-        return;
-
-    const sm::FrozenHit hit = sm::evaluate_frozen(values, lane, sampler.base, march.t);
-    out_t[ray] = march.t;
+    out_t[ray] = result.t;
     out_hit[ray] = true;
-    out_tape_t[ray] = march.t;
-    out_tape_base[ray * 3 + 0] = sampler.base.i;
-    out_tape_base[ray * 3 + 1] = sampler.base.j;
-    out_tape_base[ray * 3 + 2] = sampler.base.k;
-    out_position[ray * 3 + 0] = hit.world_point.x;
-    out_position[ray * 3 + 1] = hit.world_point.y;
-    out_position[ray * 3 + 2] = hit.world_point.z;
-    out_normal[ray * 3 + 0] = hit.normal.x;
-    out_normal[ray * 3 + 1] = hit.normal.y;
-    out_normal[ray * 3 + 2] = hit.normal.z;
+    out_tape_t[ray] = result.t;
+    out_tape_base[ray * 3 + 0] = result.base.i;
+    out_tape_base[ray * 3 + 1] = result.base.j;
+    out_tape_base[ray * 3 + 2] = result.base.k;
+    out_position[ray * 3 + 0] = result.position.x;
+    out_position[ray * 3 + 1] = result.position.y;
+    out_position[ray * 3 + 2] = result.position.z;
+    out_normal[ray * 3 + 0] = result.normal.x;
+    out_normal[ray * 3 + 1] = result.normal.y;
+    out_normal[ray * 3 + 2] = result.normal.z;
 }
 
 } // namespace
@@ -134,7 +120,7 @@ namespace rayd::torch_backend {
 
 namespace {
 
-namespace sm = sdf_math;
+namespace sm = shared::sdf_math;
 namespace vm = shared::math;
 
 using vm::Vec3f;

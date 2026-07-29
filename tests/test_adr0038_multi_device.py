@@ -561,14 +561,12 @@ class Adr0038CapabilityModuleTests(AdrTestCase):
             with self.subTest(backend=backend):
                 self.assertIn(f'"{CAPABILITY}": ("core", "provisional"),', source)
 
-    def test_the_copies_diverge_on_exactly_the_five_enumerated_lines(self) -> None:
+    def test_the_copies_diverge_on_exactly_the_three_enumerated_lines(self) -> None:
         drjit = self.sources["drjit"].splitlines()
         torch = self.sources["torch"].splitlines()
         self.assertEqual(len(drjit), len(torch))
         divergent = [left.strip().split(":")[0].strip() for left, right in zip(drjit, torch) if left != right]
-        self.assertEqual(
-            divergent, ['_BACKEND = "drjit"', '"surfel"', '"sdf_intersect"', '"torch_compile"', f'"{CAPABILITY}"']
-        )
+        self.assertEqual(divergent, ['_BACKEND = "drjit"', '"torch_compile"', f'"{CAPABILITY}"'])
 
     def test_both_copies_repinned_the_manifest_hash(self) -> None:
         expected = hashlib.sha256(PUBLIC_API_PATH.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
@@ -578,10 +576,10 @@ class Adr0038CapabilityModuleTests(AdrTestCase):
 
     def test_adr0036_was_amended_rather_than_left_false(self) -> None:
         adr0036 = read(ADR0036_PATH)
-        self.assertPhrase("diverges on exactly five lines", adr0036)
+        self.assertPhrase("diverges on exactly three lines", adr0036)
         self.assertPhrase(f'`"{CAPABILITY}"` (`False` versus `True`, per ADR-0038)', adr0036)
         self.assertNoPhrase("diverges on exactly four lines", adr0036)
-        self.assertNoPhrase("diverges on exactly three lines", adr0036)
+        self.assertNoPhrase("diverges on exactly five lines", adr0036)
 
 
 class Adr0038EvidenceTests(AdrTestCase):

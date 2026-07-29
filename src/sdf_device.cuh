@@ -369,7 +369,7 @@ template <typename Sampler> RAYD_HOST_DEVICE MarchResult sphere_trace(Sampler& s
 // Device math the ADR-0037 SDF intersection kernels share between the forward
 // translation unit and the derivative one. The shared headers own the field
 // interpolant, the placement and the march; this header owns only what the
-// Torch kernels need on top of them:
+// backend launchers need on top of them:
 //
 //   * the per-ray setup both passes must reproduce identically (placement, unit
 //     direction, local ray, structural usability of the placement);
@@ -384,7 +384,7 @@ template <typename Sampler> RAYD_HOST_DEVICE MarchResult sphere_trace(Sampler& s
 // It deliberately includes no OptiX or CUDA SDK header and stays outside every
 // committed-PTX include closure (ADR-0037 section 9).
 
-namespace rayd::torch_backend::sdf_math {
+namespace rayd::shared::sdf_math {
 
 namespace vmath = shared::math;
 namespace core = shared::sdf;
@@ -662,6 +662,46 @@ RAYD_HOST_DEVICE FrozenHit evaluate_frozen(const float* values, const Lane& lane
     return hit;
 }
 
+struct ForwardResult {
+    bool hit;
+    int steps;
+    float t;
+    Vec3f position;
+    Vec3f normal;
+    core::BaseIndex base;
+    float denominator;
+};
+
+RAYD_HOST_DEVICE ForwardResult intersect_forward(const float* values, const Lane& lane, float tmax, int max_steps,
+                                                 float relaxation, float eps_hit_request) {
+    ForwardResult result{};
+    if (!lane.usable)
+        return result;
+
+    const core::Interval interval = core::clip_ray_to_box(lane.local_origin, lane.local_direction, lane.scale, tmax);
+    if (!interval.valid)
+        return result;
+
+    GridSampler sampler = make_sampler(values, lane);
+    const core::MarchConfig config{
+        interval.t_lo, interval.t_hi, core::resolve_eps_hit(eps_hit_request, lane.scale, lane.cells),
+        relaxation,    max_steps,
+    };
+    const core::MarchResult march = core::sphere_trace(sampler, config);
+    result.steps = march.steps;
+    if (!march.hit)
+        return result;
+
+    const FrozenHit frozen = evaluate_frozen(values, lane, sampler.base, march.t);
+    result.hit = true;
+    result.t = march.t;
+    result.position = frozen.world_point;
+    result.normal = frozen.normal;
+    result.base = sampler.base;
+    result.denominator = frozen.denominator;
+    return result;
+}
+
 // `dF/dscale_i` at the frozen hit: `scale` enters only the grid coordinate
 // mapping, so the row is exact and closed form (ADR-0037 section 6).
 RAYD_HOST_DEVICE Vec3f scale_partial(const Lane& lane, const FrozenHit& hit) {
@@ -670,4 +710,4 @@ RAYD_HOST_DEVICE Vec3f scale_partial(const Lane& lane, const FrozenHit& hit) {
                             -hit.local_gradient.z * hit.local_point.z / lane.scale.z);
 }
 
-} // namespace rayd::torch_backend::sdf_math
+} // namespace rayd::shared::sdf_math

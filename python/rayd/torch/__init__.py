@@ -37,6 +37,7 @@ from rayd._impl.geometry import (
 from rayd._impl.scene import Mesh
 from rayd._impl.scene import Scene
 from rayd._impl.sdf import SdfGrid, sdf_intersect
+from rayd._impl.surfel import SurfelCloud, SurfelComposite, SurfelIntersection, SurfelScene, SurfelTraceOptions
 
 if TYPE_CHECKING:
     from rayd._impl.multi import MultiDeviceOptions as MultiDeviceOptions
@@ -75,6 +76,11 @@ __all__ = [
     "SceneGlobalGeometry",
     "SdfGrid",
     "SdfIntersection",
+    "SurfelCloud",
+    "SurfelComposite",
+    "SurfelIntersection",
+    "SurfelScene",
+    "SurfelTraceOptions",
     "SegmentChainVisibility",
     "SegmentPairVisibility",
     "api_manifest",

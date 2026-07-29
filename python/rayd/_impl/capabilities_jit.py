@@ -7,7 +7,7 @@ from copy import deepcopy
 from typing import Any
 
 _SCHEMA_VERSION = 2
-_SCHEMA_SHA256 = "53f11fa0c96fb895ff545d4935ae11df563670e4a707e737b5dc0b0c5bd631ae"
+_SCHEMA_SHA256 = "3baf43224b80810178d70d3d62b4a4974424b3ef07e5bdda8e43ff5004575dc2"
 _BACKEND = "drjit"
 _TYPING = "complete"
 
@@ -32,7 +32,7 @@ _CAPABILITIES = {
     "diffraction_direct": True,
     "diffraction_chain": True,
     "surfel": True,
-    "sdf_intersect": False,
+    "sdf_intersect": True,
     "reverse_ad": True,
     "forward_ad": True,
     "torch_compile": False,

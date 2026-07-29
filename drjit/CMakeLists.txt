@@ -236,6 +236,7 @@ set(RAYD_CORE_SOURCE_FILES
     ${RAYD_SOURCE_DIR}/reflection/reflection_jit.cpp
     ${RAYD_SOURCE_DIR}/diffraction/diffraction_jit.cpp
     ${RAYD_SOURCE_DIR}/surfel_jit.cpp
+    ${RAYD_SOURCE_DIR}/sdf_jit.cpp
 )
 
 include("${RAYD_ROOT}/cmake/RayDCompilePolicy.cmake")
@@ -330,6 +331,17 @@ rayd_cuda_object(
         "${RAYD_SOURCE_DIR}/bvh_build.h"
         "${RAYD_SOURCE_DIR}/bvh_topology.h"
         "${RAYD_SOURCE_DIR}/bvh_triangle_query.h"
+)
+rayd_cuda_object(
+    NAME sdf_jit
+    SOURCE "${RAYD_SOURCE_DIR}/sdf_jit.cu"
+    OUT_SOURCES RAYD_CORE_SOURCE_FILES
+    DEPENDS
+        "${RAYD_INCLUDE_DIR}/jit/sdf.h"
+        "${RAYD_SOURCE_DIR}/sdf_jit.h"
+        "${RAYD_SOURCE_DIR}/sdf_device.cuh"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/math.h"
+        "${RAYD_SOURCE_DIR}/runtime/rt_device.cuh"
 )
 
 # Frozen divergence D1: this Dr.Jit object remains fast_math while the adjacent

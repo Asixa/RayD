@@ -16,6 +16,7 @@
 #include <rayd/jit/visibility.h>
 #include <rayd/jit/mesh.h>
 #include <rayd/jit/optix.h>
+#include <rayd/jit/sdf.h>
 #include <rayd/jit/surfel.h>
 #include <rayd/jit/scene.h>
 
@@ -400,6 +401,12 @@ NB_MODULE(_C, m) {
             .def_rw("transmittance_min", &SurfelTraceOptions::transmittance_min)
             .def_rw("max_trace_segments", &SurfelTraceOptions::max_trace_segments);
 
+        nb::class_<SdfTraceOptions>(m, "SdfTraceOptions")
+            .def(nb::init<>())
+            .def_rw("max_steps", &SdfTraceOptions::max_steps)
+            .def_rw("relaxation", &SdfTraceOptions::relaxation)
+            .def_rw("eps_hit", &SdfTraceOptions::eps_hit);
+
         nb::class_<SurfelRenderOptions>(m, "SurfelRenderOptions")
             .def(nb::init<>())
             .def_static(
@@ -539,6 +546,22 @@ NB_MODULE(_C, m) {
             .def_ro("value", &SurfelIntersectionAD::value)
             .def_ro("surfel_id", &SurfelIntersectionAD::surfel_id)
             .def_ro("triangle_id", &SurfelIntersectionAD::triangle_id);
+
+        nb::class_<SdfIntersection>(m, "SdfIntersection")
+            .def("is_valid", &SdfIntersection::is_valid)
+            .def_ro("t", &SdfIntersection::t)
+            .def_ro("hit_mask", &SdfIntersection::hit_mask)
+            .def_ro("position", &SdfIntersection::position)
+            .def_ro("normal", &SdfIntersection::normal)
+            .def_ro("steps", &SdfIntersection::steps);
+
+        nb::class_<SdfIntersectionAD>(m, "SdfIntersectionAD")
+            .def("is_valid", &SdfIntersectionAD::is_valid)
+            .def_ro("t", &SdfIntersectionAD::t)
+            .def_ro("hit_mask", &SdfIntersectionAD::hit_mask)
+            .def_ro("position", &SdfIntersectionAD::position)
+            .def_ro("normal", &SdfIntersectionAD::normal)
+            .def_ro("steps", &SdfIntersectionAD::steps);
 
         nb::class_<SurfelComposite>(m, "SurfelComposite")
             .def("is_valid", &SurfelComposite::is_valid)
@@ -1523,7 +1546,67 @@ NB_MODULE(_C, m) {
                 [](const SurfelScene& scene, const Vector3fAD& start, const Vector3fAD& end, rayd::MaskAD active) {
                     return scene.visible<false>(start, end, active);
                 },
-                "start"_a, "end"_a, "active"_a = true);
+                "start"_a, "end"_a, "active"_a = true)
+            .def(
+                "trace_reflections",
+                [](const SurfelScene& scene, const Ray& ray, int max_bounces, rayd::Mask active) {
+                    return scene.trace_reflections<true>(ray, max_bounces, active);
+                },
+                nb::arg("ray").noconvert(), "max_bounces"_a, "active"_a = true)
+            .def(
+                "trace_reflections",
+                [](const SurfelScene& scene, const RayAD& ray, int max_bounces, rayd::MaskAD active) {
+                    return scene.trace_reflections<false>(ray, max_bounces, active);
+                },
+                nb::arg("ray").noconvert(), "max_bounces"_a, "active"_a = true);
+    });
+
+    bind_section("sdf", [&]() {
+        nb::class_<SdfGrid>(m, "SdfGrid")
+            .def(nb::init<const Float&, int, int, int, const Vector3f&, const Float&, const Vector3f&>(), "values"_a,
+                 "nx"_a, "ny"_a, "nz"_a, "position"_a, "rotation"_a, "scale"_a)
+            .def(nb::init<const FloatAD&, int, int, int, const Vector3fAD&, const FloatAD&, const Vector3fAD&>(),
+                 "values"_a, "nx"_a, "ny"_a, "nz"_a, "position"_a, "rotation"_a, "scale"_a)
+            .def_prop_ro("nx", &SdfGrid::nx)
+            .def_prop_ro("ny", &SdfGrid::ny)
+            .def_prop_ro("nz", &SdfGrid::nz)
+            .def_prop_ro("value_count", &SdfGrid::value_count)
+            .def_prop_ro("values", &SdfGrid::values)
+            .def_prop_ro("position", &SdfGrid::position)
+            .def_prop_ro("rotation", &SdfGrid::rotation)
+            .def_prop_ro("scale", &SdfGrid::scale)
+            .def(
+                "intersect",
+                [](const SdfGrid& grid, const Ray& ray, const SdfTraceOptions& options, rayd::Mask active) {
+                    return grid.intersect<true>(ray, options, active);
+                },
+                nb::arg("ray").noconvert(), "options"_a = SdfTraceOptions(), "active"_a = true)
+            .def(
+                "intersect",
+                [](const SdfGrid& grid, const RayAD& ray, const SdfTraceOptions& options, rayd::MaskAD active) {
+                    return grid.intersect<false>(ray, options, active);
+                },
+                nb::arg("ray").noconvert(), "options"_a = SdfTraceOptions(), "active"_a = true)
+            .def(
+                "visible",
+                [](const SdfGrid& grid, const Vector3f& start, const Vector3f& end, const SdfTraceOptions& options,
+                   rayd::Mask active) { return grid.visible<true>(start, end, options, active); },
+                "start"_a, "end"_a, "options"_a = SdfTraceOptions(), "active"_a = true)
+            .def(
+                "visible",
+                [](const SdfGrid& grid, const Vector3fAD& start, const Vector3fAD& end, const SdfTraceOptions& options,
+                   rayd::MaskAD active) { return grid.visible<false>(start, end, options, active); },
+                "start"_a, "end"_a, "options"_a = SdfTraceOptions(), "active"_a = true)
+            .def(
+                "trace_reflections",
+                [](const SdfGrid& grid, const Ray& ray, int max_bounces, const SdfTraceOptions& options,
+                   rayd::Mask active) { return grid.trace_reflections<true>(ray, max_bounces, options, active); },
+                nb::arg("ray").noconvert(), "max_bounces"_a, "options"_a = SdfTraceOptions(), "active"_a = true)
+            .def(
+                "trace_reflections",
+                [](const SdfGrid& grid, const RayAD& ray, int max_bounces, const SdfTraceOptions& options,
+                   rayd::MaskAD active) { return grid.trace_reflections<false>(ray, max_bounces, options, active); },
+                nb::arg("ray").noconvert(), "max_bounces"_a, "options"_a = SdfTraceOptions(), "active"_a = true);
     });
 
     bind_section("mesh", [&]() {

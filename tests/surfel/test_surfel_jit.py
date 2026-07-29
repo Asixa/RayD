@@ -31,6 +31,7 @@ class SurfelCoreTests(unittest.TestCase):
                 "has_reference_composite": hasattr(pj.SurfelScene, "composite_alpha_reference"),
                 "has_render": hasattr(pj.SurfelScene, "render"),
                 "has_update_appearance": hasattr(pj.SurfelScene, "update_appearance"),
+                "has_trace_reflections": hasattr(pj.SurfelScene, "trace_reflections"),
                 "single_launch_default": pj.SurfelTraceOptions().single_launch,
                 "ico_name": str(pj.SurfelPrimitiveMode.Icosahedron20),
                 "quad_name": str(pj.SurfelPrimitiveMode.QuadTriangles),
@@ -53,12 +54,55 @@ class SurfelCoreTests(unittest.TestCase):
         self.assertTrue(data["has_reference_composite"])
         self.assertTrue(data["has_render"])
         self.assertTrue(data["has_update_appearance"])
+        self.assertTrue(data["has_trace_reflections"])
         self.assertTrue(data["single_launch_default"])
         self.assertIn("Icosahedron20", data["ico_name"])
         self.assertIn("QuadTriangles", data["quad_name"])
         self.assertIn("SingleTriangle", data["single_name"])
         self.assertIn("RGB", data["rgb_mode"])
         self.assertIn("SH", data["sh_model"])
+
+    def test_surfel_reflection_chain_uses_surfel_id_and_no_diffraction(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd.drjit as pj
+            import drjit as dr
+            import drjit.cuda.ad as ad
+
+            center = ad.Array3f(ad.Float([0.0]), ad.Float([0.0]), ad.Float([0.0]))
+            dr.enable_grad(center)
+            cloud = pj.SurfelCloud(
+                center,
+                ad.Array3f(ad.Float([1.0]), ad.Float([0.0]), ad.Float([0.0])),
+                ad.Array3f(ad.Float([0.0]), ad.Float([1.0]), ad.Float([0.0])),
+                ad.Float([0.5]),
+                ad.Float([1.0]),
+            )
+            options = pj.SurfelTraceOptions()
+            options.primitive_mode = pj.SurfelPrimitiveMode.QuadTriangles
+            scene = pj.SurfelScene(cloud, options)
+            scene.build()
+            ray = pj.RayAD(
+                ad.Array3f(ad.Float([0.0]), ad.Float([0.0]), ad.Float([-1.0])),
+                ad.Array3f(ad.Float([0.0]), ad.Float([0.0]), ad.Float([1.0])),
+            )
+            chain = scene.trace_reflections(ray, 1)
+            dr.backward(dr.sum(chain.t))
+            print(json.dumps({
+                "bounce_count": int(chain.bounce_count[0]),
+                "prim_id": int(chain.prim_ids[0]),
+                "t": float(chain.t[0]),
+                "grad_center_z": float(dr.grad(center)[2][0]),
+                "has_diffraction": hasattr(scene, "trace_diffraction"),
+            }))
+            """
+        )
+        self.assertEqual(data["bounce_count"], 1)
+        self.assertEqual(data["prim_id"], 0)
+        self.assertAlmostEqual(data["t"], 1.0, places=5)
+        self.assertAlmostEqual(data["grad_center_z"], 1.0, places=5)
+        self.assertFalse(data["has_diffraction"])
 
     def test_surfel_native_reports_candidate_buffer_saturation(self):
         data = run_json_case(

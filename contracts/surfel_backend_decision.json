@@ -1,58 +1,34 @@
 {
-  "schema_version": 1,
-  "decision_id": "F5-surfel-backend-scope",
+  "schema_version": 2,
+  "decision_id": "cross-backend-implicit-geometry",
   "status": "accepted",
-  "decision": "drjit_only",
-  "adr": "docs/adr/0001-surfel-remains-drjit-only.md",
+  "decision": "cross_backend",
+  "adr": "docs/adr/0042-cross-backend-implicit-geometry.md",
+  "supersedes": "docs/adr/0001-surfel-remains-drjit-only.md",
   "capability": {
     "key": "surfel",
     "category": "surfel",
     "stability": "experimental",
     "backends": {
       "drjit": true,
-      "torch": false
+      "torch": true
     }
   },
-  "evidence": {
-    "repository": {
-      "drjit_surfel_files": 16,
-      "drjit_surfel_lines": 10248,
-      "drjit_surfel_bytes": 437721,
-      "native_files_excluding_embedded_ptx": 6,
-      "native_lines_excluding_embedded_ptx": 3178,
-      "native_bytes_excluding_embedded_ptx": 152923,
-      "embedded_ptx_header_bytes": 72068,
-      "focused_tests": 57,
-      "surfel_commits": 10
+  "operation_scope": {
+    "sdf": ["visibility", "reflection_trace"],
+    "surfel": ["visibility", "reflection_trace", "transmission"],
+    "diffraction": []
+  },
+  "implementation": {
+    "drjit": {
+      "sdf": ["include/rayd/jit/sdf.h", "src/sdf_jit.cpp", "src/sdf_jit.cu"],
+      "surfel": ["include/rayd/jit/surfel.h", "src/surfel_jit.cpp"]
     },
-    "torch_demand": {
-      "confirmed_repository_workflows": 0,
-      "implementation_files": 0,
-      "focused_tests": 0,
-      "examples": 0,
-      "evidence_sufficient_for_port": false
-    },
-    "reuse": {
-      "raw_pointer_params_candidate": true,
-      "optix_device_core_candidate": true,
-      "host_scene_owner_backend_neutral": false,
-      "ad_replay_backend_neutral": false,
-      "explicit_drjit_type_references": 189
-    },
-    "priority": {
-      "core_edge_visibility_before_surfel_port": true,
-      "grouped_core_native_acceptance_pending_at_decision": true
+    "torch": {
+      "sdf": ["python/rayd/_impl/sdf.py", "src/sdf.cu"],
+      "surfel": ["python/rayd/_impl/surfel.py"]
     }
   },
-  "reconsideration_gates": [
-    "named_torch_workflow_with_fixture_and_owner",
-    "backend_neutral_input_result_options_contract",
-    "shared_params_and_device_core_used_by_both_backends",
-    "torch_scene_stream_reverse_ad_jvp_and_compile_design",
-    "forward_and_ad_parity_matrix",
-    "measured_build_wheel_cold_create_runtime_memory_cost",
-    "core_edge_visibility_group_acceptance_passing"
-  ],
   "minimal_manifest": {
     "new_capability_keys": [],
     "api": {
@@ -62,7 +38,7 @@
     },
     "backend_capabilities": {
       "drjit": true,
-      "torch": false
+      "torch": true
     }
   }
 }

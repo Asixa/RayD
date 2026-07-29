@@ -35,15 +35,14 @@ independence, and a third `rayd-shared` distribution violates the frozen
 distribution set. Any edit lands in both copies in the same change with
 identical bytes, including line endings.
 
-`_capabilities.py` diverges on exactly five lines, each required: `_BACKEND`
-(`"drjit"` versus `"torch"`), `"surfel"` (`True` versus `False`, per
-ADR-0001), `"sdf_intersect"` (`False` versus `True`, per ADR-0037),
-`"torch_compile"` (`False` versus `True`), and `"multi_device_replicated"`
-(`False` versus `True`, per ADR-0038). All five values are
+`_capabilities.py` diverges on exactly three lines, each required: `_BACKEND`
+(`"drjit"` versus `"torch"`), `"torch_compile"` (`False` versus `True`), and
+`"multi_device_replicated"` (`False` versus `True`, per ADR-0038). ADR-0042 aligns
+`"surfel"` and `"sdf_intersect"` at `True` on both backends. All three values are
 frozen in `shared/contracts/public_api.json`, whose EOL-normalized SHA-256 both
 copies pin in the shared `_SCHEMA_SHA256` line, and
 `tests/test_public_api_manifest.py::test_runtime_modules_are_validated_copies_of_shared_manifest`
-cross-checks every line against that contract. Everything outside those five
+cross-checks every line against that contract. Everything outside those three
 lines is identical between the copies.
 
 ## Consequences
@@ -51,10 +50,9 @@ lines is identical between the copies.
 - The byte-identity assertion is the anti-drift mechanism for
   `path_exchange.py`; a one-sided edit, or a CRLF/LF mismatch between the
   copies, fails the root suite immediately.
-- A `_capabilities.py` change outside the five backend-specific lines must be
-  applied to both copies; a change to one of the five lines is a public-API
-  capability change governed by `shared/contracts/public_api.json` and, for
-  `surfel`, ADR-0001.
+- A `_capabilities.py` change outside the three backend-specific lines must be
+  applied to both copies; a change to one of the three lines is a public-API
+  capability change governed by `contracts/public_api.json`.
 - Sharing these modules through a common wheel or cross-import would require
   reopening the frozen distribution set and wheel-layout contracts under a new
   decision record; this record decides against it.

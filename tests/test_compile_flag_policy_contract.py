@@ -465,7 +465,7 @@ class CompileFlagPolicyContractTests(unittest.TestCase):
         self.assertEqual(
             len(DECLARED), len(CONTRACT["translation_units"]), "duplicate (backend, unit) key in the contract"
         )
-        self.assertEqual(len(DECLARED), 80, "ADR-0039 preserves 80 logical TU roles")
+        self.assertEqual(len(DECLARED), 81, "ADR-0042 adds the Dr.Jit SDF CUDA role")
         self.assertFalse(
             [unit for _, unit in DECLARED if "/" in unit],
             "logical TU names must be stable concept roles, not physical paths",

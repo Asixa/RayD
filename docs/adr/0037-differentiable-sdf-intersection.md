@@ -1,6 +1,6 @@
 # ADR-0037: Differentiable SDF ray intersection
 
-- Status: Accepted; integration include and API-version clauses superseded by ADR-0041
+- Status: Accepted; backend-only scope superseded by ADR-0042
 - Date: 2026-07-26
 - Decision ID: `differentiable-sdf-intersection`
 - Scope: the RayD Torch backend's standalone signed-distance-field intersection

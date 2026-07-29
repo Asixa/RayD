@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import torch
 
 from .multipath import _SdfIntersectFunction, _needs_reverse_or_forward_ad, _require_native_dispatcher
-from .geometry import SdfIntersection
+from .geometry import Ray, ReflectionChain, SdfIntersection
 
 
 # ADR-0037 section 7 caller defaults. `eps_hit=None` sends the non-positive
@@ -19,6 +19,7 @@ from .geometry import SdfIntersection
 DEFAULT_MAX_STEPS = 64
 DEFAULT_RELAXATION = 0.9
 _EPS_HIT_DEVICE_DERIVED = -1.0
+_RAY_EPSILON = 1.0e-3
 
 
 def _require_resident_float32(value: torch.Tensor, name: str) -> None:
@@ -40,6 +41,14 @@ def _require_ray_batch(value: torch.Tensor, name: str) -> None:
     _require_resident_float32(value, name)
     if value.ndim != 2 or value.shape[1] != 3:
         raise ValueError(f"{name} must have shape (N, 3) (got {tuple(value.shape)}).")
+
+
+def _require_active(active: torch.Tensor | None, count: int, device: torch.device) -> torch.Tensor:
+    if active is None:
+        return torch.ones((count,), dtype=torch.bool, device=device)
+    if active.device != device or active.dtype != torch.bool or active.shape != (count,) or not active.is_contiguous():
+        raise ValueError("active must be a contiguous CUDA bool tensor with shape (N,) on the ray device.")
+    return active
 
 
 @dataclass(frozen=True)
@@ -68,6 +77,149 @@ class SdfGrid:
                     f"SdfGrid.{name} must be on the same CUDA device as SdfGrid.values "
                     f"({getattr(self, name).device} != {self.values.device})."
                 )
+
+    def _query_bias(self, eps_hit: float | None) -> torch.Tensor:
+        if eps_hit is None:
+            shape = self.values.shape
+            resolved = (
+                torch.minimum(
+                    self.scale[0] / float(shape[0] - 1),
+                    torch.minimum(self.scale[1] / float(shape[1] - 1), self.scale[2] / float(shape[2] - 1)),
+                )
+                * 1.0e-3
+            )
+        else:
+            if not eps_hit > 0.0:
+                raise ValueError(f"eps_hit must be positive, or None to derive it on the device (got {eps_hit}).")
+            resolved = self.scale.new_tensor(float(eps_hit))
+        return torch.maximum(2.0 * resolved, self.scale.new_tensor(_RAY_EPSILON))
+
+    def intersect(
+        self,
+        ray: Ray,
+        *,
+        active: torch.Tensor | None = None,
+        max_steps: int = DEFAULT_MAX_STEPS,
+        relaxation: float = DEFAULT_RELAXATION,
+        eps_hit: float | None = None,
+    ) -> SdfIntersection:
+        """Trace a ray batch against this grid, honoring per-lane ``Ray.tmax`` and ``active``."""
+        if not isinstance(ray, Ray):
+            raise TypeError("SdfGrid.intersect() expects rayd.torch.Ray.")
+        lane_active = _require_active(active, ray.o.shape[0], ray.o.device)
+        hit = sdf_intersect(self, ray.o, ray.d, max_steps=max_steps, relaxation=relaxation, eps_hit=eps_hit)
+        valid = hit.hit_mask & lane_active
+        if ray.tmax.numel() != 0:
+            valid = valid & (hit.t < ray.tmax)
+        inf = torch.full_like(hit.t, float("inf"))
+        zero3 = torch.zeros_like(hit.position)
+        return SdfIntersection(
+            torch.where(valid, hit.t, inf),
+            valid,
+            torch.where(valid[:, None], hit.position, zero3),
+            torch.where(valid[:, None], hit.normal, zero3),
+            torch.where(lane_active, hit.steps, torch.zeros_like(hit.steps)),
+        )
+
+    def visible(
+        self,
+        start: torch.Tensor,
+        end: torch.Tensor,
+        active: torch.Tensor | None = None,
+        *,
+        max_steps: int = DEFAULT_MAX_STEPS,
+        relaxation: float = DEFAULT_RELAXATION,
+        eps_hit: float | None = None,
+    ) -> torch.Tensor:
+        """Return segment LOS; only SDF intersections can block the segment."""
+        _require_ray_batch(start, "start")
+        _require_ray_batch(end, "end")
+        if start.shape != end.shape or start.device != self.values.device or end.device != self.values.device:
+            raise ValueError("start and end must have equal shape and be on the SDF grid's CUDA device.")
+        lane_active = _require_active(active, start.shape[0], start.device)
+        delta = end - start
+        length = torch.linalg.vector_norm(delta, dim=1)
+        bias = self._query_bias(eps_hit)
+        short = length <= 2.0 * bias
+        direction = delta / torch.clamp_min(length, 1.0e-12)[:, None]
+        ray = Ray(
+            (start + direction * bias).contiguous(),
+            direction.contiguous(),
+            torch.clamp_min(length - 2.0 * bias, 0.0).contiguous(),
+        )
+        hit = self.intersect(
+            ray, active=lane_active & ~short, max_steps=max_steps, relaxation=relaxation, eps_hit=eps_hit
+        )
+        return lane_active & (short | ~hit.hit_mask)
+
+    def trace_reflections(
+        self,
+        ray: Ray,
+        max_bounces: int,
+        active: torch.Tensor | None = None,
+        *,
+        max_steps: int = DEFAULT_MAX_STEPS,
+        relaxation: float = DEFAULT_RELAXATION,
+        eps_hit: float | None = None,
+    ) -> ReflectionChain:
+        """Trace specular SDF reflections without adding any diffraction path."""
+        if not isinstance(ray, Ray):
+            raise TypeError("SdfGrid.trace_reflections() expects rayd.torch.Ray.")
+        if max_bounces < 0:
+            raise ValueError("max_bounces must be non-negative.")
+        count = ray.o.shape[0]
+        lane_active = _require_active(active, count, ray.o.device)
+        if max_bounces == 0:
+            return ReflectionChain(
+                torch.empty((count, 0), dtype=torch.bool, device=ray.o.device),
+                torch.empty((count, 0), dtype=ray.o.dtype, device=ray.o.device),
+                torch.empty((count, 0, 3), dtype=ray.o.dtype, device=ray.o.device),
+                torch.empty((count, 0), dtype=torch.int32, device=ray.o.device),
+            )
+
+        direction = ray.d / torch.clamp_min(torch.linalg.vector_norm(ray.d, dim=1), 1.0e-12)[:, None]
+        current_ray = Ray(ray.o, direction.contiguous(), ray.tmax)
+        current_image_source = ray.o
+        bias = self._query_bias(eps_hit)
+        valid_slots: list[torch.Tensor] = []
+        t_slots: list[torch.Tensor] = []
+        image_slots: list[torch.Tensor] = []
+        id_slots: list[torch.Tensor] = []
+        for _bounce in range(max_bounces):
+            hit = self.intersect(
+                current_ray, active=lane_active, max_steps=max_steps, relaxation=relaxation, eps_hit=eps_hit
+            )
+            bounce_hit = lane_active & hit.hit_mask
+            normal = torch.where((torch.sum(current_ray.d * hit.normal, dim=1) > 0.0)[:, None], -hit.normal, hit.normal)
+            plane_distance = torch.sum((current_image_source - hit.position) * normal, dim=1)
+            image_source = current_image_source - 2.0 * plane_distance[:, None] * normal
+            reflected = current_ray.d - 2.0 * torch.sum(current_ray.d * normal, dim=1)[:, None] * normal
+
+            valid_slots.append(bounce_hit)
+            t_slots.append(torch.where(bounce_hit, hit.t, torch.full_like(hit.t, float("inf"))))
+            image_slots.append(torch.where(bounce_hit[:, None], image_source, torch.zeros_like(image_source)))
+            id_slots.append(
+                torch.where(
+                    bounce_hit,
+                    torch.zeros((count,), dtype=torch.int32, device=ray.o.device),
+                    torch.full((count,), -1, dtype=torch.int32, device=ray.o.device),
+                )
+            )
+
+            next_origin = hit.position + bias * reflected
+            current_ray = Ray(
+                torch.where(bounce_hit[:, None], next_origin, current_ray.o).contiguous(),
+                torch.where(bounce_hit[:, None], reflected, current_ray.d).contiguous(),
+            )
+            current_image_source = torch.where(bounce_hit[:, None], image_source, current_image_source)
+            lane_active = bounce_hit
+
+        return ReflectionChain(
+            torch.stack(valid_slots, dim=1),
+            torch.stack(t_slots, dim=1),
+            torch.stack(image_slots, dim=1),
+            torch.stack(id_slots, dim=1),
+        )
 
 
 def sdf_intersect(

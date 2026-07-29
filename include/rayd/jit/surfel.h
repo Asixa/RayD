@@ -411,6 +411,10 @@ class SurfelScene {
     MaskT<Detached> visible(const Vector3fT<Detached>& start, const Vector3fT<Detached>& end,
                             MaskT<Detached> active) const;
 
+    template <bool Detached>
+    ReflectionChainT<Detached> trace_reflections(const RayT<Detached>& ray, int max_bounces,
+                                                 MaskT<Detached> active) const;
+
   private:
     void build_triangle_buffers();
     void validate_trace_options(const char* context) const;

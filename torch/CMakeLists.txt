@@ -153,6 +153,7 @@ install(
         ${RAYD_ROOT_DIR}/python/rayd/_impl/multipath.py
         ${RAYD_ROOT_DIR}/python/rayd/_impl/camera.py
         ${RAYD_ROOT_DIR}/python/rayd/_impl/sdf.py
+        ${RAYD_ROOT_DIR}/python/rayd/_impl/surfel.py
     DESTINATION rayd/_impl)
 # nvcc numeric flags are a contract. contracts/compile_policy.json and
 # docs/adr/0035-cuda-compile-flag-policy.md declare the numeric profile of every
