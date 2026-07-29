@@ -1,4 +1,5 @@
 #include <rayd/torch/integration.h>
+#include <rayd/shared/utd/utd_math.h>
 
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
@@ -218,6 +219,42 @@ void enable_all_gradients(
     request.need_grad_vertices = true;
 }
 
+void test_stationary_line_fermat_and_short_dipole_amplitude() {
+    namespace utd = rayd::shared::utd;
+    const auto source = utd::make_f3(0.0F, -3.0F, 2.0F);
+    const auto target = utd::make_f3(2.0F, 0.0F, 8.0F);
+    const auto origin = utd::make_f3(0.0F, 0.0F, 0.0F);
+    const auto axis = utd::make_f3(0.0F, 0.0F, 1.0F);
+    const float parameter = utd::first_order_diffraction_parameter(source, target, origin, axis);
+    require(std::fabs(parameter - 5.6F) <= 2.0e-6F, "line-Fermat closed form differs");
+    const auto translation = utd::make_f3(7.0F, -4.0F, 3.0F);
+    const float translated = utd::first_order_diffraction_parameter(
+        utd::f3_add(source, translation), utd::f3_add(target, translation),
+        utd::f3_add(origin, translation), axis);
+    require(std::fabs(translated - parameter) <= 2.0e-6F, "line-Fermat translation invariance differs");
+    const float reversed = utd::first_order_diffraction_parameter(
+        source, target, origin, utd::f3_mul(axis, -1.0F));
+    require(std::fabs(reversed + parameter) <= 2.0e-6F, "line-Fermat axis reversal differs");
+    const float non_unique = utd::first_order_diffraction_parameter(
+        utd::make_f3(0.0F, 0.0F, 1.0F), utd::make_f3(0.0F, 0.0F, 3.0F), origin, axis);
+    require(!std::isfinite(non_unique), "non-unique axial stationary family must be rejected");
+
+    utd::MaterialParams material = {};
+    material.txPolZ = 1.0F;
+    const float theta = 0.5235987755982988F;
+    const auto direction = utd::make_f3(std::sin(theta), 0.0F, std::cos(theta));
+    const auto vector = utd::direct_source_vector(origin, direction, 3.0F, material);
+    const auto scalar = utd::direct_source_field(origin, direction, 3.0F);
+    const float vector_power = utd::cplx_abs_sqr(vector.x) + utd::cplx_abs_sqr(vector.y) +
+                               utd::cplx_abs_sqr(vector.z);
+    const float scalar_power = utd::cplx_abs_sqr(scalar);
+    require(std::fabs(std::sqrt(vector_power / scalar_power) - 0.5F) <= 2.0e-5F,
+            "short-dipole transverse amplitude must retain sin(theta)");
+    const auto axial = utd::direct_source_vector(origin, axis, 3.0F, material);
+    const float axial_power = utd::cplx_abs_sqr(axial.x) + utd::cplx_abs_sqr(axial.y) +
+                              utd::cplx_abs_sqr(axial.z);
+    require(axial_power <= 1.0e-12F * scalar_power, "short-dipole axial field must vanish");
+}
 void test_empty_schema_and_optional_bundle() {
     const auto empty = empty_wedge_request();
     require_result_schema(rayd::torch::field_diffraction_wedge(empty), 0);
@@ -559,6 +596,8 @@ void test_invalid_row_short_circuits_poison() {
 int main() {
     try {
         require(at::cuda::is_available(), "CUDA is required for wedge tests");
+        std::cout << "[RUN] test_stationary_line_fermat_and_short_dipole_amplitude\n";
+        test_stationary_line_fermat_and_short_dipole_amplitude();
         std::cout << "[RUN] test_empty_schema_and_optional_bundle\n";
         test_empty_schema_and_optional_bundle();
         std::cout << "[RUN] test_primal_ad_duality_need_and_zero\n";

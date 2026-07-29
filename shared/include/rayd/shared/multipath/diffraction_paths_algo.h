@@ -142,6 +142,22 @@ RAYD_HOST_DEVICE Vec3f state_vec(
 }
 
 template <typename Params>
+RAYD_HOST_DEVICE Vec3f edge_visibility_point(
+    const Params &params, int state_idx, Vec3f edge_point) {
+    const Vec3f n0 = state_vec(
+        params.state_n0_x, params.state_n0_y, params.state_n0_z, state_idx);
+    const Vec3f n1 = state_vec(
+        params.state_n1_x, params.state_n1_y, params.state_n1_z, state_idx);
+    const Vec3f exterior = math::add(n0, n1);
+    const float exterior_norm = norm3(exterior);
+    if (!is_finite(exterior_norm) || !(exterior_norm > kSmallEps)) {
+        return edge_point;
+    }
+    return math::add(
+        edge_point, math::scale(exterior, kRayBias / exterior_norm));
+}
+
+template <typename Params>
 RAYD_HOST_DEVICE bool state_active(const Params &params, int state_idx) {
     return params.active_mask[state_idx] != 0u;
 }
@@ -351,8 +367,9 @@ RAYD_DEVICE void trace_paths_order1_algo(
     }
     const float clamped_parameter = fminf(fmaxf(parameter, 0.f), edge_length);
     const Vec3f edge_point = math::add(edge_origin, math::scale(edge_dir, clamped_parameter));
-    if (!visible_segment<SplitScene>(primary, secondary, source, edge_point) ||
-        !visible_segment<SplitScene>(primary, secondary, edge_point, receiver)) {
+    const Vec3f visibility_point = edge_visibility_point(params, state_idx, edge_point);
+    if (!visible_segment<SplitScene>(primary, secondary, source, visibility_point) ||
+        !visible_segment<SplitScene>(primary, secondary, visibility_point, receiver)) {
         return;
     }
 
@@ -429,8 +446,9 @@ RAYD_DEVICE void trace_paths_source_visibility_algo(
         return;
     }
 
+    const Vec3f visibility_point = edge_visibility_point(params, state_idx, edge_point);
     params.temp_visibility[lane] =
-        visible_segment<false>(primary, secondary, source, edge_point) ? 1u : 0u;
+        visible_segment<false>(primary, secondary, source, visibility_point) ? 1u : 0u;
 }
 
 /// Two-phase target-export pass for one lane (former
@@ -466,7 +484,8 @@ RAYD_DEVICE void trace_paths_target_export_algo(
     if (!finite_paths_points(source, edge_point, receiver)) {
         return;
     }
-    if (!visible_segment<false>(primary, secondary, edge_point, receiver)) {
+    const Vec3f visibility_point = edge_visibility_point(params, state_idx, edge_point);
+    if (!visible_segment<false>(primary, secondary, visibility_point, receiver)) {
         return;
     }
 

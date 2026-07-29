@@ -257,32 +257,24 @@ UTD_DINLINE T first_order_diffraction_parameter(
     Vec3T<T> edgeOrigin,
     Vec3T<T> edgeDir)
 {
-    Vec3T<T> zeta = safe_normalize(edgeDir, v3_const<T>(0.f, 0.f, 1.f));
-    Vec3T<T> targetOffset = f3_sub(targetPos, edgeOrigin);
-    Vec3T<T> sourceOffset = f3_sub(sourcePos, edgeOrigin);
-    Vec3T<T> targetProjection = f3_mul(zeta, f3_dot(targetOffset, zeta));
-    Vec3T<T> sourceProjection = f3_mul(zeta, f3_dot(sourceOffset, zeta));
-    Vec3T<T> targetRadial = f3_sub(targetOffset, targetProjection);
-    Vec3T<T> sourceRadial = f3_sub(sourceOffset, sourceProjection);
-    T targetRadialNorm = safe_length(targetRadial);
-    T sourceRadialNorm = safe_length(sourceRadial);
-    Vec3T<T> v1 = f3_div(targetRadial, fmaxf(targetRadialNorm, T(UTD_SMALL_EPS)));
-    Vec3T<T> v2 = f3_div(sourceRadial, fmaxf(sourceRadialNorm, T(UTD_SMALL_EPS)));
-    T theta = UTD_PI - safe_acos(f3_dot(v1, v2));
-    Vec3T<T> rotationAxis = f3_cross(sourceRadial, targetRadial);
-    T rotationAxisNorm = safe_length(rotationAxis);
-    rotationAxis = rotationAxisNorm > UTD_SMALL_EPS
-        ? f3_div(rotationAxis, rotationAxisNorm + T(UTD_EPS))
-        : zeta;
-    Vec3T<T> coplanarTarget = rotate_vector_around_axis(targetOffset, rotationAxis, theta);
-    Vec3T<T> sourceToTarget = f3_sub(coplanarTarget, sourceOffset);
-    T sourceToTargetNorm = safe_length(sourceToTarget);
-    Vec3T<T> u0 = f3_div(sourceToTarget, fmaxf(sourceToTargetNorm, T(UTD_SMALL_EPS)));
-    Vec3T<T> u1 = f3_cross(sourceOffset, u0);
-    Vec3T<T> u2 = f3_cross(zeta, u0);
-    T u2Norm = safe_length(u2);
-    T sign = T(scalar_value(f3_dot(u1, u2)) >= 0.f ? 1.f : -1.f);
-    return sign * safe_length(u1) / fmaxf(u2Norm, T(UTD_SMALL_EPS));
+    const T edgeNorm = safe_length(edgeDir);
+    if (!isfinite(scalar_value(edgeNorm)) || !(scalar_value(edgeNorm) > UTD_SMALL_EPS)) {
+        return T(NAN);
+    }
+    const Vec3T<T> zeta = f3_div(edgeDir, edgeNorm);
+    const Vec3T<T> sourceOffset = f3_sub(sourcePos, edgeOrigin);
+    const Vec3T<T> targetOffset = f3_sub(targetPos, edgeOrigin);
+    const T sourceAxial = f3_dot(sourceOffset, zeta);
+    const T targetAxial = f3_dot(targetOffset, zeta);
+    const Vec3T<T> sourceRadial = f3_sub(sourceOffset, f3_mul(zeta, sourceAxial));
+    const Vec3T<T> targetRadial = f3_sub(targetOffset, f3_mul(zeta, targetAxial));
+    const T sourceRadius = safe_length(sourceRadial);
+    const T targetRadius = safe_length(targetRadial);
+    const T radialSum = sourceRadius + targetRadius;
+    if (!isfinite(scalar_value(radialSum)) || !(scalar_value(radialSum) > 0.f)) {
+        return T(NAN);
+    }
+    return (targetRadius * sourceAxial + sourceRadius * targetAxial) / radialSum;
 }
 
 template <typename T>
@@ -363,7 +355,7 @@ UTD_DINLINE Complex3T<T> direct_source_vector(
 {
     Vec3T<T> rayDir = safe_normalize(f3_sub(targetPos, sourcePos), v3_const<T>(0.f, 0.f, 1.f));
     Vec3T<T> txPol = {mat.txPolX, mat.txPolY, mat.txPolZ};
-    Vec3T<T> polDir = stable_perp_basis(rayDir, txPol);
+    Vec3T<T> polDir = project_to_wedge_plane(txPol, rayDir);
     return cplx_scale_real(polDir, direct_source_field(sourcePos, targetPos, k));
 }
 
@@ -626,8 +618,8 @@ UTD_DINLINE ComplexT<T> mend_beta_term_value(ComplexT<T> termValue,
     T delta = beta - bStar;
     T deltaW = 4.f * sqrtf(UTD_TWO_PI / fmaxf(kL, T(1.0e-6f)));  // locality window
     T w = expf(-(delta / deltaW) * (delta / deltaW));
-    if (!(scalar_value(w) > 1.0e-3f)) {
-        // Far from every GO boundary: no odd part, pure smooth background.
+    if (scalar_value(w) == 0.0f) {
+        // Only a true exponential underflow has an exactly zero odd part.
         return cplx_mul(termValue, truncEven);
     }
     // Evaluate the SAME term at the mirrored argument (roundf inside
