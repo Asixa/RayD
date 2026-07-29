@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests required diffraction path validity.
+
 import re
 import unittest
 from pathlib import Path
@@ -82,7 +85,7 @@ class Adr0031RequiredDiffractionPathValidityTests(unittest.TestCase):
             TORCH_SOURCE / "diffraction" / "paths_optix.cu"
         )
         shared = read(
-            ROOT / "include" / "rayd" / "detail" / "diffraction"
+            ROOT / "include" / "rayd" / "diffraction"
             / "paths_algo.h"
         )
         for source in (optix, shared):

@@ -1,46 +1,5 @@
-// ADR-021 Op B: native multi-bounce coherent phase-screen chain realization.
-//
-// Coherent (fully polarimetric) generalization of ADR-010 op 2
-// (scattering_patch_integral.cu). Per joined chain row the vertex sits on a
-// phase-screen patch; a specular reflection chain C1 transports the transmit
-// field to the vertex, the vertex applies the layer-stack reflection Jones
-// operator diag(r_te, r_tm) in the local s/p basis, and a specular reflection
-// chain C2 transports the outgoing field to the receiver:
-//
-//     E_rx = A_2 . S_patch(d_i, d_o; h) . A_1 . e_tx
-//
-// with the carrier exp(-j k0 (L1 + L2)) over the image-unfolded lengths, the
-// planar-chain spreading sp1*sp2 (= 1/(L1 L2) for planar image chains), the
-// r_te/r_tm computed IN-KERNEL from the resident CSR layer stack at the local
-// specular cosine (no separate em_layer_stack launch, ADR-009 fusion boundary
-// is the complete row), and the same Duffy-mapped 16x16 Gauss-Legendre patch
-// quadrature and two-stage fixed-order tree reduction as op 2.
-//
-// The scalar Jones response E_rx replaces op 2's caller-supplied
-// jones = r_te*(a_te*g_te) + r_tm*(a_tm*g_tm) scalar. The degenerate
-// d1 = d2 = 0 row (empty chains, A_1 = A_2 = I) collapses symbol-for-symbol to
-// op 2 (lockstep-pinned, NOT dispatched in production). Every per-bounce
-// specular event reuses field_transport.cuh reflect_frame / slab_fresnel /
-// complex3_dot_real exactly like field_transport_reflection.cu; the vertex
-// stack reuses em::stack_rt.
-//
-// Phase convention (module docstring of propagation/enumerated/scattering.py):
-// physical q = k0*(d_o - d_i); the aperture integral evaluates the swapped
-// integrand exp(-j*(q_int . x + q_int_n * h)) with q_int = -q against each
-// patch triangle winding normal; the leftover absolute-position phase is
-// removed by the carrier's q . centroid term.
-//
-// No float atomics: stage 1 is one block per row (256-node shared tree
-// reduction) and stage 2 tree-reduces the row values into the 0-dim total in a
-// fixed order, so total / path_field / path_gain are bitwise stable
-// run-to-run. Compiled --fmad=false (lockstep with op 2).
-//
-// NOTE (see the plan 10a section 4 gap reported by the owner): the chain
-// transport requires the absolute endpoint positions source (tx), vertex
-// (v_s) and target (rx) to reconstruct the per-bounce incident directions,
-// exactly as field_transport_reflection.cu takes source/target. The frozen
-// section 4.1 facade table omits them; this bridge adds source/vertex/target
-// right after n_rows, matching the reflection-kernel precedent.
+// Copyright Xingyu Chen.
+// Implements scattering support for chain realization.
 
 #include "scattering_internal.cuh"
 #include <rayd/scattering.h>

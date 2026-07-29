@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal visibility support for visibility.
+
 #pragma once
 
 #include <ATen/ATen.h>

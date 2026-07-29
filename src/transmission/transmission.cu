@@ -1,10 +1,13 @@
+// Copyright Xingyu Chen.
+// Implements transmission support for transmission.
+
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAException.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/util/Exception.h>
 
-#include <rayd/detail/transmission/layer_stack.cuh>
+#include <rayd/transmission/layer_stack.cuh>
 #include <src/bindings/tensor_contract.h>
 #include <src/field_transport/ad.cuh>
 #include <rayd/transmission.h>
@@ -619,8 +622,8 @@ rayd::torch::LayerStackResult rayd::torch::em_layer_stack_jvp(
 #include <c10/util/Exception.h>
 #include <c10/util/complex.h>
 
-#include <rayd/detail/field_transport.cuh>
-#include <rayd/detail/transmission/layer_stack.cuh>
+#include <rayd/field_transport.cuh>
+#include <rayd/transmission/layer_stack.cuh>
 #include <src/bindings/tensor_contract.h>
 #include <rayd/transmission.h>
 
@@ -982,8 +985,8 @@ rayd::torch::field_transmission_sequence(
 #include <c10/util/Exception.h>
 #include <c10/util/complex.h>
 
-#include <rayd/detail/field_transport.cuh>
-#include <rayd/detail/transmission/layer_stack.cuh>
+#include <rayd/field_transport.cuh>
+#include <rayd/transmission/layer_stack.cuh>
 #include <src/bindings/tensor_contract.h>
 #include <src/field_transport/ad.cuh>
 #include <rayd/transmission.h>

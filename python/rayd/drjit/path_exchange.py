@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Exposes the Dr.Jit path exchange Python API.
+
 from rayd._impl.path_exchange_jit import *  # noqa: F401,F403
 
 # Keep the documented public module identity stable for pickle, repr, and

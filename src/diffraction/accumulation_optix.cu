@@ -1,8 +1,11 @@
+// Copyright Xingyu Chen.
+// Implements diffraction support for accumulation optix.
+
 #include <optix.h>
 #include <optix_device.h>
 
-#include <rayd/detail/diffraction/accumulation_optix_device.cuh>
-#include <src/runtime/math.cuh>
+#include <rayd/diffraction/accumulation_optix_device.cuh>
+#include <rayd/math.h>
 #include <src/diffraction/accum_params.h>
 
 namespace rayd::torch_backend {

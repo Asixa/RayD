@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests multi device stress.
+
 """Phase 1 acceptance tests for concurrent multi-device Torch execution.
 
 Phase 0 proved that a single host thread can drive any device correctly. This

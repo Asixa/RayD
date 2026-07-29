@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal bindings support for integration internal.
+
 #pragma once
 
 #include <rayd/scene.h>

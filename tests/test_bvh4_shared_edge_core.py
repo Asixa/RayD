@@ -1,10 +1,13 @@
+# Copyright Xingyu Chen.
+# Tests bvh4 shared edge core.
+
 import re
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-INCLUDE_DIR = ROOT / "include" / "rayd" / "detail" / "edge"
+INCLUDE_DIR = ROOT / "include" / "rayd" / "edge"
 SOURCE_DIR = ROOT / "src" / "edge"
 CONTRACT_HEADERS = (
     "bvh_types.h",
@@ -14,7 +17,7 @@ CONTRACT_HEADERS = (
 )
 # P3 Stage A extracted the primitive-agnostic machinery into shared/bvh/. The
 # raw-pointer/caller-owned and enqueue-only contracts now also cover the core.
-BVH_CORE_INCLUDE_DIR = ROOT / "include" / "rayd" / "detail" / "bvh"
+BVH_CORE_INCLUDE_DIR = ROOT / "include" / "rayd" / "bvh"
 BVH_CORE_SOURCE_DIR = ROOT / "src" / "bvh"
 BVH_CORE_HEADERS = (
     "topology.h",

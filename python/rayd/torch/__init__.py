@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Exposes the public Torch Python package.
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

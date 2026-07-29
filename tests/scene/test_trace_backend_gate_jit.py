@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests trace backend gate Dr.Jit.
+
 """P1 gate: TraceBackend abstraction + decoupled OptiX GAS build.
 
 Exercises the two axes the P1 acceptance criteria demand:

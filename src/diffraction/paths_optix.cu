@@ -1,9 +1,12 @@
+// Copyright Xingyu Chen.
+// Implements diffraction support for paths optix.
+
 #include <optix.h>
 #include <optix_device.h>
 
-#include <src/runtime/math.cuh>
+#include <rayd/math.h>
 #include <src/diffraction/paths_params.h>
-#include <rayd/detail/diffraction/utd_math.h>
+#include <rayd/diffraction/utd.h>
 
 namespace rayd::torch_backend {
 

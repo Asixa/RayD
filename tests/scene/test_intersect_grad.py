@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests intersect grad.
+
 import unittest
 from unittest import mock
 

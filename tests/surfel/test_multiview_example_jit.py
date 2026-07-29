@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests multiview example Dr.Jit.
+
 import importlib.util
 import tempfile
 import unittest

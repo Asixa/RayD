@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements camera support for camera.
+
 #include <src/camera/camera.h>
 #include <src/bindings/tensor_contract.h>
 

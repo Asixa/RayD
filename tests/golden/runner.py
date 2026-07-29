@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests runner.
+
 """Collect golden query results for the declarative scenes in ``scenes.py``.
 
 ``collect_golden(backend="drjit")`` builds every scene once and returns a

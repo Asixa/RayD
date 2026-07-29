@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests torch source bundle.
+
 import hashlib
 import importlib.util
 import json

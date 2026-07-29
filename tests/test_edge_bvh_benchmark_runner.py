@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests edge bvh benchmark runner.
+
 import unittest
 from pathlib import Path
 from subprocess import CompletedProcess

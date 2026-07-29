@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal scene support for optix intersect params.
+
 #pragma once
 
 #include <optix.h>

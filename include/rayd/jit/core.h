@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares the Dr.Jit core API.
+
 #pragma once
 
 #include <limits>
@@ -5,7 +8,7 @@
 #include <string>
 #include <string_view>
 
-#include <rayd/detail/contracts.h>
+#include <rayd/contracts.h>
 
 /// Number of field channels carried per ray (e.g. RGB or three polarization components).
 constexpr int RAYD_NUM_CHANNELS = 3;

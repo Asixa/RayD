@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Exercises integration test in a native smoke test.
+
 #include <rayd/integration.h>
 
 #include <ATen/ATen.h>

@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests benchmark script Dr.Jit.
+
 import unittest
 from pathlib import Path
 

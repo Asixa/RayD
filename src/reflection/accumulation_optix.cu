@@ -1,9 +1,12 @@
+// Copyright Xingyu Chen.
+// Implements reflection support for accumulation optix.
+
 #include <optix.h>
 #include <optix_device.h>
 
-#include <src/runtime/math.cuh>
+#include <rayd/math.h>
 #include <src/reflection/accum_params.h>
-#include <rayd/detail/reflection/accumulation_optix_device.cuh>
+#include <rayd/reflection/accumulation_optix_device.cuh>
 
 namespace rayd::torch_backend {
 
@@ -28,20 +31,20 @@ struct ReflectionAccumulationPolicy {
             const long long slot =
                 static_cast<long long>(ray_index) * stride + static_cast<long long>(depth);
             ReflAccumStagedValue value;
-            value.a = make_float4(power, field.x.r, field.x.i, field.y.r);
-            value.b = make_float4(field.y.i, field.z.r, field.z.i, 1.0f);
+            value.a = make_float4(power, field.x.re, field.x.im, field.y.re);
+            value.b = make_float4(field.y.im, field.z.re, field.z.im, 1.0f);
             params.stage_cell[slot] = cell;
             params.stage_value[slot] = value;
             return;
         }
 
         const WarpCellGroup group = warp_cell_group(cell);
-        atomic_add_same_cell(params.out_field_x_re, cell, field.x.r, group);
-        atomic_add_same_cell(params.out_field_x_im, cell, field.x.i, group);
-        atomic_add_same_cell(params.out_field_y_re, cell, field.y.r, group);
-        atomic_add_same_cell(params.out_field_y_im, cell, field.y.i, group);
-        atomic_add_same_cell(params.out_field_z_re, cell, field.z.r, group);
-        atomic_add_same_cell(params.out_field_z_im, cell, field.z.i, group);
+        atomic_add_same_cell(params.out_field_x_re, cell, field.x.re, group);
+        atomic_add_same_cell(params.out_field_x_im, cell, field.x.im, group);
+        atomic_add_same_cell(params.out_field_y_re, cell, field.y.re, group);
+        atomic_add_same_cell(params.out_field_y_im, cell, field.y.im, group);
+        atomic_add_same_cell(params.out_field_z_re, cell, field.z.re, group);
+        atomic_add_same_cell(params.out_field_z_im, cell, field.z.im, group);
         atomic_add_same_cell(params.out_reflection_power, cell, power, group);
         atomic_add_warp(params.out_reflection_count, 1);
     }

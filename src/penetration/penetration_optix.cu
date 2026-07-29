@@ -1,9 +1,12 @@
+// Copyright Xingyu Chen.
+// Implements penetration support for penetration optix.
+
 #include <optix.h>
 #include <optix_device.h>
 
 #include <cuda_runtime.h>
 
-#include <rayd/detail/contracts.h>
+#include <rayd/contracts.h>
 #include <src/penetration/segment_penetration_params.h>
 
 namespace rayd::torch_backend {

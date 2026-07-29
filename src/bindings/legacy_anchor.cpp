@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements bindings support for legacy anchor.
+
 #if defined(_WIN32)
 #  define RAYD_TORCH_LEGACY_EXPORT __declspec(dllexport)
 #else

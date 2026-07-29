@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests axial edge visibility.
+
 import unittest
 from pathlib import Path
 

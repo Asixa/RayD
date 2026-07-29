@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests share2 ad.
+
 """Cross-backend AD parity for smooth, fixed-discrete-choice public operations.
 
 These tests intentionally keep edge winners, reflection hits, and diffraction

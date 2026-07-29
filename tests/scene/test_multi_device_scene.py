@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests multi device scene.
+
 """Phase 2a of `docs/dev/multi_gpu_plan.md`: replicated multi-device `Scene`.
 
 The contract under test is that `Scene(devices=[...])` is a composition layer

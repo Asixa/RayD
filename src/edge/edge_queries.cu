@@ -1,7 +1,10 @@
+// Copyright Xingyu Chen.
+// Implements edge support for edge queries.
+
 #include <src/edge/kernels.h>
 #include <src/edge/optix_params.h>
 #include <src/runtime/optix_context.h>
-#include <rayd/detail/edge/edge_distance_math.h>
+#include <rayd/edge/edge_distance.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>
@@ -36,13 +39,6 @@ __device__ float3 edge_vector(
     return make_float3(e1_x[edge], e1_y[edge], e1_z[edge]);
 }
 
-__device__ float3 add3(float3 a, float3 b) {
-    return make_float3(a.x + b.x, a.y + b.y, a.z + b.z);
-}
-
-__device__ float3 mul3(float s, float3 a) {
-    return make_float3(s * a.x, s * a.y, s * a.z);
-}
 
 void cuda_check(cudaError_t result, const char *expr) {
     if (result == cudaSuccess)
@@ -807,8 +803,8 @@ EdgeRayForwardOutputs edge_ray_forward_cuda(
 // ---- merged from src/edge/edge_backward_part.cu ----
 
 #include <src/edge/kernels.h>
-#include <src/runtime/math.cuh>
-#include <rayd/detail/edge/edge_distance_math.h>
+#include <rayd/math.h>
+#include <rayd/edge/edge_distance.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>
@@ -1398,8 +1394,8 @@ EdgeRayJvpOutputs edge_ray_jvp_optional_cuda(
 #include <src/runtime/optix_context.h>
 #include <src/scene/cache.h>
 
-#include <rayd/detail/edge/bvh_query.h>
-#include <rayd/detail/edge/edge_distance_math.h>
+#include <rayd/edge/bvh_query.h>
+#include <rayd/edge/edge_distance.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>

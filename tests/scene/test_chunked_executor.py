@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests chunked executor.
+
 """Phase 2b of `docs/dev/multi_gpu_plan.md`: the chunked executor.
 
 The contract under test is decision D7: a large batch is executed as a stream

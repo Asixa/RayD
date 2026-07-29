@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests bvh3 config convergence.
+
 import unittest
 from pathlib import Path
 

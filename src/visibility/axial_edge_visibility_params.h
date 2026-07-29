@@ -1,6 +1,9 @@
+// Copyright Xingyu Chen.
+// Declares internal visibility support for axial edge visibility params.
+
 #pragma once
 
-#include <rayd/detail/visibility/segment_params.h>
+#include <rayd/visibility/segment_params.h>
 
 #include <cstdint>
 #include <type_traits>

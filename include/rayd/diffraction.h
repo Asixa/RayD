@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares the Torch diffraction API.
+
 #pragma once
 
 #include <rayd/scene.h>

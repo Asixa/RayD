@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Demonstrates surfel convergence video.
+
 import argparse
 import json
 import os

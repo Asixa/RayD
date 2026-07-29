@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests multi device smoke.
+
 import unittest
 
 import torch

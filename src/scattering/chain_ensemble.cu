@@ -1,39 +1,5 @@
-// ADR-021 Op A: native multi-bounce Kirchhoff ensemble scattering row physics.
-//
-// Power-domain generalization of ADR-010 op 1 (scattering_ensemble.cu). Per
-// joined chain row TX --C1(d1 reflections)--> v_s --C2(d2 reflections)--> RX:
-//
-//   1. C1 coherent Jones transport of the tx polarization to the vertex v_s,
-//      yielding the incident coherency diagonal (P_te, P_tm) in the vertex s/p
-//      basis of the last C1 leg (supervisor ruling: computed in-kernel from the
-//      C1 transport of tx_pol, never a caller-supplied a_te2/a_tm2 pair).
-//   2. Ensemble Kirchhoff table lookup (f_te, f_tm) at the vertex (op-1 shared
-//      device interpolation, scattering_table.cuh::eval_te_tm).
-//   3. Outgoing coherency J_out = diag(f_te*P_te, f_tm*P_tm).
-//   4. C2 receiver responses (g_te2, g_tm2): |p_rx . A_2 s_o|^2 and
-//      |p_rx . A_2 p_o|^2, the diagonal of A_2^H p_rx p_rx^H A_2 (op-1's
-//      g_te2/g_tm2 when C2 is empty). Because J_out is diagonal the receiver
-//      projection p^H J p reduces to f_te*P_te*g_te2 + f_tm*P_tm*g_tm2.
-//   5. Radiometric assembly, op-1 association preserved.
-//
-// The per-bounce C1/C2 transport reuses the shared device primitives
-// transport::reflect_frame / transport::slab_fresnel / transport::
-// complex3_dot_real and the field:: complex helpers (field_transport.cuh),
-// exactly as field_transport_reflection.cu::reflection_chain_eval; no device
-// function is copied. Padded [R, Dmax, ...] leg blocks with per-row depths
-// bound every loop (plan 10a section 1, Dmax = kMaxAdDepth = 8). Elementwise,
-// no atomics: bitwise run-to-run deterministic (op-1 parity). Compiled with
-// --fmad=false so the radiometric mul/add chain rounds like the Torch oracle.
-//
-// NOTE (interface reconciliation, see the change report): the committed float64
-// oracle tests/reference/chain_ensemble.py and the existing native op-1
-// convention drive the radiometric assembly (per-row `weights` = A_patch and
-// 1/(L1^2 L2^2) spreading), which differs from the frozen plan-10a section 3.1
-// argument sketch (sp1/sp2, no weights). Following the task rule "existing
-// native op-1/op-2 conventions win", this kernel uses the op-1 weights + length
-// convention. The endpoint positions source/vertex/target (required by the C1/C2
-// transport, omitted from the section 3.1 sketch) are explicit arguments here,
-// mirroring field_reflection_sequence.
+// Copyright Xingyu Chen.
+// Implements scattering support for chain ensemble.
 
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
@@ -45,8 +11,8 @@
 
 #include "scattering_internal.cuh"
 
-#include <rayd/detail/field_transport.cuh>
-#include <rayd/detail/scattering_table.cuh>
+#include <rayd/field_transport.cuh>
+#include <rayd/scattering_table.cuh>
 
 namespace {
 
@@ -484,7 +450,7 @@ ScatteringChainEnsembleEvalResult scattering_chain_ensemble_eval(
 // covers geometry in forward mode, and a follow-up wave adds the reverse.
 
 #include "scattering_internal.cuh"
-#include <rayd/detail/scattering_table.cuh>
+#include <rayd/scattering_table.cuh>
 #include <rayd/scattering.h>
 
 namespace ad = rayd::torch::field_transport_ad;

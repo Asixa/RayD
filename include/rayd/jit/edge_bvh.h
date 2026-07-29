@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares the Dr.Jit edge bvh API.
+
 #pragma once
 
 #include <cstddef>

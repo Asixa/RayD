@@ -1,7 +1,10 @@
-#include <rayd/detail/vec3.h>
-#include <rayd/detail/visibility/segment_algo.h>
-#include <rayd/detail/visibility/segment_optix_device.cuh>
-#include <rayd/detail/rt/numeric_policy.h>
+// Copyright Xingyu Chen.
+// Implements visibility support for axial edge visibility optix.
+
+#include <rayd/math.h>
+#include <rayd/visibility/segment_algo.h>
+#include <rayd/visibility/segment_optix_device.cuh>
+#include <rayd/rt/numeric_policy.h>
 #include <src/visibility/axial_edge_visibility_params.h>
 
 #include <cmath>

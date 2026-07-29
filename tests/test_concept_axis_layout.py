@@ -1,4 +1,7 @@
-"""Architecture gate for the ADR-0039/0040/0041 repository layout."""
+# Copyright Xingyu Chen.
+# Tests concept axis layout.
+
+"""Checks the repository concept-oriented layout."""
 
 import json
 import re
@@ -88,11 +91,15 @@ class ConceptAxisLayoutTests(unittest.TestCase):
                 "scene.h",
                 "transmission.h",
                 "visibility.h",
+                "contracts.h",
+                "field_transport.cuh",
+                "math.h",
+                "scattering_table.cuh",
             },
         )
         self.assertEqual(
             {path.name for path in include_root.iterdir() if path.is_dir()},
-            {"detail", "jit"},
+            {"bvh", "diffraction", "edge", "jit", "reflection", "rt", "scene", "sdf", "transmission", "visibility"},
         )
 
         jit_root = include_root / "jit"
@@ -132,40 +139,12 @@ class ConceptAxisLayoutTests(unittest.TestCase):
             },
         )
 
-        detail_root = include_root / "detail"
-        self.assertEqual(
-            {path.name for path in detail_root.iterdir() if path.is_file()},
-            {
-                "contracts.h",
-                "field_math.h",
-                "field_transport.cuh",
-                "scattering_table.cuh",
-                "vec3.h",
-            },
-        )
-        detail_directories = {
-            path.name: len([child for child in path.iterdir() if child.is_file()])
-            for path in detail_root.iterdir()
-            if path.is_dir()
-        }
-        self.assertEqual(
-            set(detail_directories),
-            {
-                "bvh",
-                "diffraction",
-                "edge",
-                "reflection",
-                "rt",
-                "scene",
-                "sdf",
-                "transmission",
-                "visibility",
-            },
-        )
-        self.assertTrue(all(count >= 2 for count in detail_directories.values()))
+        self.assertFalse((include_root / "detail").exists())
+        self.assertTrue((include_root / "math.h").is_file())
         self.assertFalse(any(include_root.rglob("torch.h")))
         self.assertFalse(any(include_root.rglob("drjit.h")))
         self.assertFalse((include_root / "shared").exists())
+
     def test_torch_backend_private_headers_are_concept_owned(self):
         expected = {
             "src/bindings/tensor_contract.h",
@@ -185,7 +164,6 @@ class ConceptAxisLayoutTests(unittest.TestCase):
             "src/penetration/segment_penetration_params.h",
             "src/reflection/accum_params.h",
             "src/reflection/accum_reduce.h",
-            "src/reflection/complex.cuh",
             "src/reflection/dedup.h",
             "src/reflection/epc_field.h",
             "src/reflection/epc_params.h",
@@ -193,7 +171,6 @@ class ConceptAxisLayoutTests(unittest.TestCase):
             "src/reflection/pipeline.h",
             "src/reflection/trace_params.h",
             "src/runtime/diagnostics.h",
-            "src/runtime/math.cuh",
             "src/runtime/native_compat.h",
             "src/runtime/optix_context.h",
             "src/runtime/optix_pipeline.h",
@@ -203,7 +180,7 @@ class ConceptAxisLayoutTests(unittest.TestCase):
             "src/scene/multipath_cuda.h",
             "src/scene/optix_intersect_params.h",
             "src/scene/triangle_bvh.h",
-            "src/sdf/device_math.cuh",
+            "src/sdf/derivatives.cuh",
             "src/sdf/kernels.h",
             "src/visibility/axial_edge_visibility_params.h",
             "src/visibility/visibility.h",

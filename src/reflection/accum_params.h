@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal reflection support for accum params.
+
 #pragma once
 
 #include <cstdint>

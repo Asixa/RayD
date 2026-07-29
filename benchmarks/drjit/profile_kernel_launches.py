@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Benchmarks profile kernel launches.
+
 import argparse
 import json
 import math

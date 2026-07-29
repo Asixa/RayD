@@ -1,14 +1,17 @@
+# Copyright Xingyu Chen.
+# Tests share4 scene edge optix contracts.
+
 from pathlib import Path
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCENE_CONTRACT = ROOT / "include/rayd/detail/scene/optix_contracts.h"
-EDGE_CONTRACT = ROOT / "include/rayd/detail/edge/optix_contracts.h"
-SBT_CONTRACT = ROOT / "include/rayd/detail/rt/optix_sbt.h"
-PIPELINE_CONTRACT = ROOT / "include/rayd/detail/rt/optix_pipeline_contracts.h"
-EDGE_DEVICE = ROOT / "include/rayd/detail/edge/optix_device.cuh"
-SCENE_DEVICE = ROOT / "include/rayd/detail/scene/optix_device.cuh"
+SCENE_CONTRACT = ROOT / "include/rayd/scene/optix_contracts.h"
+EDGE_CONTRACT = ROOT / "include/rayd/edge/optix_contracts.h"
+SBT_CONTRACT = ROOT / "include/rayd/rt/optix_sbt.h"
+PIPELINE_CONTRACT = ROOT / "include/rayd/rt/optix_pipeline_contracts.h"
+EDGE_DEVICE = ROOT / "include/rayd/edge/optix_device.cuh"
+SCENE_DEVICE = ROOT / "include/rayd/scene/optix_device.cuh"
 DRJIT_EDGE = ROOT / "src/edge/edge_optix_jit.cu"
 TORCH_EDGE = ROOT / "src/edge/edge_optix.cu"
 TORCH_SCENE = ROOT / "src/scene/intersection_optix.cu"
@@ -62,7 +65,7 @@ class Share4SceneEdgeOptixContractsTests(unittest.TestCase):
     def test_edge_programs_use_shared_device_helpers(self):
         for path in (DRJIT_EDGE, TORCH_EDGE):
             source = path.read_text(encoding="utf-8")
-            self.assertIn("rayd/detail/edge/optix_device.cuh", source)
+            self.assertIn("rayd/edge/optix_device.cuh", source)
             for symbol in (
                 "shared::optix::edge_query_active", "shared::optix::edge_geometry_active",
                 "shared::optix::write_invalid_edge_result", "shared::optix::set_edge_point_payload",
@@ -84,7 +87,7 @@ class Share4SceneEdgeOptixContractsTests(unittest.TestCase):
     def test_scene_payload_and_hitobject_order_share_one_contract(self):
         torch_scene = TORCH_SCENE.read_text(encoding="utf-8")
         drjit_scene = DRJIT_SCENE.read_text(encoding="utf-8")
-        self.assertIn("rayd/detail/scene/optix_device.cuh", torch_scene)
+        self.assertIn("rayd/scene/optix_device.cuh", torch_scene)
         self.assertIn("shared::optix::SceneIntersectionPayload", torch_scene)
         self.assertIn("shared::optix::set_scene_intersection_payload", torch_scene)
         self.assertIn("SceneHitObjectFieldSlot::Count", drjit_scene)

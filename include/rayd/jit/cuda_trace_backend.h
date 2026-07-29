@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares the Dr.Jit cuda trace backend API.
+
 #pragma once
 
 #include <vector>

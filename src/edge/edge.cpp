@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements edge support for edge.
+
 #include <src/edge/kernels.h>
 #include <src/scene/cache.h>
 #include <src/bindings/tensor_contract.h>

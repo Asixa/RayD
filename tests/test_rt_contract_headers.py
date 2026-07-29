@@ -1,10 +1,13 @@
+# Copyright Xingyu Chen.
+# Tests rt contract headers.
+
 import re
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RT_DIR = ROOT / "include" / "rayd" / "detail" / "rt"
+RT_DIR = ROOT / "include" / "rayd" / "rt"
 NUMERIC_POLICY = RT_DIR / "numeric_policy.h"
 HIT_TYPES = RT_DIR / "hit_types.h"
 RAY_TYPES = RT_DIR / "ray_types.h"

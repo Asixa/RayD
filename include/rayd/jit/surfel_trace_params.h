@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares the Dr.Jit surfel trace params API.
+
 #pragma once
 
 #include <cstdint>

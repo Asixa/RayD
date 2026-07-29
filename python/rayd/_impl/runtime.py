@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Implements shared Python support for runtime.
+
 """Torch native loading, compile registration, and optional warm-up runtime."""
 
 from __future__ import annotations

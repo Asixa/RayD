@@ -1,4 +1,7 @@
-#include <rayd/detail/edge/bvh_query.h>
+// Copyright Xingyu Chen.
+// Exercises share5 edge bvh cuda smoke in a native smoke test.
+
+#include <rayd/edge/bvh_query.h>
 
 #include <cuda_runtime.h>
 

@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests edge queries.
+
 import unittest
 from unittest import mock
 

@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements scene support for intersection stable.
+
 #include <torch/csrc/stable/accelerator.h>
 #include <torch/csrc/stable/c/shim.h>
 #include <torch/csrc/stable/library.h>

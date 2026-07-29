@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests f5 surfel decision.
+
 from __future__ import annotations
 
 import json

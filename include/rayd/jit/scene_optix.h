@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares the Dr.Jit scene optix API.
+
 #pragma once
 
 #include <rayd/jit/core.h>

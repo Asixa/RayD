@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Demonstrates surfel intersection.
+
 import rayd.drjit as rd
 import drjit as dr
 import drjit.cuda.ad as ad

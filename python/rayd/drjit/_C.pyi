@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Exposes the Dr.Jit C Python API.
+
 from collections.abc import Sequence
 from enum import Enum, IntFlag
 from typing import Any, TypeAlias, overload

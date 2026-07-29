@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Benchmarks benchmark edge bvh cutoff compare.
+
 import argparse
 import json
 import os

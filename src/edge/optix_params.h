@@ -1,8 +1,11 @@
+// Copyright Xingyu Chen.
+// Declares internal edge support for optix params.
+
 #pragma once
 
 #include <cstdint>
 
-#include <rayd/detail/edge/optix_contracts.h>
+#include <rayd/edge/optix_contracts.h>
 
 namespace rayd::torch_backend {
 

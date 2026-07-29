@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests f1 ray edge ad source.
+
 import unittest
 from pathlib import Path
 

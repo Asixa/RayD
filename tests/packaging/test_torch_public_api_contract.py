@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests torch public api contract.
+
 import unittest
 from pathlib import Path
 

@@ -1,6 +1,9 @@
+// Copyright Xingyu Chen.
+// Implements bindings support for module.
+
 #include <pybind11/pybind11.h>
 
-#include <rayd/detail/contracts.h>
+#include <rayd/contracts.h>
 
 namespace rayd::torch_backend {
 

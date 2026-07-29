@@ -1,6 +1,9 @@
+// Copyright Xingyu Chen.
+// Declares the Dr.Jit trace backend API.
+
 #pragma once
 
-#include <rayd/detail/rt/backend.h>
+#include <rayd/rt/backend.h>
 
 namespace rayd {
 

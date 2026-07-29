@@ -1,8 +1,11 @@
+// Copyright Xingyu Chen.
+// Declares internal scene support for multipath cuda.
+
 #pragma once
 
-#include <rayd/detail/reflection/trace_params.h>
-#include <rayd/detail/reflection/epc_params.h>
-#include <rayd/detail/visibility/segment_params.h>
+#include <rayd/reflection/trace_params.h>
+#include <rayd/reflection/epc_params.h>
+#include <rayd/visibility/segment_params.h>
 #include <src/reflection/accum_params.h>
 #include <src/diffraction/paths_params.h>
 #include <src/diffraction/accum_params.h>

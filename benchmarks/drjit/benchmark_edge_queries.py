@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Benchmarks benchmark edge queries.
+
 import argparse
 import json
 import os

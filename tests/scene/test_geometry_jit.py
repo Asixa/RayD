@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests geometry Dr.Jit.
+
 import json
 import math
 import json

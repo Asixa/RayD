@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests baseline Dr.Jit.
+
 import unittest
 
 from tests.support.drjit_baseline_utils import (

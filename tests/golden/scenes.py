@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests scenes.
+
 """Backend-neutral declarative golden scenes for RayD geometry and edge queries.
 
 Each scene is pure Python data: mesh vertices/faces as lists of ``[x, y, z]``

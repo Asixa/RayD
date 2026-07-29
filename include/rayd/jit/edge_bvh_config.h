@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares the Dr.Jit edge bvh config API.
+
 #pragma once
 
 #include <algorithm>
@@ -6,7 +9,7 @@
 #include <stdexcept>
 #include <string>
 
-#include <rayd/detail/edge/bvh_types.h>
+#include <rayd/edge/bvh_types.h>
 
 namespace rayd {
 

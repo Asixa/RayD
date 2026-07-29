@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests rt host compile.
+
 """P4 key gate: the migrated multipath algorithm headers compile host-only.
 
 The reflection-trace algorithm body was lifted out of the OptiX device header
@@ -21,8 +24,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SHARED_INCLUDE = ROOT / "include"
-SHARED_ROOT = SHARED_INCLUDE / "rayd" / "detail"
-RT_INCLUDE = SHARED_INCLUDE / "rayd" / "detail" / "rt"
+SHARED_ROOT = SHARED_INCLUDE / "rayd"
+RT_INCLUDE = SHARED_INCLUDE / "rayd" / "rt"
 ALGO_HEADERS = (
     SHARED_ROOT / "reflection" / "trace_algo.h",
     SHARED_ROOT / "visibility" / "segment_algo.h",

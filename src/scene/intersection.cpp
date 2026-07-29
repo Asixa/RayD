@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements scene support for intersection.
+
 #include <src/scene/geometry_kernels.h>
 #include <src/scene/cache.h>
 #include <src/bindings/tensor_contract.h>

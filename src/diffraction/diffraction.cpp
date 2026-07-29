@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements diffraction support for diffraction.
+
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -3519,7 +3522,7 @@ CoherentDiffractionResult diffraction_coherent_accumulation_forward(
 
 #include <src/diffraction/accum_params.h>
 #include <src/diffraction/paths_params.h>
-#include <rayd/detail/rt/optix_pipeline_contracts.h>
+#include <rayd/rt/optix_pipeline_contracts.h>
 #include <rayd/diffraction/accumulation_torch_ptx.h>
 #include <rayd/diffraction/paths_torch_ptx.h>
 

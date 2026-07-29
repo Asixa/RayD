@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements camera support for camera stable.
+
 #include <src/camera/camera_kernels.cuh>
 
 #include <torch/csrc/stable/accelerator.h>

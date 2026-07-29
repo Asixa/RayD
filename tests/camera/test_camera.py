@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests camera.
+
 import unittest
 import math
 

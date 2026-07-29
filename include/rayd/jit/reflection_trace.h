@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares the Dr.Jit reflection trace API.
+
 #pragma once
 
 #include <vector>

@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests no drjit import.
+
 import subprocess
 import sys
 import textwrap

@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests drjit.
+
 import os
 import unittest
 import importlib

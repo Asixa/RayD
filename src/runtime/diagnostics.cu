@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements runtime support for diagnostics.
+
 #include <src/runtime/diagnostics.h>
 
 #include <ATen/cuda/CUDAContext.h>

@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests trace backend gate.
+
 from __future__ import annotations
 
 import os

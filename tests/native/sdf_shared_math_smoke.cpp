@@ -1,17 +1,12 @@
-// Host-compile and host-run smoke for the shared SDF device math (ADR-0037
-// Phase 2). It is built by tests/test_sdf_shared_math.py with a pure host C++
-// compiler, no CUDA and no OptiX, which proves the two headers carry no
-// device-only intrinsic, and then executed, which proves the numerics are the
-// ones ADR-0037 specifies rather than merely well-formed.
-//
-// Every check returns its own exit code so a failure names itself.
+// Copyright Xingyu Chen.
+// Exercises sdf shared math smoke in a native smoke test.
 
 #include <cmath>
 #include <limits>
 #include <vector>
 
-#include <rayd/detail/sdf/grid_sdf.cuh>
-#include <rayd/detail/sdf/sphere_trace.h>
+#include <rayd/sdf/grid_sdf.cuh>
+#include <rayd/sdf/sphere_trace.h>
 
 namespace {
 

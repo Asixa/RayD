@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Exercises optix pipeline cold create Dr.Jit in a native smoke test.
+
 import os
 import subprocess
 import sys

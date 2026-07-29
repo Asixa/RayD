@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements scene support for multipath Dr.Jit.
+
 #include <src/scene/cuda_multipath_gpu_jit.h>
 
 #include <stdexcept>
@@ -7,20 +10,20 @@
 
 #include <rayd/jit/native_launch_audit.h>
 
-#include <rayd/detail/bvh/cuda_bvh_traverser.h>
-#include <rayd/detail/bvh/topology.h>
-#include <rayd/detail/bvh/triangle_query.h>
-#include <rayd/detail/field_math.h>
-#include <rayd/detail/vec3.h>
+#include <rayd/bvh/cuda_bvh_traverser.h>
+#include <rayd/bvh/topology.h>
+#include <rayd/bvh/triangle_query.h>
+#include <rayd/math.h>
+#include <rayd/math.h>
 #include <src/diffraction/accumulation_params_jit.h>
 #include <src/diffraction/paths_params_jit.h>
-#include <rayd/detail/diffraction/accumulation_algo.h>
-#include <rayd/detail/diffraction/paths_algo.h>
-#include <rayd/detail/reflection/accumulation_algo.h>
-#include <rayd/detail/reflection/epc_algo.h>
-#include <rayd/detail/reflection/trace_algo.h>
-#include <rayd/detail/visibility/segment_algo.h>
-#include <rayd/detail/rt/traverser.h>
+#include <rayd/diffraction/accumulation_algo.h>
+#include <rayd/diffraction/paths_algo.h>
+#include <rayd/reflection/accumulation_algo.h>
+#include <rayd/reflection/epc_algo.h>
+#include <rayd/reflection/trace_algo.h>
+#include <rayd/visibility/segment_algo.h>
+#include <rayd/rt/traverser.h>
 
 // CUDA fused multipath executor (P4 Stage D). Each launcher runs the migrated,
 // traverser-templated multipath algorithm body (concept-owned shared/*/*_algo.h) with
@@ -266,12 +269,12 @@ struct CudaReflectionAccumulationPolicy {
     static __forceinline__ __device__ void commit(const AccumParams &params, unsigned int, int,
                                                   int cell, shared::field::Complex3 field,
                                                   float power) {
-        atomicAdd(params.out_field_x_re + cell, field.x.r);
-        atomicAdd(params.out_field_x_im + cell, field.x.i);
-        atomicAdd(params.out_field_y_re + cell, field.y.r);
-        atomicAdd(params.out_field_y_im + cell, field.y.i);
-        atomicAdd(params.out_field_z_re + cell, field.z.r);
-        atomicAdd(params.out_field_z_im + cell, field.z.i);
+        atomicAdd(params.out_field_x_re + cell, field.x.re);
+        atomicAdd(params.out_field_x_im + cell, field.x.im);
+        atomicAdd(params.out_field_y_re + cell, field.y.re);
+        atomicAdd(params.out_field_y_im + cell, field.y.im);
+        atomicAdd(params.out_field_z_re + cell, field.z.re);
+        atomicAdd(params.out_field_z_im + cell, field.z.im);
         atomicAdd(params.out_reflection_power + cell, power);
         atomicAdd(params.out_reflection_count, 1);
     }

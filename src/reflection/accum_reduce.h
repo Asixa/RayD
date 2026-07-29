@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal reflection support for accum reduce.
+
 #pragma once
 
 #include <ATen/ATen.h>

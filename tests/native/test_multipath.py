@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Exercises multipath in a native smoke test.
+
 import unittest
 from unittest import mock
 

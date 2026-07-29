@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Implements shared Python support for multipath.
+
 from __future__ import annotations
 
 import torch

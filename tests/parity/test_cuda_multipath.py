@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests cuda multipath.
+
 import unittest
 
 import torch

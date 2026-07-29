@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests edge bvh gate.
+
 from __future__ import annotations
 
 import argparse

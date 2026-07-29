@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal diffraction support for accum ad.
+
 #pragma once
 
 #include <cstdint>

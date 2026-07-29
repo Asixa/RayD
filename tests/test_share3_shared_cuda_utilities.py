@@ -1,10 +1,13 @@
+# Copyright Xingyu Chen.
+# Tests share3 shared cuda utilities.
+
 import re
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARED_INCLUDE = ROOT / "include" / "rayd" / "detail"
+SHARED_INCLUDE = ROOT / "include" / "rayd"
 SHARED_SOURCE = ROOT / "src"
 
 # Local builds drop generated trees under backend build directories (notably the
@@ -202,11 +205,11 @@ class Share3SharedCudaUtilitiesTests(unittest.TestCase):
         caller_text = {
             name: path.read_text(encoding="utf-8") for name, path in callers.items()
         }
-        self.assertIn("<rayd/detail/edge/edge_aabb.h>", caller_text["drjit_aabb"])
-        self.assertIn("<rayd/detail/edge/edge_aabb.h>", caller_text["torch_aabb"])
-        self.assertIn("<rayd/detail/reflection/dedup.h>", caller_text["drjit_dedup"])
-        self.assertIn("<rayd/detail/reflection/dedup.h>", caller_text["torch_dedup"])
-        self.assertIn("<rayd/detail/scene/packing.h>", caller_text["torch_packing"])
+        self.assertIn("<rayd/edge/edge_aabb.h>", caller_text["drjit_aabb"])
+        self.assertIn("<rayd/edge/edge_aabb.h>", caller_text["torch_aabb"])
+        self.assertIn("<rayd/reflection/dedup.h>", caller_text["drjit_dedup"])
+        self.assertIn("<rayd/reflection/dedup.h>", caller_text["torch_dedup"])
+        self.assertIn("<rayd/scene/packing.h>", caller_text["torch_packing"])
 
     def test_aabb_reference_covers_reversed_degenerate_and_negative_inflation(self):
         def reference(p0, edge, inflation):

@@ -501,8 +501,8 @@ This interface is intended for projects built in the same CMake/libtorch graph;
 it is not a stable binary ABI across unrelated libtorch builds.
 
 Shared RF device headers are source-level contracts under
-`include/rayd/detail/transmission/` and
-`include/rayd/detail/scattering_table.cuh`. Transmission families are introduced as
+`include/rayd/transmission/` and
+`include/rayd/scattering_table.cuh`. Transmission families are introduced as
 dormant RayD candidates before a downstream pin and switch; dormancy does not
 create a second production owner or authorize runtime fallback dispatch.
 

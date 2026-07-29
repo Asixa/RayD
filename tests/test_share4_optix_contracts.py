@@ -1,10 +1,13 @@
+# Copyright Xingyu Chen.
+# Tests share4 optix contracts.
+
 import re
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARED = ROOT / "include" / "rayd" / "detail" / "diffraction"
+SHARED = ROOT / "include" / "rayd" / "diffraction"
 
 
 class Share4DiffractionOptixContractsTests(unittest.TestCase):
@@ -71,7 +74,7 @@ class Share4DiffractionOptixContractsTests(unittest.TestCase):
     def test_path_params_validate_only_common_sub_layouts(self):
         for path in self.path_headers:
             source = path.read_text(encoding="utf-8")
-            self.assertIn("<rayd/detail/diffraction/contracts.h>", source)
+            self.assertIn("<rayd/diffraction/contracts.h>", source)
             self.assertIn("is_standard_layout_v<DfrPathParams>", source)
             self.assertEqual(source.count("RAYD_ASSERT_DFR_PATH_PREFIX("), 19)
             self.assertEqual(source.count("RAYD_ASSERT_DFR_PATH_TAIL("), 7)
@@ -89,7 +92,7 @@ class Share4DiffractionOptixContractsTests(unittest.TestCase):
     def test_accum_params_validate_grid_output_and_tape_sub_layouts(self):
         for path in self.accum_headers:
             source = path.read_text(encoding="utf-8")
-            self.assertIn("<rayd/detail/diffraction/contracts.h>", source)
+            self.assertIn("<rayd/diffraction/contracts.h>", source)
             self.assertIn("is_standard_layout_v<DfrAccumParams>", source)
             self.assertEqual(source.count("RAYD_ASSERT_DFR_GRID("), 10)
             self.assertEqual(source.count("RAYD_ASSERT_DFR_ACCUM_OUTPUT("), 30)

@@ -1,9 +1,12 @@
+// Copyright Xingyu Chen.
+// Declares internal edge support for bvh.
+
 #pragma once
 
 #include <ATen/ATen.h>
 #include <cuda_runtime_api.h>
 
-#include <rayd/detail/edge/bvh_types.h>
+#include <rayd/edge/bvh_types.h>
 
 #include <cstddef>
 #include <cstdint>

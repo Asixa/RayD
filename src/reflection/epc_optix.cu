@@ -1,5 +1,8 @@
+// Copyright Xingyu Chen.
+// Implements reflection support for epc optix.
+
 #include <src/reflection/epc_params.h>
-#include <rayd/detail/reflection/epc_optix_device.cuh>
+#include <rayd/reflection/epc_optix_device.cuh>
 
 namespace rayd::shared::optix {
 

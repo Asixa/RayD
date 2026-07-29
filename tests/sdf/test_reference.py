@@ -1,20 +1,7 @@
-"""Golden tests for the Phase 1 pure-PyTorch SDF intersection reference.
+# Copyright Xingyu Chen.
+# Tests reference.
 
-The reference in `_sdf_reference.py` is the oracle the Phase 3 CUDA kernels will
-be checked against, so it is checked here against something independent of it:
-closed-form ray/sphere and ray/box intersections of the analytic fields that were
-baked onto the grids, `torch.nn.functional.grid_sample` for the interpolant,
-`torch.autograd.gradcheck` for the frozen-tape derivative expression, and central
-finite differences of a re-marched forward pass for every one of the six
-gradient inputs ADR-0037 supports.
-
-Forward tolerances are set by the trilinear discretisation error of the baked
-field, not by float32 round-off: a sphere baked on a grid of edge `h` is
-represented to `O(h^2)` in value and `O(h)` in gradient, so `t` is checked at
-`1e-3` and the normal direction at `5e-2` on the `97^3` grids used here. The one
-exception is the box face test, where the field is exactly linear in the
-traversed region and the interpolant is therefore exact.
-"""
+"""Tests the pure-PyTorch SDF intersection oracle."""
 
 from __future__ import annotations
 
@@ -110,7 +97,7 @@ def z_rays(offsets: list[float], device: str, dtype: torch.dtype) -> tuple[Tenso
 
 @REQUIRES_CUDA
 class SdfReferenceForwardTests(unittest.TestCase):
-    """Forward accuracy against the closed-form solution of the baked field."""
+    """Tests the pure-PyTorch SDF intersection oracle."""
 
     device = "cuda"
     dtype = torch.float32
@@ -139,9 +126,7 @@ class SdfReferenceForwardTests(unittest.TestCase):
         self.assertTrue(bool((res.steps > 0).all()))
 
     def test_box_face_hit_is_exact_for_a_linear_field(self) -> None:
-        """The box SDF is linear along `z` where these rays travel, and trilinear
-        interpolation reproduces a linear function exactly, so the only error left
-        is the march tolerance."""
+        """Tests the pure-PyTorch SDF intersection oracle."""
         position = torch.zeros(3, device=self.device, dtype=self.dtype)
         rotation = torch.tensor(IDENTITY_QUAT, device=self.device, dtype=self.dtype)
         scale = torch.full((3,), 2.0, device=self.device, dtype=self.dtype)
@@ -226,8 +211,7 @@ class SdfReferenceForwardTests(unittest.TestCase):
         self.assertEqual(float(clipped.t[0]), float("inf"))
 
     def test_non_eikonal_field_recovers_through_bisection(self) -> None:
-        """A field scaled by two overshoots every relaxed step; the sign-flip
-        bracket has to bring the march back onto the same zero level set."""
+        """Tests the pure-PyTorch SDF intersection oracle."""
         grid = sphere_case(self.device, self.dtype)
         scaled = ref.SdfGridRef(
             2.0 * grid.values, grid.position, grid.rotation, grid.scale
@@ -296,9 +280,7 @@ class SdfReferenceForwardTests(unittest.TestCase):
         return bool((t_lo <= t_hi).all())
 
     def test_manual_gather_matches_grid_sample(self) -> None:
-        """`grid_sample(align_corners=True)` is the same interpolant; the manual
-        gather is preferred only because it also yields the frozen base index and
-        the analytic `dD/du` (see the module docstring)."""
+        """Tests the pure-PyTorch SDF intersection oracle."""
         torch.manual_seed(7)
         values = torch.randn(9, 7, 11, device=self.device, dtype=torch.float64)
         cells = values.new_tensor([8.0, 6.0, 10.0])
@@ -318,7 +300,7 @@ class SdfReferenceForwardTests(unittest.TestCase):
 
 @dataclass
 class GradCase:
-    """A differentiable configuration whose six inputs all matter."""
+    """Tests the pure-PyTorch SDF intersection oracle."""
 
     values: Tensor
     position: Tensor
@@ -341,7 +323,7 @@ class GradCase:
 
 @REQUIRES_CUDA
 class SdfReferenceGradientTests(unittest.TestCase):
-    """Derivative checks for the frozen-winner IFT contract of ADR-0037."""
+    """Tests the pure-PyTorch SDF intersection oracle."""
 
     device = "cuda"
     dtype = torch.float64
@@ -452,9 +434,7 @@ class SdfReferenceGradientTests(unittest.TestCase):
         self.check_finite_difference("directions")
 
     def test_grazing_rays_keep_every_gradient_finite(self) -> None:
-        """Impact parameters sweeping through the tangent point of the sphere put
-        the IFT denominator arbitrarily close to zero. The clamp has to keep every
-        output and every gradient finite on both sides of the tangency."""
+        """Tests the pure-PyTorch SDF intersection oracle."""
         grid = sphere_case(self.device, self.dtype, size=65)
         tensors = [
             grid.values.clone(),
@@ -490,9 +470,7 @@ class SdfReferenceGradientTests(unittest.TestCase):
             self.assertTrue(bool(torch.isfinite(tensor.grad).all()), msg=name)
 
     def test_zero_denominator_takes_the_signed_grazing_clamp(self) -> None:
-        """A constant field has `grad_w D = 0`, so `g` is exactly zero and the
-        clamp decides the derivative outright: `sign(0) := +1` makes it
-        `-c_m / eps_graze`, and the eight trilinear weights sum to one."""
+        """Tests the pure-PyTorch SDF intersection oracle."""
         position = torch.zeros(3, device=self.device, dtype=self.dtype)
         rotation = torch.tensor(IDENTITY_QUAT, device=self.device, dtype=self.dtype)
         scale = torch.full((3,), 2.0, device=self.device, dtype=self.dtype)

@@ -1,11 +1,14 @@
+// Copyright Xingyu Chen.
+// Declares internal scene support for cache.
+
 #pragma once
 
 #include <ATen/ATen.h>
 #include <torch/custom_class.h>
 #include <optix.h>
-#include <rayd/detail/bvh/topology.h>
-#include <rayd/detail/bvh/triangle_query.h>
-#include <rayd/detail/edge/bvh_types.h>
+#include <rayd/bvh/topology.h>
+#include <rayd/bvh/triangle_query.h>
+#include <rayd/edge/bvh_types.h>
 
 #include <cstdint>
 #include <memory>

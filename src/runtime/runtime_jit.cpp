@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements runtime support for runtime Dr.Jit.
+
 #include <drjit-core/optix.h>
 #define OPTIX_STUBS_IMPL
 #include <rayd/jit/optix.h>
@@ -747,7 +750,7 @@ bool native_launch_audit_timing_enabled() {
 #include <cuda_runtime_api.h>
 
 #include <rayd/jit/native_launch_audit.h>
-#include <rayd/detail/rt/optix_pipeline_contracts.h>
+#include <rayd/rt/optix_pipeline_contracts.h>
 
 #include <reflection_trace_ptx.h>
 #include <reflection_epc_ptx.h>

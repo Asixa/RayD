@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares the Dr.Jit optix trace backend API.
+
 #pragma once
 
 #include <memory>

@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares the Dr.Jit scene edge API.
+
 #pragma once
 
 #include <rayd/jit/core.h>

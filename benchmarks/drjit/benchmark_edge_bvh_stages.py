@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Benchmarks benchmark edge bvh stages.
+
 import argparse
 import json
 import os

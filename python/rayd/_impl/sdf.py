@@ -1,14 +1,7 @@
-"""Standalone differentiable SDF ray intersection (ADR-0037).
+# Copyright Xingyu Chen.
+# Implements shared Python support for sdf.
 
-`SdfGrid` is a thin holder for the caller's field and its oriented box, and
-`sdf_intersect` sphere-traces a ray batch against it. The primitive owns no
-acceleration structure, never touches OptiX, and never joins a `Scene`.
-
-Validation here is structural only, matching ADR-0037 section 8: reading a
-resident tensor's values to check them would cost a stream synchronization, so
-`scale_i > 0` and the finiteness of `values` are the device path's job and
-surface as misses.
-"""
+"""Provides the standalone differentiable SDF intersection API."""
 
 from __future__ import annotations
 
@@ -55,15 +48,7 @@ def _require_ray_batch(value: torch.Tensor, name: str) -> None:
 
 @dataclass(frozen=True)
 class SdfGrid:
-    """Caller-owned dense signed distance field placed by an oriented box.
-
-    `values` holds vertex-centred float32 samples of shape `[Nx, Ny, Nz]` with
-    `N_i >= 2`, in world-metric distance and negative inside. `position` is the
-    world centre of the box, `rotation` a scalar-first quaternion, and `scale`
-    the full side lengths, so the local frame spans `[-scale/2, +scale/2]`.
-    All four tensors stay caller-owned; RayD never bakes, rescales, or copies
-    them.
-    """
+    """Provides the standalone differentiable SDF intersection API."""
 
     values: torch.Tensor
     position: torch.Tensor
@@ -102,19 +87,7 @@ def sdf_intersect(
     relaxation: float = DEFAULT_RELAXATION,
     eps_hit: float | None = None,
 ) -> SdfIntersection:
-    """Sphere-trace a ray batch against `grid` (ADR-0037).
-
-    `origins` and `directions` are float32 CUDA `[N, 3]` on the grid's device;
-    directions are normalized inside the operation, so `t` is a metric
-    distance. The traced interval is the ray's overlap with the box clipped to
-    `tmax`, and a ray whose origin is inside the box is a supported case.
-    `relaxation` is the sphere-trace step factor in `(0, 1]`, and `eps_hit`
-    defaults to a resolution-derived tolerance computed on the device.
-
-    Gradients and tangents flow to `grid.values`, `grid.position`,
-    `grid.rotation`, `grid.scale`, `origins` and `directions` through the
-    frozen-winner implicit function theorem. Missed lanes are bitwise inert.
-    """
+    """Provides the standalone differentiable SDF intersection API."""
     _require_native_dispatcher()
     _require_ray_batch(origins, "origins")
     _require_ray_batch(directions, "directions")

@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Implements shared Python support for multi.
+
 """Private replicated multi-device orchestration for `Scene(devices=[...])`.
 
 This is Phases 2a, 2b, 2d and the grid-reduce half of 2c of

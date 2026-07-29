@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests torch ptx depfiles.
+
 import re
 import unittest
 from pathlib import Path

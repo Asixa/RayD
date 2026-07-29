@@ -1,11 +1,14 @@
+// Copyright Xingyu Chen.
+// Implements edge support for edge optix.
+
 #include <optix.h>
 #include <optix_device.h>
 
-#include <src/runtime/math.cuh>
+#include <rayd/math.h>
 #include <src/edge/optix_params.h>
-#include <rayd/detail/contracts.h>
-#include <rayd/detail/edge/edge_distance_math.h>
-#include <rayd/detail/edge/optix_device.cuh>
+#include <rayd/contracts.h>
+#include <rayd/edge/edge_distance.h>
+#include <rayd/edge/optix_device.cuh>
 
 namespace rayd::torch_backend {
 

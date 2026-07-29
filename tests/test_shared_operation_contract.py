@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests shared operation contract.
+
 import json
 import pathlib
 import re

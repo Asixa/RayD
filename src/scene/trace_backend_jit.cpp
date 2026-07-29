@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements scene support for trace backend Dr.Jit.
+
 #include <rayd/jit/cuda_trace_backend.h>
 
 #include <algorithm>
@@ -10,8 +13,8 @@
 #include <rayd/jit/triangle_bvh_gpu.h>
 #include <rayd/jit/utils.h>
 
-#include <rayd/detail/bvh/host_topology.h>
-#include <rayd/detail/bvh/topology.h>
+#include <rayd/bvh/host_topology.h>
+#include <rayd/bvh/topology.h>
 
 namespace rayd {
 

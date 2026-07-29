@@ -1,6 +1,9 @@
+// Copyright Xingyu Chen.
+// Implements scene support for intersection.
+
 #include <src/scene/geometry_kernels.h>
-#include <rayd/detail/contracts.h>
-#include <src/runtime/math.cuh>
+#include <rayd/contracts.h>
+#include <rayd/math.h>
 #include <src/runtime/optix_context.h>
 #include <src/scene/optix_intersect_params.h>
 #include <src/scene/triangle_bvh.h>
@@ -521,8 +524,8 @@ at::Tensor intersect_forward_t_only_cuda(
 // ---- merged from src/scene/intersection_backward_part.cu ----
 
 #include <src/scene/geometry_kernels.h>
-#include <src/runtime/math.cuh>
-#include <rayd/detail/contracts.h>
+#include <rayd/math.h>
+#include <rayd/contracts.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>

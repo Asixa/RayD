@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests drjit baseline cases.
+
 import argparse
 import importlib.util
 import os

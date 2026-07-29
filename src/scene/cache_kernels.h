@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal scene support for cache kernels.
+
 #pragma once
 
 #include <ATen/ATen.h>

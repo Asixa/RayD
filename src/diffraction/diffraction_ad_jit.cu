@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements diffraction support for diffraction ad Dr.Jit.
+
 #include <src/diffraction/accumulation_ad_jit.h>
 
 #include <cuda_runtime.h>
@@ -7,6 +10,7 @@
 
 #include <rayd/jit/native_launch_audit.h>
 #include <rayd/jit/core.h>
+#include <rayd/math.h>
 
 namespace rayd {
 
@@ -15,39 +19,7 @@ namespace {
 constexpr float kSmallEps = 1e-6f;
 constexpr float kPi = 3.14159265358979323846f;
 
-static __forceinline__ __device__ float3 make_vec3(float x, float y, float z) {
-    return make_float3(x, y, z);
-}
-
-static __forceinline__ __device__ float3 operator+(float3 a, float3 b) {
-    return make_vec3(a.x + b.x, a.y + b.y, a.z + b.z);
-}
-
-static __forceinline__ __device__ float3 operator-(float3 a, float3 b) {
-    return make_vec3(a.x - b.x, a.y - b.y, a.z - b.z);
-}
-
-static __forceinline__ __device__ float3 operator*(float s, float3 v) {
-    return make_vec3(s * v.x, s * v.y, s * v.z);
-}
-
-static __forceinline__ __device__ float dot3(float3 a, float3 b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-static __forceinline__ __device__ float norm3(float3 v) {
-    return sqrtf(fmaxf(dot3(v, v), 0.f));
-}
-
-static __forceinline__ __device__ float3 cross3(float3 a, float3 b) {
-    return make_vec3(a.y * b.z - a.z * b.y,
-                     a.z * b.x - a.x * b.z,
-                     a.x * b.y - a.y * b.x);
-}
-
-static __forceinline__ __device__ float3 normalize3(float3 v) {
-    return rsqrtf(fmaxf(dot3(v, v), 1e-12f)) * v;
-}
+using namespace shared::cuda_math;
 
 // Dense storage-access layer for the shared AD device body. Every macro
 // expands to the exact pre-dedup Dr.Jit expression: raw dense indexing, no
@@ -75,7 +47,7 @@ static __forceinline__ __device__ float3 normalize3(float3 v) {
 #define RAYD_DFR_AD_SUFFIX_FACE_PRIM(P, F, S, HAS_THIRD, SECOND, THIRD) \
     ((HAS_THIRD) ? (P).F[(THIRD)] : (P).F[(SECOND)])
 
-#include <rayd/detail/diffraction/accumulation_ad_device.cuh>
+#include <rayd/diffraction/accumulation_ad_device.cuh>
 
 static __forceinline__ __device__ void add_chain_unit_vjp(
     const DfrChainAccumADParams &params,
@@ -115,7 +87,7 @@ static __forceinline__ __device__ void add_unit_vjp(
 #define RAYD_DFR_AD_ADD_CHAIN_UNIT_VJP_DENSE(P, PR, G, F, I, T) \
     add_chain_unit_vjp((P), (PR), (G), (P).F, (I), (T))
 
-#include <rayd/detail/diffraction/accumulation_ad_vjp_device.cuh>
+#include <rayd/diffraction/accumulation_ad_vjp_device.cuh>
 
 __global__ void dfr_direct_accum_jvp_kernel(DfrDirectAccumADParams params) {
     const int lane = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);

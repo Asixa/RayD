@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests surfel Dr.Jit.
+
 import json
 import math
 import subprocess

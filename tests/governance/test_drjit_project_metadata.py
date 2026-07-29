@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests drjit project metadata.
+
 import unittest
 import re
 from pathlib import Path
@@ -210,12 +213,11 @@ class ProjectMetadataTests(unittest.TestCase):
             WORKSPACE_ROOT
             / "include"
             / "rayd"
-            / "detail"
             / "visibility"
             / "segment_algo.h"
         ).read_text(encoding="utf-8")
         self.assertIn(
-            "<rayd/detail/visibility/segment_optix_device.cuh>",
+            "<rayd/visibility/segment_optix_device.cuh>",
             segment_source,
         )
         self.assertIn("params.out_first_blocked_prim[ray]", shared_segment_source)

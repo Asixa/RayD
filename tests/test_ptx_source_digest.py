@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests ptx source digest.
+
 """Staleness guard for the committed Dr.Jit OptiX PTX headers.
 
 The Dr.Jit backend commits eight generated `*_ptx.h` headers so that building a

@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements bindings support for tensor contract.
+
 #include <src/bindings/tensor_contract.h>
 
 #include <stdexcept>

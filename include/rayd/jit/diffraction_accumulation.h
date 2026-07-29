@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares the Dr.Jit diffraction accumulation API.
+
 #pragma once
 
 #include <type_traits>
@@ -5,7 +8,7 @@
 #include <drjit/complex.h>
 
 #include <rayd/jit/core.h>
-#include <rayd/detail/diffraction/contracts.h>
+#include <rayd/diffraction/contracts.h>
 
 namespace rayd {
 

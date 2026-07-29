@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Tests segment penetration oracle.
+
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
 

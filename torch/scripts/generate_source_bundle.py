@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Supports the Torch package's generate source bundle workflow.
+
 """Build the relocatable, integrity-described RayD Torch source bundle."""
 
 from __future__ import annotations
@@ -30,7 +33,19 @@ SOURCE_INPUTS = (
     "torch/CMakeLists.txt",
     "torch/scripts/embed_ptx.py",
     *BUNDLED_PUBLIC_HEADERS,
-    "include/rayd/detail",
+    "include/rayd/contracts.h",
+    "include/rayd/field_transport.cuh",
+    "include/rayd/math.h",
+    "include/rayd/scattering_table.cuh",
+    "include/rayd/bvh",
+    "include/rayd/diffraction",
+    "include/rayd/edge",
+    "include/rayd/reflection",
+    "include/rayd/rt",
+    "include/rayd/scene",
+    "include/rayd/sdf",
+    "include/rayd/transmission",
+    "include/rayd/visibility",
     "src",
     "cmake",
 )

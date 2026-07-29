@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests visibility topk Dr.Jit.
+
 import json
 import os
 import subprocess

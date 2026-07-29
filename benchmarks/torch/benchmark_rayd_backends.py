@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Benchmarks benchmark rayd backends.
+
 from __future__ import annotations
 
 import argparse

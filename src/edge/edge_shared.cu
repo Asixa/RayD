@@ -1,20 +1,15 @@
-#include <rayd/detail/edge/bvh_build.h>
+// Copyright Xingyu Chen.
+// Implements edge support for edge shared.
 
-#include <rayd/detail/bvh/build.h>
-#include <rayd/detail/bvh/refit.h>
+#include <rayd/edge/bvh_build.h>
+
+#include <rayd/bvh/build.h>
+#include <rayd/bvh/refit.h>
 
 namespace rayd::shared::edge {
 namespace {
 
 constexpr int kBlockSize = 256;
-
-__host__ __device__ inline BvhFloat3 min3(const BvhFloat3 &a, const BvhFloat3 &b) {
-    return { fminf(a.x, b.x), fminf(a.y, b.y), fminf(a.z, b.z) };
-}
-
-__host__ __device__ inline BvhFloat3 max3(const BvhFloat3 &a, const BvhFloat3 &b) {
-    return { fmaxf(a.x, b.x), fmaxf(a.y, b.y), fmaxf(a.z, b.z) };
-}
 
 __device__ inline void store_bounds(int index,
                                     const BvhBounds3 &value,
@@ -36,7 +31,7 @@ __global__ void compute_primitive_bounds_kernel(PrimitiveBoundsParams params) {
     const BvhFloat3 p1{ p0.x + params.edges.direction_x[primitive],
                         p0.y + params.edges.direction_y[primitive],
                         p0.z + params.edges.direction_z[primitive] };
-    const BvhBounds3 bounds{ min3(p0, p1), max3(p0, p1) };
+    const BvhBounds3 bounds{ math::component_min(p0, p1), math::component_max(p0, p1) };
     store_bounds(primitive, bounds, params.primitive_bounds);
     params.packed_bounds[primitive] = bounds;
 }
@@ -97,14 +92,14 @@ void launch_refit_selected_internal_nodes_async(const InternalNodeRefitParams &p
 
 } // namespace rayd::shared::edge
 
-#include <rayd/detail/edge/bvh_query.h>
+#include <rayd/edge/bvh_query.h>
 
 #include <cuda_runtime.h>
 #include <math_constants.h>
 
-#include <rayd/detail/bvh/traversal_common.cuh>
-#include <rayd/detail/edge/edge_distance_math.h>
-#include <rayd/detail/vec3.h>
+#include <rayd/bvh/traversal_common.cuh>
+#include <rayd/edge/edge_distance.h>
+#include <rayd/math.h>
 
 namespace rayd::shared::edge {
 namespace query_detail {
@@ -328,7 +323,7 @@ __device__ __forceinline__ void initialize_output(const EdgeQueryOutputView &out
 }
 
 // The depth-major stack push/load helpers and the near/far tie-break are shared
-// with any BVH consumer via <rayd/detail/bvh/traversal_common.cuh>; the edge
+// with any BVH consumer via <rayd/bvh/traversal_common.cuh>; the edge
 // query calls bvh::stack_push / bvh::stack_load / bvh::near_child_is_left so the
 // coalesced indexing and traversal order stay bitwise identical.
 
@@ -594,7 +589,7 @@ void launch_ray_bvh_query_async(const RayBvhQueryParams &params) {
 
 } // namespace rayd::shared::edge
 
-#include <rayd/detail/edge/edge_aabb.h>
+#include <rayd/edge/edge_aabb.h>
 
 #include <cuda_runtime.h>
 
@@ -663,13 +658,13 @@ void launch_edge_aabb(
 
 } // namespace rayd::shared::edge
 
-#include <rayd/detail/edge/edge_distance.h>
+#include <rayd/edge/edge_distance.h>
 
 #include <cuda_runtime.h>
 #include <math_constants.h>
 
-#include <rayd/detail/edge/edge_distance_math.h>
-#include <rayd/detail/vec3.h>
+#include <rayd/edge/edge_distance.h>
+#include <rayd/math.h>
 
 namespace rayd::shared::edge {
 namespace distance_detail {

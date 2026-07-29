@@ -1,14 +1,15 @@
+// Copyright Xingyu Chen.
+// Implements sdf support for sdf.
+
 #include <src/sdf/kernels.h>
-#include <src/sdf/device_math.cuh>
+#include <src/sdf/derivatives.cuh>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>
 
 #include <limits>
 
-// ADR-0037 primal: one detached relaxed sphere trace per ray, producing the
-// public result and the frozen-winner tape the derivative passes consume. No
-// atomics, no device-to-host read, no stream synchronization.
+// Runs one detached sphere trace per ray and records the derivative tape.
 
 namespace rayd::torch_backend {
 
@@ -159,7 +160,7 @@ SdfIntersectForwardOutputs sdf_intersect_forward_cuda(
 // ---- merged from src/sdf/sdf_backward_part.cu ----
 
 #include <src/sdf/kernels.h>
-#include <src/sdf/device_math.cuh>
+#include <src/sdf/derivatives.cuh>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>
@@ -280,7 +281,7 @@ __global__ void sdf_intersect_backward_kernel(
                           grad_local_gradient.z * hit.local_gradient.z / lane.scale.z));
 
         const Vec3f grad_coordinate =
-            sm::hessian_mul(sm::index_hessian(values, hit.cell), grad_index_gradient);
+            sm::hessian_multiply(sm::index_hessian(values, hit.cell), grad_index_gradient);
         const Vec3f grad_local_point = per_axis_ratio(grad_coordinate, lane.cells, lane.scale);
         grad_box_scale_local = vm::subtract(
             grad_box_scale_local,
@@ -412,7 +413,7 @@ __global__ void sdf_intersect_jvp_kernel(
     float field_rate = vm::dot(hit.world_gradient, vm::subtract(tangent_origin, tangent_center)) +
                        hit_distance * vm::dot(hit.world_gradient, tangent_unit_direction) +
                        vm::dot(sm::scale_partial(lane, hit), tangent_box_scale) +
-                       vm::dot(offset, sm::mul(rotation_rate, hit.local_gradient));
+                       vm::dot(offset, sm::multiply(rotation_rate, hit.local_gradient));
     if (tangent_values != nullptr)
         for (int corner = 0; corner < 8; ++corner)
             field_rate += hit.cell.weight[corner] * tangent_values[hit.cell.index[corner]];
@@ -424,7 +425,7 @@ __global__ void sdf_intersect_jvp_kernel(
                 vm::scale(tangent_unit_direction, hit_distance)));
     const Vec3f tangent_offset = vm::subtract(tangent_world_point, tangent_center);
     const Vec3f tangent_local_point =
-        vm::add(sm::transpose_mul(rotation_rate, offset),
+        vm::add(sm::transpose_multiply(rotation_rate, offset),
                 sm::core::world_to_local_direction(lane.placement, tangent_offset));
     const Vec3f tangent_coordinate = vm::subtract(
         per_axis_ratio(tangent_local_point, lane.cells, lane.scale),
@@ -434,7 +435,7 @@ __global__ void sdf_intersect_jvp_kernel(
             tangent_box_scale.z * lane.cells.z * hit.local_point.z / (lane.scale.z * lane.scale.z)));
 
     Vec3f tangent_index_gradient =
-        sm::hessian_mul(sm::index_hessian(values, hit.cell), tangent_coordinate);
+        sm::hessian_multiply(sm::index_hessian(values, hit.cell), tangent_coordinate);
     if (tangent_values != nullptr)
         for (int corner = 0; corner < 8; ++corner)
             tangent_index_gradient = vm::add(
@@ -447,7 +448,7 @@ __global__ void sdf_intersect_jvp_kernel(
                       tangent_box_scale.y * hit.local_gradient.y / lane.scale.y,
                       tangent_box_scale.z * hit.local_gradient.z / lane.scale.z));
     const Vec3f tangent_world_gradient =
-        vm::add(sm::mul(rotation_rate, hit.local_gradient),
+        vm::add(sm::multiply(rotation_rate, hit.local_gradient),
                 sm::core::local_to_world_direction(lane.placement, tangent_local_gradient));
 
     out_tangent_t[ray] = tangent_hit_distance;

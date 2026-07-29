@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests contract schema validation.
+
 import json
 import unittest
 from pathlib import Path

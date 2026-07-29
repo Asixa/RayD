@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal runtime support for optix context.
+
 #pragma once
 
 #include <cuda.h>

@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Exposes the Torch path exchange Python API.
+
 """Public Torch path-exchange compatibility module."""
 
 from rayd._impl.path_exchange import (

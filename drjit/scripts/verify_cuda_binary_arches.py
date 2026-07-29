@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Checks Dr.Jit metadata for verify cuda binary arches.
+
 from __future__ import annotations
 
 import argparse

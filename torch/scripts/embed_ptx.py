@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Supports the Torch package's embed ptx workflow.
+
 from __future__ import annotations
 
 import sys

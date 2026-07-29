@@ -1,5 +1,8 @@
+// Copyright Xingyu Chen.
+// Implements reflection support for epc optix Dr.Jit.
+
 #include <src/reflection/epc_params_jit.h>
-#include <rayd/detail/reflection/epc_optix_device.cuh>
+#include <rayd/reflection/epc_optix_device.cuh>
 
 namespace rayd::shared::optix {
 

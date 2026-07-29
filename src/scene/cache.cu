@@ -1,7 +1,10 @@
+// Copyright Xingyu Chen.
+// Implements scene support for cache.
+
 #include <src/scene/cache_kernels.h>
-#include <src/runtime/math.cuh>
+#include <rayd/math.h>
 #include <src/runtime/optix_context.h>
-#include <rayd/detail/scene/packing.h>
+#include <rayd/scene/packing.h>
 
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>

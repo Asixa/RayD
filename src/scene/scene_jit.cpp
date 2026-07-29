@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements scene support for scene Dr.Jit.
+
 #include <array>
 #include <chrono>
 #include <iostream>
@@ -2247,7 +2250,7 @@ template IntersectionAD Scene::intersect<false>(const RayAD &ray, MaskAD active,
 #include <rayd/jit/scene_optix.h>
 
 #include <rayd/jit/native_launch_audit.h>
-#include <rayd/detail/scene/optix_contracts.h>
+#include <rayd/scene/optix_contracts.h>
 
 namespace rayd {
 

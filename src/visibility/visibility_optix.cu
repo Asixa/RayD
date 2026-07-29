@@ -1,4 +1,7 @@
-#include <rayd/detail/visibility/segment_optix_device.cuh>
+// Copyright Xingyu Chen.
+// Implements visibility support for visibility optix.
+
+#include <rayd/visibility/segment_optix_device.cuh>
 #include <src/visibility/visibility_params.h>
 
 namespace rayd::torch_backend {

@@ -1,10 +1,13 @@
+// Copyright Xingyu Chen.
+// Implements diffraction support for wedge.
+
 #include <rayd/diffraction.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAException.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/util/complex.h>
-#include <rayd/detail/field_transport.cuh>
+#include <rayd/field_transport.cuh>
 #include <src/bindings/tensor_contract.h>
 #include <src/field_transport/ad.cuh>
 
@@ -17,7 +20,7 @@
 // reflection-diffraction.
 //
 // The wedge field is RayD's own templated forward
-// (rayd/detail/diffraction/utd_math.h): instantiated with float it IS the production
+// (rayd/diffraction/utd.h): instantiated with float it IS the production
 // forward, instantiated with utd::Dual the same pass carries an exact
 // directional derivative (host-FD validated in both channel conventions).
 // Reverse mode runs one seeded dual pass per requested input scalar and

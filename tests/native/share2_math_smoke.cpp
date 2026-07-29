@@ -1,7 +1,10 @@
+// Copyright Xingyu Chen.
+// Exercises share2 math smoke in a native smoke test.
+
 #include <cmath>
 
-#include <rayd/detail/edge/edge_distance_math.h>
-#include <rayd/detail/reflection/reflection_geometry.h>
+#include <rayd/edge/edge_distance.h>
+#include <rayd/reflection/reflection_geometry.h>
 
 namespace {
 

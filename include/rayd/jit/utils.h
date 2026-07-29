@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares the Dr.Jit utils API.
+
 #pragma once
 
 #include <array>

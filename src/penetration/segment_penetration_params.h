@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal penetration support for segment penetration params.
+
 #pragma once
 
 #include <optix.h>

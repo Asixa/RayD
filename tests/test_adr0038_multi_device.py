@@ -1,16 +1,7 @@
-"""ADR-0038 guard: the replicated multi-device record matches what shipped.
+# Copyright Xingyu Chen.
+# Tests multi device.
 
-The record is the only place the replication regime, the merge-layer float
-semantics, the lane-window contract, the shardability classification and the
-single-device invariance are written down together, so this suite checks it
-against the shared contracts that declare the capability, against both runtime
-capability copies, against the Python and dispatcher defaults it cites, and
-against the plan and the operational note it is grounded in. A record that
-drifts from any of those has stopped describing the layer.
-
-Prose assertions run on whitespace-flattened text so that reflowing a paragraph
-is not a test failure; assertions that parse table rows keep the raw text.
-"""
+"""Checks the replicated multi-device contract against the implementation."""
 
 from __future__ import annotations
 
@@ -56,16 +47,12 @@ def read(path: Path) -> str:
 
 
 def flat(text: str) -> str:
-    """Whitespace-flattened text, with markdown blockquote markers dropped.
-
-    A reflowed paragraph must not fail a prose assertion, and neither must the
-    `> ` a quoted claim carries on every one of its lines.
-    """
+    """Checks the replicated multi-device contract against the implementation."""
     return re.sub(r"\s+", " ", re.sub(r"^[ \t]*>[ \t]?", " ", text, flags=re.M))
 
 
 def sections(text: str, level: int) -> dict[str, str]:
-    """Map heading title -> body for every heading at exactly `level` hashes."""
+    """Checks the replicated multi-device contract against the implementation."""
     marker = "#" * level + " "
     found: dict[str, str] = {}
     title: str | None = None
@@ -90,7 +77,7 @@ def sections(text: str, level: int) -> dict[str, str]:
 
 
 def table_rows(body: str, columns: int) -> list[list[str]]:
-    """Every `columns`-wide markdown row of `body`, header and rule dropped."""
+    """Checks the replicated multi-device contract against the implementation."""
     rows = []
     for line in body.splitlines():
         line = line.strip()
@@ -106,7 +93,7 @@ def table_rows(body: str, columns: int) -> list[list[str]]:
 
 
 def defaults_of(path: Path, function: str) -> dict[str, object]:
-    """Literal keyword defaults of `function`, wherever it is defined in `path`."""
+    """Checks the replicated multi-device contract against the implementation."""
     tree = ast.parse(read(path))
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == function:
@@ -123,7 +110,7 @@ def defaults_of(path: Path, function: str) -> dict[str, object]:
 
 
 def dataclass_defaults(path: Path, name: str) -> dict[str, object]:
-    """Literal field defaults of the dataclass `name` in `path`."""
+    """Checks the replicated multi-device contract against the implementation."""
     tree = ast.parse(read(path))
     for node in tree.body:
         if isinstance(node, ast.ClassDef) and node.name == name:
@@ -258,7 +245,7 @@ class Adr0038RecordTests(AdrTestCase):
 
 
 class Adr0038ContractStateTests(AdrTestCase):
-    """The shared contracts declare exactly what the record says they do."""
+    """Checks the replicated multi-device contract against the implementation."""
 
     def setUp(self) -> None:
         self.public_api = json.loads(read(PUBLIC_API_PATH))
@@ -319,7 +306,7 @@ class Adr0038ContractStateTests(AdrTestCase):
 
 
 class Adr0038ClassificationTableTests(AdrTestCase):
-    """Section 11's table and `operations.json` must be the same table."""
+    """Checks the replicated multi-device contract against the implementation."""
 
     def setUp(self) -> None:
         self.operations = json.loads(read(OPERATIONS_PATH))["operations"]
@@ -362,7 +349,7 @@ class Adr0038ClassificationTableTests(AdrTestCase):
 
 
 class Adr0038LaneWindowTests(AdrTestCase):
-    """Section 5 is the contract the shipped lane window actually implements."""
+    """Checks the replicated multi-device contract against the implementation."""
 
     def setUp(self) -> None:
         self.window = json.loads(read(OPERATIONS_PATH))["shardability_classes"]["lane_window"]
@@ -439,7 +426,7 @@ class Adr0038LaneWindowTests(AdrTestCase):
 
 
 class Adr0038PythonDefaultTests(AdrTestCase):
-    """Section 8 and section 10 cite defaults; they are the shipped defaults."""
+    """Checks the replicated multi-device contract against the implementation."""
 
     def setUp(self) -> None:
         self.multi = read(MULTI_PATH)
@@ -522,7 +509,7 @@ class Adr0038PythonDefaultTests(AdrTestCase):
 
 
 class Adr0038SingleDeviceInvarianceTests(AdrTestCase):
-    """Section 9's D9 claims are structural, so they are checkable."""
+    """Checks the replicated multi-device contract against the implementation."""
 
     def setUp(self) -> None:
         self.scene = read(SCENE_PATH)
@@ -564,7 +551,7 @@ class Adr0038SingleDeviceInvarianceTests(AdrTestCase):
 
 
 class Adr0038RefusalTests(AdrTestCase):
-    """Section 6's refusals are loud, and they are the ones the code raises."""
+    """Checks the replicated multi-device contract against the implementation."""
 
     def setUp(self) -> None:
         self.scene = read(SCENE_PATH)
@@ -593,7 +580,7 @@ class Adr0038RefusalTests(AdrTestCase):
 
 
 class Adr0038FrozenSurfaceTests(AdrTestCase):
-    """The record claims nothing else moved; the artifacts have to agree."""
+    """Checks the replicated multi-device contract against the implementation."""
 
     def test_no_committed_ptx_closure_reaches_the_torch_backend(self) -> None:
         modules = json.loads(read(PTX_SOURCES_PATH))["modules"]
@@ -612,7 +599,7 @@ class Adr0038FrozenSurfaceTests(AdrTestCase):
 
 
 class Adr0038CapabilityModuleTests(AdrTestCase):
-    """Both runtime copies gained the key, and ADR-0036 was amended again."""
+    """Checks the replicated multi-device contract against the implementation."""
 
     def setUp(self) -> None:
         self.sources = {
@@ -665,7 +652,7 @@ class Adr0038CapabilityModuleTests(AdrTestCase):
 
 
 class Adr0038EvidenceTests(AdrTestCase):
-    """Every measured number in the record is one the operational note records."""
+    """Checks the replicated multi-device contract against the implementation."""
 
     def setUp(self) -> None:
         self.adr = read(ADR_PATH)

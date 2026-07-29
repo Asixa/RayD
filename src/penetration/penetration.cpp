@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements penetration support for penetration.
+
 #include <src/penetration/segment_penetration_kernels.h>
 
 #include <src/runtime/optix_context.h>
@@ -444,7 +447,7 @@ SegmentPenetrationJvpResult segment_penetration_jvp(
 #include <src/penetration/segment_penetration_kernels.h>
 #include <src/penetration/segment_penetration_params.h>
 
-#include <rayd/detail/rt/optix_pipeline_contracts.h>
+#include <rayd/rt/optix_pipeline_contracts.h>
 #include <rayd/penetration/segment_torch_ptx.h>
 
 namespace rayd::torch_backend {

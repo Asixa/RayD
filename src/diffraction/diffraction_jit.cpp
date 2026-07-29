@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements diffraction support for diffraction Dr.Jit.
+
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>

@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements diffraction support for diffraction kernels.
+
 #include <src/diffraction/paths_init.h>
 
 #include <ATen/cuda/CUDAContext.h>
@@ -566,7 +569,7 @@ void reduce_dfr_coherent_accum_staged_cuda(
 #include <cmath>
 #include <string>
 
-#include <src/runtime/math.cuh>
+#include <rayd/math.h>
 #include <src/runtime/native_compat.h>
 
 namespace rayd::torch_backend {
@@ -691,7 +694,7 @@ static __forceinline__ __device__ float material_gain_for_prim(
 #define RAYD_DFR_AD_SUFFIX_FACE_PRIM(P, F, S, HAS_THIRD, SECOND, THIRD) \
     read_i32_strided_or_default((P).F, (P).S, (HAS_THIRD) ? (THIRD) : (SECOND), -1)
 
-#include <rayd/detail/diffraction/accumulation_ad_device.cuh>
+#include <rayd/diffraction/accumulation_ad_device.cuh>
 
 static __forceinline__ __device__ void add_chain_unit_vjp(
     const DfrChainAccumADParams &params,
@@ -746,7 +749,7 @@ static __forceinline__ __device__ void add_unit_vjp_strided(
 #define RAYD_DFR_AD_ADD_CHAIN_UNIT_VJP_DENSE(P, PR, G, F, I, T) \
     add_chain_unit_vjp((P), (PR), (G), (P).F, 1, (I), (T))
 
-#include <rayd/detail/diffraction/accumulation_ad_vjp_device.cuh>
+#include <rayd/diffraction/accumulation_ad_vjp_device.cuh>
 
 __global__ void dfr_direct_accum_jvp_kernel(DfrDirectAccumADParams params) {
     const int lane =

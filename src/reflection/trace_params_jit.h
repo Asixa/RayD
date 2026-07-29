@@ -1,6 +1,9 @@
+// Copyright Xingyu Chen.
+// Declares internal reflection support for trace params Dr.Jit.
+
 #pragma once
 
-#include <rayd/detail/reflection/trace_params.h>
+#include <rayd/reflection/trace_params.h>
 
 namespace rayd {
 

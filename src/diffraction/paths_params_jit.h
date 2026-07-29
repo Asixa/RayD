@@ -1,10 +1,13 @@
+// Copyright Xingyu Chen.
+// Declares internal diffraction support for paths params Dr.Jit.
+
 #pragma once
 
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
 
-#include <rayd/detail/diffraction/contracts.h>
+#include <rayd/diffraction/contracts.h>
 
 namespace rayd {
 

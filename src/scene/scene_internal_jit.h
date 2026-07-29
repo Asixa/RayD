@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal scene support for scene internal Dr.Jit.
+
 #pragma once
 
 #include <rayd/jit/scene.h>

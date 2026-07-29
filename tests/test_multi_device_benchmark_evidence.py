@@ -1,10 +1,7 @@
-"""Governance checks for ADR-0038 performance evidence and GPU CI.
+# Copyright Xingyu Chen.
+# Tests multi device benchmark evidence.
 
-These tests are intentionally CPU-only. They do not claim to replace a live
-multi-GPU run; they ensure that live runs emit the evidence fields needed to
-audit one, and that the committed historical transcription stays identical to
-the ADR and operations guide from which it was sourced.
-"""
+"""Checks committed multi-device benchmark evidence and GPU CI metadata."""
 
 from __future__ import annotations
 

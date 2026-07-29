@@ -1,6 +1,9 @@
+// Copyright Xingyu Chen.
+// Implements reflection support for reflection kernels.
+
 #include <src/scene/geometry_kernels.h>
 #include <src/reflection/kernels.h>
-#include <src/runtime/math.cuh>
+#include <rayd/math.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>
@@ -942,7 +945,7 @@ ReflEpcJvpOutputs refl_epc_jvp_cuda(
 // ---- merged from src/reflection/dedup_part.cu ----
 
 #include <src/reflection/dedup.h>
-#include <rayd/detail/reflection/dedup.h>
+#include <rayd/reflection/dedup.h>
 
 #include <c10/cuda/CUDAGuard.h>
 #include <cuda_runtime.h>
@@ -1360,7 +1363,7 @@ int reflection_dedup_gpu(
 // ---- merged from src/reflection/epc_field_part.cu ----
 
 #include <src/reflection/epc_field.h>
-#include <rayd/detail/contracts.h>
+#include <rayd/contracts.h>
 
 #include <c10/cuda/CUDAGuard.h>
 #include <cuda_runtime.h>
@@ -1368,8 +1371,8 @@ int reflection_dedup_gpu(
 #include <algorithm>
 #include <string>
 
-#include <src/reflection/complex.cuh>
-#include <src/runtime/math.cuh>
+#include <rayd/math.h>
+#include <rayd/math.h>
 #include <src/runtime/native_compat.h>
 
 
@@ -1507,19 +1510,19 @@ __global__ void reflection_epc_forward_setup_kernel(ReflEpcForwardSetupParams pa
         (P).out_valid[(RAY)] = 1u;                                                 \
     }                                                                              \
     if ((P).out_field_x_re != nullptr) {                                           \
-        (P).out_field_x_re[(RAY)] = (FIELD).x.r;                                   \
-        (P).out_field_x_im[(RAY)] = (FIELD).x.i;                                   \
+        (P).out_field_x_re[(RAY)] = (FIELD).x.re;                                   \
+        (P).out_field_x_im[(RAY)] = (FIELD).x.im;                                   \
     }                                                                              \
     if ((P).out_field_y_re != nullptr) {                                           \
-        (P).out_field_y_re[(RAY)] = (FIELD).y.r;                                   \
-        (P).out_field_y_im[(RAY)] = (FIELD).y.i;                                   \
+        (P).out_field_y_re[(RAY)] = (FIELD).y.re;                                   \
+        (P).out_field_y_im[(RAY)] = (FIELD).y.im;                                   \
     }                                                                              \
     if ((P).out_field_z_re != nullptr) {                                           \
-        (P).out_field_z_re[(RAY)] = (FIELD).z.r;                                   \
-        (P).out_field_z_im[(RAY)] = (FIELD).z.i;                                   \
+        (P).out_field_z_re[(RAY)] = (FIELD).z.re;                                   \
+        (P).out_field_z_im[(RAY)] = (FIELD).z.im;                                   \
     }
 
-#include <rayd/detail/reflection/epc_field_device.cuh>
+#include <rayd/reflection/epc_field_device.cuh>
 
 void check_cuda_last_error(const char *message) {
     check_cuda_call(cudaGetLastError(), message);
@@ -1594,16 +1597,16 @@ void reflection_epc_field_gpu(const ReflEpcFieldParams &params, int device_index
 // raygen solves for an already-selected plane sequence: mirror the source
 // through each plane, walk back from the receiver intersecting each plane,
 // sum the segment lengths. That chain lives in
-// include/rayd/detail/reflection/epc_chain.h together with its
+// include/rayd/reflection/epc_chain.h together with its
 // reverse-mode companion, so the math here has exactly one implementation.
 // Which primitive each bounce hits, the containment test and the visibility
 // casts are frozen discovery decisions: invalid rows contribute nothing and
 // no ray is traced, so no OptiX is involved.
 
 #include <src/reflection/kernels.h>
-#include <src/runtime/math.cuh>
-#include <rayd/detail/reflection/epc_params.h>
-#include <rayd/detail/reflection/epc_chain.h>
+#include <rayd/math.h>
+#include <rayd/reflection/epc_params.h>
+#include <rayd/reflection/epc_chain.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>

@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal bindings support for tensor contract.
+
 #pragma once
 
 #include <ATen/ATen.h>

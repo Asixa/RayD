@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Benchmarks benchmark rayd torch drjit mitsuba stress.
+
 from __future__ import annotations
 
 import argparse

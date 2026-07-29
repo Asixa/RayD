@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Demonstrates ddp intersect train.
+
 """One rank per GPU: sharded differentiable `intersect`, all-reduced gradients.
 
 Run it with `torchrun`, one process per GPU:

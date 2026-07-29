@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Exercises cuda multipath Dr.Jit in a native smoke test.
+
 """P4 Stage D gate: the CUDA fused multipath executor matches OptiX.
 
 Every multipath pipeline the CUDA fused executor serves is run under both

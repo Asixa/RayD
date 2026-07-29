@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests compare.
+
 """Comparison policy for golden scene results.
 
 Discrete fields are compared for exact equality; continuous fields use the

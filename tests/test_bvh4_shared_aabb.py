@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests bvh4 shared aabb.
+
 from __future__ import annotations
 
 import re
@@ -6,7 +9,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARED_HEADER = ROOT / "include/rayd/detail/edge/edge_aabb.h"
+SHARED_HEADER = ROOT / "include/rayd/edge/edge_aabb.h"
 SHARED_SOURCE = ROOT / "src/edge/edge_shared.cu"
 TORCH_HEADER = ROOT / "src/edge/bvh.h"
 TORCH_SOURCE = ROOT / "src/edge/edge_bvh.cu"
@@ -45,7 +48,7 @@ class SharedEdgeAabbSourceTests(unittest.TestCase):
         source = TORCH_SOURCE.read_text(encoding="utf-8")
         header = TORCH_HEADER.read_text(encoding="utf-8")
         cmake = TORCH_CMAKE.read_text(encoding="utf-8")
-        self.assertIn("rayd/detail/edge/edge_aabb.h", source)
+        self.assertIn("rayd/edge/edge_aabb.h", source)
         self.assertNotIn("current_torch_cuda_context()", source)
         self.assertIn("c10::cuda::CUDAGuard guard(out_aabbs.device());", source)
         self.assertIn(

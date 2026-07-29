@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements edge support for edge Dr.Jit.
+
 #include <algorithm>
 #include <array>
 #include <limits>
@@ -10,7 +13,7 @@
 #include <rayd/jit/edge_bvh.h>
 #include <rayd/jit/edge_bvh_config.h>
 
-#include <rayd/detail/bvh/host_topology.h>
+#include <rayd/bvh/host_topology.h>
 
 #include <rayd/jit/scene_edge.h>
 #include <rayd/jit/utils.h>
@@ -221,7 +224,7 @@ float bbox_overlap_surface_area(const ScalarVector3f &a_min,
 
 /// Host-side dense BVH after compaction: topology, leaf primitives, and per-node
 /// bounds. The compaction and its preorder emission are the primitive-agnostic
-/// host algorithms shared through <rayd/detail/bvh/host_topology.h>.
+/// host algorithms shared through <rayd/bvh/host_topology.h>.
 using CompactedEdgeBVH = shared::bvh::HostCompactedBvh<ScalarVector3f>;
 
 float bbox_cost_inflated(const ScalarVector3f &bbox_min,

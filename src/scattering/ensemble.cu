@@ -1,21 +1,5 @@
-
-
-
-// ADR-010 op 1: native Kirchhoff ensemble scattering row physics.
-//
-// One launch per (tx, rx-chunk) replacing the Torch per-row physics of
-// propagation/enumerated/scattering.py::_ensemble_rows between the RayD
-// visibility calls. The candidate grid (to_rx/r2/wo/cos_o over [Rc, S]) stays
-// Torch per the ADR; the surviving rows' wo/r2/cos_o are gathered from that
-// grid and passed in (bitwise the values the previous Torch physics used, so
-// the steep-lobe table interpolation sees identical weights). Per row the
-// kernel builds wo_local, looks up the per-material Kirchhoff table (shared
-// device interpolation from scattering_table.cuh), builds the outgoing s/p
-// basis and receiver projections, and assembles the radiometric gain.
-// Elementwise, no atomics: bitwise run-to-run deterministic. Compiled with
-// --fmad=false so mul/add chains round exactly like Torch's per-op kernels.
-// Expression order mirrors the Torch source (see
-// docs/dev/audit/adr-010-expression-mapping.md).
+// Copyright Xingyu Chen.
+// Implements scattering support for ensemble.
 
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
@@ -24,9 +8,10 @@
 #include <c10/util/Exception.h>
 
 #include <rayd/scattering.h>
+#include <rayd/math.h>
 
 #include "scattering_internal.cuh"
-#include <rayd/detail/scattering_table.cuh>
+#include <rayd/scattering_table.cuh>
 
 namespace {
 
@@ -36,7 +21,7 @@ namespace st = rayd::shared::scattering;
 int launch_blocks(int64_t count) {
     return static_cast<int>((count + kBlockSize - 1) / kBlockSize);
 }
-struct V3 { float x, y, z; };
+using V3 = rayd::shared::math::Vec3f;
 
 __device__ __forceinline__ V3 load3(const float* __restrict__ p, int64_t i) {
     return {p[i * 3 + 0], p[i * 3 + 1], p[i * 3 + 2]};
@@ -45,14 +30,11 @@ __device__ __forceinline__ V3 load3(const float* __restrict__ p, int64_t i) {
 // with two parallel accumulators: (p0 + p2) + p1. Replicated exactly (this TU
 // compiles with --fmad=false, so each product/add rounds like the Torch
 // per-op kernels).
-__device__ __forceinline__ float dot3(V3 a, V3 b) {
+__device__ __forceinline__ float dot3_torch_ordered(V3 a, V3 b) {
     const float p0 = a.x * b.x;
     const float p1 = a.y * b.y;
     const float p2 = a.z * b.z;
     return (p0 + p2) + p1;
-}
-__device__ __forceinline__ V3 cross3(V3 a, V3 b) {
-    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
 }
 
 __global__ void ensemble_eval_kernel(
@@ -104,7 +86,7 @@ __global__ void ensemble_eval_kernel(
         // wo_local = (wo.t1r, wo.t2r, cos_o).
         const V3 t1 = load3(t1r, s);
         const V3 t2 = load3(t2r, s);
-        const float wo_local[3] = {dot3(wo, t1), dot3(wo, t2), cos_o};
+        const float wo_local[3] = {dot3_torch_ordered(wo, t1), dot3_torch_ordered(wo, t2), cos_o};
 
         // Kirchhoff table lookup (shared device interpolation).
         float f_te = 0.0f, f_tm = 0.0f;
@@ -121,8 +103,8 @@ __global__ void ensemble_eval_kernel(
         }
 
         // Outgoing s/p basis: s_o = normalize(n x wo) with backup at grazing.
-        const V3 s_raw = cross3(n, wo);
-        const float sn = sqrtf(dot3(s_raw, s_raw));
+        const V3 s_raw = rayd::shared::math::cross(n, wo);
+        const float sn = sqrtf(dot3_torch_ordered(s_raw, s_raw));
         V3 s_o;
         if (sn < 1.0e-6f) {
             s_o = load3(backup_axis, s);
@@ -130,15 +112,15 @@ __global__ void ensemble_eval_kernel(
             const float d = fmaxf(sn, 1.0e-12f);
             s_o = {s_raw.x / d, s_raw.y / d, s_raw.z / d};
         }
-        const V3 p_o = cross3(s_o, wo);
+        const V3 p_o = rayd::shared::math::cross(s_o, wo);
 
         // Receiver co-pol projections.
         const V3 pol_r = load3(rx_pol, c);
-        const float prw = dot3(pol_r, wo);
+        const float prw = dot3_torch_ordered(pol_r, wo);
         const V3 pol_r_perp = {
             pol_r.x - prw * wo.x, pol_r.y - prw * wo.y, pol_r.z - prw * wo.z};
-        const float g_te = dot3(pol_r_perp, s_o);
-        const float g_tm = dot3(pol_r_perp, p_o);
+        const float g_te = dot3_torch_ordered(pol_r_perp, s_o);
+        const float g_tm = dot3_torch_ordered(pol_r_perp, p_o);
         const float g_te2 = g_te * g_te;
         const float g_tm2 = g_tm * g_tm;
         const float f_eff = (f_te * a_te2[s]) * g_te2 + (f_tm * a_tm2[s]) * g_tm2;
@@ -324,9 +306,10 @@ rayd::torch::ScatteringEnsembleEvalResult rayd::torch::scattering_ensemble_eval(
 #include <c10/util/Exception.h>
 
 #include <rayd/scattering.h>
+#include <rayd/math.h>
 
 #include "scattering_internal.cuh"
-#include <rayd/detail/scattering_table.cuh>
+#include <rayd/scattering_table.cuh>
 
 namespace {
 
@@ -371,9 +354,6 @@ const T* opt_ptr(const at::Tensor* tensor) {
 }
 
 
-__device__ __forceinline__ V3 vadd(V3 a, V3 b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
-__device__ __forceinline__ V3 vsub(V3 a, V3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
-__device__ __forceinline__ V3 vscale(V3 a, float s) { return {a.x * s, a.y * s, a.z * s}; }
 
 // Shared forward recompute: fills the frame/table intermediates a row needs for
 // both the VJP and JVP. Returns via out-params. ``tg.active`` reports whether a
@@ -422,7 +402,7 @@ __device__ __forceinline__ void recompute_row(
     p.cos_o = cos_o_rows[row];
     p.t1 = load3(t1r, p.s);
     p.t2 = load3(t2r, p.s);
-    const float wo_local[3] = {dot3(p.wo, p.t1), dot3(p.wo, p.t2), p.cos_o};
+    const float wo_local[3] = {dot3_torch_ordered(p.wo, p.t1), dot3_torch_ordered(p.wo, p.t2), p.cos_o};
 
     // Kirchhoff table lookup with derivative companions.
     p.f_te = 0.0f; p.f_tm = 0.0f;
@@ -443,8 +423,8 @@ __device__ __forceinline__ void recompute_row(
     }
 
     // Outgoing s/p basis: s_o = normalize(n x wo) with backup at grazing.
-    const V3 s_raw = cross3(p.n, p.wo);
-    p.sn = sqrtf(dot3(s_raw, s_raw));
+    const V3 s_raw = rayd::shared::math::cross(p.n, p.wo);
+    p.sn = sqrtf(dot3_torch_ordered(s_raw, s_raw));
     p.degen = p.sn < 1.0e-6f;
     if (p.degen) {
         p.s_o = load3(backup_axis, p.s);
@@ -452,16 +432,16 @@ __device__ __forceinline__ void recompute_row(
         const float d = fmaxf(p.sn, 1.0e-12f);
         p.s_o = {s_raw.x / d, s_raw.y / d, s_raw.z / d};
     }
-    p.p_o = cross3(p.s_o, p.wo);
+    p.p_o = rayd::shared::math::cross(p.s_o, p.wo);
 
     // Receiver co-pol projections.
     p.pol_r = load3(rx_pol, p.c);
-    p.prw = dot3(p.pol_r, p.wo);
+    p.prw = dot3_torch_ordered(p.pol_r, p.wo);
     p.pol_r_perp = {p.pol_r.x - p.prw * p.wo.x,
                     p.pol_r.y - p.prw * p.wo.y,
                     p.pol_r.z - p.prw * p.wo.z};
-    p.g_te = dot3(p.pol_r_perp, p.s_o);
-    p.g_tm = dot3(p.pol_r_perp, p.p_o);
+    p.g_te = dot3_torch_ordered(p.pol_r_perp, p.s_o);
+    p.g_tm = dot3_torch_ordered(p.pol_r_perp, p.p_o);
     p.g_te2 = p.g_te * p.g_te;
     p.g_tm2 = p.g_tm * p.g_tm;
     p.a_te2s = a_te2[p.s];
@@ -567,23 +547,23 @@ __global__ void ensemble_eval_backward_kernel(
 
         // Reverse frame/projection chain.
         // g_te = pol_r_perp . s_o ; g_tm = pol_r_perp . p_o.
-        V3 vp = vadd(vscale(p.s_o, A_gte), vscale(p.p_o, A_gtm));   // d L/d pol_r_perp
-        V3 vs = vscale(p.pol_r_perp, A_gte);                       // d L/d s_o
-        const V3 vpo = vscale(p.pol_r_perp, A_gtm);                // d L/d p_o
-        // p_o = cross3(s_o, wo).
-        vs = vadd(vs, cross3(p.wo, vpo));
-        V3 g_wo = cross3(vpo, p.s_o);
+        V3 vp = rayd::shared::math::add(rayd::shared::math::scale(p.s_o, A_gte), rayd::shared::math::scale(p.p_o, A_gtm));   // d L/d pol_r_perp
+        V3 vs = rayd::shared::math::scale(p.pol_r_perp, A_gte);                       // d L/d s_o
+        const V3 vpo = rayd::shared::math::scale(p.pol_r_perp, A_gtm);                // d L/d p_o
+        // p_o = rayd::shared::math::cross(s_o, wo).
+        vs = rayd::shared::math::add(vs, rayd::shared::math::cross(p.wo, vpo));
+        V3 g_wo = rayd::shared::math::cross(vpo, p.s_o);
         // pol_r_perp = pol_r - (pol_r.wo) wo.
-        const float vp_dot_wo = dot3(vp, p.wo);
-        g_wo = vadd(g_wo, vsub(vscale(vp, -p.prw), vscale(p.pol_r, vp_dot_wo)));
+        const float vp_dot_wo = dot3_torch_ordered(vp, p.wo);
+        g_wo = rayd::shared::math::add(g_wo, rayd::shared::math::subtract(rayd::shared::math::scale(vp, -p.prw), rayd::shared::math::scale(p.pol_r, vp_dot_wo)));
         // s_o = normalize(n x wo) (non-degenerate branch only).
         V3 grad_n = {0.0f, 0.0f, 0.0f};
         if (!p.degen) {
-            const float s_dot = dot3(p.s_o, vs);
-            const V3 proj = vsub(vs, vscale(p.s_o, s_dot));
-            const V3 grad_s_raw = vscale(proj, 1.0f / p.sn);
-            grad_n = cross3(p.wo, grad_s_raw);
-            g_wo = vadd(g_wo, cross3(grad_s_raw, p.n));
+            const float s_dot = dot3_torch_ordered(p.s_o, vs);
+            const V3 proj = rayd::shared::math::subtract(vs, rayd::shared::math::scale(p.s_o, s_dot));
+            const V3 grad_s_raw = rayd::shared::math::scale(proj, 1.0f / p.sn);
+            grad_n = rayd::shared::math::cross(p.wo, grad_s_raw);
+            g_wo = rayd::shared::math::add(g_wo, rayd::shared::math::cross(grad_s_raw, p.n));
         }
 
         // Table-coordinate contributions (combined te/tm coeffs).
@@ -598,7 +578,7 @@ __global__ void ensemble_eval_backward_kernel(
             Two.z = coeff_te * p.tg.dte_dwo[2] + coeff_tm * p.tg.dtm_dwo[2];
         }
         // wo also receives the wo_local[0/1] table chain via t1/t2.
-        g_wo = vadd(g_wo, vadd(vscale(p.t1, Two.x), vscale(p.t2, Two.y)));
+        g_wo = rayd::shared::math::add(g_wo, rayd::shared::math::add(rayd::shared::math::scale(p.t1, Two.x), rayd::shared::math::scale(p.t2, Two.y)));
 
         // cos_o: radiometric plus table via wo_local[2].
         const float R_cos_o = gbar * dg_dcos_o;
@@ -714,17 +694,17 @@ __global__ void ensemble_eval_jvp_kernel(
         const float t_atm = t_a_tm2 != nullptr ? t_a_tm2[p.s] : 0.0f;
 
         // Tangent of wo_local = (wo.t1, wo.t2, cos_o).
-        const V3 t_wol = {dot3(t_wo, p.t1) + dot3(p.wo, t_t1),
-                          dot3(t_wo, p.t2) + dot3(p.wo, t_t2),
+        const V3 t_wol = {dot3_torch_ordered(t_wo, p.t1) + dot3_torch_ordered(p.wo, t_t1),
+                          dot3_torch_ordered(t_wo, p.t2) + dot3_torch_ordered(p.wo, t_t2),
                           t_cos_o};
 
         // Tangent of the table values: coordinate chain plus table-value tangent.
         float t_fte = 0.0f, t_ftm = 0.0f;
         if (p.tg.active) {
-            t_fte = dot3(V3{p.tg.dte_dwi[0], p.tg.dte_dwi[1], p.tg.dte_dwi[2]}, t_wil) +
-                    dot3(V3{p.tg.dte_dwo[0], p.tg.dte_dwo[1], p.tg.dte_dwo[2]}, t_wol);
-            t_ftm = dot3(V3{p.tg.dtm_dwi[0], p.tg.dtm_dwi[1], p.tg.dtm_dwi[2]}, t_wil) +
-                    dot3(V3{p.tg.dtm_dwo[0], p.tg.dtm_dwo[1], p.tg.dtm_dwo[2]}, t_wol);
+            t_fte = dot3_torch_ordered(V3{p.tg.dte_dwi[0], p.tg.dte_dwi[1], p.tg.dte_dwi[2]}, t_wil) +
+                    dot3_torch_ordered(V3{p.tg.dte_dwo[0], p.tg.dte_dwo[1], p.tg.dte_dwo[2]}, t_wol);
+            t_ftm = dot3_torch_ordered(V3{p.tg.dtm_dwi[0], p.tg.dtm_dwi[1], p.tg.dtm_dwi[2]}, t_wil) +
+                    dot3_torch_ordered(V3{p.tg.dtm_dwo[0], p.tg.dtm_dwo[1], p.tg.dtm_dwo[2]}, t_wol);
             if (t_fte_flat != nullptr) {
                 for (int k = 0; k < 16; ++k)
                     t_fte += p.tg.cw[k] * t_fte_flat[p.table_base + p.tg.idx[k]];
@@ -736,19 +716,19 @@ __global__ void ensemble_eval_jvp_kernel(
         }
 
         // Tangent of the outgoing s/p basis.
-        const V3 t_s_raw = vadd(cross3(t_n, p.wo), cross3(p.n, t_wo));
+        const V3 t_s_raw = rayd::shared::math::add(rayd::shared::math::cross(t_n, p.wo), rayd::shared::math::cross(p.n, t_wo));
         V3 t_s_o = {0.0f, 0.0f, 0.0f};
         if (!p.degen) {
-            const float s_dot = dot3(p.s_o, t_s_raw);
-            t_s_o = vscale(vsub(t_s_raw, vscale(p.s_o, s_dot)), 1.0f / p.sn);
+            const float s_dot = dot3_torch_ordered(p.s_o, t_s_raw);
+            t_s_o = rayd::shared::math::scale(rayd::shared::math::subtract(t_s_raw, rayd::shared::math::scale(p.s_o, s_dot)), 1.0f / p.sn);
         }
-        const V3 t_p_o = vadd(cross3(t_s_o, p.wo), cross3(p.s_o, t_wo));
+        const V3 t_p_o = rayd::shared::math::add(rayd::shared::math::cross(t_s_o, p.wo), rayd::shared::math::cross(p.s_o, t_wo));
 
         // Tangent of the receiver co-pol projection.
-        const float t_prw = dot3(p.pol_r, t_wo);
-        const V3 t_pol_perp = vsub(vscale(p.wo, -t_prw), vscale(t_wo, p.prw));
-        const float t_g_te = dot3(t_pol_perp, p.s_o) + dot3(p.pol_r_perp, t_s_o);
-        const float t_g_tm = dot3(t_pol_perp, p.p_o) + dot3(p.pol_r_perp, t_p_o);
+        const float t_prw = dot3_torch_ordered(p.pol_r, t_wo);
+        const V3 t_pol_perp = rayd::shared::math::subtract(rayd::shared::math::scale(p.wo, -t_prw), rayd::shared::math::scale(t_wo, p.prw));
+        const float t_g_te = dot3_torch_ordered(t_pol_perp, p.s_o) + dot3_torch_ordered(p.pol_r_perp, t_s_o);
+        const float t_g_tm = dot3_torch_ordered(t_pol_perp, p.p_o) + dot3_torch_ordered(p.pol_r_perp, t_p_o);
 
         // Tangent of f_eff = f_te*a_te2*g_te^2 + f_tm*a_tm2*g_tm^2.
         const float t_feff =

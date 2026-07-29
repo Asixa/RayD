@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Benchmarks benchmark surfel queries.
+
 import argparse
 import json
 import math

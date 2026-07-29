@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests lane offset.
+
 """Monte-Carlo lane-window (`lane_offset` / `lane_count`) contract.
 
 The diffraction accumulation entry points describe a global Monte-Carlo lane

@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests f3 torch stable abi.
+
 from __future__ import annotations
 
 import json

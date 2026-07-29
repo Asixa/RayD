@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests source lane diffraction paths.
+
 from __future__ import annotations
 
 import re
@@ -61,7 +64,6 @@ class Adr0032SourceLaneDiffractionPathTests(unittest.TestCase):
             ROOT
             / "include"
             / "rayd"
-            / "detail"
             / "diffraction"
             / "paths_algo.h"
         )

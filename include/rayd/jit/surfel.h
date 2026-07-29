@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares the Dr.Jit surfel API.
+
 #pragma once
 
 #include <rayd/jit/ray.h>

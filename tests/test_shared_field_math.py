@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests shared field math.
+
 import cmath
 import math
 import unittest
@@ -5,13 +8,13 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARED = ROOT / "include" / "rayd" / "detail"
+SHARED = ROOT / "include" / "rayd"
 
 
 class SharedFieldMathTests(unittest.TestCase):
     def test_utd_uses_rayd_namespace_with_compatibility_alias(self):
         types = (SHARED / "diffraction" / "utd_types.h").read_text(encoding="utf-8")
-        math_header = (SHARED / "diffraction" / "utd_math.h").read_text(encoding="utf-8")
+        math_header = (SHARED / "diffraction" / "utd.h").read_text(encoding="utf-8")
         self.assertIn("namespace rayd::shared::diffraction", types)
         self.assertIn("namespace rayd::shared::diffraction", math_header)
         self.assertIn("namespace native_ext = ::rayd::shared::diffraction", types)
@@ -23,7 +26,7 @@ class SharedFieldMathTests(unittest.TestCase):
         shared_algo = (
             SHARED / "diffraction" / "accumulation_algo.h"
         ).read_text(encoding="utf-8")
-        self.assertIn("<rayd/detail/diffraction/utd_math.h>", shared_algo)
+        self.assertIn("<rayd/diffraction/utd.h>", shared_algo)
         self.assertIn("::rayd::shared::diffraction::first_order_diffraction_parameter(", shared_algo)
 
         paths = (
@@ -33,25 +36,20 @@ class SharedFieldMathTests(unittest.TestCase):
         for path in paths:
             source = path.read_text(encoding="utf-8")
             self.assertIn(
-                "<rayd/detail/diffraction/accumulation_optix_device.cuh>",
+                "<rayd/diffraction/accumulation_optix_device.cuh>",
                 source,
             )
             self.assertNotIn("first_order_diffraction_parameter", source)
             self.assertNotIn("rotate_around_axis", source)
 
     def test_complex_and_field_scalars_have_one_implementation(self):
-        header = (SHARED / "field_math.h").read_text(encoding="utf-8")
+        header = (SHARED / "math.h").read_text(encoding="utf-8")
         self.assertIn("struct Complex", header)
         self.assertIn("fresnel_reflection_coefficients", header)
         self.assertIn("free_space_amplitude", header)
         self.assertIn("propagation_phase", header)
-        self.assertIn("is_standard_layout_v<Complex>", header)
+        self.assertIn("is_standard_layout_v<Complexf>", header)
 
-        torch_compat = (
-            ROOT / "src" / "reflection" / "complex.cuh"
-        ).read_text(encoding="utf-8")
-        self.assertIn("<rayd/detail/field_math.h>", torch_compat)
-        self.assertNotIn("struct Complex {", torch_compat)
 
         shared_reflection_algo = (
             SHARED / "reflection" / "accumulation_algo.h"
@@ -65,7 +63,7 @@ class SharedFieldMathTests(unittest.TestCase):
         for path in accumulation_adapters:
             source = path.read_text(encoding="utf-8")
             self.assertIn(
-                "<rayd/detail/reflection/accumulation_optix_device.cuh>",
+                "<rayd/reflection/accumulation_optix_device.cuh>",
                 source,
             )
             self.assertNotIn("fresnel_reflection_coefficients", source)

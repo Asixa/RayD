@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements surfel support for surfel Dr.Jit.
+
 #include <algorithm>
 #include <array>
 #include <cmath>

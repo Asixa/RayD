@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares the Torch integration API.
+
 #pragma once
 
 #include <cstdint>

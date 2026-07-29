@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal camera support for camera.
+
 #pragma once
 
 #include <ATen/ATen.h>

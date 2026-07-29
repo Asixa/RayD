@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal camera support for camera kernels.
+
 #pragma once
 
 #include <cuda_runtime.h>

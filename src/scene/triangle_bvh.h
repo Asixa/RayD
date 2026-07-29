@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal scene support for triangle bvh.
+
 #pragma once
 
 #include <ATen/ATen.h>

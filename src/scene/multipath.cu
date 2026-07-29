@@ -1,15 +1,18 @@
+// Copyright Xingyu Chen.
+// Implements scene support for multipath.
+
 #include <src/scene/multipath_cuda.h>
 
 #include <src/scene/cache.h>
-#include <src/runtime/math.cuh>
-#include <rayd/detail/bvh/cuda_bvh_traverser.h>
-#include <rayd/detail/reflection/accumulation_algo.h>
-#include <rayd/detail/reflection/epc_algo.h>
-#include <rayd/detail/diffraction/paths_algo.h>
-#include <rayd/detail/diffraction/accumulation_algo.h>
-#include <rayd/detail/reflection/trace_algo.h>
-#include <rayd/detail/visibility/segment_algo.h>
-#include <rayd/detail/rt/traverser.h>
+#include <rayd/math.h>
+#include <rayd/bvh/cuda_bvh_traverser.h>
+#include <rayd/reflection/accumulation_algo.h>
+#include <rayd/reflection/epc_algo.h>
+#include <rayd/diffraction/paths_algo.h>
+#include <rayd/diffraction/accumulation_algo.h>
+#include <rayd/reflection/trace_algo.h>
+#include <rayd/visibility/segment_algo.h>
+#include <rayd/rt/traverser.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>
@@ -90,19 +93,19 @@ struct TorchCudaReflectionAccumulationPolicy {
             const long long slot =
                 static_cast<long long>(ray_index) * stride + static_cast<long long>(depth);
             ReflAccumStagedValue value;
-            value.a = make_float4(power, field.x.r, field.x.i, field.y.r);
-            value.b = make_float4(field.y.i, field.z.r, field.z.i, 1.0f);
+            value.a = make_float4(power, field.x.re, field.x.im, field.y.re);
+            value.b = make_float4(field.y.im, field.z.re, field.z.im, 1.0f);
             params.stage_cell[slot] = cell;
             params.stage_value[slot] = value;
             return;
         }
         const WarpCellGroup group = warp_cell_group(cell);
-        atomic_add_same_cell(params.out_field_x_re, cell, field.x.r, group);
-        atomic_add_same_cell(params.out_field_x_im, cell, field.x.i, group);
-        atomic_add_same_cell(params.out_field_y_re, cell, field.y.r, group);
-        atomic_add_same_cell(params.out_field_y_im, cell, field.y.i, group);
-        atomic_add_same_cell(params.out_field_z_re, cell, field.z.r, group);
-        atomic_add_same_cell(params.out_field_z_im, cell, field.z.i, group);
+        atomic_add_same_cell(params.out_field_x_re, cell, field.x.re, group);
+        atomic_add_same_cell(params.out_field_x_im, cell, field.x.im, group);
+        atomic_add_same_cell(params.out_field_y_re, cell, field.y.re, group);
+        atomic_add_same_cell(params.out_field_y_im, cell, field.y.im, group);
+        atomic_add_same_cell(params.out_field_z_re, cell, field.z.re, group);
+        atomic_add_same_cell(params.out_field_z_im, cell, field.z.im, group);
         atomic_add_same_cell(params.out_reflection_power, cell, power, group);
         atomic_add_warp(params.out_reflection_count, 1);
     }

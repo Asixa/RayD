@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal reflection support for pipeline.
+
 #pragma once
 
 #include <src/runtime/optix_pipeline.h>

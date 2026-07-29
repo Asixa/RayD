@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Tests diffraction wedge test.
+
 #include <rayd/diffraction.h>
 
 #include <ATen/ATen.h>

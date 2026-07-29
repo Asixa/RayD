@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Tests scattering chain test.
+
 #include <rayd/scattering.h>
 
 #include <ATen/ATen.h>

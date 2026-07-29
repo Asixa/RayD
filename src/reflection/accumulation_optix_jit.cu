@@ -1,8 +1,11 @@
+// Copyright Xingyu Chen.
+// Implements reflection support for accumulation optix Dr.Jit.
+
 #include <optix.h>
 #include <optix_device.h>
 
 #include <src/reflection/accumulation_params_jit.h>
-#include <rayd/detail/reflection/accumulation_optix_device.cuh>
+#include <rayd/reflection/accumulation_optix_device.cuh>
 
 namespace rayd {
 
@@ -22,12 +25,12 @@ struct ReflectionAccumulationPolicy {
         int cell,
         shared::field::Complex3 field,
         float power) {
-        atomicAdd(params.out_field_x_re + cell, field.x.r);
-        atomicAdd(params.out_field_x_im + cell, field.x.i);
-        atomicAdd(params.out_field_y_re + cell, field.y.r);
-        atomicAdd(params.out_field_y_im + cell, field.y.i);
-        atomicAdd(params.out_field_z_re + cell, field.z.r);
-        atomicAdd(params.out_field_z_im + cell, field.z.i);
+        atomicAdd(params.out_field_x_re + cell, field.x.re);
+        atomicAdd(params.out_field_x_im + cell, field.x.im);
+        atomicAdd(params.out_field_y_re + cell, field.y.re);
+        atomicAdd(params.out_field_y_im + cell, field.y.im);
+        atomicAdd(params.out_field_z_re + cell, field.z.re);
+        atomicAdd(params.out_field_z_im + cell, field.z.im);
         atomicAdd(params.out_reflection_power + cell, power);
         atomicAdd(params.out_reflection_count, 1);
     }

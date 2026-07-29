@@ -1,10 +1,13 @@
+// Copyright Xingyu Chen.
+// Exercises share4 scene edge contracts smoke in a native smoke test.
+
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
 
-#include <rayd/detail/edge/optix_contracts.h>
-#include <rayd/detail/rt/optix_sbt.h>
-#include <rayd/detail/scene/optix_contracts.h>
+#include <rayd/edge/optix_contracts.h>
+#include <rayd/rt/optix_sbt.h>
+#include <rayd/scene/optix_contracts.h>
 
 using namespace rayd::shared::optix;
 

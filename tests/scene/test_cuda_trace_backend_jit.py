@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests cuda trace backend Dr.Jit.
+
 """P3 Stage B/C gate: the pure-CUDA triangle TraceBackend.
 
 Every case runs in a fresh subprocess (mirrors ``test_geometry`` /

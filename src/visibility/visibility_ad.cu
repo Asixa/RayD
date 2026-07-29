@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements visibility support for visibility ad.
+
 #include <src/scene/geometry_kernels.h>
 #include <src/reflection/kernels.h>
 

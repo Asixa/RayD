@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests public api manifest.
+
 import ast
 import hashlib
 import json

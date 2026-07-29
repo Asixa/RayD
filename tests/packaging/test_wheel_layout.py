@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests wheel layout.
+
 import hashlib
 import json
 import os
@@ -70,12 +73,30 @@ class WheelLayoutTests(unittest.TestCase):
         for wheel in (self.drjit_wheel, self.torch_wheel):
             self.assertNotIn("rayd/__init__.py", self.names(wheel))
 
-    def test_drjit_wheel_contains_exact_flat_jit_and_detail_headers(self):
+    def test_drjit_wheel_contains_flat_jit_and_shared_concept_headers(self):
         source_root = Path(__file__).resolve().parents[2] / "include" / "rayd"
         wheel_prefix = "rayd/drjit/include/rayd/"
+        root_headers = {
+            "path_exchange.h",
+            "contracts.h",
+            "field_transport.cuh",
+            "math.h",
+            "scattering_table.cuh",
+        }
+        shared_directories = {
+            "bvh",
+            "diffraction",
+            "edge",
+            "reflection",
+            "rt",
+            "scene",
+            "sdf",
+            "transmission",
+            "visibility",
+        }
 
-        expected = {"path_exchange.h"}
-        for directory in ("jit", "detail"):
+        expected = set(root_headers)
+        for directory in {"jit", *shared_directories}:
             expected.update(
                 path.relative_to(source_root).as_posix()
                 for path in (source_root / directory).rglob("*")
@@ -97,45 +118,32 @@ class WheelLayoutTests(unittest.TestCase):
             for name in actual
             if len(PurePosixPath(name).parts) > 1
         }
-        self.assertEqual(root_files, {"path_exchange.h"})
-        self.assertEqual(root_directories, {"jit", "detail"})
+        self.assertEqual(root_files, root_headers)
+        self.assertEqual(root_directories, {"jit", *shared_directories})
 
-        jit_headers = {
-            name for name in actual if name.startswith("jit/")
-        }
-        self.assertEqual(len(jit_headers), 29)
+        jit_headers = {name for name in actual if name.startswith("jit/")}
+        self.assertTrue(jit_headers)
         self.assertTrue(
             all(PurePosixPath(name).parent == PurePosixPath("jit")
                 for name in jit_headers),
             jit_headers,
         )
-
-        detail_headers = {
-            name for name in actual if name.startswith("detail/")
-        }
-        self.assertEqual(len(detail_headers), 66)
-        detail_subdirectory_counts = Counter(
-            PurePosixPath(name).parent
-            for name in detail_headers
-            if PurePosixPath(name).parent != PurePosixPath("detail")
-        )
-        self.assertEqual(len(detail_subdirectory_counts), 9)
-        self.assertTrue(
-            all(len(directory.parts) == 2
-                for directory in detail_subdirectory_counts),
-            detail_subdirectory_counts,
-        )
-        self.assertTrue(
-            all(count > 1 for count in detail_subdirectory_counts.values()),
-            detail_subdirectory_counts,
-        )
+        for directory in shared_directories:
+            concept_headers = {
+                name for name in actual if name.startswith(f"{directory}/")
+            }
+            self.assertTrue(concept_headers, directory)
+            self.assertTrue(
+                all(PurePosixPath(name).parent == PurePosixPath(directory)
+                    for name in concept_headers),
+                concept_headers,
+            )
 
         torch_root_headers = {
             name.removeprefix("include/rayd/")
             for name in self.INTEGRATION_HEADERS
         }
         self.assertTrue(actual.isdisjoint(torch_root_headers))
-
     def test_backend_files_are_disjoint(self):
         drjit = {
             name

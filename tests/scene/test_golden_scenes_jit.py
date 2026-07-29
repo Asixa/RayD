@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests golden scenes Dr.Jit.
+
 """Golden-scene regression test for the drjit backend.
 
 Collects the declarative golden scenes (``tests/golden``) twice in two isolated

@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests shared contracts.
+
 import ast
 import re
 import unittest
@@ -5,7 +8,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CONTRACT = ROOT / "include" / "rayd" / "detail" / "contracts.h"
+CONTRACT = ROOT / "include" / "rayd" / "contracts.h"
 
 
 class SharedContractsTests(unittest.TestCase):

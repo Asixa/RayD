@@ -1,6 +1,9 @@
+// Copyright Xingyu Chen.
+// Declares internal visibility support for segment params Dr.Jit.
+
 #pragma once
 
-#include <rayd/detail/visibility/segment_params.h>
+#include <rayd/visibility/segment_params.h>
 
 namespace rayd {
 

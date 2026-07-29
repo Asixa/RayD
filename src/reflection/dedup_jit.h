@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal reflection support for dedup Dr.Jit.
+
 #pragma once
 
 namespace rayd {

@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Demonstrates surfel multiview color fit.
+
 import argparse
 import json
 import math

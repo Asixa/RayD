@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests share6 diffraction accumulation device.
+
 from __future__ import annotations
 
 import json
@@ -7,9 +10,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARED = ROOT / "include/rayd/detail/diffraction/accumulation_optix_device.cuh"
-ALGO = ROOT / "include/rayd/detail/diffraction/accumulation_algo.h"
-REFLECTION = ROOT / "include/rayd/detail/reflection/accumulation_optix_device.cuh"
+SHARED = ROOT / "include/rayd/diffraction/accumulation_optix_device.cuh"
+ALGO = ROOT / "include/rayd/diffraction/accumulation_algo.h"
+REFLECTION = ROOT / "include/rayd/reflection/accumulation_optix_device.cuh"
 DRJIT = ROOT / "src/diffraction/accumulation_optix_jit.cu"
 TORCH = ROOT / "src/diffraction/accumulation_optix.cu"
 COEXIST = ROOT / "tests/native/share6_accumulation_headers_coexist.cu"

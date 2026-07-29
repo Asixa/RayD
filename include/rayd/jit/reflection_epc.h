@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares the Dr.Jit reflection epc API.
+
 #pragma once
 
 #include <string>

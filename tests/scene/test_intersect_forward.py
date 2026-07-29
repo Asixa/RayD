@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests intersect forward.
+
 import unittest
 
 import torch

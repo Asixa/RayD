@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests release artifact matrix.
+
 import os
 import unittest
 from pathlib import Path

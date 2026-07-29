@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests epc Dr.Jit.
+
 import json
 import math
 import subprocess

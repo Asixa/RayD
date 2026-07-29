@@ -1,8 +1,11 @@
+// Copyright Xingyu Chen.
+// Exercises share3 packing layout smoke in a native smoke test.
+
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
 
-#include <rayd/detail/scene/packing.h>
+#include <rayd/scene/packing.h>
 
 using rayd::shared::scene::GlobalGeometryPackingParams;
 using rayd::shared::scene::GlobalVertexTangentPackingParams;

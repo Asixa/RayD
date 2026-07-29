@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests accumulation Dr.Jit.
+
 import json
 import math
 import os

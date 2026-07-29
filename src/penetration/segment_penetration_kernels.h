@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal penetration support for segment penetration kernels.
+
 #pragma once
 
 #include <ATen/ATen.h>

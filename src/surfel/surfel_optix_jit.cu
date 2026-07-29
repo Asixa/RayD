@@ -1,7 +1,11 @@
+// Copyright Xingyu Chen.
+// Implements surfel support for surfel optix Dr.Jit.
+
 #include <optix.h>
 #include <optix_device.h>
 
 #include <rayd/jit/surfel_trace_params.h>
+#include <rayd/math.h>
 
 namespace rayd {
 
@@ -14,39 +18,7 @@ namespace {
 constexpr float kInvalidT = 3.4028234663852886e38f;
 constexpr float kSortEpsilon = 1.0e-6f;
 
-static __forceinline__ __device__ float3 make_vec3(float x, float y, float z) {
-    return make_float3(x, y, z);
-}
-
-static __forceinline__ __device__ float3 operator+(float3 a, float3 b) {
-    return make_float3(a.x + b.x, a.y + b.y, a.z + b.z);
-}
-
-static __forceinline__ __device__ float3 operator-(float3 a, float3 b) {
-    return make_float3(a.x - b.x, a.y - b.y, a.z - b.z);
-}
-
-static __forceinline__ __device__ float3 operator-(float3 a) {
-    return make_float3(-a.x, -a.y, -a.z);
-}
-
-static __forceinline__ __device__ float3 operator*(float3 a, float s) {
-    return make_float3(a.x * s, a.y * s, a.z * s);
-}
-
-static __forceinline__ __device__ float dot3(float3 a, float3 b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-static __forceinline__ __device__ float3 cross3(float3 a, float3 b) {
-    return make_float3(a.y * b.z - a.z * b.y,
-                       a.z * b.x - a.x * b.z,
-                       a.x * b.y - a.y * b.x);
-}
-
-static __forceinline__ __device__ float squared_norm(float3 a) {
-    return dot3(a, a);
-}
+using namespace shared::cuda_math;
 
 static __forceinline__ __device__ bool is_active(unsigned int ray) {
     return params.active_mask == nullptr || params.active_mask[ray] != 0u;

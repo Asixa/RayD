@@ -1,7 +1,10 @@
+// Copyright Xingyu Chen.
+// Declares internal diffraction support for paths params.
+
 #pragma once
 
 #include <src/diffraction/common.h>
-#include <rayd/detail/diffraction/contracts.h>
+#include <rayd/diffraction/contracts.h>
 
 #include <cstddef>
 #include <cstdint>

@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests legacy loader compat.
+
 import unittest
 
 import rayd.torch as rt

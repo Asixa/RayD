@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Benchmarks benchmark surfel scale.
+
 import argparse
 import json
 import math

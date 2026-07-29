@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests intersect.
+
 """GPU tests for the public `rayd.torch` SDF intersection entry point.
 
 Phase 3b of `docs/dev/sdf_intersection_plan.md`. The oracle is the Phase 1

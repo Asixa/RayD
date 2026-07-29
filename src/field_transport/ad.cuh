@@ -1,7 +1,10 @@
+// Copyright Xingyu Chen.
+// Declares internal field transport support for ad.
+
 #pragma once
 
-#include <rayd/detail/field_transport.cuh>
-#include <rayd/detail/transmission/layer_stack.cuh>
+#include <rayd/field_transport.cuh>
+#include <rayd/transmission/layer_stack.cuh>
 
 #include <c10/util/complex.h>
 
@@ -45,6 +48,7 @@ namespace rayd::torch::field_transport_ad {
 namespace utd = ::rayd::shared::diffraction;
 namespace em = rayd::shared::transmission;
 namespace transport = rayd::shared::field_transport;
+namespace vmath = rayd::shared::math;
 
 // ---------------------------------------------------------------------------
 // Dual scalars / complex numbers (value + derivative along one tangent).
@@ -530,72 +534,7 @@ __device__ __forceinline__ DualStackRT stack_rt_dual(
 // ---------------------------------------------------------------------------
 
 template <typename T>
-struct Vec3 {
-    T x;
-    T y;
-    T z;
-};
-
-template <typename T>
-__device__ __forceinline__ Vec3<T> v3_load(const T* values, int64_t index) {
-    const int64_t base = index * 3;
-    return {values[base], values[base + 1], values[base + 2]};
-}
-
-template <typename T>
-__device__ __forceinline__ Vec3<T> v3_sub(Vec3<T> a, Vec3<T> b) {
-    return {a.x - b.x, a.y - b.y, a.z - b.z};
-}
-
-template <typename T>
-__device__ __forceinline__ Vec3<T> v3_scale(Vec3<T> a, T s) {
-    return {a.x * s, a.y * s, a.z * s};
-}
-
-template <typename T>
-__device__ __forceinline__ T v3_dot(Vec3<T> a, Vec3<T> b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-template <typename T>
-__device__ __forceinline__ T v3_length(Vec3<T> a) {
-    const T sq = v3_dot(a, a);
-    return sqrt(sq > T(0) ? sq : T(0));
-}
-
-template <typename T>
-__device__ __forceinline__ Vec3<T> v3_safe_normalize(Vec3<T> v, Vec3<T> alternate) {
-    const T n = v3_length(v);
-    if (n > T(utd::UTD_SMALL_EPS))
-        return v3_scale(v, T(1) / (n + T(utd::UTD_EPS)));
-    const T fn = v3_length(alternate);
-    return v3_scale(alternate, T(1) / (fn + T(utd::UTD_EPS)));
-}
-
-template <typename T>
-__device__ __forceinline__ Vec3<T> v3_stable_perp_basis(
-    Vec3<T> ray_dir, Vec3<T> preferred) {
-    const Vec3<T> proj = v3_sub(
-        preferred, v3_scale(ray_dir, v3_dot(preferred, ray_dir)));
-    const Vec3<T> alt_axis = (fabs(ray_dir.z) < T(0.9))
-                                 ? Vec3<T>{T(0), T(0), T(1)}
-                                 : Vec3<T>{T(0), T(1), T(0)};
-    const Vec3<T> alt_proj = v3_sub(
-        alt_axis, v3_scale(ray_dir, v3_dot(alt_axis, ray_dir)));
-    return v3_safe_normalize(proj, alt_proj);
-}
-
-// F1 unnormalized transverse projection of the TX/RX FIELD axis:
-//   t = preferred - ray_dir * (preferred . ray_dir)   (project_to_wedge_plane
-// without the safe_normalize). This carries the short-dipole sin(theta)
-// pattern weight of the polarization and is exactly zero at the axial null
-// (no fallback), which is the correct physics. Only the polarization field
-// axes use this; the Jones s/p bases stay orthonormal (v3_stable_perp_basis).
-template <typename T>
-__device__ __forceinline__ Vec3<T> v3_transverse_project(
-    Vec3<T> ray_dir, Vec3<T> preferred) {
-    return v3_sub(preferred, v3_scale(ray_dir, v3_dot(preferred, ray_dir)));
-}
+using Vec3 = vmath::Vec3<T>;
 
 constexpr float kSpeedOfLight = transport::kSpeedOfLight;
 
@@ -629,16 +568,20 @@ __device__ __forceinline__ FreeSpaceEval<T> free_space_eval(
     T tx_power,
     T frequency_hz) {
     FreeSpaceEval<T> out;
-    const Vec3<T> offset = v3_sub(target, source);
-    out.distance = v3_length(offset);
-    out.direction = v3_safe_normalize(offset, Vec3<T>{T(0), T(0), T(1)});
+    const Vec3<T> offset = vmath::subtract(target, source);
+    out.distance = vmath::length(offset);
+    out.direction = vmath::safe_normalize(
+        offset,
+        Vec3<T>{T(0), T(0), T(1)},
+        T(utd::UTD_SMALL_EPS),
+        T(utd::UTD_EPS));
     // F1: the exported field is the unnormalized transverse projection of the
     // transmit polarization (short-dipole sin(theta) weight); the receiver
     // scalar is p_rx . E, so the rx axis is the same unnormalized projection.
-    out.tx_axis = v3_transverse_project(out.direction, tx_polarization);
-    out.rx_axis = v3_transverse_project(out.direction, rx_polarization);
+    out.tx_axis = vmath::transverse_project(out.direction, tx_polarization);
+    out.rx_axis = vmath::transverse_project(out.direction, rx_polarization);
     out.amplitude_scale = sqrt(tx_power > T(0) ? tx_power : T(0));
-    out.projection = v3_dot(out.tx_axis, out.rx_axis);
+    out.projection = vmath::dot(out.tx_axis, out.rx_axis);
     const T wave_number =
         T(2.0 * 3.14159265358979323846) * frequency_hz / T(kSpeedOfLight);
     const T k_clamped =
@@ -671,15 +614,6 @@ __device__ __forceinline__ FreeSpaceEval<T> free_space_eval(
 // primal branch; length subgradients vanish at zero like torch's vector_norm.
 // ---------------------------------------------------------------------------
 
-template <typename T>
-__device__ __forceinline__ Vec3<T> v3_add(Vec3<T> a, Vec3<T> b) {
-    return {a.x + b.x, a.y + b.y, a.z + b.z};
-}
-
-template <typename T>
-__device__ __forceinline__ Vec3<T> v3_neg(Vec3<T> a) {
-    return {-a.x, -a.y, -a.z};
-}
 
 template <typename T>
 struct DualV3 {
@@ -694,16 +628,16 @@ __device__ __forceinline__ DualV3<T> dv3_const(Vec3<T> value) {
 
 template <typename T>
 __device__ __forceinline__ DualV3<T> dv3_sub(DualV3<T> a, DualV3<T> b) {
-    return {v3_sub(a.v, b.v), v3_sub(a.d, b.d)};
+    return {vmath::subtract(a.v, b.v), vmath::subtract(a.d, b.d)};
 }
 
 // Dual of v3_length: d|v| = (v . dv)/|v| on the positive branch, zero at the
 // origin (the primal takes the max(., 0) zero branch there).
 template <typename T>
 __device__ __forceinline__ T dual_v3_length(DualV3<T> a, T& d_length) {
-    const T sq = v3_dot(a.v, a.v);
+    const T sq = vmath::dot(a.v, a.v);
     const T length = sqrt(sq > T(0) ? sq : T(0));
-    d_length = sq > T(0) ? v3_dot(a.v, a.d) / length : T(0);
+    d_length = sq > T(0) ? vmath::dot(a.v, a.d) / length : T(0);
     return length;
 }
 
@@ -712,17 +646,17 @@ __device__ __forceinline__ T dual_v3_length(DualV3<T> a, T& d_length) {
 template <typename T>
 __device__ __forceinline__ DualV3<T> dual_v3_safe_normalize(
     DualV3<T> v, DualV3<T> alternate) {
-    const T n = v3_length(v.v);
+    const T n = vmath::length(v.v);
     const bool main_branch = n > T(utd::UTD_SMALL_EPS);
     const DualV3<T>& active = main_branch ? v : alternate;
-    const T an = main_branch ? n : v3_length(alternate.v);
+    const T an = main_branch ? n : vmath::length(alternate.v);
     const T s = T(1) / (an + T(utd::UTD_EPS));
     DualV3<T> out;
-    out.v = v3_scale(active.v, s);
+    out.v = vmath::scale(active.v, s);
     if (an > T(0)) {
-        const T dn = v3_dot(active.v, active.d) / an;
-        out.d = v3_sub(
-            v3_scale(active.d, s), v3_scale(active.v, dn * s * s));
+        const T dn = vmath::dot(active.v, active.d) / an;
+        out.d = vmath::subtract(
+            vmath::scale(active.d, s), vmath::scale(active.v, dn * s * s));
     } else {
         out.d = {T(0), T(0), T(0)};
     }
@@ -735,32 +669,32 @@ __device__ __forceinline__ DualV3<T> dual_v3_safe_normalize(
 template <typename T>
 __device__ __forceinline__ DualV3<T> dual_v3_stable_perp_basis(
     DualV3<T> ray_dir, Vec3<T> preferred) {
-    const T proj_dot = v3_dot(preferred, ray_dir.v);
-    const T d_proj_dot = v3_dot(preferred, ray_dir.d);
+    const T proj_dot = vmath::dot(preferred, ray_dir.v);
+    const T d_proj_dot = vmath::dot(preferred, ray_dir.d);
     DualV3<T> proj;
-    proj.v = v3_sub(preferred, v3_scale(ray_dir.v, proj_dot));
-    proj.d = v3_neg(v3_add(
-        v3_scale(ray_dir.d, proj_dot), v3_scale(ray_dir.v, d_proj_dot)));
+    proj.v = vmath::subtract(preferred, vmath::scale(ray_dir.v, proj_dot));
+    proj.d = vmath::negate(vmath::add(
+        vmath::scale(ray_dir.d, proj_dot), vmath::scale(ray_dir.v, d_proj_dot)));
     const Vec3<T> alt_axis = (fabs(ray_dir.v.z) < T(0.9))
                                  ? Vec3<T>{T(0), T(0), T(1)}
                                  : Vec3<T>{T(0), T(1), T(0)};
-    const T alt_dot = v3_dot(alt_axis, ray_dir.v);
-    const T d_alt_dot = v3_dot(alt_axis, ray_dir.d);
+    const T alt_dot = vmath::dot(alt_axis, ray_dir.v);
+    const T d_alt_dot = vmath::dot(alt_axis, ray_dir.d);
     DualV3<T> alt_proj;
-    alt_proj.v = v3_sub(alt_axis, v3_scale(ray_dir.v, alt_dot));
-    alt_proj.d = v3_neg(v3_add(
-        v3_scale(ray_dir.d, alt_dot), v3_scale(ray_dir.v, d_alt_dot)));
+    alt_proj.v = vmath::subtract(alt_axis, vmath::scale(ray_dir.v, alt_dot));
+    alt_proj.d = vmath::negate(vmath::add(
+        vmath::scale(ray_dir.d, alt_dot), vmath::scale(ray_dir.v, d_alt_dot)));
     return dual_v3_safe_normalize(proj, alt_proj);
 }
 
 // Adjoint of v3_length into g_v (gate matches dual_v3_length).
 template <typename T>
 __device__ __forceinline__ void adj_v3_length(Vec3<T> v, T g_length, Vec3<T>& g_v) {
-    const T sq = v3_dot(v, v);
+    const T sq = vmath::dot(v, v);
     if (!(sq > T(0)))
         return;
     const T length = sqrt(sq);
-    g_v = v3_add(g_v, v3_scale(v, g_length / length));
+    g_v = vmath::add(g_v, vmath::scale(v, g_length / length));
 }
 
 // Adjoint of the active v3_safe_normalize branch (mirror of
@@ -768,21 +702,21 @@ __device__ __forceinline__ void adj_v3_length(Vec3<T> v, T g_length, Vec3<T>& g_
 template <typename T>
 __device__ __forceinline__ void adj_v3_normalize_branch(
     Vec3<T> v, Vec3<T> g_out, Vec3<T>& g_v) {
-    const T sq = v3_dot(v, v);
+    const T sq = vmath::dot(v, v);
     const T n = sqrt(sq > T(0) ? sq : T(0));
     if (!(n > T(0)))
         return;
     const T denom = n + T(utd::UTD_EPS);
-    const T dg = v3_dot(g_out, v);
-    g_v = v3_add(
+    const T dg = vmath::dot(g_out, v);
+    g_v = vmath::add(
         g_v,
-        v3_sub(v3_scale(g_out, T(1) / denom), v3_scale(v, dg / (n * denom * denom))));
+        vmath::subtract(vmath::scale(g_out, T(1) / denom), vmath::scale(v, dg / (n * denom * denom))));
 }
 
 template <typename T>
 __device__ __forceinline__ void adj_v3_safe_normalize(
     Vec3<T> v, Vec3<T> alternate, Vec3<T> g_out, Vec3<T>& g_v, Vec3<T>& g_alternate) {
-    if (v3_length(v) > T(utd::UTD_SMALL_EPS)) {
+    if (vmath::length(v) > T(utd::UTD_SMALL_EPS)) {
         adj_v3_normalize_branch(v, g_out, g_v);
     } else {
         adj_v3_normalize_branch(alternate, g_out, g_alternate);
@@ -794,22 +728,22 @@ __device__ __forceinline__ void adj_v3_safe_normalize(
 template <typename T>
 __device__ __forceinline__ void adj_v3_stable_perp_basis(
     Vec3<T> ray_dir, Vec3<T> preferred, Vec3<T> g_out, Vec3<T>& g_ray_dir) {
-    const T proj_dot = v3_dot(preferred, ray_dir);
-    const Vec3<T> proj = v3_sub(preferred, v3_scale(ray_dir, proj_dot));
+    const T proj_dot = vmath::dot(preferred, ray_dir);
+    const Vec3<T> proj = vmath::subtract(preferred, vmath::scale(ray_dir, proj_dot));
     const Vec3<T> alt_axis = (fabs(ray_dir.z) < T(0.9))
                                  ? Vec3<T>{T(0), T(0), T(1)}
                                  : Vec3<T>{T(0), T(1), T(0)};
-    const T alt_dot = v3_dot(alt_axis, ray_dir);
-    const Vec3<T> alt_proj = v3_sub(alt_axis, v3_scale(ray_dir, alt_dot));
+    const T alt_dot = vmath::dot(alt_axis, ray_dir);
+    const Vec3<T> alt_proj = vmath::subtract(alt_axis, vmath::scale(ray_dir, alt_dot));
     Vec3<T> g_proj = {T(0), T(0), T(0)};
     Vec3<T> g_alt_proj = {T(0), T(0), T(0)};
     adj_v3_safe_normalize(proj, alt_proj, g_out, g_proj, g_alt_proj);
     // proj = preferred - ray_dir * (preferred . ray_dir)
-    g_ray_dir = v3_sub(g_ray_dir, v3_scale(g_proj, proj_dot));
-    g_ray_dir = v3_sub(g_ray_dir, v3_scale(preferred, v3_dot(g_proj, ray_dir)));
+    g_ray_dir = vmath::subtract(g_ray_dir, vmath::scale(g_proj, proj_dot));
+    g_ray_dir = vmath::subtract(g_ray_dir, vmath::scale(preferred, vmath::dot(g_proj, ray_dir)));
     // alt_proj = alt_axis - ray_dir * (alt_axis . ray_dir)
-    g_ray_dir = v3_sub(g_ray_dir, v3_scale(g_alt_proj, alt_dot));
-    g_ray_dir = v3_sub(g_ray_dir, v3_scale(alt_axis, v3_dot(g_alt_proj, ray_dir)));
+    g_ray_dir = vmath::subtract(g_ray_dir, vmath::scale(g_alt_proj, alt_dot));
+    g_ray_dir = vmath::subtract(g_ray_dir, vmath::scale(alt_axis, vmath::dot(g_alt_proj, ray_dir)));
 }
 
 // Dual of v3_transverse_project (preferred is a constant of the
@@ -818,12 +752,12 @@ __device__ __forceinline__ void adj_v3_stable_perp_basis(
 template <typename T>
 __device__ __forceinline__ DualV3<T> dual_v3_transverse_project(
     DualV3<T> ray_dir, Vec3<T> preferred) {
-    const T proj_dot = v3_dot(preferred, ray_dir.v);
-    const T d_proj_dot = v3_dot(preferred, ray_dir.d);
+    const T proj_dot = vmath::dot(preferred, ray_dir.v);
+    const T d_proj_dot = vmath::dot(preferred, ray_dir.d);
     DualV3<T> out;
-    out.v = v3_sub(preferred, v3_scale(ray_dir.v, proj_dot));
-    out.d = v3_neg(v3_add(
-        v3_scale(ray_dir.d, proj_dot), v3_scale(ray_dir.v, d_proj_dot)));
+    out.v = vmath::subtract(preferred, vmath::scale(ray_dir.v, proj_dot));
+    out.d = vmath::negate(vmath::add(
+        vmath::scale(ray_dir.d, proj_dot), vmath::scale(ray_dir.v, d_proj_dot)));
     return out;
 }
 
@@ -832,9 +766,9 @@ __device__ __forceinline__ DualV3<T> dual_v3_transverse_project(
 template <typename T>
 __device__ __forceinline__ void adj_v3_transverse_project(
     Vec3<T> ray_dir, Vec3<T> preferred, Vec3<T> g_out, Vec3<T>& g_ray_dir) {
-    const T proj_dot = v3_dot(preferred, ray_dir);
-    g_ray_dir = v3_sub(g_ray_dir, v3_scale(g_out, proj_dot));
-    g_ray_dir = v3_sub(g_ray_dir, v3_scale(preferred, v3_dot(g_out, ray_dir)));
+    const T proj_dot = vmath::dot(preferred, ray_dir);
+    g_ray_dir = vmath::subtract(g_ray_dir, vmath::scale(g_out, proj_dot));
+    g_ray_dir = vmath::subtract(g_ray_dir, vmath::scale(preferred, vmath::dot(g_out, ray_dir)));
 }
 
 // ---------------------------------------------------------------------------
@@ -1115,7 +1049,7 @@ __device__ __forceinline__ void adj_reflect_frame(
     const utd::float3a g_n_unit = flip ? utd::f3_neg(g_oriented) : g_oriented;
     // n_unit = safe_normalize(normal, e_z); incident = safe_normalize(arg, e_z).
     utd::float3a g_dump = utd::f3_zero();
-    adj_safe_normalize(normal, e_z, g_n_unit, g_normal, g_dump);
+    utd::adj_safe_normalize(normal, e_z, g_n_unit, g_normal, g_dump);
     utd::adj_safe_normalize(
         incident_direction, e_z, g_incident, g_incident_direction, g_dump);
 }
@@ -1212,7 +1146,7 @@ __device__ __forceinline__ void adj_wall_frame(
     // Frozen flip sign, then the input normalize.
     const utd::float3a g_n_unit = flip ? utd::f3_neg(g_normal) : g_normal;
     utd::float3a g_dump = utd::f3_zero();
-    adj_safe_normalize(raw_normal, e_z, g_n_unit, g_raw_normal, g_dump);
+    utd::adj_safe_normalize(raw_normal, e_z, g_n_unit, g_raw_normal, g_dump);
 }
 
 // ---------------------------------------------------------------------------
@@ -1389,7 +1323,7 @@ __device__ __forceinline__ void legacy_slab_fresnel_dual(
 
 // ---------------------------------------------------------------------------
 // RayD-dual bridges (plan 07 AD-4). The templated UTD math in
-// rayd/detail/utd runs on utd::Dual scalars; these helpers feed the validated
+// rayd/utd runs on utd::Dual scalars; these helpers feed the validated
 // AD-1 slab response into that machinery so the wedge and diffraction-map
 // dual rows share one finite-slab implementation. Shared by
 // kernels/field_wedge_ad.cu and kernels/diffraction.cu.

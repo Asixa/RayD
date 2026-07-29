@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests f4 path exchange contract.
+
 import json
 import runpy
 import unittest

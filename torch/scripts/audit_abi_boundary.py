@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Supports the Torch package's audit abi boundary workflow.
+
 from __future__ import annotations
 
 import argparse

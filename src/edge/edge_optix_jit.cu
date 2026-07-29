@@ -1,10 +1,13 @@
+// Copyright Xingyu Chen.
+// Implements edge support for edge optix Dr.Jit.
+
 #include <optix.h>
 #include <optix_device.h>
 
 #include <rayd/jit/edge_optix_params.h>
-#include <rayd/detail/contracts.h>
-#include <rayd/detail/edge/edge_distance_math.h>
-#include <rayd/detail/edge/optix_device.cuh>
+#include <rayd/contracts.h>
+#include <rayd/edge/edge_distance.h>
+#include <rayd/edge/optix_device.cuh>
 
 namespace rayd {
 

@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal runtime support for multipath internal Dr.Jit.
+
 #pragma once
 
 #include <algorithm>

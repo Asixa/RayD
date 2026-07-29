@@ -1,6 +1,9 @@
+// Copyright Xingyu Chen.
+// Declares internal diffraction support for common.
+
 #pragma once
 
-#include <rayd/detail/diffraction/contracts.h>
+#include <rayd/diffraction/contracts.h>
 
 namespace rayd::torch_backend {
 

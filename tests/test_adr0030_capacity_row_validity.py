@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests capacity row validity.
+
 import re
 import unittest
 from pathlib import Path

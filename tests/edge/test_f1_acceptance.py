@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests f1 acceptance.
+
 """Grouped F1 acceptance coverage for Torch geometry and visibility helpers.
 
 The cross-backend cases are opt-in because they require both native extensions

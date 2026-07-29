@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements visibility support for visibility.
+
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -22,7 +25,7 @@
 #include <src/visibility/visibility.h>
 #include <src/visibility/visibility_params.h>
 #include <rayd/visibility.h>
-#include <rayd/detail/rt/optix_pipeline_contracts.h>
+#include <rayd/rt/optix_pipeline_contracts.h>
 #include <rayd/visibility/segment_torch_ptx.h>
 #include <rayd/visibility/axial_edge_torch_ptx.h>
 #include <src/scene/cache.h>

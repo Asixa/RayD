@@ -1,30 +1,5 @@
-
-
-
-// ADR-010 op 2: native realization-coherent phase-screen patch integral.
-//
-// One fused launch per (tx, rx, structure) replacing the host per-patch
-// Python loop (rows.tolist()) of _realization_rows, the per-patch Torch
-// Gauss-Legendre quadrature (patch_phase_integral), and the per-row
-// jones/prefactor/carrier assembly. Stage 1: one block per selected patch
-// row, one thread per Duffy-mapped quadrature node, fixed-order shared-memory
-// tree reduction of the phasor sum, then thread 0 assembles the row
-// coefficient (prefactor * jones * carrier / (r1 * r2)) times the patch
-// integral. Stage 2: a single block tree-reduces the row values into the
-// 0-dim total in a fixed order. No float atomics: the total is bitwise
-// stable run-to-run on the same binary.
-//
-// Height sampling replicates PhaseScreenRuntime.sample_height exactly:
-// texel centers at (i + 0.5) / N, the continuous texel coordinate clamped to
-// the span of texel centers before flooring (edge clamp, no wrap).
-//
-// Phase convention (module docstring of propagation/enumerated/scattering.py):
-// the physical q = k0 * (d_o - d_i); the integral evaluates the SWAPPED
-// integrand exp(-j * (q_int . x + q_int_n * h)) with q_int = -q, i.e. the
-// physical +j integrand, with q_int_n taken against the WINDING normal of
-// each patch triangle (exactly patch_phase_integral's convention). The
-// leftover absolute-position phase is removed by the carrier's q . c term
-// (q against the flipped illuminated-side normal path).
+// Copyright Xingyu Chen.
+// Implements scattering support for patch.
 
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
@@ -34,6 +9,7 @@
 #include <c10/util/Exception.h>
 
 #include <rayd/scattering.h>
+#include <rayd/math.h>
 
 #include "scattering_internal.cuh"
 
@@ -45,23 +21,11 @@ constexpr float kPi = 3.14159265358979323846f;
 
 using cfloat = c10::complex<float>;
 
-struct V3 { float x, y, z; };
-struct C2 { float re, im; };
+using V3 = rayd::shared::math::Vec3f;
+using C2 = rayd::shared::math::Complexf;
 
 __device__ __forceinline__ V3 load3(const float* __restrict__ p, int64_t i) {
     return {p[i * 3 + 0], p[i * 3 + 1], p[i * 3 + 2]};
-}
-__device__ __forceinline__ float dot3(V3 a, V3 b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-__device__ __forceinline__ V3 cross3(V3 a, V3 b) {
-    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
-}
-__device__ __forceinline__ V3 sub3(V3 a, V3 b) {
-    return {a.x - b.x, a.y - b.y, a.z - b.z};
-}
-__device__ __forceinline__ V3 scale3(V3 a, float s) {
-    return {a.x * s, a.y * s, a.z * s};
 }
 
 // PhaseScreenRuntime.sample_height: bilinear with half-texel edge clamp.
@@ -94,24 +58,24 @@ __device__ __forceinline__ V3 stable_tangent(V3 n) {
     if (ax <= ay && ax <= az) axis.x = 1.0f;
     else if (ay <= az) axis.y = 1.0f;
     else axis.z = 1.0f;
-    const float proj = dot3(axis, n);
+    const float proj = rayd::shared::math::dot(axis, n);
     V3 t = {axis.x - proj * n.x, axis.y - proj * n.y, axis.z - proj * n.z};
-    const float norm = fmaxf(sqrtf(dot3(t, t)), 1.0e-12f);
-    return scale3(t, 1.0f / norm);
+    const float norm = fmaxf(sqrtf(rayd::shared::math::dot(t, t)), 1.0e-12f);
+    return rayd::shared::math::scale(t, 1.0f / norm);
 }
 
 // _sp_basis: s = normalize(n x d) with the deterministic backup axis at
 // normal incidence; p = s x d.
 __device__ __forceinline__ void sp_basis(
     V3 n, V3 d, V3 backup, V3& s, V3& p) {
-    const V3 raw = cross3(n, d);
-    const float norm = sqrtf(dot3(raw, raw));
+    const V3 raw = rayd::shared::math::cross(n, d);
+    const float norm = sqrtf(rayd::shared::math::dot(raw, raw));
     if (norm < 1.0e-6f) {
         s = backup;
     } else {
-        s = scale3(raw, 1.0f / fmaxf(norm, 1.0e-12f));
+        s = rayd::shared::math::scale(raw, 1.0f / fmaxf(norm, 1.0e-12f));
     }
-    p = cross3(s, d);
+    p = rayd::shared::math::cross(s, d);
 }
 
 __global__ void patch_integral_rows_kernel(
@@ -156,11 +120,11 @@ __global__ void patch_integral_rows_kernel(
     const V3 p0 = load3(patch_tris, patch * 3 + 0);
     const V3 p1 = load3(patch_tris, patch * 3 + 1);
     const V3 p2 = load3(patch_tris, patch * 3 + 2);
-    const V3 e1 = sub3(p1, p0);
-    const V3 e2 = sub3(p2, p0);
-    const V3 winding = cross3(e1, e2);
-    const float double_area = sqrtf(dot3(winding, winding));
-    const V3 n_hat = scale3(winding, 1.0f / fmaxf(double_area, 1.0e-30f));
+    const V3 e1 = rayd::shared::math::subtract(p1, p0);
+    const V3 e2 = rayd::shared::math::subtract(p2, p0);
+    const V3 winding = rayd::shared::math::cross(e1, e2);
+    const float double_area = sqrtf(rayd::shared::math::dot(winding, winding));
+    const V3 n_hat = rayd::shared::math::scale(winding, 1.0f / fmaxf(double_area, 1.0e-30f));
 
     // Torch rounding order preserved: k_i_vec = d_i * k0 and k_s_vec =
     // d_o * k0 round per component BEFORE the subtraction. Physical
@@ -170,9 +134,9 @@ __global__ void patch_integral_rows_kernel(
     const V3 dov = load3(d_o, row);
     const V3 kiv = {di.x * k0, di.y * k0, di.z * k0};
     const V3 ksv = {dov.x * k0, dov.y * k0, dov.z * k0};
-    const V3 q = sub3(ksv, kiv);
-    const V3 q_int = sub3(kiv, ksv);
-    const float q_int_n = dot3(n_hat, q_int);
+    const V3 q = rayd::shared::math::subtract(ksv, kiv);
+    const V3 q_int = rayd::shared::math::subtract(kiv, ksv);
+    const float q_int_n = rayd::shared::math::dot(n_hat, q_int);
 
     // Quadrature node phasor (one node per thread).
     const float a = quad_a[t];
@@ -192,7 +156,7 @@ __global__ void patch_integral_rows_kernel(
     const float uu = u0 + a * (u1 - u0) + b * (u2 - u0);
     const float vv = v0 + a * (v1 - v0) + b * (v2 - v0);
     const float h = sample_height(heights, h_rows_dim, w_cols_dim, uu, vv);
-    const float phase = dot3(pos, q_int) + q_int_n * h;
+    const float phase = rayd::shared::math::dot(pos, q_int) + q_int_n * h;
     float c, s;
     sincosf(-phase, &s, &c);
     sh_re[t] = c * w;
@@ -215,8 +179,8 @@ __global__ void patch_integral_rows_kernel(
 
     // Row coefficient: prefactor * jones * carrier / (r1 * r2).
     const V3 n = load3(n_rows, row);
-    const float q_norm2 = dot3(q, q);
-    const float q_n = fmaxf(dot3(q, n), 1.0e-9f);
+    const float q_norm2 = rayd::shared::math::dot(q, q);
+    const float q_n = fmaxf(rayd::shared::math::dot(q, n), 1.0e-9f);
     // prefactor = 1j * k0 * (|q|^2 / (k0 * q_n)) / (4 pi): purely imaginary.
     const float pref_im = k0 * (q_norm2 / (k0 * q_n)) / (4.0f * kPi);
 
@@ -226,14 +190,14 @@ __global__ void patch_integral_rows_kernel(
     sp_basis(n, dov, backup, s_o, p_o);
     const V3 pt = {pol_t[0], pol_t[1], pol_t[2]};
     const V3 pr = {pol_r[0], pol_r[1], pol_r[2]};
-    const float pt_di = dot3(pt, di);
+    const float pt_di = rayd::shared::math::dot(pt, di);
     const V3 pt_perp = {pt.x - pt_di * di.x, pt.y - pt_di * di.y, pt.z - pt_di * di.z};
-    const float pr_do = dot3(pr, dov);
+    const float pr_do = rayd::shared::math::dot(pr, dov);
     const V3 pr_perp = {pr.x - pr_do * dov.x, pr.y - pr_do * dov.y, pr.z - pr_do * dov.z};
-    const float a_te = dot3(pt_perp, s_i);
-    const float a_tm = dot3(pt_perp, p_i);
-    const float g_te = dot3(pr_perp, s_o);
-    const float g_tm = dot3(pr_perp, p_o);
+    const float a_te = rayd::shared::math::dot(pt_perp, s_i);
+    const float a_tm = rayd::shared::math::dot(pt_perp, p_i);
+    const float g_te = rayd::shared::math::dot(pr_perp, s_o);
+    const float g_tm = rayd::shared::math::dot(pr_perp, p_o);
     const cfloat te = r_te[row];
     const cfloat tm = r_tm[row];
     const C2 jones = {
@@ -244,7 +208,7 @@ __global__ void patch_integral_rows_kernel(
     const V3 c_row = load3(centroids, row);
     const float r1v = r1_rows[row];
     const float r2v = r2_rows[row];
-    const float carrier_phase = -(k0 * (r1v + r2v) + dot3(q, c_row));
+    const float carrier_phase = -(k0 * (r1v + r2v) + rayd::shared::math::dot(q, c_row));
     float cc, cs;
     sincosf(carrier_phase, &cs, &cc);
 
@@ -441,6 +405,7 @@ rayd::torch::scattering_patch_integral_eval(
 #include <c10/util/Exception.h>
 
 #include <rayd/scattering.h>
+#include <rayd/math.h>
 
 #include "scattering_internal.cuh"
 
@@ -516,39 +481,39 @@ __device__ __forceinline__ float sample_height_tex(
 __device__ __forceinline__ void basis_and_grads(
     V3 n, V3 d, V3 backup, V3 pol,
     V3& s, V3& p, float& val_te, float& val_tm, V3& grad_te, V3& grad_tm) {
-    const V3 raw = cross3(n, d);
-    const float norm = sqrtf(dot3(raw, raw));
+    const V3 raw = rayd::shared::math::cross(n, d);
+    const float norm = sqrtf(rayd::shared::math::dot(raw, raw));
     const bool unclamped = norm >= 1.0e-6f;
-    if (unclamped) s = scale3(raw, 1.0f / fmaxf(norm, 1.0e-12f));
+    if (unclamped) s = rayd::shared::math::scale(raw, 1.0f / fmaxf(norm, 1.0e-12f));
     else s = backup;
-    p = cross3(s, d);
-    const float pol_d = dot3(pol, d);
+    p = rayd::shared::math::cross(s, d);
+    const float pol_d = rayd::shared::math::dot(pol, d);
     const V3 perp = {pol.x - pol_d * d.x, pol.y - pol_d * d.y, pol.z - pol_d * d.z};
-    val_te = dot3(perp, s);
-    val_tm = dot3(perp, p);
-    const float d_s = dot3(d, s);
-    const float d_p = dot3(d, p);
+    val_te = rayd::shared::math::dot(perp, s);
+    val_tm = rayd::shared::math::dot(perp, p);
+    const float d_s = rayd::shared::math::dot(d, s);
+    const float d_p = rayd::shared::math::dot(d, p);
     grad_te = {-d_s * pol.x - pol_d * s.x,
                -d_s * pol.y - pol_d * s.y,
                -d_s * pol.z - pol_d * s.z};
-    const V3 perp_x_s = cross3(perp, s);
+    const V3 perp_x_s = rayd::shared::math::cross(perp, s);
     grad_tm = {-d_p * pol.x - pol_d * p.x + perp_x_s.x,
                -d_p * pol.y - pol_d * p.y + perp_x_s.y,
                -d_p * pol.z - pol_d * p.z + perp_x_s.z};
     if (unclamped) {
         const float inv = 1.0f / norm;
-        const float perp_s = dot3(perp, s);
+        const float perp_s = rayd::shared::math::dot(perp, s);
         const V3 w_vec = {(perp.x - perp_s * s.x) * inv,
                           (perp.y - perp_s * s.y) * inv,
                           (perp.z - perp_s * s.z) * inv};
-        const V3 wxn = cross3(w_vec, n);
+        const V3 wxn = rayd::shared::math::cross(w_vec, n);
         grad_te.x += wxn.x; grad_te.y += wxn.y; grad_te.z += wxn.z;
-        const V3 dxperp = cross3(d, perp);
-        const float dxperp_s = dot3(dxperp, s);
+        const V3 dxperp = rayd::shared::math::cross(d, perp);
+        const float dxperp_s = rayd::shared::math::dot(dxperp, s);
         const V3 r_vec = {(dxperp.x - dxperp_s * s.x) * inv,
                           (dxperp.y - dxperp_s * s.y) * inv,
                           (dxperp.z - dxperp_s * s.z) * inv};
-        const V3 rxn = cross3(r_vec, n);
+        const V3 rxn = rayd::shared::math::cross(r_vec, n);
         grad_tm.x += rxn.x; grad_tm.y += rxn.y; grad_tm.z += rxn.z;
     }
 }
@@ -568,18 +533,18 @@ __device__ __forceinline__ RowFrame load_frame(
     f.p0 = load3(patch_tris, patch * 3 + 0);
     const V3 p1 = load3(patch_tris, patch * 3 + 1);
     const V3 p2 = load3(patch_tris, patch * 3 + 2);
-    f.e1 = sub3(p1, f.p0);
-    f.e2 = sub3(p2, f.p0);
-    const V3 winding = cross3(f.e1, f.e2);
-    f.double_area = sqrtf(dot3(winding, winding));
-    f.n_hat = scale3(winding, 1.0f / fmaxf(f.double_area, 1.0e-30f));
+    f.e1 = rayd::shared::math::subtract(p1, f.p0);
+    f.e2 = rayd::shared::math::subtract(p2, f.p0);
+    const V3 winding = rayd::shared::math::cross(f.e1, f.e2);
+    f.double_area = sqrtf(rayd::shared::math::dot(winding, winding));
+    f.n_hat = rayd::shared::math::scale(winding, 1.0f / fmaxf(f.double_area, 1.0e-30f));
     const V3 di = load3(d_i, row);
     const V3 dov = load3(d_o, row);
     const V3 kiv = {di.x * k0, di.y * k0, di.z * k0};
     const V3 ksv = {dov.x * k0, dov.y * k0, dov.z * k0};
-    f.q = sub3(ksv, kiv);
-    f.q_int = sub3(kiv, ksv);
-    f.q_int_n = dot3(f.n_hat, f.q_int);
+    f.q = rayd::shared::math::subtract(ksv, kiv);
+    f.q_int = rayd::shared::math::subtract(kiv, ksv);
+    f.q_int_n = rayd::shared::math::dot(f.n_hat, f.q_int);
     return f;
 }
 
@@ -599,7 +564,7 @@ __device__ __forceinline__ void node_uv(
 
 // prefactor gradient d pref/d q (real 3-vector); pref matches the forward.
 __device__ __forceinline__ V3 pref_grad_q(V3 q, V3 n, float q_norm2) {
-    const float qn = dot3(q, n);
+    const float qn = rayd::shared::math::dot(q, n);
     const float qn_c = fmaxf(qn, 1.0e-9f);
     const float flag = qn > 1.0e-9f ? 1.0f : 0.0f;
     const float inv = 1.0f / (4.0f * kPi * qn_c * qn_c);
@@ -624,8 +589,8 @@ __device__ __forceinline__ RowCoef assemble_coef(
     V3 pt, V3 pr, V3 c_row, float r1v, float r2v, float k0) {
     RowCoef rc;
     rc.te = te; rc.tm = tm;
-    const float q_norm2 = dot3(f.q, f.q);
-    const float q_n = fmaxf(dot3(f.q, n), 1.0e-9f);
+    const float q_norm2 = rayd::shared::math::dot(f.q, f.q);
+    const float q_n = fmaxf(rayd::shared::math::dot(f.q, n), 1.0e-9f);
     // Forward-order prefactor (purely imaginary weight 1j*pref).
     rc.pref = k0 * (q_norm2 / (k0 * q_n)) / (4.0f * kPi);
 
@@ -638,7 +603,7 @@ __device__ __forceinline__ RowCoef assemble_coef(
         te.real() * (rc.a_te * rc.g_te) + tm.real() * (rc.a_tm * rc.g_tm),
         te.imag() * (rc.a_te * rc.g_te) + tm.imag() * (rc.a_tm * rc.g_tm));
 
-    const float carrier_phase = -(k0 * (r1v + r2v) + dot3(f.q, c_row));
+    const float carrier_phase = -(k0 * (r1v + r2v) + rayd::shared::math::dot(f.q, c_row));
     sincosf(carrier_phase, &rc.cs, &rc.cc);
     rc.carrier = cfloat(rc.cc, rc.cs);
     rc.inv_rr = 1.0f / (r1v * r2v);
@@ -737,7 +702,7 @@ __global__ void patch_integral_backward_kernel(
     node_uv(patch_uvs, patch, a, b, uu, vv);
     Texel4 tex;
     const float h = sample_height_tex(heights, h_rows_dim, w_cols_dim, uu, vv, tex);
-    const float phase = dot3(pos, f.q_int) + f.q_int_n * h;
+    const float phase = rayd::shared::math::dot(pos, f.q_int) + f.q_int_n * h;
     float e_im, e_re;  // exp(-j phase) = (cos phase, -sin phase)
     sincosf(-phase, &e_im, &e_re);
     sh_I_re[t] = e_re * w;
@@ -815,7 +780,7 @@ __global__ void patch_integral_backward_kernel(
                 grad_centroids[row * 3 + c] = reconjmul(g, cmul(Iv, cfloat(0.0f, -qc)));
             }
             // d_i / d_o : phase + prefactor + carrier + Jones chains.
-            const V3 dprefdq = pref_grad_q(f.q, n, dot3(f.q, f.q));
+            const V3 dprefdq = pref_grad_q(f.q, n, rayd::shared::math::dot(f.q, f.q));
             const float gIbase = reconjmul(g, Ibase);
             const float gjIv = reconjmul(g, jIv);
             const float w_ate = reconjmul(g, cscalef(cmul(coeff2I, rc.te), rc.g_te));
@@ -839,8 +804,8 @@ __global__ void patch_integral_backward_kernel(
         }
 
         if (need_k0) {
-            const V3 Delta = sub3(dov, di);
-            const V3 dprefdq = pref_grad_q(f.q, n, dot3(f.q, f.q));
+            const V3 Delta = rayd::shared::math::subtract(dov, di);
+            const V3 dprefdq = pref_grad_q(f.q, n, rayd::shared::math::dot(f.q, f.q));
             // dI/dk0 = -dot(Delta, S_phase).
             cfloat S_k0 = cfloat(0.0f, 0.0f);
 #pragma unroll
@@ -923,7 +888,7 @@ __global__ void patch_integral_jvp_kernel(
     const RowFrame f = load_frame(patch_tris, patch, d_i, d_o, row, k0);
     const V3 di = load3(d_i, row);
     const V3 dov = load3(d_o, row);
-    const V3 Delta = sub3(dov, di);
+    const V3 Delta = rayd::shared::math::subtract(dov, di);
     // t_q = t_k0*Delta + k0*(t_dov - t_di); t_q_int = -t_q.
     V3 t_di = {0.0f, 0.0f, 0.0f}, t_dov = {0.0f, 0.0f, 0.0f};
     if (t_d_i != nullptr) t_di = load3(t_d_i, row);
@@ -943,7 +908,7 @@ __global__ void patch_integral_jvp_kernel(
     node_uv(patch_uvs, patch, a, b, uu, vv);
     Texel4 tex;
     const float h = sample_height_tex(heights, h_rows_dim, w_cols_dim, uu, vv, tex);
-    const float phase = dot3(pos, f.q_int) + f.q_int_n * h;
+    const float phase = rayd::shared::math::dot(pos, f.q_int) + f.q_int_n * h;
     float e_im, e_re;  // exp(-j phase) = (cos phase, -sin phase)
     sincosf(-phase, &e_im, &e_re);
     sh_I_re[t] = e_re * w;
@@ -956,7 +921,7 @@ __global__ void patch_integral_jvp_kernel(
         for (int k = 0; k < 4; ++k) t_h += tex.wgt[k] * t_heights[tex.idx[k]];
     }
     const V3 pvec = {pos.x + h * f.n_hat.x, pos.y + h * f.n_hat.y, pos.z + h * f.n_hat.z};
-    const float t_phase = dot3(t_q_int, pvec) + f.q_int_n * t_h;
+    const float t_phase = rayd::shared::math::dot(t_q_int, pvec) + f.q_int_n * t_h;
     // node tangent phasor = w_t*(-j t_phase)*exp(-j phase) = w_t*t_phase*(e_im, -e_re).
     sh_tI_re[t] = w * t_phase * e_im;
     sh_tI_im[t] = w * t_phase * (-e_re);
@@ -990,13 +955,13 @@ __global__ void patch_integral_jvp_kernel(
 
     // Tangent of value via product rule on value = A*B*C*D with
     // A = j*pref, B = jones, C = carrier, D = inv_rr.
-    const V3 dprefdq = pref_grad_q(f.q, n, dot3(f.q, f.q));
+    const V3 dprefdq = pref_grad_q(f.q, n, rayd::shared::math::dot(f.q, f.q));
     const float t_pref = dprefdq.x * t_q.x + dprefdq.y * t_q.y + dprefdq.z * t_q.z;
 
-    const float t_a_te = dot3(rc.grad_ate, t_di);
-    const float t_a_tm = dot3(rc.grad_atm, t_di);
-    const float t_g_te = dot3(rc.grad_gte, t_dov);
-    const float t_g_tm = dot3(rc.grad_gtm, t_dov);
+    const float t_a_te = rayd::shared::math::dot(rc.grad_ate, t_di);
+    const float t_a_tm = rayd::shared::math::dot(rc.grad_atm, t_di);
+    const float t_g_te = rayd::shared::math::dot(rc.grad_gte, t_dov);
+    const float t_g_tm = rayd::shared::math::dot(rc.grad_gtm, t_dov);
     cfloat t_r_te_v = cfloat(0.0f, 0.0f), t_r_tm_v = cfloat(0.0f, 0.0f);
     if (t_r_te != nullptr) t_r_te_v = t_r_te[row];
     if (t_r_tm != nullptr) t_r_tm_v = t_r_tm[row];

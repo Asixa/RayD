@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests schema validate.
+
 """Dependency-free JSON-Schema validator for the RayD contract schemas.
 
 Implements only the JSON-Schema draft 2020-12 constructs used by

@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Implements shared Python support for capabilities.
+
 from __future__ import annotations
 
 from copy import deepcopy

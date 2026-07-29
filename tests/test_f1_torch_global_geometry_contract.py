@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests f1 torch global geometry contract.
+
 from __future__ import annotations
 
 import re

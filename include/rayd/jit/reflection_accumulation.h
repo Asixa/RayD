@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares the Dr.Jit reflection accumulation API.
+
 #pragma once
 
 #include <type_traits>

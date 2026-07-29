@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Implements shared Python support for geometry.
+
 from __future__ import annotations
 
 from dataclasses import dataclass

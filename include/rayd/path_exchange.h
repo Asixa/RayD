@@ -1,8 +1,13 @@
+// Copyright Xingyu Chen.
+// Declares the Torch path exchange API.
+
 #pragma once
 
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
+
+#include <rayd/math.h>
 
 namespace rayd::shared::multipath {
 
@@ -41,20 +46,8 @@ enum PathDerivativeField : std::uint32_t {
     PathDerivativePower = 1u << 7u,
 };
 
-struct PathVec3f {
-    float x;
-    float y;
-    float z;
-};
-
-struct PathComplex3f {
-    float x_re;
-    float x_im;
-    float y_re;
-    float y_im;
-    float z_re;
-    float z_im;
-};
+using PathVec3f = math::Vec3f;
+using PathComplex3f = math::Complex3f;
 
 /// One interaction in the flattened interaction table. Exactly one of the
 /// global primitive/edge IDs is normally valid for reflection/diffraction.

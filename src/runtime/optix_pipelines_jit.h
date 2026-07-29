@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal runtime support for optix pipelines Dr.Jit.
+
 #pragma once
 
 #include <cstddef>

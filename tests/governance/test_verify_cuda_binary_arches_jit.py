@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests verify cuda binary arches Dr.Jit.
+
 import importlib.util
 import sys
 from pathlib import Path

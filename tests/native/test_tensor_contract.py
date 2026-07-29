@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Exercises tensor contract in a native smoke test.
+
 import unittest
 
 import torch

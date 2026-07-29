@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares the Torch scattering API.
+
 #pragma once
 
 #include <ATen/ATen.h>

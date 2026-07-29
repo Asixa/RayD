@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal diffraction support for paths init.
+
 #pragma once
 
 #include <ATen/ATen.h>

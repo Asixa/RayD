@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests share6 reflection accumulation device.
+
 from __future__ import annotations
 
 import re
@@ -6,8 +9,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARED = ROOT / "include/rayd/detail/reflection/accumulation_optix_device.cuh"
-ALGO = ROOT / "include/rayd/detail/reflection/accumulation_algo.h"
+SHARED = ROOT / "include/rayd/reflection/accumulation_optix_device.cuh"
+ALGO = ROOT / "include/rayd/reflection/accumulation_algo.h"
 DRJIT = ROOT / "src/reflection/accumulation_optix_jit.cu"
 TORCH = ROOT / "src/reflection/accumulation_optix.cu"
 

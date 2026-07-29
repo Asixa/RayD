@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests scene cache.
+
 import unittest
 
 import torch

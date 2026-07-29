@@ -1,24 +1,5 @@
-
-
-
-
-// ADR-015 Part A: native JVP/VJP companions of the resident Kirchhoff BSDF
-// table lookup (kernels/scattering.cu::scattering_eval_kernel, facade
-// scattering_table_eval). The forward is untouched; these kernels recompute
-// every forward interpolation intermediate through the shared
-// scattering_table.cuh::eval_te_tm_grad helper (this TU compiles with
-// --fmad=false so the in-helper primal recompute rounds exactly like the
-// forward) and differentiate the live inputs wi, wo, f_te, f_tm.
-//
-// Backward: one thread per row (grid-stride loop). The direction gradients
-// (grad_wi, grad_wo) are direct stores; the 16 interpolation corners scatter
-// into the zero-initialised table gradient buffers with atomicAdd (same
-// run-to-run nondeterministic accumulation policy as the ADR-014 ensemble and
-// the transmission-layer backward).
-//
-// JVP: elementwise, tangent-forward, no atomics; a missing tangent is a zero
-// tangent. Both companions share the quadrilinear table derivative helper in
-// scattering_table.cuh with the forward, so no table math is duplicated here.
+// Copyright Xingyu Chen.
+// Implements scattering support for table ad.
 
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
@@ -29,7 +10,7 @@
 #include <rayd/scattering.h>
 
 #include "scattering_internal.cuh"
-#include <rayd/detail/scattering_table.cuh>
+#include <rayd/scattering_table.cuh>
 
 namespace {
 

@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements bindings support for module Dr.Jit.
+
 #include <rayd/jit/core.h>
 
 #include <algorithm>

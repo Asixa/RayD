@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares the Dr.Jit optix API.
+
 #pragma once
 
 #define RAYD_OPTIX_TARGET_VERSION 80100
@@ -5,7 +8,7 @@
 
 #include <drjit-core/optix.h>
 
-#include <rayd/detail/rt/optix_sbt.h>
+#include <rayd/rt/optix_sbt.h>
 
 #include <string>
 

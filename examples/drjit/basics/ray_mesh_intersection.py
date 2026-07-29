@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Demonstrates ray mesh intersection.
+
 import rayd.drjit as rd
 import drjit as dr
 

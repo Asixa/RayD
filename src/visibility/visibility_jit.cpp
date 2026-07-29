@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements visibility support for visibility Dr.Jit.
+
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>

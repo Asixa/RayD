@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests cuda geometry.
+
 import unittest
 
 import torch

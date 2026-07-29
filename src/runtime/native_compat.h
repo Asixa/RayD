@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal runtime support for native compat.
+
 #pragma once
 
 #include <ATen/cuda/CUDAContext.h>

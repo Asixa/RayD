@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Benchmarks benchmark torch native.
+
 from __future__ import annotations
 
 import argparse

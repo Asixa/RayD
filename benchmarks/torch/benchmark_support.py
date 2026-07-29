@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Benchmarks benchmark support.
+
 from __future__ import annotations
 
 import time

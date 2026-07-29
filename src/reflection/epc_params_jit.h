@@ -1,6 +1,9 @@
+// Copyright Xingyu Chen.
+// Declares internal reflection support for epc params Dr.Jit.
+
 #pragma once
 
-#include <rayd/detail/reflection/epc_params.h>
+#include <rayd/reflection/epc_params.h>
 
 namespace rayd {
 

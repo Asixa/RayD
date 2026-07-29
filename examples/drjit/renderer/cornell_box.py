@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Demonstrates cornell box.
+
 """Differentiable Cornell box — GPU path tracing + interior/edge AD."""
 
 import argparse, time

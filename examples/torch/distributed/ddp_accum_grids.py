@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Demonstrates ddp accum grids.
+
 """One rank per GPU: a Monte-Carlo accumulation split by lane window.
 
 Run it with `torchrun`, one process per GPU:

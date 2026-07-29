@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests torch project metadata.
+
 import unittest
 from pathlib import Path
 

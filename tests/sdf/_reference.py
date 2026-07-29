@@ -1,32 +1,7 @@
-"""Pure-PyTorch reference for the ADR-0037 differentiable SDF ray intersection.
+# Copyright Xingyu Chen.
+# Tests reference.
 
-Phase 1 of `docs/dev/sdf_intersection_plan.md`. This module is the numerical
-oracle the Phase 3 CUDA kernels are validated against. It is test-only and must
-never be imported from the shipped `rayd.torch` package.
-
-The march (`march`) is fully detached and reproduces ADR-0037 section 4 verbatim:
-entry-sign relaxation, a step clamped to `t_hi` before it is sampled, sign-flip
-bisection with the section 4 rule order, and a bounded bisection budget that
-still reports a hit when it is exhausted. The differentiable part (`reattach`) is
-the frozen-winner implicit function theorem of section 6: it consumes the frozen
-hit distance, hit mask, base voxel index and field value from the tape, and
-carries derivatives to `values`, `position`, `rotation`, `scale`, `origins` and
-`directions` through the partials of `F` at that frozen hit.
-
-Interpolation choice: the trilinear gather is written out by hand rather than
-delegated to `torch.nn.functional.grid_sample(..., align_corners=True)`. The two
-agree to float64 round-off, which `test_sdf_reference.py` pins, but the manual
-form is the exact ADR-0037 expression while `grid_sample` is only equivalent to
-it. Three differences decide it: ADR-0037 clamps `u` to `[0, N_i - 1]` before the
-base/fraction split, whereas `grid_sample` clamps normalized coordinates through
-`padding_mode`; ADR-0037 freezes the base voxel index on the tape, whereas
-`grid_sample` re-derives a winner from the coordinate it is handed; and the
-normal and the IFT denominator need the analytic index-space gradient `dD/du`,
-which the manual weights give in closed form and `grid_sample` would only expose
-through a double-backward graph. The `[N, C, D, H, W]` layout of `grid_sample`
-additionally reverses the axis order of `values`, which is an avoidable way to
-get the mapping wrong.
-"""
+"""Provides the pure-PyTorch SDF intersection test oracle."""
 
 from __future__ import annotations
 
@@ -49,7 +24,7 @@ DEFAULT_MAX_STEPS = 64
 
 @dataclass(frozen=True)
 class SdfGridRef:
-    """Caller-owned dense field placed in the world by an oriented box."""
+    """Provides the pure-PyTorch SDF intersection test oracle."""
 
     values: Tensor  # [Nx, Ny, Nz], vertex-centred, negative inside
     position: Tensor  # [3], world centre of the box
@@ -67,7 +42,7 @@ class SdfGridRef:
 
 @dataclass(frozen=True)
 class TraceConfig:
-    """Caller march parameters. None of these is differentiable."""
+    """Provides the pure-PyTorch SDF intersection test oracle."""
 
     tmax: float = float("inf")
     max_steps: int = DEFAULT_MAX_STEPS
@@ -77,13 +52,7 @@ class TraceConfig:
 
 @dataclass(frozen=True)
 class Tape:
-    """Frozen discrete decisions of one march.
-
-    `t`, `hit`, `base` and `value` are the ADR-0037 tape (`value` is the field
-    sample at the frozen hit, which the reattachment needs as a constant).
-    `bisected` is a reference-only diagnostic so the tests can prove the
-    bisection branch is exercised; it carries no contract.
-    """
+    """Provides the pure-PyTorch SDF intersection test oracle."""
 
     t: Tensor  # [N] frozen hit distance
     hit: Tensor  # [N] bool
@@ -95,7 +64,7 @@ class Tape:
 
 @dataclass(frozen=True)
 class SdfIntersectionRef:
-    """ADR-0037 section 5 result. Missed lanes are bitwise inert."""
+    """Provides the pure-PyTorch SDF intersection test oracle."""
 
     t: Tensor  # [N], `+inf` on miss
     hit_mask: Tensor  # [N] bool

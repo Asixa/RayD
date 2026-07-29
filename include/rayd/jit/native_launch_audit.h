@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares the Dr.Jit native launch audit API.
+
 #pragma once
 
 #include <cstdint>

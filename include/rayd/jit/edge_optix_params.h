@@ -1,8 +1,11 @@
+// Copyright Xingyu Chen.
+// Declares the Dr.Jit edge optix params API.
+
 #pragma once
 
 #include <cstdint>
 
-#include <rayd/detail/edge/optix_contracts.h>
+#include <rayd/edge/optix_contracts.h>
 
 namespace rayd {
 

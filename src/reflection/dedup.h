@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal reflection support for dedup.
+
 #pragma once
 
 namespace rayd::torch_backend {

@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests warmup.
+
 import threading
 import unittest
 from unittest import mock

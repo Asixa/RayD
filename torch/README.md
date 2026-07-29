@@ -91,7 +91,7 @@ Native downstream projects built in the same CMake/LibTorch graph use the
 versioned typed C++ surface in `rayd/integration.h`; they do not load a
 second RayD Python extension or use a dynamic symbol registry. Solver-neutral
 transmission and scattering device math is exposed through
-`rayd/detail/transmission/` and `rayd/detail/scattering_table.cuh`. Torch-specific
+`rayd/transmission/` and `rayd/scattering_table.cuh`. Torch-specific
 cross-concept field AD helpers live at `src/field_transport/ad.cuh`.
 
 The `rayd-torch` wheel also carries a relocatable source bundle at

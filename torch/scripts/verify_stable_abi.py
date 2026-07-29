@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Supports the Torch package's verify stable abi workflow.
+
 from __future__ import annotations
 
 import argparse

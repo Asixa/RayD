@@ -1,15 +1,7 @@
-"""ADR-0037 guard: the SDF intersection decision record is complete and consistent.
+# Copyright Xingyu Chen.
+# Tests sdf intersection.
 
-The record is the only place the representation, the frozen-winner AD contract,
-the grazing clamp and the miss sentinel are written down in full, so this suite
-checks it against itself, against the plan it governs, against the shared
-contracts that now declare the operation, and against the constants the shipped
-code actually compiles. A record that drifts from any of those is a record that
-has stopped describing the primitive.
-
-Prose assertions run on whitespace-flattened text so that reflowing a paragraph
-is not a test failure; assertions that parse table rows keep the raw text.
-"""
+"""Checks the SDF intersection contract against the implementation."""
 
 from __future__ import annotations
 
@@ -28,9 +20,9 @@ OPERATIONS_PATH = ROOT / "contracts" / "operations.json"
 PUBLIC_API_PATH = ROOT / "contracts" / "public_api.json"
 COMPILE_POLICY_PATH = ROOT / "contracts" / "compile_policy.json"
 SPHERE_TRACE_PATH = (
-    ROOT / "include" / "rayd" / "detail" / "sdf" / "sphere_trace.h"
+    ROOT / "include" / "rayd" / "sdf" / "sphere_trace.h"
 )
-DEVICE_MATH_PATH = ROOT / "src" / "sdf" / "device_math.cuh"
+DEVICE_MATH_PATH = ROOT / "src" / "sdf" / "derivatives.cuh"
 TORCH_PACKAGE = ROOT / "python" / "rayd" / "_impl"
 CAPABILITY_MODULES = {
     "drjit": ROOT / "python" / "rayd" / "_impl" / "capabilities_jit.py",
@@ -45,7 +37,7 @@ def read(path: Path) -> str:
 
 
 def cpp_constant(text: str, name: str) -> float:
-    """The value of `inline constexpr <type> <name> = <value>;`, as a float."""
+    """Checks the SDF intersection contract against the implementation."""
     match = re.search(rf"constexpr\s+\w+\s+{re.escape(name)}\s*=\s*([^;]+);", text)
     if match is None:
         raise AssertionError(f"no constexpr definition of {name!r}")
@@ -64,7 +56,7 @@ def flat(text: str) -> str:
 
 
 def sections(text: str, level: int) -> dict[str, str]:
-    """Map heading title -> body for every heading at exactly `level` hashes."""
+    """Checks the SDF intersection contract against the implementation."""
     marker = "#" * level + " "
     found: dict[str, str] = {}
     title: str | None = None
@@ -227,9 +219,7 @@ class Adr0037AlgorithmTests(AdrTestCase):
             self.assertPhrase(rule, self.march)
 
     def test_the_step_is_clamped_so_no_hit_can_land_outside_the_interval(self) -> None:
-        """A sign flip found past `t_hi` would be read off the extrapolated
-        interpolant and could report a hit beyond `tmax`. The step clamp, and the
-        rule-3 test on the unclamped target, are what exclude that."""
+        """Checks the SDF intersection contract against the implementation."""
         for pinned in (
             "t_k+1   = min(t_raw_k, t_hi)",
             "The step is clamped to `t_hi` before it is sampled",
@@ -333,7 +323,7 @@ class Adr0037OutputAndAdTests(AdrTestCase):
 
 
 class Adr0037NumericConstantTests(AdrTestCase):
-    """The reused epsilons must equal the values the shared contract already owns."""
+    """Checks the SDF intersection contract against the implementation."""
 
     def setUp(self) -> None:
         self.constants = sections(read(ADR_PATH), 3)["7. Numeric constants"]
@@ -482,7 +472,7 @@ class Adr0037ScopeTests(AdrTestCase):
 
 
 class Adr0037PlanConsistencyTests(AdrTestCase):
-    """The record must not contradict the plan it was written from."""
+    """Checks the SDF intersection contract against the implementation."""
 
     def setUp(self) -> None:
         self.adr = read(ADR_PATH)
@@ -506,7 +496,7 @@ class Adr0037PlanConsistencyTests(AdrTestCase):
 
 
 class Adr0037ContractStateTests(AdrTestCase):
-    """The shared contracts declare exactly what section 9 and the impact list say."""
+    """Checks the SDF intersection contract against the implementation."""
 
     def setUp(self) -> None:
         self.public_api = json.loads(read(PUBLIC_API_PATH))
@@ -549,7 +539,7 @@ class Adr0037ContractStateTests(AdrTestCase):
 
 
 class Adr0037OperationContractTests(AdrTestCase):
-    """`operations.sdf_intersect` must restate the record, not paraphrase it."""
+    """Checks the SDF intersection contract against the implementation."""
 
     def setUp(self) -> None:
         self.operations = json.loads(read(OPERATIONS_PATH))
@@ -640,7 +630,7 @@ class Adr0037OperationContractTests(AdrTestCase):
 
 
 class Adr0037CodeConstantTests(AdrTestCase):
-    """The numbers the record fixes are the numbers the code compiles."""
+    """Checks the SDF intersection contract against the implementation."""
 
     def setUp(self) -> None:
         self.constants = sections(read(ADR_PATH), 3)["7. Numeric constants"]
@@ -684,7 +674,7 @@ class Adr0037CodeConstantTests(AdrTestCase):
 
 
 class Adr0037CapabilityModuleTests(AdrTestCase):
-    """Both runtime capability copies gained the key, and ADR-0036 was amended."""
+    """Checks the SDF intersection contract against the implementation."""
 
     def setUp(self) -> None:
         self.sources = {

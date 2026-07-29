@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Benchmarks benchmark support.
+
 import argparse
 import gc
 import json

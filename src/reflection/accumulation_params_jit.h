@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal reflection support for accumulation params Dr.Jit.
+
 #pragma once
 
 #include <cstdint>

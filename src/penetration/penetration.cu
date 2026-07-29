@@ -1,6 +1,9 @@
+// Copyright Xingyu Chen.
+// Implements penetration support for penetration.
+
 #include <src/penetration/segment_penetration_kernels.h>
 
-#include <src/runtime/math.cuh>
+#include <rayd/math.h>
 #include <src/runtime/optix_context.h>
 #include <src/penetration/segment_penetration_params.h>
 

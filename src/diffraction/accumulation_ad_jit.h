@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal diffraction support for accumulation ad Dr.Jit.
+
 #pragma once
 
 #include <cstdint>

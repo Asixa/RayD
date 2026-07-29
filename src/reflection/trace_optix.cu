@@ -1,9 +1,12 @@
+// Copyright Xingyu Chen.
+// Implements reflection support for trace optix.
+
 #include <optix.h>
 #include <optix_device.h>
 
 #include <src/reflection/trace_params.h>
-#include <rayd/detail/reflection/optix_hit.h>
-#include <rayd/detail/reflection/trace_optix_device.cuh>
+#include <rayd/reflection/optix_hit.h>
+#include <rayd/reflection/trace_optix_device.cuh>
 
 namespace rayd::torch_backend {
 

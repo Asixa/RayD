@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests edge bvh benchmark contract.
+
 import copy
 import unittest
 

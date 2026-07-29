@@ -1,24 +1,16 @@
-// Host-compile smoke for the migrated multipath algorithm headers (P4 key gate).
-//
-// This translation unit is compiled by tests/test_rt_host_compile.py with a pure
-// host C++ compiler (cl.exe / g++), no CUDA or OptiX device compiler. It proves
-// that the de-CUDA-ised algorithm bodies parse and fully type-check off-device:
-// they must spell no optixTrace / payload register / launch index, and every ray
-// cast must go through the rt::Traverser concept, which a plain host struct can
-// satisfy. `<vector_types.h>` (a header-only POD from the CUDA toolkit, pulled in
-// by reflection_trace_params.h for the optional packed-triangle inputs) is the
-// only CUDA include on the host path.
+// Copyright Xingyu Chen.
+// Exercises rt host compile smoke in a native smoke test.
 
 #include <cstdint>
 
-#include <rayd/detail/diffraction/paths_algo.h>
-#include <rayd/detail/diffraction/accumulation_algo.h>
-#include <rayd/detail/reflection/accumulation_algo.h>
-#include <rayd/detail/reflection/epc_algo.h>
-#include <rayd/detail/reflection/trace_algo.h>
-#include <rayd/detail/visibility/segment_algo.h>
-#include <rayd/detail/rt/qualifiers.h>
-#include <rayd/detail/rt/traverser.h>
+#include <rayd/diffraction/paths_algo.h>
+#include <rayd/diffraction/accumulation_algo.h>
+#include <rayd/reflection/accumulation_algo.h>
+#include <rayd/reflection/epc_algo.h>
+#include <rayd/reflection/trace_algo.h>
+#include <rayd/visibility/segment_algo.h>
+#include <rayd/rt/qualifiers.h>
+#include <rayd/rt/traverser.h>
 
 namespace {
 

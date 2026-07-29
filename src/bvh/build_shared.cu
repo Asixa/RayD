@@ -1,30 +1,17 @@
-#include <rayd/detail/bvh/build.h>
-#include <rayd/detail/bvh/refit.h>
+// Copyright Xingyu Chen.
+// Implements bvh support for build shared.
+
+#include <rayd/bvh/build.h>
+#include <rayd/bvh/refit.h>
 
 namespace rayd::shared::bvh {
 namespace {
 
 constexpr int kBlockSize = 256;
 
-__host__ __device__ inline BvhFloat3 min3(const BvhFloat3 &a, const BvhFloat3 &b) {
-    return { fminf(a.x, b.x), fminf(a.y, b.y), fminf(a.z, b.z) };
-}
-
-__host__ __device__ inline BvhFloat3 max3(const BvhFloat3 &a, const BvhFloat3 &b) {
-    return { fmaxf(a.x, b.x), fmaxf(a.y, b.y), fmaxf(a.z, b.z) };
-}
-
-__host__ __device__ inline BvhFloat3 add3(const BvhFloat3 &a, const BvhFloat3 &b) {
-    return { a.x + b.x, a.y + b.y, a.z + b.z };
-}
-
-__host__ __device__ inline BvhFloat3 mul3(const BvhFloat3 &a, float scale) {
-    return { a.x * scale, a.y * scale, a.z * scale };
-}
-
 __host__ __device__ inline BvhBounds3 merge_bounds(const BvhBounds3 &a,
                                                     const BvhBounds3 &b) {
-    return { min3(a.min, b.min), max3(a.max, b.max) };
+    return { math::component_min(a.min, b.min), math::component_max(a.max, b.max) };
 }
 
 __device__ inline BvhBounds3 empty_bounds() {
@@ -280,7 +267,7 @@ __global__ void compute_morton_codes_kernel(MortonCodeParams params) {
     if (primitive >= static_cast<int>(params.primitive_bounds.count)) return;
     const BvhBounds3 bounds = load_bounds(primitive, params.primitive_bounds);
     params.morton_codes[primitive] =
-        morton_code_3d(mul3(add3(bounds.min, bounds.max), 0.5f), params.scene_bounds);
+        morton_code_3d(math::scale(math::add(bounds.min, bounds.max), 0.5f), params.scene_bounds);
 }
 
 __device__ inline int longest_common_prefix(const std::uint32_t *morton_codes,

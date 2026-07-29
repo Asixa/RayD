@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares the Dr.Jit triangle bvh gpu API.
+
 #pragma once
 
 // Host-callable CUDA orchestration entry points for the pure-CUDA triangle BVH

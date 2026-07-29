@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Benchmarks benchmark multi device.
+
 """Multi-GPU throughput benchmark for `Scene(devices=[...])` (plan Phase 2d).
 
 Run it from the repository root, the same way as `benchmark_torch_native.py`:

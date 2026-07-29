@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Demonstrates surfel fit web image.
+
 import argparse
 import json
 import math

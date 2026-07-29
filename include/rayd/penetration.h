@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares the Torch penetration API.
+
 #pragma once
 
 #include <rayd/scene.h>

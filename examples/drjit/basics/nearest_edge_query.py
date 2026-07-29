@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Demonstrates nearest edge query.
+
 import rayd.drjit as rd
 import drjit as dr
 

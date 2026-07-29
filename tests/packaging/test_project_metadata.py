@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests project metadata.
+
 try:
     import tomllib
 except ModuleNotFoundError:  # Python 3.10

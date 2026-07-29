@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests bvh1 removal.
+
 import json
 import re
 import unittest

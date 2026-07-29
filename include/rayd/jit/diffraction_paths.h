@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares the Dr.Jit diffraction paths API.
+
 #pragma once
 
 #include <type_traits>

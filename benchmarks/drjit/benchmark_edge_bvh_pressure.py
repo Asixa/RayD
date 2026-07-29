@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Benchmarks benchmark edge bvh pressure.
+
 import argparse
 import json
 import math

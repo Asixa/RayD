@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests bvh2 removal.
+
 import unittest
 from pathlib import Path
 

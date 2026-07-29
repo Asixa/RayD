@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Implements shared Python support for runtime Dr.Jit.
+
 import os as _os
 import pathlib as _pathlib
 import sys as _sys

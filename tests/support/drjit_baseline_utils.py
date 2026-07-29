@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests drjit baseline utils.
+
 import json
 import math
 import numbers

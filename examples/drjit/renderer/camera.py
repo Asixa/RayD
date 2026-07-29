@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Demonstrates camera.
+
 from dataclasses import dataclass
 import math
 

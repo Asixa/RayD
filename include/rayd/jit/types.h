@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares the Dr.Jit types API.
+
 #pragma once
 
 #include <cstdint>

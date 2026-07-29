@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements bindings support for library.
+
 #include <src/scene/cache.h>
 #include <src/visibility/visibility.h>
 

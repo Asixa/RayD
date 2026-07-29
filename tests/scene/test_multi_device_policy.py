@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests multi device policy.
+
 """Policy and memory contracts for replicated multi-device execution.
 
 These tests deliberately exercise the Python policy layer without constructing

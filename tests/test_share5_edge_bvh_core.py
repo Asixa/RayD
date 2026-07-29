@@ -1,15 +1,18 @@
+# Copyright Xingyu Chen.
+# Tests share5 edge bvh core.
+
 import re
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARED_INCLUDE = ROOT / "include/rayd/detail/edge"
+SHARED_INCLUDE = ROOT / "include/rayd/edge"
 SHARED_SOURCE = ROOT / "src/edge"
 # P3 Stage A moved the primitive-agnostic BVH machinery into shared/bvh/. The
 # edge headers now re-export it, so the pins below live on the new locations and
 # additionally assert that the edge layer keeps delegating to the core.
-BVH_CORE_INCLUDE = ROOT / "include/rayd/detail/bvh"
+BVH_CORE_INCLUDE = ROOT / "include/rayd/bvh"
 BVH_CORE_SOURCE = ROOT / "src/bvh"
 
 

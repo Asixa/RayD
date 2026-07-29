@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements scene support for scene.
+
 #include <src/scene/cache.h>
 #include <src/scene/cache_kernels.h>
 #include <src/bindings/tensor_contract.h>
@@ -290,9 +293,9 @@ SceneEdgeRecordsResult scene_edge_records(const SceneResource &scene) {
 #include <src/edge/bvh.h>
 #include <src/scene/cache_kernels.h>
 #include <src/scene/triangle_bvh.h>
-#include <rayd/detail/bvh/build.h>
-#include <rayd/detail/bvh/host_topology.h>
-#include <rayd/detail/edge/bvh_build.h>
+#include <rayd/bvh/build.h>
+#include <rayd/bvh/host_topology.h>
+#include <rayd/edge/bvh_build.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>

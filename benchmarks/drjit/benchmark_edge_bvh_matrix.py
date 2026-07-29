@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Benchmarks benchmark edge bvh matrix.
+
 """Run the reproducible BVH-0 edge benchmark matrix.
 
 The public mode orchestrates the one-factor coverage suite declared in

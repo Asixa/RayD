@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements reflection support for reflection Dr.Jit.
+
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>

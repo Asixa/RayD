@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests stable camera.
+
 from __future__ import annotations
 
 import os

@@ -1,5 +1,5 @@
-
-
+// Copyright Xingyu Chen.
+// Implements scattering support for table.
 
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
@@ -10,7 +10,7 @@
 #include <rayd/scattering.h>
 
 #include "scattering_internal.cuh"
-#include <rayd/detail/scattering_table.cuh>
+#include <rayd/scattering_table.cuh>
 
 namespace {
 

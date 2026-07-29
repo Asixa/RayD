@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements reflection support for reflection.
+
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -2533,7 +2536,7 @@ ReflectionEpcJvpResult reflection_epc_paths_jvp(
 #include <src/reflection/accum_params.h>
 #include <src/reflection/epc_params.h>
 #include <src/reflection/trace_params.h>
-#include <rayd/detail/rt/optix_pipeline_contracts.h>
+#include <rayd/rt/optix_pipeline_contracts.h>
 #include <rayd/reflection/accumulation_torch_ptx.h>
 #include <rayd/reflection/epc_torch_ptx.h>
 #include <rayd/reflection/trace_torch_ptx.h>

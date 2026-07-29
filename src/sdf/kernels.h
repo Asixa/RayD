@@ -1,13 +1,11 @@
+// Copyright Xingyu Chen.
+// Declares internal sdf support for kernels.
+
 #pragma once
 
 #include <ATen/ATen.h>
 
-// Torch-backend launcher surface for the ADR-0037 differentiable SDF ray
-// intersection. Three entry points, one translation unit each for the primal
-// and the two derivatives, no dispatcher and no second implementation.
-//
-// The primitive is standalone: it takes caller-owned grid and placement
-// tensors, never a `SceneCache`, and never touches OptiX.
+// Declares the standalone Torch launchers for SDF primal and derivative passes.
 
 namespace rayd::torch_backend {
 

@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Tests segment penetration test.
+
 #include <rayd/integration.h>
 
 #include <ATen/ATen.h>

@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal scattering support for scattering internal.
+
 #pragma once
 
 #include <rayd/scattering.h>

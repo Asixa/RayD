@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests namespace isolation.
+
 import json
 import subprocess
 import sys

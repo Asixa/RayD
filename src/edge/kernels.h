@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal edge support for kernels.
+
 #pragma once
 
 #include <ATen/ATen.h>

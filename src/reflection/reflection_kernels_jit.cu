@@ -1,5 +1,8 @@
+// Copyright Xingyu Chen.
+// Implements reflection support for reflection kernels Dr.Jit.
+
 #include <src/reflection/dedup_jit.h>
-#include <rayd/detail/reflection/dedup.h>
+#include <rayd/reflection/dedup.h>
 
 #include <cuda_runtime.h>
 #include <cub/cub.cuh>
@@ -414,8 +417,8 @@ int reflection_dedup_gpu(
 
 // Consolidated reflection EPC field kernels.
 #include <src/reflection/epc_field_jit.h>
-#include <rayd/detail/contracts.h>
-#include <rayd/detail/field_math.h>
+#include <rayd/contracts.h>
+#include <rayd/math.h>
 
 #include <cuda_runtime.h>
 
@@ -435,39 +438,7 @@ constexpr float kPi = 3.14159265358979323846f;
 
 using namespace shared::field;
 
-static __forceinline__ __device__ float3 make_vec3(float x, float y, float z) {
-    return make_float3(x, y, z);
-}
-
-static __forceinline__ __device__ float3 operator-(float3 a, float3 b) {
-    return make_vec3(a.x - b.x, a.y - b.y, a.z - b.z);
-}
-
-static __forceinline__ __device__ float3 operator*(float s, float3 v) {
-    return make_vec3(s * v.x, s * v.y, s * v.z);
-}
-
-static __forceinline__ __device__ float dot3(float3 a, float3 b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-static __forceinline__ __device__ float3 cross(float3 a, float3 b) {
-    return make_vec3(a.y * b.z - a.z * b.y,
-                     a.z * b.x - a.x * b.z,
-                     a.x * b.y - a.y * b.x);
-}
-
-static __forceinline__ __device__ float norm3(float3 v) {
-    return sqrtf(fmaxf(dot3(v, v), 0.0f));
-}
-
-static __forceinline__ __device__ float3 normalize3(float3 v) {
-    const float len2 = dot3(v, v);
-    if (!(len2 > 1e-12f) || !isfinite(len2)) {
-        return make_vec3(0.f, 0.f, 0.f);
-    }
-    return rsqrtf(len2) * v;
-}
+using namespace shared::cuda_math;
 
 static __forceinline__ __device__ bool slot_reflection_coefficients(
     const ReflEpcFieldParams params,
@@ -514,14 +485,14 @@ static __forceinline__ __device__ void store_zero_field(
                   (P).tx_pol_z[tx_pol_index]);
 #define RAYD_REFL_EPC_STORE_FIELD(P, RAY, FIELD)            \
     (P).out_valid[(RAY)] = 1u;                              \
-    (P).out_field_x_re[(RAY)] = (FIELD).x.r;                \
-    (P).out_field_x_im[(RAY)] = (FIELD).x.i;                \
-    (P).out_field_y_re[(RAY)] = (FIELD).y.r;                \
-    (P).out_field_y_im[(RAY)] = (FIELD).y.i;                \
-    (P).out_field_z_re[(RAY)] = (FIELD).z.r;                \
-    (P).out_field_z_im[(RAY)] = (FIELD).z.i;
+    (P).out_field_x_re[(RAY)] = (FIELD).x.re;                \
+    (P).out_field_x_im[(RAY)] = (FIELD).x.im;                \
+    (P).out_field_y_re[(RAY)] = (FIELD).y.re;                \
+    (P).out_field_y_im[(RAY)] = (FIELD).y.im;                \
+    (P).out_field_z_re[(RAY)] = (FIELD).z.re;                \
+    (P).out_field_z_im[(RAY)] = (FIELD).z.im;
 
-#include <rayd/detail/reflection/epc_field_device.cuh>
+#include <rayd/reflection/epc_field_device.cuh>
 
 void check_epc_field_cuda_call(cudaError_t error, const char *message) {
     require(error == cudaSuccess,

@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Benchmarks benchmark sionna rt multipath.
+
 import argparse
 import importlib.metadata
 import json

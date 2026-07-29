@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests scattering ownership.
+
 import re
 import unittest
 from pathlib import Path

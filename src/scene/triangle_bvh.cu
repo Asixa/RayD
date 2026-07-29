@@ -1,8 +1,11 @@
+// Copyright Xingyu Chen.
+// Implements scene support for triangle bvh.
+
 #include <src/scene/triangle_bvh.h>
 
 #include <src/scene/cache.h>
-#include <rayd/detail/bvh/triangle_query.h>
-#include <rayd/detail/contracts.h>
+#include <rayd/bvh/triangle_query.h>
+#include <rayd/contracts.h>
 
 #include <cuda_runtime.h>
 

@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests distributed recipe.
+
 """The process-per-GPU recipes under `examples/torch/distributed`.
 
 The examples are the documented multi-GPU route for the Dr.Jit backend and the

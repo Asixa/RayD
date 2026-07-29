@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests numeric policy contract.
+
 import json
 import re
 import unittest
@@ -5,8 +8,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CONTRACTS_H = ROOT / "include" / "rayd" / "detail" / "contracts.h"
-POLICY_H = ROOT / "include" / "rayd" / "detail" / "rt" / "numeric_policy.h"
+CONTRACTS_H = ROOT / "include" / "rayd" / "contracts.h"
+POLICY_H = ROOT / "include" / "rayd" / "rt" / "numeric_policy.h"
 OPERATIONS = json.loads(
     (ROOT / "contracts" / "operations.json").read_text(encoding="utf-8")
 )

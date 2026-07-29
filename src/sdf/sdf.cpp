@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Implements sdf support for sdf.
+
 #include <src/sdf/kernels.h>
 #include <src/bindings/tensor_contract.h>
 

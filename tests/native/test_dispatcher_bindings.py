@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Exercises dispatcher bindings in a native smoke test.
+
 import subprocess
 import sys
 import unittest

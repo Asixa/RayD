@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests device binding Dr.Jit.
+
 import json
 import subprocess
 import sys

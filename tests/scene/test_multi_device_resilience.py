@@ -1,3 +1,6 @@
+# Copyright Xingyu Chen.
+# Tests multi device resilience.
+
 """Failure-atomicity gates for replicated multi-device execution."""
 
 import ast

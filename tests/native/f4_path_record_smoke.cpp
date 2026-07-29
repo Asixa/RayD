@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Exercises f4 path record smoke in a native smoke test.
+
 #include <rayd/path_exchange.h>
 
 using namespace rayd::shared::multipath;

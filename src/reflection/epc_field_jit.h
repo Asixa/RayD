@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal reflection support for epc field Dr.Jit.
+
 #pragma once
 
 #include <cstdint>

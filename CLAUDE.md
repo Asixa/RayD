@@ -22,7 +22,7 @@ The repository root is a meta-distribution and builds no native code. Build a ba
 
 - `include/rayd/*.h`: flat default Torch typed API plus the backend-neutral `path_exchange.h` contract
 - `include/rayd/jit/*.h`, `src/**/*_jit.*`: flat Dr.Jit C++ API and its CUDA/OptiX implementations
-- `include/rayd/detail/`, `src/**/*_shared.*`: backend-neutral contracts, math, edge BVH core, and accumulation kernels; only multi-file modules retain subdirectories
+- `include/rayd/`, `src/**/*_shared.*`: backend-neutral contracts, math, edge BVH core, and accumulation kernels; only multi-file modules retain subdirectories
 - `contracts/`: machine-readable public API and operation manifests
 - `Scene`: mesh container plus OptiX acceleration structure
 - `Mesh`: raw triangle mesh input, transforms, edge topology, secondary edge query data
@@ -48,7 +48,7 @@ metadata, and public results.
 
 - Declarations have one owner in
   `include/rayd/scattering.h`; shared table device math
-  has one owner in `include/rayd/detail/scattering_table.cuh`.
+  has one owner in `include/rayd/scattering_table.cuh`.
 - Move every family complete. Do not split primal from backward/JVP, copy a
   Channel implementation/header, include Channel private headers, or add a
   second Python extension/dispatcher.
@@ -276,6 +276,15 @@ bind it to Python or the legacy dispatcher. Activation requires an atomic
 downstream pin, switch, parity proof, and deletion of the former numerical
 owner.
 
+## Source Layout, Math Ownership, and File Headers
+
+- `include/rayd/` has no `detail/` container. Public Torch headers and small shared single-file modules live at the root; multi-file concepts use one direct concept directory; Dr.Jit public headers live only in `include/rayd/jit/`.
+- `include/rayd/math.h` is the sole owner of reusable math primitives and functions. It owns vector, complex, dual-scalar, matrix, quaternion, CUDA `float3`, and common scalar/vector operations used by more than one implementation.
+- Do not redeclare simple math types or primitive operations in concept files. Use `math.h` directly or introduce a local type alias when a domain name improves readability. Domain files may own domain records and algorithms whose meaning is not generic math.
+- Production files under `include/` and `src/` must not use another filename containing `math`; choose a domain responsibility such as `utd.h`, `edge_distance.h`, or `derivatives.cuh`.
+- Every maintained Python, C, C++, CUDA source, and header starts with `Copyright Xingyu Chen.` followed by one plain-English sentence describing the file. Use `#` for Python and `//` for native code, keep the sentence concise, and do not put an ADR identifier in the file header.
+- Generated headers under `generated/` are exempt from manual file headers. Regenerate them from their governed sources instead of editing them by hand.
+- `tests/test_source_file_standards.py` enforces these rules. Update the implementation and the test together when the maintained source surface changes.
 ## Tests
 
 ```bash

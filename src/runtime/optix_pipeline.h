@@ -1,3 +1,6 @@
+// Copyright Xingyu Chen.
+// Declares internal runtime support for optix pipeline.
+
 #pragma once
 
 #include <ATen/ATen.h>

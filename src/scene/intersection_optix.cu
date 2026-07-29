@@ -1,6 +1,9 @@
+// Copyright Xingyu Chen.
+// Implements scene support for intersection optix.
+
 #include <src/scene/optix_intersect_params.h>
-#include <rayd/detail/contracts.h>
-#include <rayd/detail/scene/optix_device.cuh>
+#include <rayd/contracts.h>
+#include <rayd/scene/optix_device.cuh>
 
 #include <optix_device.h>
 
