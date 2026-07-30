@@ -472,8 +472,19 @@ jobs:
           $wheel = (Get-ChildItem "$env:GITHUB_WORKSPACE/dist/$backend/*.whl").FullName
           python -m pip install --no-deps --force-reinstall $wheel
           $nativeExit=$LASTEXITCODE; if ($nativeExit -ne 0) { exit $nativeExit }
+          if ($backend -eq "drjit") {
+            $disabledLlvm = Join-Path $env:RUNNER_TEMP "rayd-drjit-disabled-llvm-does-not-exist.dll"
+            if (Test-Path -LiteralPath $disabledLlvm) {
+              throw "Expected the Dr.Jit LLVM isolation path to be absent: $disabledLlvm"
+            }
+            $env:DRJIT_LIBLLVM_PATH = $disabledLlvm
+          }
           python -I "$env:GITHUB_WORKSPACE/tests/packaging/wheel_lifecycle_smoke.py" installed $backend
-          $nativeExit=$LASTEXITCODE; if ($nativeExit -ne 0) { exit $nativeExit }
+          $nativeExit=$LASTEXITCODE
+          if ($backend -eq "drjit") {
+            Remove-Item Env:DRJIT_LIBLLVM_PATH
+          }
+          if ($nativeExit -ne 0) { exit $nativeExit }
           python -m pip uninstall -y "rayd-$backend"
           $nativeExit=$LASTEXITCODE; if ($nativeExit -ne 0) { exit $nativeExit }
           python -I "$env:GITHUB_WORKSPACE/tests/packaging/wheel_lifecycle_smoke.py" absent $backend

@@ -17,6 +17,7 @@ PREFLIGHT = ROOT / "tests" / "support" / "single_gpu_ci_preflight.py"
 WHEEL_SMOKE = ROOT / "tests" / "packaging" / "wheel_lifecycle_smoke.py"
 FIELD_PARITY = ROOT / "tests" / "parity" / "test_share2_ad.py"
 TORCH_BUILD_CONSTRAINT = ROOT / ".github" / "constraints" / "torch-build.txt"
+CI_BUILD_MATRIX = ROOT / "docs" / "dev" / "ci_build_matrix.md"
 
 
 class GpuCiContractTests(unittest.TestCase):
@@ -28,6 +29,7 @@ class GpuCiContractTests(unittest.TestCase):
         cls.hosted = HOSTED.read_text(encoding="utf-8")
         cls.preflight = PREFLIGHT.read_text(encoding="utf-8")
         cls.wheel_smoke = WHEEL_SMOKE.read_text(encoding="utf-8")
+        cls.ci_build_matrix = CI_BUILD_MATRIX.read_text(encoding="utf-8")
 
     def test_single_gpu_workflow_has_label_manual_and_scheduled_routes(self) -> None:
         self.assertIn("\n  pull_request:\n    types: [labeled]", self.single_gpu)
@@ -169,7 +171,7 @@ class GpuCiContractTests(unittest.TestCase):
             "  test-stable-torch-abi:", 1
         )[0]
 
-        self.assertEqual(windows.count(fail_fast), 14)
+        self.assertEqual(windows.count(fail_fast), 13)
         self.assertEqual(compatibility.count(fail_fast), 6)
 
         windows_command_tails = (
@@ -182,7 +184,6 @@ class GpuCiContractTests(unittest.TestCase):
             "python torch/scripts/verify_stable_abi.py --source-root src $wheel",
             "python torch/scripts/verify_driver_independence.py $wheel",
             "python -m pip install --no-deps --force-reinstall $wheel",
-            'python -I "$env:GITHUB_WORKSPACE/tests/packaging/wheel_lifecycle_smoke.py" installed $backend',
             'python -m pip uninstall -y "rayd-$backend"',
             'python -I "$env:GITHUB_WORKSPACE/tests/packaging/wheel_lifecycle_smoke.py" absent $backend',
         )
@@ -208,6 +209,39 @@ class GpuCiContractTests(unittest.TestCase):
             with self.subTest(workflow=name):
                 self.assertIn('"nanobind==2.11.0" "drjit==1.3.1"', workflow)
                 self.assertNotIn('"nanobind==2.9.2" "drjit==1.3.1"', workflow)
+
+    def test_windows_drjit_lifecycle_isolates_upstream_llvm_shutdown_bug(self) -> None:
+        windows = self.release.split("  build-windows-wheels:", 1)[1].split(
+            "  test-torch-full-wheel-compatibility:", 1
+        )[0]
+        expected_block = "\n".join(
+            (
+                '          if ($backend -eq "drjit") {',
+                '            $disabledLlvm = Join-Path $env:RUNNER_TEMP "rayd-drjit-disabled-llvm-does-not-exist.dll"',
+                "            if (Test-Path -LiteralPath $disabledLlvm) {",
+                '              throw "Expected the Dr.Jit LLVM isolation path to be absent: $disabledLlvm"',
+                "            }",
+                "            $env:DRJIT_LIBLLVM_PATH = $disabledLlvm",
+                "          }",
+                '          python -I "$env:GITHUB_WORKSPACE/tests/packaging/wheel_lifecycle_smoke.py" installed $backend',
+                "          $nativeExit=$LASTEXITCODE",
+                '          if ($backend -eq "drjit") {',
+                "            Remove-Item Env:DRJIT_LIBLLVM_PATH",
+                "          }",
+                "          if ($nativeExit -ne 0) { exit $nativeExit }",
+            )
+        )
+
+        self.assertIn(expected_block, windows)
+        self.assertEqual(self.release.count("DRJIT_LIBLLVM_PATH"), 2)
+        self.assertNotIn("os._exit", windows)
+        self.assertNotIn("diagnostic only", windows)
+        self.assertNotIn("upstream Dr.Jit-only lifecycle baseline", windows)
+        normalized_docs = " ".join(self.ci_build_matrix.split())
+        self.assertIn("LLVM 20.1.8 runtime", normalized_docs)
+        self.assertIn("LLVM #156052", normalized_docs)
+        self.assertIn("`DRJIT_LIBLLVM_PATH` to a checked-nonexistent file", normalized_docs)
+        self.assertIn("without changing or swallowing the RayD probe's exit code", normalized_docs)
 
     def test_windows_release_matrix_installs_imports_and_removes_each_built_wheel(self) -> None:
         self.assertIn("Validate wheel install and uninstall lifecycle", self.release)

@@ -68,6 +68,16 @@ also requires both the legacy dispatcher and Stable ABI operator sets to be
 registered. This per-wheel check complements the final merged-wheel install
 order and namespace-coexistence matrix.
 
+The affected Windows runner's active LLVM 20.1.8 runtime has a known TLS-cleanup access
+violation when an otherwise standalone Dr.Jit 1.3.1 process exits
+([Dr.Jit #356](https://github.com/mitsuba-renderer/drjit/issues/356),
+[LLVM #156052](https://github.com/llvm/llvm-project/issues/156052)). For the
+RayD CUDA-only lifecycle subprocess, the release job sets
+`DRJIT_LIBLLVM_PATH` to a checked-nonexistent file and removes the variable
+immediately afterward. This isolates the unrelated LLVM backend without
+changing or swallowing the RayD probe's exit code; CUDA and OptiX execution
+remain covered by the self-hosted GPU acceptance workflows.
+
 Torch native source builds require CUDA Toolkit 11.3 or newer. The legacy
 library resolves `cuCtxGetCurrent` through the CUDA runtime only when an OptiX
 context is requested, so installed-wheel imports have no direct
