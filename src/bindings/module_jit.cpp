@@ -1895,7 +1895,7 @@ NB_MODULE(_C, m) {
                     return scene.trace_refl_epc<true>(ray, receiver, max_bounces, options, active);
                 },
                 nb::arg("ray").noconvert(), nb::arg("receiver"), "max_bounces"_a, "options"_a = nb::none(),
-                "active"_a = rayd::Mask(true))
+                "active"_a = true)
             .def(
                 "trace_refl_epc_field",
                 [](const Scene& scene, nb::handle source_obj, nb::handle receiver_obj, int max_bounces,
@@ -1954,7 +1954,7 @@ NB_MODULE(_C, m) {
                     return scene.trace_refl_epc_field<false>(ray, receiver, max_bounces, options, active);
                 },
                 nb::arg("ray").noconvert(), nb::arg("receiver").noconvert(), "max_bounces"_a, "options"_a,
-                "active"_a = rayd::MaskAD(true))
+                "active"_a = true)
             .def(
                 "trace_refl_epc_field",
                 [](const Scene& scene, const Vector3fAD& tx_position, const Vector3fAD& receiver, int max_bounces,
@@ -1962,23 +1962,21 @@ NB_MODULE(_C, m) {
                     return scene.trace_refl_epc_field<false>(tx_position, receiver, max_bounces, options, active);
                 },
                 nb::arg("tx_position").noconvert(), nb::arg("receiver").noconvert(), "max_bounces"_a, "options"_a,
-                "active"_a = rayd::MaskAD(true))
+                "active"_a = true)
             .def(
                 "trace_refl_epc_field",
                 [](const Scene& scene, const Ray& ray, const Vector3f& receiver, int max_bounces,
                    const ReflEpcFieldOptions& options, rayd::Mask active) {
                     return scene.trace_refl_epc_field<true>(ray, receiver, max_bounces, options, active);
                 },
-                nb::arg("ray").noconvert(), nb::arg("receiver"), "max_bounces"_a, "options"_a,
-                "active"_a = rayd::Mask(true))
+                nb::arg("ray").noconvert(), nb::arg("receiver"), "max_bounces"_a, "options"_a, "active"_a = true)
             .def(
                 "trace_refl_epc_field",
                 [](const Scene& scene, const Vector3f& tx_position, const Vector3f& receiver, int max_bounces,
                    const ReflEpcFieldOptions& options, rayd::Mask active) {
                     return scene.trace_refl_epc_field<true>(tx_position, receiver, max_bounces, options, active);
                 },
-                nb::arg("tx_position"), nb::arg("receiver"), "max_bounces"_a, "options"_a,
-                "active"_a = rayd::Mask(true))
+                nb::arg("tx_position"), nb::arg("receiver"), "max_bounces"_a, "options"_a, "active"_a = true)
             .def(
                 "accumulate_reflections",
                 [](const Scene& scene, nb::handle ray_obj, nb::handle tx_position_obj, const AccumGrid& grid,
@@ -2007,7 +2005,7 @@ NB_MODULE(_C, m) {
                     throw nb::next_overload();
                 },
                 nb::arg("ray"), nb::arg("tx_position"), "grid"_a, "material"_a, "max_bounces"_a,
-                "options"_a = AccumOptions(), "active"_a = true, "tx_polarization"_a = Vector3f(1.f, 0.f, 0.f))
+                "options"_a = AccumOptions(), "active"_a = true, "tx_polarization"_a = nb::make_tuple(1.f, 0.f, 0.f))
             .def(
                 "accum_dfr_direct",
                 [](const Scene& scene, nb::handle states_obj, const DfrGrid& grid, nb::handle material_obj,

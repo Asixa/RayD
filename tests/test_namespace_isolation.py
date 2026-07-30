@@ -2,6 +2,7 @@
 # Tests namespace isolation.
 
 import json
+import os
 import subprocess
 import sys
 import unittest
@@ -43,6 +44,35 @@ assert b.backend_capabilities()["backend"] == {order[1].split(".")[-1]!r}
     def test_drjit_backend_does_not_import_torch(self):
         result = run_script("import rayd.drjit; import sys; assert 'torch' not in sys.modules")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_drjit_import_does_not_require_a_visible_cuda_device(self):
+        env = os.environ.copy()
+        env["CUDA_VISIBLE_DEVICES"] = "-1"
+        env["RAYD_DISABLE_OPTIX"] = "1"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                """
+import rayd.drjit as rd
+try:
+    rd.device_count()
+except RuntimeError as error:
+    assert "No Dr.Jit-compatible CUDA devices" in str(error), error
+else:
+    raise AssertionError("device_count() unexpectedly succeeded without a visible CUDA device")
+print("imported")
+""",
+            ],
+            cwd=ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("imported", result.stdout)
 
     def test_obsolete_imports_fail(self):
         result = run_script("""

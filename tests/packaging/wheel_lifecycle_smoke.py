@@ -49,8 +49,11 @@ def _probe_installed(backend: str) -> None:
             raise AssertionError("RayD Torch legacy native operators were not registered")
         if not hasattr(torch.ops.rayd_torch_stable, "intersection_valid"):
             raise AssertionError("RayD Torch Stable ABI operators were not registered")
-    elif not hasattr(module, "Scene"):
-        raise AssertionError("RayD Dr.Jit native Scene binding is unavailable")
+    else:
+        if not hasattr(module, "Scene"):
+            raise AssertionError("RayD Dr.Jit native Scene binding is unavailable")
+        for options_name in ("SdfTraceOptions", "SurfelTraceOptions", "SurfelRenderOptions"):
+            getattr(module, options_name)()
 
     print(f"installed {backend} module: {module_path}")
     print(f"installed {backend} native extension: {native_path}")

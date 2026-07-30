@@ -1,8 +1,8 @@
 # Copyright Xingyu Chen.
 # Tests drjit project metadata.
 
-import unittest
 import re
+import unittest
 from pathlib import Path
 
 
@@ -116,6 +116,16 @@ class ProjectMetadataTests(unittest.TestCase):
             (WORKSPACE_ROOT / "generated" / "drjit" / "ptx" / "reflection_epc_ptx.h").is_file(),
             "Expected committed reflection_epc PTX header for wheel builds.",
         )
+
+    def test_binding_defaults_do_not_eagerly_allocate_cuda_arrays(self):
+        bindings = (WORKSPACE_ROOT / "src" / "bindings" / "module_jit.cpp").read_text(encoding="utf-8")
+        eager_cuda_default = re.compile(
+            r'"[^"]+"_a\s*=\s*(?:rayd::)?'
+            r"(?:Float|Int|UInt(?:64)?|Mask|Vector[1-4][fi]|Matrix4f)(?:AD)?\((?!\s*\))"
+        )
+
+        self.assertIsNone(eager_cuda_default.search(bindings))
+        self.assertIn('"tx_polarization"_a = nb::make_tuple(1.f, 0.f, 0.f)', bindings)
 
     def test_multipath_optix_pipeline_uses_dedicated_exception_flags(self):
         cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
