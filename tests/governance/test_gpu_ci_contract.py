@@ -131,7 +131,7 @@ class GpuCiContractTests(unittest.TestCase):
         self.assertIn("python torch/scripts/verify_driver_independence.py $wheel", windows)
         self.assertEqual(self.release.count("torch/scripts/verify_driver_independence.py"), 2)
 
-    def test_torch_211_full_wheel_lifecycle_covers_every_published_wheel(self) -> None:
+    def test_torch_baseline_full_wheel_lifecycle_covers_every_published_wheel(self) -> None:
         lifecycle = self.release.split("  test-torch-full-wheel-compatibility:", 1)[1].split(
             "  test-stable-torch-abi:", 1
         )[0]
@@ -149,9 +149,10 @@ class GpuCiContractTests(unittest.TestCase):
             "name: ${{ matrix.artifact }}",
             "path: ${{ runner.temp }}/wheel-artifact",
             "working-directory: ${{ runner.temp }}",
-            "torch==2.11.0",
+            "torch==2.10.0",
             "https://download.pytorch.org/whl/cu128",
             "pip install --no-deps --force-reinstall $wheel",
+            "python -m pip check",
             'wheel_lifecycle_smoke.py" installed torch',
             "pip uninstall -y rayd-torch",
             'wheel_lifecycle_smoke.py" absent torch',
@@ -159,6 +160,7 @@ class GpuCiContractTests(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertIn(marker, lifecycle)
 
+        self.assertNotIn("torch==2.11.0", lifecycle)
         validation = self.release.split("  validate-wheel-set:", 1)[1].split("  publish-drjit:", 1)[0]
         self.assertIn("- test-torch-full-wheel-compatibility", validation)
 
@@ -172,7 +174,7 @@ class GpuCiContractTests(unittest.TestCase):
         )[0]
 
         self.assertEqual(windows.count(fail_fast), 13)
-        self.assertEqual(compatibility.count(fail_fast), 6)
+        self.assertEqual(compatibility.count(fail_fast), 7)
 
         windows_command_tails = (
             'python -m pip install --upgrade pip build twine "scikit-build-core>=0.10" "cmake>=3.22" ninja',
@@ -196,6 +198,7 @@ class GpuCiContractTests(unittest.TestCase):
             "python -m pip install --upgrade pip",
             "--index-url https://download.pytorch.org/whl/cu128",
             "python -m pip install --no-deps --force-reinstall $wheel",
+            "python -m pip check",
             'python -I "$env:GITHUB_WORKSPACE/tests/packaging/wheel_lifecycle_smoke.py" installed torch',
             "python -m pip uninstall -y rayd-torch",
             'python -I "$env:GITHUB_WORKSPACE/tests/packaging/wheel_lifecycle_smoke.py" absent torch',

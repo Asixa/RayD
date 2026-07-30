@@ -10,6 +10,11 @@ import rayd.torch as rt
 Install the `rayd-torch` distribution. It owns only `rayd/torch/**` and can
 coexist with the independently installed `rayd-drjit` backend.
 
+Published complete wheels are built for and require PyTorch 2.10
+(`torch>=2.10,<2.11`) because `_legacy_ops` uses the non-Stable-ABI
+LibTorch C++ surface. The separately audited `_stable_ops` library remains
+validated across PyTorch 2.10 through 2.13.
+
 Published wheels contain both native backends and do not require an OptiX SDK
 at runtime. Building this dual-backend distribution from source does require
 the OptiX SDK headers, even when the target machine will select CUDA at

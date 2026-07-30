@@ -22,6 +22,8 @@ All notable changes to RayD are documented in this file.
   implemented.
 - Expanded single- and multi-GPU CUDA/OptiX CI, Stable ABI checks, wheel
   install/uninstall lifecycle validation, and release-artifact verification.
+- Bound the complete `rayd-torch` wheel to its PyTorch 2.10 build minor; the
+  separately audited `_stable_ops` slice retains cross-version validation.
 
 ### Fixed
 

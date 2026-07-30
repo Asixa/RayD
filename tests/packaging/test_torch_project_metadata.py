@@ -28,8 +28,11 @@ class ProjectMetadataTests(unittest.TestCase):
     def test_transitional_wheels_cover_supported_python_and_torch_baseline(self):
         data = tomllib.loads((TORCH_ROOT / "pyproject.toml").read_text())
         self.assertEqual(data["project"]["requires-python"], ">=3.10,<3.15")
-        self.assertIn("torch>=2.10,<2.12", data["project"]["dependencies"])
+        self.assertEqual(data["project"]["dependencies"], ["torch>=2.10,<2.11"])
         self.assertIn("torch==2.10.0", data["build-system"]["requires"])
+        readme = (TORCH_ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("require PyTorch 2.10", readme)
+        self.assertIn("validated across PyTorch 2.10 through 2.13", readme)
 
     def test_public_python_source_has_no_obsolete_product_name(self):
         source_roots = (TORCH_ROOT / "python" / "rayd" / "torch", WORKSPACE_ROOT / "python" / "rayd" / "_impl")

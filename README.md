@@ -42,8 +42,10 @@ Release artifacts cover CPython 3.10 through 3.14 on Windows x86-64 and
 `manylinux_2_28_x86_64`. The native backend wheels are CPython-specific while
 the Torch backend still contains the transitional `_C` extension. The
 `_stable_ops` library inside `rayd-torch` is untagged and uses the LibTorch 2.10
-Stable ABI boundary. The `rayd` meta-distribution is a universal pure-Python
-wheel and is the only distribution that also publishes an sdist.
+Stable ABI boundary. The complete `rayd-torch` wheel requires PyTorch 2.10
+(`torch>=2.10,<2.11`) while that separately audited Stable ABI library is
+validated through PyTorch 2.13. The `rayd` meta-distribution is a universal
+pure-Python wheel and is the only distribution that also publishes an sdist.
 
 > [!IMPORTANT]
 > Since 0.6.0, RayD uses explicit backend namespaces. The parent `rayd` namespace does
