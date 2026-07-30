@@ -71,6 +71,24 @@ class ProjectMetadataTests(unittest.TestCase):
         for symbol in ('"at::"', '"c10::"', '"@at@@"', '"@c10@@"'):
             self.assertIn(symbol, source)
 
+    def test_legacy_library_resolves_the_cuda_driver_lazily(self):
+        cmake = (TORCH_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+        runtime = (WORKSPACE_ROOT / "src" / "runtime" / "optix.cpp").read_text(encoding="utf-8")
+        readme = (TORCH_ROOT / "README.md").read_text(encoding="utf-8")
+        verifier = (TORCH_ROOT / "scripts" / "verify_driver_independence.py").read_text(encoding="utf-8")
+
+        self.assertIn("find_package(CUDAToolkit 11.3 REQUIRED)", cmake)
+        self.assertNotIn("find_package(CUDAToolkit 11.0 REQUIRED)", cmake)
+        self.assertNotIn("CUDA::cuda_driver", cmake)
+        self.assertIn("#include <cudaTypedefs.h>", runtime)
+        self.assertIn('cudaGetDriverEntryPoint("cuCtxGetCurrent"', runtime)
+        self.assertIn("PFN_cuCtxGetCurrent", runtime)
+        self.assertNotIn("cudaDriverEntryPointQueryResult", runtime)
+        self.assertNotIn("cuCtxGetCurrent(&cu_ctx)", runtime)
+        self.assertIn("CUDA Toolkit 11.3 or newer", readme)
+        for dependency in ("libcuda.so", "nvcuda.dll"):
+            self.assertIn(dependency, verifier)
+
     def test_local_cuda_build_targets_native_gpu(self):
         cmake = (TORCH_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
         pyproject = tomllib.loads((TORCH_ROOT / "pyproject.toml").read_text(encoding="utf-8"))

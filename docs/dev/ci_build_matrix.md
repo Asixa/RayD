@@ -50,8 +50,9 @@ the two backend projects use the unique `pypi-rayd-drjit` and
 | `build-drjit-linux` | Five parallel CPython 3.10-3.14 cibuildwheel jobs | Build and repair five `rayd-drjit` `manylinux_2_28_x86_64` wheels inside CUDA-enabled manylinux images |
 | `build-torch-linux` | Five parallel CPython 3.10-3.14 cibuildwheel jobs | Build and repair five full `rayd-torch` wheels; audit `_legacy_ops`, `_stable_ops`, external framework dependencies, and CUDA images |
 | `build-windows-wheels` | 2 backends x Python 3.10-3.14 on `windows-2022` | Build and audit ten `win_amd64` wheels |
+| `test-torch-full-wheel-compatibility` | Ubuntu and Windows x Python 3.10-3.14 | Install every matching `rayd-torch` wheel with PyTorch 2.11/cu128 and run the complete installed/uninstalled native lifecycle |
 | `build-meta` | Python 3.12 on Ubuntu | Build and check the pure Python `rayd` wheel and sdist |
-| `validate-wheel-set` | Ubuntu, after all four build jobs | Validate the complete release artifact set via `tests.packaging.test_release_artifact_matrix`; gates every publish job |
+| `validate-wheel-set` | Ubuntu, after all build and compatibility jobs | Validate the complete release artifact set via `tests.packaging.test_release_artifact_matrix`; gates every publish job |
 | `publish-*` | published GitHub Releases only, on `ubuntu-latest` | Publish backend wheels first, then the meta distribution, using PyPI trusted publishing |
 
 Both native backends keep `manylinux_2_28` rather than changing to the witwin `manylinux_2_35` tag. This is a stricter backward-compatibility target and matches the Dr.Jit and PyTorch 2.10/cu128 Linux wheels used by the builds.
@@ -66,6 +67,14 @@ environment's `site-packages`, and print their resolved paths. The Torch probe
 also requires both the legacy dispatcher and Stable ABI operator sets to be
 registered. This per-wheel check complements the final merged-wheel install
 order and namespace-coexistence matrix.
+
+Torch native source builds require CUDA Toolkit 11.3 or newer. The legacy
+library resolves `cuCtxGetCurrent` through the CUDA runtime only when an OptiX
+context is requested, so installed-wheel imports have no direct
+`libcuda.so`/`nvcuda.dll` dependency. The hosted full-wheel lifecycle injects
+no driver stub on either OS, then loads every wheel with PyTorch 2.11 before
+uninstalling it. Actual CUDA and OptiX execution remains owned by the
+self-hosted GPU acceptance workflows.
 
 ## Runtime GPU acceptance
 

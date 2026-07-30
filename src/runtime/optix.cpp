@@ -6,6 +6,7 @@
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
+#include <cudaTypedefs.h>
 #include <cuda_runtime_api.h>
 #include <optix_stack_size.h>
 #include <optix_stubs.h>
@@ -407,8 +408,15 @@ TorchCudaContext current_torch_cuda_context() {
 OptixDeviceContextEntry& get_optix_context(int device_index) {
     std::lock_guard<std::mutex> lock(context_mutex);
     c10::cuda::CUDAGuard guard(device_index);
+    void* raw_get_current = nullptr;
+    const cudaError_t lookup_result = cudaGetDriverEntryPoint("cuCtxGetCurrent", &raw_get_current, cudaEnableDefault);
+    if (lookup_result != cudaSuccess || raw_get_current == nullptr) {
+        throw std::runtime_error(std::string("Could not resolve cuCtxGetCurrent through the CUDA runtime: ") +
+                                 cudaGetErrorString(lookup_result) + ".");
+    }
+    const auto get_current = reinterpret_cast<PFN_cuCtxGetCurrent>(raw_get_current);
     CUcontext cu_ctx = nullptr;
-    CUresult cu_result = cuCtxGetCurrent(&cu_ctx);
+    const CUresult cu_result = get_current(&cu_ctx);
     if (cu_result != CUDA_SUCCESS || cu_ctx == nullptr)
         throw std::runtime_error("Could not get current CUDA context for OptiX.");
 

@@ -279,6 +279,7 @@ jobs:
             SCCACHE_BASEDIRS=/project
             SCCACHE_IGNORE_SERVER_IO_ERROR=1
             SKBUILD_BUILD_DIR=/project/artifacts/skbuild
+            PIP_CONSTRAINT=/project/.github/constraints/torch-build.txt
             PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu128
             CC=/opt/rh/gcc-toolset-12/root/usr/bin/gcc
             CXX=/opt/rh/gcc-toolset-12/root/usr/bin/g++
@@ -307,6 +308,8 @@ jobs:
             --stem _legacy_ops --stem _stable_ops {dest_dir}/*.whl &&
             python /project/torch/scripts/verify_stable_abi.py
             --source-root /project/src {dest_dir}/*.whl &&
+            python /project/torch/scripts/verify_driver_independence.py
+            {dest_dir}/*.whl &&
             $RAYD_SCCACHE_ROOT/sccache-bin/sccache --show-stats &&
             chown -R --reference=/host${{ github.workspace }}
             $RAYD_SCCACHE_ROOT/rayd-sccache
@@ -405,13 +408,18 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip build twine "scikit-build-core>=0.10" "cmake>=3.22" ninja
+          $nativeExit=$LASTEXITCODE; if ($nativeExit -ne 0) { exit $nativeExit }
           python -m pip install --constraint .github/constraints/drjit-build.txt "nanobind==2.9.2" "drjit==1.3.1"
+          $nativeExit=$LASTEXITCODE; if ($nativeExit -ne 0) { exit $nativeExit }
       - name: Install Torch build dependencies
         if: matrix.backend == 'torch'
         shell: pwsh
         run: |
           python -m pip install --upgrade pip build twine "scikit-build-core>=0.10" "cmake>=3.26" ninja
-          python -m pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128
+          $nativeExit=$LASTEXITCODE; if ($nativeExit -ne 0) { exit $nativeExit }
+          python -m pip install --constraint .github/constraints/torch-build.txt torch `
+            --index-url https://download.pytorch.org/whl/cu128
+          $nativeExit=$LASTEXITCODE; if ($nativeExit -ne 0) { exit $nativeExit }
       - name: Build Dr.Jit wheel
         if: matrix.backend == 'drjit'
         working-directory: drjit
@@ -440,15 +448,22 @@ jobs:
         run: |
           $wheel = (Get-ChildItem dist/drjit/*.whl).FullName
           python drjit/scripts/verify_cuda_binary_arches.py --stem _C $wheel
+          $nativeExit=$LASTEXITCODE; if ($nativeExit -ne 0) { exit $nativeExit }
           python -m twine check $wheel
+          $nativeExit=$LASTEXITCODE; if ($nativeExit -ne 0) { exit $nativeExit }
       - name: Verify Torch wheel
         if: matrix.backend == 'torch'
         shell: pwsh
         run: |
           $wheel = (Get-ChildItem dist/torch/*.whl).FullName
           python drjit/scripts/verify_cuda_binary_arches.py --stem _legacy_ops --stem _stable_ops $wheel
+          $nativeExit=$LASTEXITCODE; if ($nativeExit -ne 0) { exit $nativeExit }
           python torch/scripts/verify_stable_abi.py --source-root src $wheel
+          $nativeExit=$LASTEXITCODE; if ($nativeExit -ne 0) { exit $nativeExit }
+          python torch/scripts/verify_driver_independence.py $wheel
+          $nativeExit=$LASTEXITCODE; if ($nativeExit -ne 0) { exit $nativeExit }
           python -m twine check $wheel
+          $nativeExit=$LASTEXITCODE; if ($nativeExit -ne 0) { exit $nativeExit }
       - name: Validate wheel install and uninstall lifecycle
         shell: pwsh
         working-directory: ${{ runner.temp }}
@@ -456,14 +471,69 @@ jobs:
           $backend = "${{ matrix.backend }}"
           $wheel = (Get-ChildItem "$env:GITHUB_WORKSPACE/dist/$backend/*.whl").FullName
           python -m pip install --no-deps --force-reinstall $wheel
+          $nativeExit=$LASTEXITCODE; if ($nativeExit -ne 0) { exit $nativeExit }
           python -I "$env:GITHUB_WORKSPACE/tests/packaging/wheel_lifecycle_smoke.py" installed $backend
+          $nativeExit=$LASTEXITCODE; if ($nativeExit -ne 0) { exit $nativeExit }
           python -m pip uninstall -y "rayd-$backend"
+          $nativeExit=$LASTEXITCODE; if ($nativeExit -ne 0) { exit $nativeExit }
           python -I "$env:GITHUB_WORKSPACE/tests/packaging/wheel_lifecycle_smoke.py" absent $backend
+          $nativeExit=$LASTEXITCODE; if ($nativeExit -ne 0) { exit $nativeExit }
       - uses: actions/upload-artifact@v4
         with:
           name: release-rayd-${{ matrix.backend }}-windows-py${{ matrix.python-version }}
           path: dist/${{ matrix.backend }}/*.whl
           if-no-files-found: error
+
+  test-torch-full-wheel-compatibility:
+    name: Full wheel / ${{ matrix.os }} / py${{ matrix.python-version }} / torch2.11
+    needs: [build-torch-linux, build-windows-wheels]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: "ubuntu-22.04", python-version: "3.10", artifact: "release-rayd-torch-linux-py3.10"}
+          - {os: "ubuntu-22.04", python-version: "3.11", artifact: "release-rayd-torch-linux-py3.11"}
+          - {os: "ubuntu-22.04", python-version: "3.12", artifact: "release-rayd-torch-linux-py3.12"}
+          - {os: "ubuntu-22.04", python-version: "3.13", artifact: "release-rayd-torch-linux-py3.13"}
+          - {os: "ubuntu-22.04", python-version: "3.14", artifact: "release-rayd-torch-linux-py3.14"}
+          - {os: "windows-2022", python-version: "3.10", artifact: "release-rayd-torch-windows-py3.10"}
+          - {os: "windows-2022", python-version: "3.11", artifact: "release-rayd-torch-windows-py3.11"}
+          - {os: "windows-2022", python-version: "3.12", artifact: "release-rayd-torch-windows-py3.12"}
+          - {os: "windows-2022", python-version: "3.13", artifact: "release-rayd-torch-windows-py3.13"}
+          - {os: "windows-2022", python-version: "3.14", artifact: "release-rayd-torch-windows-py3.14"}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ runner.temp }}/wheel-artifact
+      - name: Validate full wheel with Torch 2.11
+        shell: pwsh
+        working-directory: ${{ runner.temp }}
+        run: |
+          python -m pip install --upgrade pip
+          $nativeExit=$LASTEXITCODE; if ($nativeExit -ne 0) { exit $nativeExit }
+          python -m pip install --no-cache-dir torch==2.11.0 `
+            --index-url https://download.pytorch.org/whl/cu128
+          $nativeExit=$LASTEXITCODE; if ($nativeExit -ne 0) { exit $nativeExit }
+          $artifactDir = Join-Path $env:RUNNER_TEMP "wheel-artifact"
+          $wheels = @(Get-ChildItem -LiteralPath $artifactDir -Filter "*.whl")
+          if ($wheels.Count -ne 1) {
+            throw "Expected exactly one RayD Torch wheel in $artifactDir; found $($wheels.Count)."
+          }
+          $wheel = $wheels[0].FullName
+          python -m pip install --no-deps --force-reinstall $wheel
+          $nativeExit=$LASTEXITCODE; if ($nativeExit -ne 0) { exit $nativeExit }
+          python -I "$env:GITHUB_WORKSPACE/tests/packaging/wheel_lifecycle_smoke.py" installed torch
+          $nativeExit=$LASTEXITCODE; if ($nativeExit -ne 0) { exit $nativeExit }
+          python -m pip uninstall -y rayd-torch
+          $nativeExit=$LASTEXITCODE; if ($nativeExit -ne 0) { exit $nativeExit }
+          python -I "$env:GITHUB_WORKSPACE/tests/packaging/wheel_lifecycle_smoke.py" absent torch
+          $nativeExit=$LASTEXITCODE; if ($nativeExit -ne 0) { exit $nativeExit }
 
   test-stable-torch-abi:
     name: Stable ABI / ${{ matrix.os }} / py${{ matrix.compatibility.python-version }} / torch${{ matrix.compatibility.torch-version }}
@@ -562,7 +632,13 @@ jobs:
   validate-wheel-set:
     name: Validate complete release artifact set
     runs-on: ubuntu-22.04
-    needs: [build-drjit-linux, build-torch-linux, build-windows-wheels, test-stable-torch-abi, build-meta]
+    needs:
+      - build-drjit-linux
+      - build-torch-linux
+      - build-windows-wheels
+      - test-torch-full-wheel-compatibility
+      - test-stable-torch-abi
+      - build-meta
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6

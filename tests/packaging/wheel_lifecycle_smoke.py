@@ -44,7 +44,8 @@ def _probe_installed(backend: str) -> None:
         import torch
 
         if not module._NATIVE_AVAILABLE:
-            raise AssertionError(f"RayD Torch native runtime is unavailable: {module._EXTENSION_IMPORT_ERROR}")
+            extension_error = module._EXTENSION_IMPORT_ERROR
+            raise AssertionError(f"RayD Torch native runtime is unavailable: {extension_error!r}") from extension_error
         if not hasattr(torch.ops.rayd_torch, "intersect_forward_t"):
             raise AssertionError("RayD Torch legacy native operators were not registered")
         if not hasattr(torch.ops.rayd_torch_stable, "intersection_valid"):

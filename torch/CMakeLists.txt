@@ -169,7 +169,7 @@ if(RAYD_TORCH_OPTIX_FAST_MATH)
 endif()
 
 if(RAYD_TORCH_BUILD_NATIVE)
-    find_package(CUDAToolkit 11.0 REQUIRED)
+    find_package(CUDAToolkit 11.3 REQUIRED)
     find_path(
         OPTIX_INCLUDE_DIR
         optix.h
@@ -950,8 +950,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
         rayd_torch_device_core
         PUBLIC
             "${TORCH_LIBRARIES}"
-            CUDA::cudart
-            CUDA::cuda_driver)
+            CUDA::cudart)
     # libtorch_python is the Python-version dependent half of LibTorch and is
     # needed only by the units that reach torch/extension.h.
     target_link_libraries(
@@ -959,8 +958,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
         PUBLIC
             "${TORCH_LIBRARIES}"
             "${TORCH_PYTHON_LIBRARY}"
-            CUDA::cudart
-            CUDA::cuda_driver)
+            CUDA::cudart)
     target_compile_features(rayd_torch_device_core PUBLIC cxx_std_17)
     target_compile_features(rayd_torch_python_ops PUBLIC cxx_std_17)
 

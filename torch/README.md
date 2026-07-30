@@ -14,6 +14,9 @@ Published wheels contain both native backends and do not require an OptiX SDK
 at runtime. Building this dual-backend distribution from source does require
 the OptiX SDK headers, even when the target machine will select CUDA at
 runtime; an SDK-less CUDA-only source-build mode is not currently provided.
+Native source builds require CUDA Toolkit 11.3 or newer so the CUDA runtime can
+resolve driver entry points lazily without making the wheel depend directly on
+the platform CUDA driver library.
 
 ## Ray-tracing backend selection
 
