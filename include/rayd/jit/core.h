@@ -15,6 +15,7 @@
 #include <drjit/array.h>
 #include <drjit/autodiff.h>
 #include <drjit/jit.h>
+#include <drjit/math.h>
 #include <drjit/matrix.h>
 #include <drjit/quaternion.h>
 #include <drjit/sphere.h>

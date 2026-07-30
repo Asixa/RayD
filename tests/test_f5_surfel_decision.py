@@ -48,6 +48,19 @@ class SurfelBackendDecisionTests(unittest.TestCase):
         self.assertTrue((ROOT / "src/sdf_jit.cu").is_file())
         self.assertTrue((ROOT / "python/rayd/_impl/sdf.py").is_file())
 
+    def test_drjit_math_template_users_have_defining_include(self) -> None:
+        translation_units = (
+            ("src/surfel_jit.cpp", "#include <rayd/jit/surfel.h>"),
+            ("src/reflection/reflection_jit.cpp", "#include <rayd/jit/core.h>"),
+            ("src/diffraction/diffraction_jit.cpp", "#include <rayd/jit/core.h>"),
+        )
+        for path, public_include in translation_units:
+            with self.subTest(path=path):
+                source = (ROOT / path).read_text(encoding="utf-8")
+                math_include = source.find("#include <drjit/math.h>")
+                self.assertGreaterEqual(math_include, 0)
+                self.assertGreater(source.find(public_include), math_include)
+
     def test_manifest_matches_the_superseding_decision(self) -> None:
         manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
         expected = self.decision["minimal_manifest"]

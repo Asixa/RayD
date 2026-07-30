@@ -5,6 +5,8 @@
 #include <array>
 #include <cmath>
 
+#include <drjit/math.h>
+
 #include <rayd/jit/surfel.h>
 #include <rayd/jit/reflection.h>
 

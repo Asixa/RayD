@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include <drjit/math.h>
+
 #include <rayd/jit/core.h>
 #include "scene_internal_jit.h"
 #include <src/diffraction/accumulation_ad_jit.h>
@@ -519,6 +521,8 @@ template DfrPathsAD Scene::trace_dfr_paths<false>(const Vector3fAD& tx_positions
 #include <limits>
 #include <string>
 #include <vector>
+
+#include <drjit/math.h>
 
 #include <rayd/jit/core.h>
 #include "scene_internal_jit.h"

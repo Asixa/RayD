@@ -80,6 +80,16 @@ class SharedContractsTests(unittest.TestCase):
         self.assertIn("shared::EdgeEpsilon", text["torch_edge"])
         self.assertIn("shared::EdgeEpsilon", text["drjit_edge"])
 
+    def test_drjit_core_header_owns_transcendental_definitions(self):
+        core = (ROOT / "include" / "rayd" / "jit" / "core.h").read_text(encoding="utf-8")
+        math_include = core.find("#include <drjit/math.h>")
+        public_include = core.find("#include <rayd/contracts.h>")
+        transform_namespace = core.find("namespace transform {")
+        self.assertEqual(core.count("#include <drjit/math.h>"), 1)
+        self.assertGreaterEqual(math_include, 0)
+        self.assertGreater(public_include, math_include)
+        self.assertGreater(transform_namespace, math_include)
+
 
 if __name__ == "__main__":
     unittest.main()

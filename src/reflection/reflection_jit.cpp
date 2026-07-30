@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include <drjit/math.h>
+
 #include <rayd/jit/core.h>
 #include "scene_internal_jit.h"
 #include <src/diffraction/accumulation_ad_jit.h>
@@ -781,6 +783,8 @@ template ReflectionTraceAD Scene::trace_bounces<false>(const RayAD& ray, int max
 #include <limits>
 #include <string>
 #include <vector>
+
+#include <drjit/math.h>
 
 #include <rayd/jit/core.h>
 #include "scene_internal_jit.h"
