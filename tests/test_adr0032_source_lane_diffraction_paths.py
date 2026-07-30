@@ -41,7 +41,7 @@ class Adr0032SourceLaneDiffractionPathTests(unittest.TestCase):
         self.assertIn("params.output_layout = output_layout", body)
         dispatcher = ops.split("py::tuple diffraction_paths_order1_forward_op", 1)[1]
         dispatcher = dispatcher.split("struct DiffractionAccumulationOutputs", 1)[0]
-        self.assertIn("kDiffractionPathLayoutCompact", dispatcher)
+        self.assertIn('checked_i32(output_layout, "output_layout")', dispatcher)
         typed = ops.split("DiffractionPathResult diffraction_paths_order1_forward", 1)[1]
         self.assertIn("static_cast<int>(config.layout)", typed)
 

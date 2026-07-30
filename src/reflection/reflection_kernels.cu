@@ -1017,7 +1017,7 @@ constexpr float kReflEps = shared::SmallEpsilon;
 
 static __forceinline__ __device__ bool slot_reflection_coefficients(const ReflEpcFieldParams params, int slot,
                                                                     float cos_theta, Complex& r_te, Complex& r_tm) {
-    const float eta_r_value = params.slot_eta_r != nullptr ? params.slot_eta_r[slot] : 1.f;
+    const float eta_r_value = params.slot_eta_r != nullptr ? params.slot_eta_r[slot] : 4.f;
     const float sigma_value = params.slot_sigma != nullptr ? params.slot_sigma[slot] : 0.f;
     const float gain = params.slot_gain != nullptr ? params.slot_gain[slot] : 1.f;
     const float mu_r_value = params.slot_mu_r != nullptr ? params.slot_mu_r[slot] : 1.f;

@@ -8,18 +8,26 @@ import torch
 from .runtime import NATIVE_AVAILABLE as _NATIVE_AVAILABLE
 from . import runtime as _legacy
 from .geometry import (
+    AccumGrid,
+    AccumOptions,
+    AccumResult,
     DfrAccum,
     DfrCoherentAccum,
     DfrGrid,
     DfrMaterial,
+    DfrPathLayout,
     DfrPaths,
     DfrStates,
     Intersection,
     NearestPointEdge,
     NearestEdgesTopK,
     NearestRayEdge,
+    ReflEpc,
     ReflEpcField,
+    ReflEpcOptions,
+    ReflMaterial,
     ReflectionChain,
+    WedgeEvents,
 )
 
 
@@ -78,6 +86,38 @@ def _needs_forward_ad(*values: torch.Tensor | None) -> bool:
         if torch.autograd.forward_ad.unpack_dual(value).tangent is not None:
             return True
     return False
+
+
+def _dfr_input_tensors(states: DfrStates, material: DfrMaterial) -> tuple[torch.Tensor, ...]:
+    """Flatten the caller-owned diffraction tensors for AD capability checks."""
+
+    values = (
+        states.edge_index,
+        states.edge_pos,
+        states.edge_dir,
+        states.edge_t_min,
+        states.edge_t_max,
+        states.n0,
+        states.n1,
+        states.prim0,
+        states.prim1,
+        states.exterior_angle,
+        states.src,
+        states.src_power,
+        states.wi,
+        states.d0,
+        material.eta_r,
+        material.sigma,
+        material.mu_r,
+        material.gain,
+        material.valid,
+    )
+    return tuple(value for value in values if value is not None)
+
+
+def _reject_forward_only_ad(operation: str, *values: torch.Tensor | None) -> None:
+    if _needs_reverse_or_forward_ad(*values):
+        raise RuntimeError(f"{operation} is forward-only and does not support reverse-mode AD or JVP.")
 
 
 _RAY_FLAG_ALL = 0x01 | 0x02 | 0x04
@@ -693,73 +733,106 @@ def nearest_edges(
     return NearestEdgesTopK(int(point.shape[0]), int(k), *values[:9])
 
 
-class _NearestEdgeRayFunction(torch.autograd.Function):
-    @staticmethod
-    def forward(
-        scene_handle: int,
-        vertices: torch.Tensor,
-        ray_o: torch.Tensor,
-        ray_d: torch.Tensor,
-        ray_tmax: torch.Tensor,
-        active: torch.Tensor,
-    ):
-        _require_native_dispatcher()
-        return tuple(torch.ops.rayd_torch.nearest_edge_ray_forward(scene_handle, ray_o, ray_d, ray_tmax, active))
+def _make_nearest_edge_ray_function(fused: bool):
+    vertex_at = 1 if fused else None
+    ray_o_at = 2 if fused else 1
+    ray_d_at = 3 if fused else 2
+    ray_tmax_at = 4 if fused else 3
+    active_at = 5 if fused else 4
+    mesh_at = 5
 
-    @staticmethod
-    def setup_context(ctx, inputs, output):
-        ctx.set_materialize_grads(False)
-        scene_handle, vertices, ray_o, ray_d, ray_tmax, _active = inputs
-        distance, ray_t, point, edge_t, edge_point, shape_id, edge_id, global_edge_id, tape_edge_id = output
-        vertices = torch.autograd.forward_ad.unpack_dual(vertices).primal
-        ray_o = torch.autograd.forward_ad.unpack_dual(ray_o).primal
-        ray_d = torch.autograd.forward_ad.unpack_dual(ray_d).primal
-        ray_tmax = torch.autograd.forward_ad.unpack_dual(ray_tmax).primal
-        ctx.scene = scene_handle
-        ctx.save_for_backward(vertices, ray_o, ray_d, ray_tmax, tape_edge_id, ray_t, edge_t)
-        ctx.save_for_forward(vertices, ray_o, ray_d, ray_tmax, tape_edge_id, ray_t, edge_t)
-        ctx.mark_non_differentiable(shape_id, edge_id, global_edge_id, tape_edge_id)
-
-    @staticmethod
-    def backward(ctx, *grad_outputs):
-        vertices, ray_o, ray_d, ray_tmax, tape_edge_id, ray_t, edge_t = ctx.saved_tensors
-        grad_vertices, grad_ray_o, grad_ray_d = torch.ops.rayd_torch.nearest_edge_ray_backward_optional(
-            ctx.scene,
-            ray_o,
-            ray_d,
-            ray_tmax,
-            tape_edge_id,
-            ray_t,
-            edge_t,
-            grad_outputs[0],
-            grad_outputs[1],
-            grad_outputs[2],
-            grad_outputs[3],
-            grad_outputs[4],
-        )
-        if not ctx.needs_input_grad[1]:
-            grad_vertices = None
-        elif grad_vertices.shape != vertices.shape:
-            grad_vertices = grad_vertices[: vertices.shape[0]]
-        return None, grad_vertices, grad_ray_o, grad_ray_d, None, None
-
-    @staticmethod
-    def jvp(ctx, grad_scene_handle, grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax, grad_active):
-        vertices, ray_o, ray_d, ray_tmax, tape_edge_id, ray_t, edge_t = ctx.saved_tensors
-        with torch._C._DisableFuncTorch():
-            values = torch.ops.rayd_torch.nearest_edge_ray_jvp_optional(
-                ctx.scene,
-                _native_tensor(ray_o),
-                _native_tensor(ray_d),
-                _native_tensor(ray_tmax),
-                _native_tensor(tape_edge_id),
-                _native_tensor(ray_t),
-                _native_tensor(edge_t),
-                _native_tangent_or_none(grad_vertices),
-                _native_tangent_or_none(grad_ray_o),
-                _native_tangent_or_none(grad_ray_d),
+    class _Fn(torch.autograd.Function):
+        @staticmethod
+        def forward(*args):
+            _require_native_dispatcher()
+            return tuple(
+                torch.ops.rayd_torch.nearest_edge_ray_forward(
+                    args[0], args[ray_o_at], args[ray_d_at], args[ray_tmax_at], args[active_at]
+                )
             )
-        return (*values, None, None, None, None)
+
+        @staticmethod
+        def setup_context(ctx, inputs, output):
+            ctx.set_materialize_grads(False)
+            distance, ray_t, point, edge_t, edge_point, shape_id, edge_id, global_edge_id, tape_edge_id = output
+            ray_o = torch.autograd.forward_ad.unpack_dual(inputs[ray_o_at]).primal
+            ray_d = torch.autograd.forward_ad.unpack_dual(inputs[ray_d_at]).primal
+            ray_tmax = torch.autograd.forward_ad.unpack_dual(inputs[ray_tmax_at]).primal
+            ctx.scene = inputs[0]
+            ctx.save_for_backward(ray_o, ray_d, ray_tmax, tape_edge_id, ray_t, edge_t)
+            if fused:
+                vertices = torch.autograd.forward_ad.unpack_dual(inputs[vertex_at]).primal
+                ctx.vertex_shape = vertices.shape
+                ctx.save_for_forward(vertices, ray_o, ray_d, ray_tmax, tape_edge_id, ray_t, edge_t)
+            else:
+                ctx.mesh_count = len(inputs) - mesh_at
+                ctx.save_for_forward(ray_o, ray_d, ray_tmax, tape_edge_id, ray_t, edge_t)
+            ctx.mark_non_differentiable(shape_id, edge_id, global_edge_id, tape_edge_id)
+
+        @staticmethod
+        def backward(ctx, *grad_outputs):
+            ray_o, ray_d, ray_tmax, tape_edge_id, ray_t, edge_t = ctx.saved_tensors
+            grad_vertices, grad_ray_o, grad_ray_d = torch.ops.rayd_torch.nearest_edge_ray_backward_optional(
+                ctx.scene,
+                ray_o,
+                ray_d,
+                ray_tmax,
+                tape_edge_id,
+                ray_t,
+                edge_t,
+                grad_outputs[0],
+                grad_outputs[1],
+                grad_outputs[2],
+                grad_outputs[3],
+                grad_outputs[4],
+            )
+            if fused:
+                if not ctx.needs_input_grad[vertex_at]:
+                    grad_vertices = None
+                elif grad_vertices.shape != ctx.vertex_shape:
+                    grad_vertices = grad_vertices[: ctx.vertex_shape[0]]
+                return None, grad_vertices, grad_ray_o, grad_ray_d, None, None
+
+            needs_mesh_grad = tuple(bool(value) for value in ctx.needs_input_grad[mesh_at:])
+            if any(needs_mesh_grad):
+                split_grad = torch.ops.rayd_torch.split_scene_vertex_grad(ctx.scene, grad_vertices)
+                mesh_grads = tuple(split_grad[i] if needs_mesh_grad[i] else None for i in range(ctx.mesh_count))
+            else:
+                mesh_grads = (None,) * ctx.mesh_count
+            return None, grad_ray_o, grad_ray_d, None, None, *mesh_grads
+
+        @staticmethod
+        def jvp(ctx, *tangents):
+            if fused:
+                vertices, ray_o, ray_d, ray_tmax, tape_edge_id, ray_t, edge_t = ctx.saved_tensors
+                tangent_vertices = _native_tangent_or_none(tangents[vertex_at])
+            else:
+                ray_o, ray_d, ray_tmax, tape_edge_id, ray_t, edge_t = ctx.saved_tensors
+                native_mesh_tangents = tuple(_native_tangent_or_none(value) for value in tangents[mesh_at:])
+                with torch._C._DisableFuncTorch():
+                    tangent_vertices = torch.ops.rayd_torch.pack_scene_vertex_tangents(
+                        ctx.scene, list(native_mesh_tangents)
+                    )
+            with torch._C._DisableFuncTorch():
+                values = torch.ops.rayd_torch.nearest_edge_ray_jvp_optional(
+                    ctx.scene,
+                    _native_tensor(ray_o),
+                    _native_tensor(ray_d),
+                    _native_tensor(ray_tmax),
+                    _native_tensor(tape_edge_id),
+                    _native_tensor(ray_t),
+                    _native_tensor(edge_t),
+                    tangent_vertices,
+                    _native_tangent_or_none(tangents[ray_o_at]),
+                    _native_tangent_or_none(tangents[ray_d_at]),
+                )
+            return (*values, None, None, None, None)
+
+    return _named_autograd_function(_Fn, "_NearestEdgeRayFunction" if fused else "_NearestEdgeRayMeshesFunction")
+
+
+_NearestEdgeRayFunction = _make_nearest_edge_ray_function(True)
+_NearestEdgeRayMeshesFunction = _make_nearest_edge_ray_function(False)
 
 
 def nearest_edge_ray(
@@ -769,10 +842,16 @@ def nearest_edge_ray(
     ray_d: torch.Tensor,
     ray_tmax: torch.Tensor,
     active: torch.Tensor | None,
+    mesh_vertices: tuple[torch.Tensor, ...] | None = None,
 ) -> NearestRayEdge:
-    values = _NearestEdgeRayFunction.apply(
-        scene_handle, vertices, ray_o, ray_d, ray_tmax, _active_ctx_tensor(active, ray_o)
-    )
+    active_arg = _active_ctx_tensor(active, ray_o)
+    tracked_vertices = (vertices,) if mesh_vertices is None else tuple(mesh_vertices)
+    if len(tracked_vertices) > 1:
+        values = _NearestEdgeRayMeshesFunction.apply(
+            scene_handle, ray_o, ray_d, ray_tmax, active_arg, *tracked_vertices
+        )
+    else:
+        values = _NearestEdgeRayFunction.apply(scene_handle, vertices, ray_o, ray_d, ray_tmax, active_arg)
     return NearestRayEdge(*values[:8])
 
 
@@ -1129,6 +1208,125 @@ def trace_refl_epc_field(
     return ReflEpcField(*values[:5])
 
 
+def trace_refl_epc_native(
+    scene_handle: int,
+    source: torch.Tensor,
+    receiver: torch.Tensor,
+    *,
+    max_bounces: int,
+    options: ReflEpcOptions,
+    active: torch.Tensor | None,
+) -> ReflEpc:
+    _require_native_dispatcher()
+    if _needs_reverse_or_forward_ad(
+        source,
+        receiver,
+        options.expected_prim_ids,
+        options.direct_plane_points,
+        options.direct_plane_normals,
+        options.surface_group_id,
+        options.surface_group_size,
+        options.surface_group_members,
+    ):
+        raise RuntimeError("Scene.trace_refl_epc() is forward-only and does not support reverse-mode AD or JVP.")
+    visibility_modes = {"primitive": 0, "surface_group": 1}
+    try:
+        visibility_ignore_mode = visibility_modes[options.visibility_ignore_mode]
+    except KeyError:
+        raise ValueError("ReflEpcOptions.visibility_ignore_mode must be 'primitive' or 'surface_group'.") from None
+    values = torch.ops.rayd_torch.reflection_epc_paths_forward(
+        scene_handle,
+        source,
+        receiver,
+        active,
+        options.expected_prim_ids,
+        options.direct_plane_points,
+        options.direct_plane_normals,
+        options.surface_group_id,
+        options.surface_group_size,
+        options.surface_group_members,
+        int(max_bounces),
+        visibility_ignore_mode,
+        float(options.plane_tolerance),
+    )
+    return ReflEpc(int(source.shape[0]), int(max_bounces), *values)
+
+
+def accumulate_reflections_native(
+    scene_handle: int,
+    ray_o: torch.Tensor,
+    ray_d: torch.Tensor,
+    ray_tmax: torch.Tensor,
+    tx_position: torch.Tensor,
+    grid: AccumGrid,
+    material: ReflMaterial,
+    *,
+    max_bounces: int,
+    options: AccumOptions,
+    active: torch.Tensor | None,
+    tx_polarization: torch.Tensor | None,
+) -> AccumResult:
+    _require_native_dispatcher()
+    if _needs_reverse_or_forward_ad(
+        ray_o,
+        ray_d,
+        ray_tmax,
+        tx_position,
+        tx_polarization,
+        material.eta_r,
+        material.sigma,
+        material.mu_r,
+        material.gain,
+        material.valid,
+    ):
+        raise RuntimeError(
+            "Scene.accumulate_reflections() is forward-only and does not support reverse-mode AD or JVP."
+        )
+    if tx_polarization is None:
+        tx_polarization = torch.zeros_like(tx_position)
+        tx_polarization[:, 0] = 1.0
+    if active is None:
+        active = torch.ones((ray_o.shape[0],), device=ray_o.device, dtype=torch.bool)
+    values = torch.ops.rayd_torch.reflection_accumulation_forward(
+        scene_handle,
+        ray_o,
+        ray_d,
+        ray_tmax,
+        active,
+        tx_position,
+        tx_polarization,
+        material.eta_r,
+        material.sigma,
+        material.mu_r,
+        material.gain,
+        material.valid,
+        int(max_bounces),
+        int(grid.axis),
+        float(grid.position),
+        float(grid.coord0_min),
+        float(grid.coord0_max),
+        float(grid.coord1_min),
+        float(grid.coord1_max),
+        int(grid.resolution0),
+        int(grid.resolution1),
+        float(options.wavelength),
+        float(options.solid_angle_per_ray),
+        bool(options.collect_wedges),
+        bool(options.collect_wedge_prefixes),
+        int(options.wedge_capacity),
+        int(options.wedge_sample_stride),
+        int(options.accumulation_strategy),
+        int(options.compact_min_samples),
+        int(options.staged_min_samples_per_cell),
+        int(options.procedural_sample_count),
+        bool(options.include_los),
+    )
+    wedge_events = WedgeEvents(int(values[9].shape[0]), *values[8:])
+    return AccumResult(
+        int(ray_o.shape[0]), int(max_bounces), int(grid.resolution0) * int(grid.resolution1), *values[:8], wedge_events
+    )
+
+
 def trace_dfr_paths_order1_native(
     scene_handle: int,
     tx_positions: torch.Tensor,
@@ -1140,8 +1338,16 @@ def trace_dfr_paths_order1_native(
     max_paths: int,
     wavelength: float,
     tx_polarization: torch.Tensor | None = None,
+    layout: DfrPathLayout = DfrPathLayout.Compact,
 ) -> DfrPaths:
     _require_native_dispatcher()
+    _reject_forward_only_ad(
+        "Scene.trace_dfr_paths()", tx_positions, rx_positions, tx_polarization, *_dfr_input_tensors(states, material)
+    )
+    try:
+        resolved_layout = DfrPathLayout(layout)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"layout must be a DfrPathLayout value, got {layout!r}.") from error
     state_limit = min(states.state_count, int(max_paths))
     capacity = int(tx_positions.shape[0]) * int(rx_positions.shape[0]) * state_limit
     if tx_polarization is None:
@@ -1173,8 +1379,9 @@ def trace_dfr_paths_order1_native(
         state_limit,
         capacity,
         float(wavelength),
+        int(resolved_layout),
     )
-    return DfrPaths(capacity, *values)
+    return DfrPaths(capacity, *values, layout=resolved_layout)
 
 
 class _DfrDirectAccumFunction(torch.autograd.Function):
@@ -2005,8 +2212,11 @@ def accum_dfr_coherent_direct_native(
     wavelength: float,
     select_diffraction_point: bool = True,
     prefilter_visibility: bool = True,
+    lane_offset: int = 0,
+    lane_count: int = -1,
 ) -> DfrCoherentAccum:
     _require_native_dispatcher()
+    _reject_forward_only_ad("Scene.accum_dfr_coherent_direct()", *_dfr_input_tensors(states, material))
     active_arg = active
     state_limit = states.state_count
     values = torch.ops.rayd_torch.diffraction_coherent_accumulation_forward(
@@ -2044,6 +2254,8 @@ def accum_dfr_coherent_direct_native(
         float(wavelength),
         bool(select_diffraction_point),
         bool(prefilter_visibility),
+        int(lane_offset),
+        int(lane_count),
     )
     grid_cell_count = int(grid.resolution0) * int(grid.resolution1)
     return DfrCoherentAccum(grid_cell_count, *values)

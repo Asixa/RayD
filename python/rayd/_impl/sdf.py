@@ -239,6 +239,105 @@ class SdfGrid:
         )
 
 
+@dataclass(frozen=True)
+class SdfGridBatch:
+    """A caller-owned packed group of shape-compatible dense SDF grids.
+
+    The leading dimension is the grid owner dimension. Untracked queries use
+    one native CUDA launch; AD queries retain the existing per-grid frozen-tape
+    implementation.
+    """
+
+    values: torch.Tensor
+    position: torch.Tensor
+    rotation: torch.Tensor
+    scale: torch.Tensor
+
+    def __post_init__(self) -> None:
+        _require_resident_float32(self.values, "SdfGridBatch.values")
+        if self.values.ndim != 4 or self.values.shape[0] < 2 or min(self.values.shape[1:]) < 2:
+            raise ValueError(
+                "SdfGridBatch.values must have shape (G, Nx, Ny, Nz) with G >= 2 and every spatial axis >= 2."
+            )
+        count = int(self.values.shape[0])
+        for value, width, name in (
+            (self.position, 3, "position"),
+            (self.rotation, 4, "rotation"),
+            (self.scale, 3, "scale"),
+        ):
+            _require_resident_float32(value, f"SdfGridBatch.{name}")
+            if value.shape != (count, width):
+                raise ValueError(f"SdfGridBatch.{name} must have shape ({count}, {width}).")
+            if value.device != self.values.device:
+                raise ValueError(f"SdfGridBatch.{name} must be on the values device.")
+
+    @property
+    def grid_count(self) -> int:
+        return int(self.values.shape[0])
+
+    def grid(self, index: int) -> SdfGrid:
+        if index < 0 or index >= self.grid_count:
+            raise IndexError("SdfGridBatch grid index is out of range.")
+        return SdfGrid(self.values[index], self.position[index], self.rotation[index], self.scale[index])
+
+    def intersect(
+        self,
+        ray: Ray,
+        *,
+        active: torch.Tensor | None = None,
+        max_steps: int = DEFAULT_MAX_STEPS,
+        relaxation: float = DEFAULT_RELAXATION,
+        eps_hit: float | None = None,
+    ) -> tuple[SdfIntersection, ...]:
+        _require_native_dispatcher()
+        if not isinstance(ray, Ray):
+            raise TypeError("SdfGridBatch.intersect() expects rayd.torch.Ray.")
+        if max_steps < 1:
+            raise ValueError(f"max_steps must be at least 1 (got {max_steps}).")
+        if not 0.0 < relaxation <= 1.0:
+            raise ValueError(f"relaxation must lie in (0, 1] (got {relaxation}).")
+        if eps_hit is not None and not eps_hit > 0.0:
+            raise ValueError(f"eps_hit must be positive, or None to derive it on the device (got {eps_hit}).")
+        lane_active = _require_active(active, ray.o.shape[0], ray.o.device)
+        if _needs_reverse_or_forward_ad(self.values, self.position, self.rotation, self.scale, ray.o, ray.d):
+            return tuple(
+                self.grid(index).intersect(
+                    ray, active=lane_active, max_steps=max_steps, relaxation=relaxation, eps_hit=eps_hit
+                )
+                for index in range(self.grid_count)
+            )
+        if ray.o.device != self.values.device:
+            raise ValueError("ray must be on the SDF batch values device.")
+        values = torch.ops.rayd_torch.sdf_batch_intersect_forward(
+            self.values,
+            self.position,
+            self.rotation,
+            self.scale,
+            ray.o,
+            ray.d,
+            float("inf"),
+            int(max_steps),
+            float(relaxation),
+            _EPS_HIT_DEVICE_DERIVED if eps_hit is None else float(eps_hit),
+        )
+        results = []
+        for index in range(self.grid_count):
+            valid = values[1][index] & lane_active
+            if ray.tmax.numel() != 0:
+                valid = valid & (values[0][index] < ray.tmax)
+            zero3 = torch.zeros_like(values[2][index])
+            results.append(
+                SdfIntersection(
+                    torch.where(valid, values[0][index], torch.full_like(values[0][index], float("inf"))),
+                    valid,
+                    torch.where(valid[:, None], values[2][index], zero3),
+                    torch.where(valid[:, None], values[3][index], zero3),
+                    torch.where(lane_active, values[4][index], torch.zeros_like(values[4][index])),
+                )
+            )
+        return tuple(results)
+
+
 def sdf_intersect(
     grid: SdfGrid,
     origins: torch.Tensor,

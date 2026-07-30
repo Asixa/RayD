@@ -105,10 +105,12 @@ struct OptixSegmentHit {
 
 /// Describes one mesh as input to an OptiX GAS/IAS build.
 struct OptixSceneMeshDesc {
-    const Mesh* mesh = nullptr; ///< Source mesh (not owned).
-    bool dynamic = false;       ///< Whether the GAS is built for in-place refit.
-    int face_offset = 0;        ///< Offset added to local primitive ids to globalize them.
-    int mesh_id = -1;           ///< Instance id / SBT record index.
+    const Mesh* mesh = nullptr;    ///< Source mesh (not owned).
+    bool dynamic = false;          ///< Whether this instance accepts transform updates.
+    bool geometry_dynamic = false; ///< Whether the shared GAS is built for in-place refit.
+    int face_offset = 0;           ///< Offset added to local primitive ids to globalize them.
+    int mesh_id = -1;              ///< Stable instance id / SBT record index.
+    int geometry_owner_id = -1;    ///< Mesh id whose object-space geometry owns the shared GAS.
 };
 
 /// Marks which aspects of a mesh changed, driving an incremental OptixScene::sync().
@@ -509,6 +511,12 @@ class Scene final {
     /// Invalidates any prior build(); call build() again before querying. Mark a mesh
     /// \p dynamic to allow later vertex/transform edits via sync() without a full rebuild.
     int add_mesh(const Mesh& mesh, bool dynamic = false);
+    /// Add a transformed instance of an existing static mesh and return its stable instance id.
+    ///
+    /// The instance shares the source mesh's object-space GAS while retaining its own
+    /// scene-global primitive range and transform. Mark it dynamic to allow transform-only
+    /// updates through set_mesh_transform()/append_mesh_transform() and sync().
+    int add_instance(int geometry_id, const Matrix4fAD& transform, bool dynamic = true);
     /// Build all acceleration structures (OptiX GAS/IAS and the edge BVH); call before any query.
     void build();
     /// True once the scene is built and no acceleration structure needs a rebuild.
@@ -718,6 +726,7 @@ class Scene final {
     struct SceneMeshRecord {
         std::unique_ptr<Mesh> mesh;
         bool dynamic = false;
+        int geometry_owner_id = -1;
         bool vertices_dirty = false;
         bool transform_dirty = false;
         mutable bool edge_dirty = false;

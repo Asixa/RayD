@@ -105,6 +105,8 @@ py::tuple intersect_jvp_optional_op(int64_t, at::Tensor, at::Tensor, at::Tensor,
 // the pure C++ implementations with no pybind round-trip.
 std::vector<at::Tensor> sdf_intersect_forward_impl(at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor,
                                                    at::Tensor, double, int64_t, double, double);
+std::vector<at::Tensor> sdf_batch_intersect_forward_impl(at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor,
+                                                         at::Tensor, double, int64_t, double, double);
 std::vector<c10::optional<at::Tensor>> sdf_intersect_backward_impl(at::Tensor, at::Tensor, at::Tensor, at::Tensor,
                                                                    at::Tensor, at::Tensor, at::Tensor, at::Tensor,
                                                                    at::Tensor, c10::optional<at::Tensor>,
@@ -160,7 +162,7 @@ py::tuple diffraction_paths_order1_forward_op(int64_t, at::Tensor, at::Tensor, a
                                               at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor,
                                               at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor,
                                               at::Tensor, at::Tensor, at::Tensor, at::Tensor, int64_t, int64_t, double,
-                                              double = 0.0);
+                                              double = 0.0, int64_t = 0);
 py::tuple diffraction_accumulation_forward_op(
     int64_t, OptionalTensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor,
     at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, OptionalTensor, OptionalTensor, at::Tensor, at::Tensor,
@@ -203,7 +205,8 @@ py::tuple diffraction_coherent_accumulation_forward_op(int64_t, OptionalTensor, 
                                                        at::Tensor, at::Tensor, at::Tensor, at::Tensor, OptionalTensor,
                                                        OptionalTensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor,
                                                        at::Tensor, int64_t, int64_t, double, double, double, double,
-                                                       double, int64_t, int64_t, double, double, bool, bool);
+                                                       double, int64_t, int64_t, double, double, bool, bool,
+                                                       int64_t = 0, int64_t = -1);
 
 py::tuple reflection_trace_stats_op(at::Tensor, at::Tensor);
 py::tuple diffraction_path_stats_op(at::Tensor, at::Tensor, at::Tensor);
@@ -583,14 +586,15 @@ OptionalTensorList diffraction_paths_order1_forward_dispatch(
     at::Tensor state_edge_t_max, at::Tensor state_n0, at::Tensor state_n1, at::Tensor state_prim0,
     at::Tensor state_prim1, at::Tensor state_exterior_angle, at::Tensor state_src, at::Tensor state_src_power,
     at::Tensor material_eta_r, at::Tensor material_sigma, at::Tensor material_mu_r, at::Tensor material_gain,
-    at::Tensor material_valid, int64_t state_limit, int64_t capacity, double wavelength) {
+    at::Tensor material_valid, int64_t state_limit, int64_t capacity, double wavelength, int64_t output_layout) {
     py::gil_scoped_acquire gil;
     return tuple_to_optional_tensor_list(
         diffraction_paths_order1_forward_op(handle(scene), tx_pos, tx_pol, rx_pos, active, state_edge_index,
                                             state_edge_pos, state_edge_dir, state_edge_t_min, state_edge_t_max,
                                             state_n0, state_n1, state_prim0, state_prim1, state_exterior_angle,
                                             state_src, state_src_power, material_eta_r, material_sigma, material_mu_r,
-                                            material_gain, material_valid, state_limit, capacity, wavelength));
+                                            material_gain, material_valid, state_limit, capacity, wavelength, 0.0,
+                                            output_layout));
 }
 
 OptionalTensorList diffraction_accumulation_forward_dispatch(
@@ -733,14 +737,15 @@ OptionalTensorList diffraction_coherent_accumulation_forward_dispatch(
     at::Tensor material_valid, int64_t state_limit, int64_t grid_axis, double grid_position, double grid_coord0_min,
     double grid_coord0_max, double grid_coord1_min, double grid_coord1_max, int64_t grid_resolution0,
     int64_t grid_resolution1, double grid_cell_area, double wavelength, bool select_diffraction_point,
-    bool prefilter_visibility) {
+    bool prefilter_visibility, int64_t lane_offset, int64_t lane_count) {
     py::gil_scoped_acquire gil;
     return tuple_to_optional_tensor_list(diffraction_coherent_accumulation_forward_op(
         handle(scene), active, state_edge_index, state_edge_pos, state_edge_dir, state_edge_t_min, state_edge_t_max,
         state_n0, state_n1, state_prim0, state_prim1, state_exterior_angle, state_src, state_src_power, state_wi,
         state_d0, material_eta_r, material_sigma, material_mu_r, material_gain, material_valid, state_limit, grid_axis,
         grid_position, grid_coord0_min, grid_coord0_max, grid_coord1_min, grid_coord1_max, grid_resolution0,
-        grid_resolution1, grid_cell_area, wavelength, select_diffraction_point, prefilter_visibility));
+        grid_resolution1, grid_cell_area, wavelength, select_diffraction_point, prefilter_visibility, lane_offset,
+        lane_count));
 }
 
 #define RAYD_TORCH_SCHEMA_SCENE "__torch__.torch.classes.rayd_torch.Scene"
@@ -749,16 +754,25 @@ TORCH_LIBRARY(rayd_torch, m) {
     m.class_<SceneHandle>("Scene")
         .def(torch::init([](std::vector<at::Tensor> vertices, std::vector<at::Tensor> faces, std::vector<at::Tensor> uv,
                             std::vector<at::Tensor> face_uv, std::vector<at::Tensor> to_world_left,
-                            std::vector<at::Tensor> to_world_right, std::vector<int64_t> mesh_flags) {
+                            std::vector<at::Tensor> to_world_right, std::vector<at::Tensor> instance_transforms,
+                            std::vector<int64_t> mesh_flags, std::vector<int64_t> geometry_owner_ids) {
             return create_scene_cache_from_flat(std::move(vertices), std::move(faces), std::move(uv),
                                                 std::move(face_uv), std::move(to_world_left), std::move(to_world_right),
-                                                std::move(mesh_flags));
+                                                std::move(instance_transforms), std::move(mesh_flags),
+                                                std::move(geometry_owner_ids));
         }))
         .def("update_vertices", [](const ScenePtr& scene, int64_t mesh_id,
                                    at::Tensor vertices) { update_mesh_vertices(scene, mesh_id, vertices); })
+        .def("update_transform",
+             [](const ScenePtr& scene, int64_t mesh_id, at::Tensor vertices, at::Tensor transform) {
+                 update_instance_transform(scene, mesh_id, std::move(vertices), std::move(transform));
+             })
         .def("sync", [](const ScenePtr& scene) { sync_scene(scene); })
         .def("version", [](const ScenePtr& scene) { return scene_version(scene); })
         .def("num_meshes", [](const ScenePtr& scene) { return scene_num_meshes(scene); })
+        .def("num_geometries", [](const ScenePtr& scene) { return scene_num_geometries(scene); })
+        .def("last_sync_gas_updates", [](const ScenePtr& scene) { return scene_last_sync_gas_updates(scene); })
+        .def("last_sync_ias_updates", [](const ScenePtr& scene) { return scene_last_sync_ias_updates(scene); })
         .def("edge_count", [](const ScenePtr& scene) { return scene_edge_count(scene); })
         .def("trace_backend", [](const ScenePtr& scene) { return scene_trace_backend(scene->handle); })
         .def("edge_backend", [](const ScenePtr& scene) { return scene_edge_backend(scene->handle); })
@@ -805,6 +819,8 @@ TORCH_LIBRARY_FRAGMENT(rayd_torch, m) {
 
     m.def("sdf_intersect_forward(Tensor values, Tensor position, Tensor rotation, Tensor scale, Tensor origins, Tensor "
           "directions, float tmax, int max_steps, float relaxation, float eps_hit) -> Tensor[]");
+    m.def("sdf_batch_intersect_forward(Tensor values, Tensor position, Tensor rotation, Tensor scale, Tensor origins, "
+          "Tensor directions, float tmax, int max_steps, float relaxation, float eps_hit) -> Tensor[]");
     m.def("sdf_intersect_backward(Tensor values, Tensor position, Tensor rotation, Tensor scale, Tensor origins, "
           "Tensor directions, Tensor tape_t, Tensor tape_hit, Tensor tape_base, Tensor? grad_t, Tensor? "
           "grad_hit_position, Tensor? grad_normal, bool need_grad_values, bool need_grad_position, bool "
@@ -900,7 +916,8 @@ TORCH_LIBRARY_FRAGMENT(rayd_torch, m) {
           "state_edge_pos, Tensor state_edge_dir, Tensor state_edge_t_min, Tensor state_edge_t_max, Tensor state_n0, "
           "Tensor state_n1, Tensor state_prim0, Tensor state_prim1, Tensor state_exterior_angle, Tensor state_src, "
           "Tensor state_src_power, Tensor material_eta_r, Tensor material_sigma, Tensor material_mu_r, Tensor "
-          "material_gain, Tensor material_valid, int state_limit, int capacity, float wavelength) -> Tensor?[]");
+          "material_gain, Tensor material_valid, int state_limit, int capacity, float wavelength, "
+          "int output_layout=0) -> Tensor?[]");
     m.def("diffraction_accumulation_forward(" RAYD_TORCH_SCHEMA_SCENE
           " scene, Tensor? active, Tensor state_edge_index, Tensor state_edge_pos, Tensor state_edge_dir, Tensor "
           "state_edge_t_min, Tensor state_edge_t_max, Tensor state_n0, Tensor state_n1, Tensor state_prim0, Tensor "
@@ -968,8 +985,8 @@ TORCH_LIBRARY_FRAGMENT(rayd_torch, m) {
           "Tensor? state_d0, Tensor material_eta_r, Tensor material_sigma, Tensor material_mu_r, Tensor material_gain, "
           "Tensor material_valid, int state_limit, int grid_axis, float grid_position, float grid_coord0_min, float "
           "grid_coord0_max, float grid_coord1_min, float grid_coord1_max, int grid_resolution0, int grid_resolution1, "
-          "float grid_cell_area, float wavelength, bool select_diffraction_point, bool prefilter_visibility) -> "
-          "Tensor?[]");
+          "float grid_cell_area, float wavelength, bool select_diffraction_point, bool prefilter_visibility, int "
+          "lane_offset=0, int lane_count=-1) -> Tensor?[]");
 }
 
 TORCH_LIBRARY_IMPL(rayd_torch, CUDA, m) {
@@ -988,6 +1005,7 @@ TORCH_LIBRARY_IMPL(rayd_torch, CUDA, m) {
     m.impl("intersect_backward_t", TORCH_FN(intersect_backward_t_dispatch));
     m.impl("intersect_jvp_optional", TORCH_FN(intersect_jvp_optional_dispatch));
     m.impl("sdf_intersect_forward", TORCH_FN(sdf_intersect_forward_impl));
+    m.impl("sdf_batch_intersect_forward", TORCH_FN(sdf_batch_intersect_forward_impl));
     m.impl("sdf_intersect_backward", TORCH_FN(sdf_intersect_backward_impl));
     m.impl("sdf_intersect_jvp", TORCH_FN(sdf_intersect_jvp_impl));
     m.impl("nearest_edge_forward", TORCH_FN(nearest_edge_forward_dispatch));

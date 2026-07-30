@@ -55,8 +55,9 @@
   },
   "not_golden": {
     "instance": {
-      "status": "na",
-      "rationale": "The public RayD API exposes no instancing. Scene.add_mesh flattens each mesh into scene-global geometry and there is no per-instance transform or instance id to query, so there is no observable instance behavior to freeze."
+      "status": "covered_elsewhere",
+      "reference": "tests/scene/test_geometry_jit.py::GeometryCoreTests.test_mesh_instance_shares_gas_and_keeps_instance_global_ids and tests/scene/test_mesh_instancing.py::MeshInstancingTests",
+      "rationale": "Both Scene backends freeze shared owner GAS, shape_id == instance_id, independent scene-global primitive ranges, transform-only IAS updates, and transform VJP/JVP in backend-specific stateful tests. Golden scenes remain forward-only immutable fixtures."
     },
     "mask_update": {
       "status": "covered_elsewhere",

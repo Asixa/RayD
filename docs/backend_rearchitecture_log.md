@@ -62,8 +62,10 @@ The plan remains authoritative for goals and gates; the facts below are authorit
   have no id tie-break). These are recorded in baselines but tagged `informative` and excluded from the
   strict gate. Consequence for P3/P5: the "discrete results bit-identical across backends" gate applies
   to the strict field set; exact-tie cases cannot be part of it until tie-breaks are unified.
-- **Instancing golden case: N/A.** RayD's public API has no instancing; recorded in the golden coverage
-  manifest with rationale instead of a scene.
+- **Instancing golden case: dedicated suites.** Both backend-native public APIs
+  now cover shared GAS, instance/global identifier mapping, transform-only IAS
+  updates, and transform VJP/JVP in stateful tests; the golden manifest records
+  the rationale instead of duplicating those mutable scenes.
 
 ### Baseline (pre-P0, worktree @ `main`)
 

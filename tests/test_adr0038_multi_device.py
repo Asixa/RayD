@@ -34,8 +34,8 @@ CAPABILITY_MODULES = {
 }
 
 CAPABILITY = "multi_device_replicated"
-CLASSES = ("per_ray", "grid_reduce", "batch_coupled")
-DISPOSITIONS = ("sharded", "unsupported", "single_device")
+CLASSES = ("per_ray", "grid_reduce", "source_lane", "variant_specific", "batch_coupled")
+DISPOSITIONS = ("sharded", "unsupported", "single_device", "variant_specific")
 
 
 def read(path: Path) -> str:
@@ -204,17 +204,9 @@ class Adr0038RecordTests(AdrTestCase):
             with self.subTest(condition=condition):
                 self.assertPhrase(condition, body)
 
-    def test_deferred_items_are_the_ones_the_layer_actually_refuses(self) -> None:
+    def test_deferred_items_are_the_remaining_follow_up_work(self) -> None:
         body = self.top["Deferred"]
-        for item in (
-            "trace_dfr_paths",
-            "SourceLane",
-            "ADR-0032",
-            "deduplicate = true",
-            "ADR-0033 failure-bit",
-            "accum_dfr_coherent_direct",
-            "Appendix A",
-        ):
+        for item in ("deduplicate = true", "ADR-0033 failure-bit", "trace_refl_epc", "Appendix A"):
             with self.subTest(item=item):
                 self.assertPhrase(item, body)
         self.assertPhrase("None is authorized here", body)
@@ -321,9 +313,9 @@ class Adr0038ClassificationTableTests(AdrTestCase):
                 "visibility_pair": ("per_ray", "sharded"),
                 "visibility_edge": ("per_ray", "sharded"),
                 "visibility_chain": ("per_ray", "sharded"),
-                "reflection_trace": ("per_ray", "sharded"),
-                "reflection_accumulation": ("grid_reduce", "single_device"),
-                "diffraction_direct": ("grid_reduce", "sharded"),
+                "reflection_trace": ("variant_specific", "variant_specific"),
+                "reflection_accumulation": ("grid_reduce", "sharded"),
+                "diffraction_direct": ("variant_specific", "sharded"),
                 "diffraction_chain": ("grid_reduce", "sharded"),
                 "sdf_intersect": ("per_ray", "single_device"),
                 "mixed_scene": ("per_ray", "single_device"),
@@ -336,7 +328,7 @@ class Adr0038LaneWindowTests(AdrTestCase):
 
     def setUp(self) -> None:
         self.window = json.loads(read(OPERATIONS_PATH))["shardability_classes"]["lane_window"]
-        self.body = sections(read(ADR_PATH), 3)["5. The Monte-Carlo lane window (D5)"]
+        self.body = sections(read(ADR_PATH), 3)["5. Diffraction lane windows (D5)"]
         self.ops_cpp = read(DIFFRACTION_OPS_PATH)
         self.multi = read(MULTI_PATH)
 
@@ -511,9 +503,9 @@ class Adr0038RefusalTests(AdrTestCase):
         self.multi = read(MULTI_PATH)
         self.body = sections(read(ADR_PATH), 3)["6. Batch-coupled operations get explicit semantics or they fail (D6)"]
 
-    def test_the_two_refused_operations_are_the_ones_the_record_names(self) -> None:
+    def test_refused_operations_are_the_ones_the_record_names(self) -> None:
         refused = set(re.findall(r'_multi\.unsupported\("([a-z_]+)"\)', self.scene))
-        self.assertEqual(refused, {"trace_dfr_paths", "accum_dfr_coherent_direct"})
+        self.assertEqual(refused, {"trace_refl_epc"})
         for name in sorted(refused):
             with self.subTest(operation=name):
                 self.assertPhrase(name, self.body)

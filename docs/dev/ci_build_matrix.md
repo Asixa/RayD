@@ -38,11 +38,11 @@ backends compile and package without paying the full release fan-out on every
 commit.
 
 The complete distribution workflow is `.github/workflows/pypi.yml`. It runs
-on `main`, weekly, by manual dispatch, and for published releases. Every run
-builds and audits the complete release artifact set; only a published GitHub
-Release enables trusted publishing. The existing `rayd` project uses the
-`pypi` GitHub Environment; the two backend projects use the unique
-`pypi-rayd-drjit` and `pypi-rayd-torch` environments required by PyPI.
+by manual dispatch and for published releases. Every run builds and audits the
+complete release artifact set; only a published GitHub Release enables trusted
+publishing. The existing `rayd` project uses the `pypi` GitHub Environment;
+the two backend projects use the unique `pypi-rayd-drjit` and
+`pypi-rayd-torch` environments required by PyPI.
 
 | Job | Matrix | Purpose |
 | --- | --- | --- |
@@ -55,6 +55,34 @@ Release enables trusted publishing. The existing `rayd` project uses the
 | `publish-*` | published GitHub Releases only, on `ubuntu-latest` | Publish backend wheels first, then the meta distribution, using PyPI trusted publishing |
 
 Both native backends keep `manylinux_2_28` rather than changing to the witwin `manylinux_2_35` tag. This is a stricter backward-compatibility target and matches the Dr.Jit and PyTorch 2.10/cu128 Linux wheels used by the builds.
+
+Every Linux matrix entry uses cibuildwheel's isolated test environment to
+load the installed public backend and native extension, then uninstalls the
+distribution and confirms that the backend import is absent. Every Windows
+matrix entry performs the same lifecycle from the runner's temporary
+directory. Both routes launch the probe with Python isolated mode, require the
+loaded public module and native library to reside under the active
+environment's `site-packages`, and print their resolved paths. The Torch probe
+also requires both the legacy dispatcher and Stable ABI operator sets to be
+registered. This per-wheel check complements the final merged-wheel install
+order and namespace-coexistence matrix.
+
+## Runtime GPU acceptance
+
+GitHub-hosted build runners have no CUDA device. Runtime execution is split
+between two self-hosted workflows:
+
+| Workflow | Runner labels | Trigger | Scope |
+| --- | --- | --- | --- |
+| `.github/workflows/single_gpu.yml` | `self-hosted`, `linux`, `x64`, `cuda`, `single-gpu` | PR label `run-gpu-ci`, weekly schedule, or manual dispatch | Builds both backends from the checkout; requires live Torch and Dr.Jit CUDA plus one successful OptiX hit per backend; runs Torch/Dr.Jit core geometry and multipath, the Dr.Jit cold-pipeline matrix, mixed geometry, SDF, and cross-backend parity |
+| `.github/workflows/multi_gpu.yml` | `self-hosted`, `linux`, `x64`, `cuda`, `multi-gpu` | PR label `run-multi-gpu-ci`, weekly schedule, or manual dispatch | Requires at least two visible devices and runs replicated-scene sharding, chunking, resilience, distributed, and benchmark acceptance |
+
+The single-GPU preflight is deliberately outside the skip-guarded unit-test
+modules. A missing CUDA device, failed Dr.Jit CUDA evaluation, unavailable
+native extension, or failed OptiX traversal terminates the job before a
+`skipUnless` guard could turn the run green. It also prints the public module,
+native extension, and shared implementation paths actually imported after the
+current checkout is built.
 
 ## Build concurrency and caching
 
@@ -137,6 +165,11 @@ The Torch backend uses the equivalent `CMAKE_CUDA_ARCHITECTURES` list for `_C`, 
 ## Artifact validation
 
 Every native release wheel is checked by `drjit/scripts/verify_cuda_binary_arches.py`. The script extracts `_C` and, for Torch, `_stable_ops`, runs `cuobjdump --list-elf` to require every SASS image, and runs `cuobjdump --dump-ptx` to require `.target sm_120`. The Torch Stable ABI library is additionally checked by `torch/scripts/verify_stable_abi.py` after wheel repair. A missing architecture or forbidden Python/unstable LibTorch dependency fails the build.
+
+Artifact inspection is followed by an install/import/uninstall lifecycle in
+every OS/backend/Python matrix entry. This checks that the repaired or native
+wheel can be imported independently of the checkout, that its native runtime
+is available, and that uninstall removes its namespace portion cleanly.
 
 This distinction matters: a matrix entry or an `nvcc` flag in YAML is an intention, while `cuobjdump` verifies the artifact users actually install.
 

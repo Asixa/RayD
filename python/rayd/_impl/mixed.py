@@ -9,9 +9,17 @@ from collections.abc import Callable
 
 import torch
 
-from .geometry import Intersection, Ray, RayFlags, ReflectionChain, _CONTRACT_VALUES, _require_float_cuda_tensor
+from .geometry import (
+    Intersection,
+    Ray,
+    RayFlags,
+    ReflectionChain,
+    SdfIntersection,
+    _CONTRACT_VALUES,
+    _require_float_cuda_tensor,
+)
 from .scene import Mesh, Scene
-from .sdf import SdfGrid, SdfTraceOptions, _require_active
+from .sdf import SdfGrid, SdfGridBatch, SdfTraceOptions, _require_active
 from .surfel import SurfelCloud, SurfelScene, SurfelTraceOptions
 
 
@@ -142,6 +150,7 @@ class MixedScene:
         self._mesh_count = 0
         self._mesh_face_count = 0
         self._sdfs: list[tuple[SdfGrid, SdfTraceOptions]] = []
+        self._sdf_batches: dict[int, tuple[SdfGridBatch, SdfTraceOptions]] = {}
         self._surfels: list[SurfelScene] = []
         self._surfel_prefix: list[int] = []
         self._device: torch.device | None = None
@@ -173,6 +182,20 @@ class MixedScene:
         self._sdfs.append((grid, trace_options))
         self._ready = False
         return len(self._sdfs) - 1
+
+    def add_sdf_batch(self, batch: SdfGridBatch, options: SdfTraceOptions | None = None) -> int:
+        """Insert a packed compatible SDF group and return its first logical grid ID."""
+        if not isinstance(batch, SdfGridBatch):
+            raise TypeError("MixedScene.add_sdf_batch() expects rayd.torch.SdfGridBatch.")
+        trace_options = SdfTraceOptions() if options is None else options
+        if not isinstance(trace_options, SdfTraceOptions):
+            raise TypeError("options must be rayd.torch.SdfTraceOptions.")
+        self._accept_device(batch.values.device, "SDF grid batch")
+        first = len(self._sdfs)
+        self._sdf_batches[first] = (batch, trace_options)
+        self._sdfs.extend((batch.grid(index), trace_options) for index in range(batch.grid_count))
+        self._ready = False
+        return first
 
     def add_surfel(self, surfel: SurfelCloud | SurfelScene, options: SurfelTraceOptions | None = None) -> int:
         if isinstance(surfel, SurfelCloud):
@@ -231,7 +254,11 @@ class MixedScene:
         hit = grid.intersect(
             ray, active=active, max_steps=options.max_steps, relaxation=options.relaxation, eps_hit=options.eps_hit
         )
+        return self._sdf_candidate_from_hit(hit, ray, index, flags)
 
+    def _sdf_candidate_from_hit(
+        self, hit: SdfIntersection, ray: Ray, index: int, flags: RayFlags
+    ) -> tuple[torch.Tensor, Callable[[], Intersection]]:
         def load_full() -> Intersection:
             count = ray.o.shape[0]
             shape_id = torch.full((count,), self._mesh_count + index, dtype=torch.int32, device=ray.o.device)
@@ -315,10 +342,29 @@ class MixedScene:
                 return _invalid_intersection(ray)
 
         load_full = [load_first]
-        for index, (grid, options) in enumerate(self._sdfs):
-            candidate, load_candidate = self._sdf_candidate(grid, options, ray, lane_active, index, flags)
-            candidate_t.append(candidate)
-            load_full.append(load_candidate)
+        index = 0
+        while index < len(self._sdfs):
+            batch_entry = self._sdf_batches.get(index)
+            if batch_entry is None:
+                grid, options = self._sdfs[index]
+                candidate, load_candidate = self._sdf_candidate(grid, options, ray, lane_active, index, flags)
+                candidate_t.append(candidate)
+                load_full.append(load_candidate)
+                index += 1
+                continue
+            batch, options = batch_entry
+            hits = batch.intersect(
+                ray,
+                active=lane_active,
+                max_steps=options.max_steps,
+                relaxation=options.relaxation,
+                eps_hit=options.eps_hit,
+            )
+            for local_index, hit in enumerate(hits):
+                candidate, load_candidate = self._sdf_candidate_from_hit(hit, ray, index + local_index, flags)
+                candidate_t.append(candidate)
+                load_full.append(load_candidate)
+            index += batch.grid_count
         for index, scene in enumerate(self._surfels):
             candidate, load_candidate = self._surfel_candidate(scene, ray, lane_active, index, flags)
             candidate_t.append(candidate)

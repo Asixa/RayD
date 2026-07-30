@@ -19,8 +19,9 @@ class SchemaValidationError(Exception):
     """Raised when an instance violates its schema."""
 
 
-_ANNOTATION_KEYWORDS = {"$schema", "$id", "title"}
+_ANNOTATION_KEYWORDS = {"$schema", "$id", "$defs", "title"}
 _SUPPORTED_KEYWORDS = {
+    "$ref",
     "type",
     "properties",
     "required",
@@ -29,6 +30,7 @@ _SUPPORTED_KEYWORDS = {
     "enum",
     "uniqueItems",
     "minLength",
+    "minProperties",
     "minimum",
     "const",
 }
@@ -42,11 +44,24 @@ _TYPE_CHECKS: dict[str, Callable[[Any], bool]] = {
 }
 
 
-def validate(instance: Any, schema: dict[str, Any], path: str = "") -> None:
+def validate(
+    instance: Any, schema: dict[str, Any], path: str = "", *, _root_schema: dict[str, Any] | None = None
+) -> None:
+    root_schema = schema if _root_schema is None else _root_schema
     where = path or "<root>"
     unsupported = set(schema) - _SUPPORTED_KEYWORDS - _ANNOTATION_KEYWORDS
     if unsupported:
         raise NotImplementedError(f"unimplemented schema keyword(s) at {where}: {sorted(unsupported)}")
+
+    if "$ref" in schema:
+        reference = schema["$ref"]
+        if not isinstance(reference, str) or not reference.startswith("#/"):
+            raise NotImplementedError(f"unimplemented schema reference at {where}: {reference!r}")
+        target: Any = root_schema
+        for token in reference[2:].split("/"):
+            target = target[token.replace("~1", "/").replace("~0", "~")]
+        validate(instance, target, path, _root_schema=root_schema)
+        return
 
     if "type" in schema:
         check = _TYPE_CHECKS.get(schema["type"])
@@ -67,13 +82,18 @@ def validate(instance: Any, schema: dict[str, Any], path: str = "") -> None:
     if "minLength" in schema and len(instance) < schema["minLength"]:
         raise SchemaValidationError(f"{where}: length {len(instance)} is below minLength {schema['minLength']}")
 
+    if "minProperties" in schema and len(instance) < schema["minProperties"]:
+        raise SchemaValidationError(
+            f"{where}: property count {len(instance)} is below minProperties {schema['minProperties']}"
+        )
+
     if isinstance(instance, dict):
-        _validate_object(instance, schema, path)
+        _validate_object(instance, schema, path, root_schema)
     elif isinstance(instance, list):
-        _validate_array(instance, schema, path)
+        _validate_array(instance, schema, path, root_schema)
 
 
-def _validate_object(instance: dict[str, Any], schema: dict[str, Any], path: str) -> None:
+def _validate_object(instance: dict[str, Any], schema: dict[str, Any], path: str, root_schema: dict[str, Any]) -> None:
     where = path or "<root>"
     for key in schema.get("required", []):
         if key not in instance:
@@ -84,18 +104,18 @@ def _validate_object(instance: dict[str, Any], schema: dict[str, Any], path: str
     for key, value in instance.items():
         child = f"{path}.{key}" if path else key
         if key in properties:
-            validate(value, properties[key], child)
+            validate(value, properties[key], child, _root_schema=root_schema)
         elif additional is False:
             raise SchemaValidationError(f"{child}: additional property is not allowed")
         elif isinstance(additional, dict):
-            validate(value, additional, child)
+            validate(value, additional, child, _root_schema=root_schema)
 
 
-def _validate_array(instance: list[Any], schema: dict[str, Any], path: str) -> None:
+def _validate_array(instance: list[Any], schema: dict[str, Any], path: str, root_schema: dict[str, Any]) -> None:
     where = path or "<root>"
     if "items" in schema:
         for index, element in enumerate(instance):
-            validate(element, schema["items"], f"{path}[{index}]")
+            validate(element, schema["items"], f"{path}[{index}]", _root_schema=root_schema)
     if schema.get("uniqueItems"):
         seen: list[Any] = []
         for element in instance:

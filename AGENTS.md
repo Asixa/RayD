@@ -208,8 +208,12 @@ class in `contracts/operations.json`.
   gradient to make a shard or chunk proceed.
 - A single-device `Scene` never imports the orchestration layer and stays
   bitwise unchanged; the Phase 0 device guards are the only single-GPU-path
-  change. `trace_dfr_paths` and `accum_dfr_coherent_direct` raise on a
-  multi-device scene instead of changing meaning.
+  change. `trace_dfr_paths` uses transmitter-aligned `SourceLane` shards and
+  `accum_dfr_coherent_direct` uses a deterministic lane window, and
+  `accumulate_reflections` shards warp-aligned ray batches before a
+  master-ordered grid reduction. Reflection wedge collection keeps one full
+  master launch because its bounded event buffer is not reducible.
+  `trace_refl_epc` still raises on a multi-device scene.
 
 See `docs/adr/0038-replicated-multi-device-execution.md` for the decisions and
 stop conditions, `docs/dev/multi_gpu_operations.md` for the operational

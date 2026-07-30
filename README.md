@@ -7,8 +7,8 @@
 [![License](https://img.shields.io/github/license/Asixa/RayD)](LICENSE)
 
 RayD is a CUDA/OptiX library for differentiable ray geometry, edge queries,
-visibility, and RF-style multipath primitives. Version 0.7 provides two
-independent, backend-native Python APIs:
+visibility, and RF-style multipath primitives. RayD provides two independent,
+backend-native Python APIs:
 
 ```python
 import rayd.drjit as rd
@@ -35,7 +35,7 @@ pip install rayd-drjit
 pip install rayd-torch
 ```
 
-All three distributions share version `0.7.0`. The `rayd` meta-distribution
+All three distributions share version `0.8.0`. The `rayd` meta-distribution
 pins `rayd-drjit` and `rayd-torch` to exactly the same version.
 
 Release artifacts cover CPython 3.10 through 3.14 on Windows x86-64 and
@@ -46,7 +46,7 @@ Stable ABI boundary. The `rayd` meta-distribution is a universal pure-Python
 wheel and is the only distribution that also publishes an sdist.
 
 > [!IMPORTANT]
-> RayD 0.7 uses explicit backend namespaces. The parent `rayd` namespace does
+> Since 0.6.0, RayD uses explicit backend namespaces. The parent `rayd` namespace does
 > not select or re-export a default backend. Replace legacy `import rayd as rd`
 > with `import rayd.drjit as rd` or `import rayd.torch as rt`.
 
@@ -113,14 +113,18 @@ edges, visibility, and multipath query results.
 | Surfel primitives | Yes | Yes |
 | SDF grid intersection | Yes | Yes |
 | Unified mesh/SDF/surfel scene | Yes | Yes |
-| Reverse-mode AD | Yes | Yes |
-| Forward-mode AD | Yes | Yes |
+| Reverse-mode AD | Operation/variant dependent | Operation/variant dependent |
+| Forward-mode AD | Operation/variant dependent | Operation/variant dependent |
 | `torch.compile` integration | No | Yes |
 | Replicated multi-device execution | No | Yes |
 
 Use `backend_capabilities()` on either backend for the machine-readable
-capability manifest. Unsupported functionality does not silently cross into
-the other runtime.
+backward-compatible flat capability mapping. Its `reverse_ad` and `forward_ad`
+booleans mean that the backend has AD support, not that every operation variant
+and input domain supports both modes. Use
+`api_manifest()["derivatives"][operation][variant]["input_domains"]` for the
+resolved `supported`, `unsupported`, or `not_applicable` VJP/JVP status.
+Unsupported functionality does not silently cross into the other runtime.
 
 Each backend owns its scene objects, GPU allocations, current stream, OptiX
 pipelines, acceleration structures, and AD graph. A `rayd.drjit.Scene` cannot
@@ -142,29 +146,39 @@ overlap:
 - `scene.trace_refl_epc_field(...)`: complex reflected EPC fields
 - `scene.accum_dfr_direct(...)` / `scene.accum_dfr(...)`: diffraction
   accumulation
-- `scene.trace_dfr_paths(...)`: compact diffraction path export with required
-  capacity-shaped CUDA validity
+- `scene.trace_dfr_paths(...)`: diffraction path export with required
+  capacity-shaped CUDA validity; single-device calls default to `Compact`,
+  while replicated scenes require deterministic `SourceLane` rows
 - `scene.nearest_edges(point, k)` for `k <= 16`
 - `scene.visible(...)`, `visible_pair(...)`, `visible_chain(...)`, and
   `visible_edge(...)`
 - `scene.set_edge_mask(mask)` / `scene.edge_mask()`
 
+Both backends expose `scene.trace_refl_epc(...)` for EPC path geometry and
+`scene.accumulate_reflections(...)` for reflected field/power accumulation.
+They also expose
+`scene.add_instance(geometry_id, transform, dynamic=True)` for an independent
+transform, instance id, and scene-global primitive range over a shared OptiX
+GAS. This first slice retains per-instance world-space geometry/edge caches;
+the CUDA trace fallback refreshes those caches instead of an IAS, and Torch
+rejects every `Scene(devices=...)` orchestrator, including one-device chunking.
+Torch wraps its existing
+`torch.ops.rayd_torch.reflection_epc_paths_forward` and
+`reflection_accumulation_forward` dispatcher operations with backend-native
+options and result records.
+
 The Dr.Jit backend additionally exposes:
 
 - `scene.shadow_test(ray)`
-- `scene.trace_refl_epc(...)`: EPC path geometry
-- `scene.accumulate_reflections(...)`: reflected field/power accumulation
 - surfel rendering primitives (intersection, LOS, reflection, and alpha
   compositing are cross-backend)
-
-Torch reaches reflection accumulation and EPC path geometry through the
-dispatcher ops `torch.ops.rayd_torch.reflection_accumulation_forward` and
-`reflection_epc_paths_forward` rather than through `Scene` methods.
 
 Both backends expose standalone differentiable signed-distance-field queries:
 
 - `SdfGrid(values, position, rotation, scale)`: a caller-owned dense grid of
   vertex-centred world-metric distances placed by an oriented box
+- Torch `SdfGridBatch(values, position, rotation, scale)`: two or more
+  shape-compatible grids packed under one native primal query owner
 - `sdf_intersect(grid, origins, directions, ...)`: sphere-traced intersection
   returning `t`, `hit_mask`, `position`, `normal`, and a `steps` diagnostic
 - `grid.visible(...)` and `grid.trace_reflections(...)`: SDF-only LOS and
@@ -190,6 +204,10 @@ closest hits on the device, and differentiates through the fixed winning hit.
 Mesh hits are opaque for transmission, SDFs are ignored, and surfels contribute
 alpha transmission. A mesh-only `MixedScene` forwards directly to `Scene`, and
 the class intentionally exposes no diffraction method.
+Torch `MixedScene.add_sdf_batch()` reduces an untracked packed group's
+closest-hit/reflection candidate work to one CUDA launch. Tracked inputs retain
+the existing per-grid frozen-winner VJP/JVP path; LOS still applies each grid's
+own bias and SDF remains outside transmission and diffraction.
 See [`ADR-0043`](docs/adr/0043-unified-mixed-geometry-scene.md).
 
 ## Differentiation Contract

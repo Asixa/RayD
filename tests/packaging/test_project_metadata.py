@@ -23,7 +23,7 @@ class DistributionMetadataTests(unittest.TestCase):
 
     def test_all_distributions_share_one_version(self):
         versions = {self.meta["project"]["version"], self.drjit["project"]["version"], self.torch["project"]["version"]}
-        self.assertEqual(versions, {"0.7.0"})
+        self.assertEqual(versions, {"0.8.0"})
 
     def test_meta_distribution_pins_both_backends(self):
         version = self.meta["project"]["version"]
@@ -41,6 +41,13 @@ class DistributionMetadataTests(unittest.TestCase):
         self.assertEqual(
             self.torch["tool"]["scikit-build"]["wheel"]["packages"], {"rayd/torch": "../python/rayd/torch"}
         )
+
+    def test_drjit_editable_mapping_cannot_replace_runtime_modules_with_stubs(self):
+        package = ROOT / "python" / "rayd" / "drjit"
+        self.assertFalse((package / "__init__.pyi").exists())
+        self.assertFalse((package / "_C.pyi").exists())
+        self.assertTrue((package / "__init__.py").is_file())
+        self.assertTrue((package / "_C" / "__init__.pyi").is_file())
 
     def test_release_publishes_meta_after_backend_distributions(self):
         workflow = (ROOT / ".github" / "workflows" / "pypi.yml").read_text(encoding="utf-8")
@@ -66,10 +73,43 @@ class DistributionMetadataTests(unittest.TestCase):
         ):
             self.assertIn(marker, workflow)
 
+    def test_release_tag_is_validated_before_metadata_can_gate_builds(self):
+        workflow = (ROOT / ".github" / "workflows" / "pypi.yml").read_text(encoding="utf-8")
+        self.assertTrue((ROOT / "scripts" / "validate_release_tag.py").is_file())
+        self.assertIn("!scripts/validate_release_tag.py", (ROOT / ".gitignore").read_text(encoding="utf-8"))
+        metadata_job = workflow.split("\n  metadata:", 1)[1].split("\n  build-drjit-linux:", 1)[0]
+        self.assertIn("github.event.release.tag_name", metadata_job)
+        self.assertIn("github.event_name == 'release' && github.event.action == 'published'", metadata_job)
+        self.assertIn(
+            'python scripts/validate_release_tag.py --tag "$RAYD_RELEASE_TAG" --pyproject pyproject.toml', metadata_job
+        )
+        self.assertIn("tests.packaging.test_release_metadata", metadata_job)
+        self.assertLess(metadata_job.index("validate_release_tag.py"), metadata_job.index("test_project_metadata"))
+
+    def test_representative_wheel_selection_accepts_dual_tags_and_fails_loudly(self):
+        workflow = (ROOT / ".github" / "workflows" / "pypi.yml").read_text(encoding="utf-8")
+        selection = workflow.split("      - name: Validate representative wheel layout", 1)[1].split(
+            "\n      - run:", 1
+        )[0]
+        self.assertIn("rayd-*-none-any.whl", selection)
+        self.assertIn("rayd_drjit-*-cp312-cp312-*manylinux_2_28_x86_64.whl", selection)
+        self.assertIn("rayd_torch-*-cp312-cp312-*manylinux_2_28_x86_64.whl", selection)
+        self.assertEqual(selection.count("-ne 1"), 3)
+        self.assertIn('-z "$meta_wheel"', selection)
+        self.assertIn('-z "$drjit_wheel"', selection)
+        self.assertIn('-z "$torch_wheel"', selection)
+        self.assertNotIn("-print -quit", selection)
+        self.assertLess(selection.index("-ne 1"), selection.index('>> "$GITHUB_ENV"'))
+
     def test_pypi_publish_is_release_only(self):
         workflow = (ROOT / ".github" / "workflows" / "pypi.yml").read_text(encoding="utf-8")
         guard = "github.event_name == 'release' && github.event.action == 'published'"
-        self.assertEqual(workflow.count(guard), 3)
+        publish_drjit = workflow.split("\n  publish-drjit:", 1)[1].split("\n  publish-torch:", 1)[0]
+        publish_torch = workflow.split("\n  publish-torch:", 1)[1].split("\n  publish-rayd:", 1)[0]
+        publish_rayd = workflow.split("\n  publish-rayd:", 1)[1]
+        for name, job in (("drjit", publish_drjit), ("torch", publish_torch), ("rayd", publish_rayd)):
+            with self.subTest(job=name):
+                self.assertEqual(job.count(guard), 1)
         self.assertIn("id-token: write", workflow)
 
     def test_paid_workflows_are_opt_in(self):
@@ -96,9 +136,7 @@ class DistributionMetadataTests(unittest.TestCase):
                 self.assertIn("tests.test_rt_host_compile", workflow)
 
     def test_workflow_python_modules_exist_at_repository_root(self):
-        module_pattern = re.compile(
-            r"(?<![A-Za-z0-9_])(?:tests|benchmarks)(?:\.[A-Za-z_][A-Za-z0-9_]*)+"
-        )
+        module_pattern = re.compile(r"(?<![A-Za-z0-9_])(?:tests|benchmarks)(?:\.[A-Za-z_][A-Za-z0-9_]*)+")
         workflows = ROOT / ".github" / "workflows"
         workflow_paths = (*workflows.glob("*.yml"), *workflows.glob("*.yaml"))
 

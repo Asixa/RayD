@@ -23,6 +23,7 @@ import pathlib
 import subprocess
 import sys
 import unittest
+from dataclasses import replace
 
 import torch
 
@@ -522,32 +523,6 @@ class MultiDeviceSceneTests(MultiDeviceResultMixin, unittest.TestCase):
         for replica, device in zip(scene._multi._replicas, scene._multi.devices):
             self.assertTrue(torch.equal(_bits(replica.edge_mask()), _bits(mask)), f"edge mask did not reach {device}")
 
-    def test_operations_without_multi_device_semantics_raise(self):
-        """What is left after Phase 2c wired the lane-windowed accumulation ops.
-
-        `trace_dfr_paths` places exporter rows by batch position, and
-        `accum_dfr_coherent_direct` has no lane window at all, so both still
-        need the per-shard contract of D6.
-        """
-        scene = self._multi_scene()
-        states = _dfr_states(self.device)
-        grid = rt.DfrGrid(axis=2, position=0.5, resolution0=2, resolution1=2)
-        active = torch.ones(states.state_count, dtype=torch.bool, device=self.device)
-
-        cases = {
-            "trace_dfr_paths": lambda: scene.trace_dfr_paths(
-                tx_positions=self.inputs["origins"], rx_positions=self.inputs["receiver"], states=states, active=active
-            ),
-            "accum_dfr_coherent_direct": lambda: scene.accum_dfr_coherent_direct(states=states, grid=grid),
-        }
-        for name, call in cases.items():
-            with self.subTest(operation=name):
-                with self.assertRaises(NotImplementedError) as raised:
-                    call()
-                message = str(raised.exception)
-                self.assertIn(name, message)
-                self.assertIn("docs/dev/multi_gpu_plan.md Phase 2c", message)
-
     def test_mesh_tensors_must_live_on_the_master_device(self):
         vertices, faces = _grid_mesh(torch.device("cuda", 1))
         scene = rt.Scene(devices=[0, 1], options=rt.MultiDeviceOptions(warm_up=False))
@@ -1037,6 +1012,30 @@ def _dfr_states(device: torch.device, requires_grad: bool = False) -> rt.DfrStat
     )
 
 
+def _repeat_dfr_states(states: rt.DfrStates, copies: int) -> rt.DfrStates:
+    """Repeat physical states while retaining their logical field contract."""
+
+    def repeat(name):
+        value = getattr(states, name)
+        factors = (copies,) + (1,) * (value.ndim - 1)
+        return value.repeat(factors)
+
+    return rt.DfrStates(
+        edge_index=repeat("edge_index"),
+        edge_pos=repeat("edge_pos"),
+        edge_dir=repeat("edge_dir"),
+        edge_t_min=repeat("edge_t_min"),
+        edge_t_max=repeat("edge_t_max"),
+        n0=repeat("n0"),
+        n1=repeat("n1"),
+        prim0=repeat("prim0"),
+        prim1=repeat("prim1"),
+        exterior_angle=repeat("exterior_angle"),
+        src=repeat("src"),
+        src_power=repeat("src_power"),
+    )
+
+
 def _dfr_material(device: torch.device, requires_grad: bool = False) -> rt.DfrMaterial:
     """A one-face material; only `gain` carries an accumulation gradient."""
     return rt.DfrMaterial(
@@ -1183,6 +1182,179 @@ class MultiDeviceAccumulationTests(AccumulationMixin, unittest.TestCase):
             with self.subTest(weights=weights):
                 scene = self._scene(weights)
                 self.assert_accum_close(self._accum(scene), reference, f"weights={weights}")
+
+    def test_cuda_trace_backend_uses_one_master_lane_window(self):
+        single = _accum_scene(self.device, trace_backend="cuda")
+        scene = _accum_scene(
+            self.device,
+            trace_backend="cuda",
+            devices=[0, 1],
+            options=rt.MultiDeviceOptions(warm_up=False, min_lanes_per_device=1),
+        )
+        reference = self._accum(single, samples=64)
+        result = self._accum(scene, samples=64)
+        self.assertEqual(scene._multi.last_dispatch, "master")
+        self.assert_accum_identical(result, reference, "CUDA master fallback")
+
+        states = _dfr_states(self.device)
+        material = _dfr_material(self.device)
+        coherent_reference = single.accum_dfr_coherent_direct(
+            states=states, grid=self.grid, material=material, wavelength=1.0
+        )
+        coherent = scene.accum_dfr_coherent_direct(states=states, grid=self.grid, material=material, wavelength=1.0)
+        self.assertEqual(scene._multi.last_dispatch, "master")
+        self.assertEqual(coherent.grid_cell_count, coherent_reference.grid_cell_count)
+        for name in coherent.__dataclass_fields__:
+            if name == "grid_cell_count":
+                continue
+            self.assertTrue(
+                torch.equal(_bits(getattr(coherent, name)), _bits(getattr(coherent_reference, name))),
+                f"CUDA coherent {name} differs",
+            )
+
+    def test_source_lane_paths_match_single_device_row_for_row(self):
+        if torch.cuda.get_device_name(0) != torch.cuda.get_device_name(1):
+            self.skipTest("bitwise cross-device equality needs identical devices")
+        states = _dfr_states(self.device)
+        material = _dfr_material(self.device)
+        active = torch.ones(states.state_count, dtype=torch.bool, device=self.device)
+        tx_positions = torch.tensor(
+            [[-0.2, -1.0, 0.25], [-0.1, -1.0, 0.25], [0.0, -1.0, 0.25], [0.1, -1.0, 0.25], [0.2, -1.0, 0.25]],
+            dtype=torch.float32,
+            device=self.device,
+        )
+        rx_positions = torch.tensor([[0.0, 1.0, 0.25], [0.1, 1.0, 0.25]], dtype=torch.float32, device=self.device)
+
+        def trace(scene):
+            return scene.trace_dfr_paths(
+                tx_positions=tx_positions,
+                rx_positions=rx_positions,
+                states=states,
+                material=material,
+                active=active,
+                layout=rt.DfrPathLayout.SourceLane,
+            )
+
+        reference = trace(self.single)
+        scene = self._scene(min_rays_per_device=1)
+        merged = trace(scene)
+        self.assertEqual(scene._multi.last_dispatch, "sharded")
+        self.assertEqual(merged.layout, rt.DfrPathLayout.SourceLane)
+        self.assertEqual(merged.capacity, reference.capacity)
+        self.assertEqual(merged.count.dtype, reference.count.dtype)
+        self.assertGreater(int(reference.count.item()), 0, "vacuous SourceLane fixture")
+        rows = torch.arange(merged.capacity, dtype=torch.int32, device=self.device)
+        expected_tx = rows // (rx_positions.shape[0] * states.state_count)
+        expected_rx = (rows // states.state_count) % rx_positions.shape[0]
+        self.assertTrue(torch.equal(merged.tx_id[merged.valid], expected_tx[merged.valid]))
+        self.assertTrue(torch.equal(merged.rx_id[merged.valid], expected_rx[merged.valid]))
+        for name in (
+            "count",
+            "valid",
+            "tx_id",
+            "rx_id",
+            "order",
+            "edge0",
+            "edge1",
+            "edge2",
+            "delay",
+            "field_x_re",
+            "field_x_im",
+            "field_y_re",
+            "field_y_im",
+            "field_z_re",
+            "field_z_im",
+            "p0",
+            "p1",
+            "p2",
+        ):
+            self.assertTrue(
+                torch.equal(_bits(getattr(merged, name)), _bits(getattr(reference, name))), f"SourceLane {name} differs"
+            )
+
+    def test_source_lane_rejects_strided_active_before_remote_copy(self):
+        states = _dfr_states(self.device)
+        material = _dfr_material(self.device)
+        active = torch.ones(states.state_count * 2, dtype=torch.bool, device=self.device)[::2]
+        tx_positions = torch.zeros((5, 3), dtype=torch.float32, device=self.device)
+        rx_positions = torch.zeros((1, 3), dtype=torch.float32, device=self.device)
+        scene = self._scene(weights=[0.0, 1.0], min_rays_per_device=1)
+
+        with self.assertRaisesRegex(RuntimeError, "active must be contiguous"):
+            scene.trace_dfr_paths(
+                tx_positions=tx_positions,
+                rx_positions=rx_positions,
+                states=states,
+                material=material,
+                active=active,
+                layout=rt.DfrPathLayout.SourceLane,
+            )
+
+    def test_source_lane_rejects_nonmaster_state_before_remote_copy(self):
+        states = _dfr_states(self.device)
+        foreign_states = replace(states, edge_pos=states.edge_pos.to(torch.device("cuda", 1)))
+        scene = self._scene(weights=[0.0, 1.0], min_rays_per_device=1)
+        active = torch.ones(states.state_count, dtype=torch.bool, device=self.device)
+        positions = torch.zeros((5, 3), dtype=torch.float32, device=self.device)
+
+        with self.assertRaisesRegex(RuntimeError, "state_edge_pos must share one CUDA device"):
+            scene.trace_dfr_paths(
+                tx_positions=positions,
+                rx_positions=positions[:1],
+                states=foreign_states,
+                material=_dfr_material(self.device),
+                active=active,
+                layout=rt.DfrPathLayout.SourceLane,
+            )
+
+    def test_forward_only_diffraction_rejects_tracked_inputs_before_sharding(self):
+        states = _dfr_states(self.device)
+        tracked_states = replace(states, edge_pos=states.edge_pos.detach().requires_grad_())
+        scene = self._scene(weights=[0.0, 1.0], min_rays_per_device=1)
+        active = torch.ones(states.state_count, dtype=torch.bool, device=self.device)
+        positions = torch.zeros((5, 3), dtype=torch.float32, device=self.device)
+
+        with self.assertRaisesRegex(RuntimeError, "forward-only"):
+            scene.trace_dfr_paths(
+                tx_positions=positions,
+                rx_positions=positions[:1],
+                states=tracked_states,
+                material=_dfr_material(self.device),
+                active=active,
+                layout=rt.DfrPathLayout.SourceLane,
+            )
+        with self.assertRaisesRegex(RuntimeError, "forward-only"):
+            scene.accum_dfr_coherent_direct(states=tracked_states, grid=self.grid, material=_dfr_material(self.device))
+
+    def test_coherent_lane_shards_match_single_device(self):
+        states = _repeat_dfr_states(_dfr_states(self.device), 2)
+        material = _dfr_material(self.device)
+        reference = self.single.accum_dfr_coherent_direct(
+            states=states, grid=self.grid, material=material, wavelength=1.0
+        )
+        scene = self._scene()
+        merged = scene.accum_dfr_coherent_direct(states=states, grid=self.grid, material=material, wavelength=1.0)
+        self.assertEqual(scene._multi.last_dispatch, "lane-sharded")
+        self.assertGreater(float(reference.direct_field_x_re.abs().sum().item()), 0.0, "vacuous coherent fixture")
+        for name in (
+            "direct_field_x_re",
+            "direct_field_x_im",
+            "direct_field_y_re",
+            "direct_field_y_im",
+            "direct_field_z_re",
+            "direct_field_z_im",
+            "multi_field_x_re",
+            "multi_field_x_im",
+            "multi_field_y_re",
+            "multi_field_y_im",
+            "multi_field_z_re",
+            "multi_field_z_im",
+        ):
+            torch.testing.assert_close(
+                getattr(merged, name), getattr(reference, name), rtol=1e-4, atol=1e-9, msg=f"{name} mismatch"
+            )
+        for name in ("direct_count", "multi_count", "visibility_reject_count", "utd_reject_count"):
+            self.assertTrue(torch.equal(getattr(merged, name), getattr(reference, name)), f"{name} mismatch")
 
     def test_the_lane_windows_partition_the_caller_s_window(self):
         """D5: the shards are a partition of the lane space, warp by warp.

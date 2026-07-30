@@ -35,6 +35,20 @@ Closest-hit candidates are merged with resident device operations; there is no
 host count read, stream synchronization, CPU fallback, or detached geometry
 fallback. This is intentionally not a single fused OptiX launch.
 
+Torch additionally accepts a caller-owned packed `SdfGridBatch`: contiguous
+`[G,Nx,Ny,Nz]` values and row-major position, rotation, and scale tensors. It is
+one specialized SDF owner, so an untracked closest-hit query submits one CUDA
+launch over its `G*N` grid-ray lanes. Packing is explicit because caching copies
+or uploading temporary host pointer tables would break caller-owned tensor
+lifetime and current-stream guarantees. A batch requires `G >= 2`; a single
+`SdfGrid` retains its original launch unchanged.
+
+Tracked packed tensors or tracked rays use the established per-grid frozen-tape
+VJP/JVP operations. This conditional fallback preserves winner-fixed AD without
+adding a second derivative implementation. Closest-hit and reflection inherit
+the packed primal path. LOS retains each grid's individual bias and query,
+transmission continues to ignore SDFs, and diffraction remains absent.
+
 A mesh-only `MixedScene` delegates directly to the existing `Scene` operation.
 It submits no additional CUDA or OptiX launch and preserves the native result,
 flags, numerical order, and AD implementation.
@@ -87,8 +101,9 @@ percent or 0.01 ms absolute of `Scene.intersect`. Tests include batches through
 `benchmarks/baselines/mixed_geometry_20260729.json`.
 
 These gates bound composition overhead, not the inherent cost of tracing more
-geometry. Adding another SDF or surfel owner necessarily performs that owner's
-candidate query, as equivalent manual composition would.
+geometry. Adding an independent SDF or surfel owner performs that owner's
+candidate query. A packed Torch SDF batch is deliberately one owner and performs
+one primal query launch; its tracked AD fallback remains per-grid.
 
 ## API and contract changes
 
@@ -96,6 +111,8 @@ candidate query, as equivalent manual composition would.
 - `contracts/operations.json` records the operation matrix, tie order, ID
   namespace, oriented SDF bounds, execution rule, and fixed-winner AD contract.
 - Torch exports `MixedScene` and immutable `SdfTraceOptions`.
+- Torch exports `SdfGridBatch` and `MixedScene.add_sdf_batch()` for explicitly
+  packed, shape-compatible dense grids.
 - Dr.Jit installs `rayd/jit/mixed_scene.h` and binds the same scene operations.
 - The operation is single-device. It is not silently routed through Torch's
   replicated multi-device `Scene` layer.
@@ -104,8 +121,8 @@ candidate query, as equivalent manual composition would.
 
 - Applications can trace a simultaneous mesh/SDF/surfel scene through one API.
 - Mesh-only behavior and every existing diffraction pipeline remain unchanged.
-- A mixed query submits the same specialized candidate work as equivalent
-  manual composition plus a small device-side winner reduction.
+- Independent owners submit the same specialized candidate work as equivalent
+  manual composition; a packed Torch SDF batch submits one primal SDF query.
 - A caller needing diffraction continues to use the triangle `Scene` and must
   not infer that mixed geometry participates.
 

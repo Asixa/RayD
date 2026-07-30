@@ -7,9 +7,11 @@
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/util/Optional.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 // Host entry points for the ADR-0037 SDF intersection. These are pure C++: no
@@ -53,6 +55,47 @@ void require_grid_values(const at::Tensor& values) {
         throw std::runtime_error("values has more elements than the kernel index range allows.");
 }
 
+void require_same_device(const at::Tensor& tensor, int device_index, const char* name) {
+    if (tensor.get_device() != device_index)
+        throw std::runtime_error(std::string(name) + " must be on the same CUDA device as the SDF grid values.");
+}
+
+int64_t require_batch_and_rays(const SdfBatchTensors& batch, const at::Tensor& origins, const at::Tensor& directions) {
+    require_cuda(batch.values, "values");
+    require_contiguous(batch.values, "values");
+    require_dtype(batch.values, at::kFloat, "values");
+    require_rank(batch.values, 4, "values");
+    if (batch.values.size(0) < 2)
+        throw std::runtime_error("SDF batch values must contain at least two grids.");
+    for (int64_t axis = 1; axis < 4; ++axis) {
+        if (batch.values.size(axis) < 2)
+            throw std::runtime_error("SDF batch values must have at least 2 samples on every spatial axis.");
+    }
+    const int64_t grid_count = batch.values.size(0);
+    for (const auto& field :
+         {std::pair<const at::Tensor*, int64_t>{&batch.position, 3}, {&batch.rotation, 4}, {&batch.scale, 3}}) {
+        require_cuda(*field.first, "batch placement");
+        require_contiguous(*field.first, "batch placement");
+        require_dtype(*field.first, at::kFloat, "batch placement");
+        require_rank(*field.first, 2, "batch placement");
+        if (field.first->size(0) != grid_count || field.first->size(1) != field.second)
+            throw std::runtime_error("SDF batch placement tensors must match the grid count and field width.");
+    }
+    require_vec3f(origins, "origins");
+    require_vec3f(directions, "directions");
+    if (origins.size(0) != directions.size(0))
+        throw std::runtime_error("origins and directions must have the same ray count.");
+    if (origins.size(0) > kMaxIndex || grid_count > kMaxIndex / std::max<int64_t>(origins.size(0), 1))
+        throw std::runtime_error("the SDF batch grid-ray product is larger than the kernel index range allows.");
+    const int device_index = batch.values.get_device();
+    require_same_device(batch.position, device_index, "position");
+    require_same_device(batch.rotation, device_index, "rotation");
+    require_same_device(batch.scale, device_index, "scale");
+    require_same_device(origins, device_index, "origins");
+    require_same_device(directions, device_index, "directions");
+    return origins.size(0);
+}
+
 void require_placement_vector(const at::Tensor& tensor, int64_t length, const char* name) {
     require_cuda(tensor, name);
     require_contiguous(tensor, name);
@@ -60,11 +103,6 @@ void require_placement_vector(const at::Tensor& tensor, int64_t length, const ch
     require_rank(tensor, 1, name);
     if (tensor.size(0) != length)
         throw std::runtime_error(std::string(name) + " must have exactly " + std::to_string(length) + " elements.");
-}
-
-void require_same_device(const at::Tensor& tensor, int device_index, const char* name) {
-    if (tensor.get_device() != device_index)
-        throw std::runtime_error(std::string(name) + " must be on the same CUDA device as the SDF grid values.");
 }
 
 int64_t require_grid_and_rays(const SdfGridTensors& grid, const at::Tensor& origins, const at::Tensor& directions) {
@@ -164,6 +202,19 @@ std::vector<at::Tensor> sdf_intersect_forward_impl(at::Tensor values, at::Tensor
     return {
         out.t, out.hit_mask, out.hit_position, out.normal, out.steps, out.tape_t, out.tape_base,
     };
+}
+
+std::vector<at::Tensor> sdf_batch_intersect_forward_impl(at::Tensor values, at::Tensor position, at::Tensor rotation,
+                                                         at::Tensor scale, at::Tensor origins, at::Tensor directions,
+                                                         double tmax, int64_t max_steps, double relaxation,
+                                                         double eps_hit) {
+    const SdfBatchTensors batch{std::move(values), std::move(position), std::move(rotation), std::move(scale)};
+    require_batch_and_rays(batch, origins, directions);
+    const SdfTraceParams params{tmax, max_steps, relaxation, eps_hit};
+    require_trace_params(params);
+    c10::cuda::CUDAGuard guard(batch.values.device());
+    SdfBatchForwardOutputs out = sdf_batch_intersect_forward_cuda(batch, origins, directions, params);
+    return {out.t, out.hit_mask, out.hit_position, out.normal, out.steps};
 }
 
 std::vector<c10::optional<at::Tensor>> sdf_intersect_backward_impl(

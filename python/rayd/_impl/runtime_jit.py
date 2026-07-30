@@ -4,12 +4,14 @@
 import os as _os
 import pathlib as _pathlib
 import sys as _sys
-
-import drjit as _drjit
+from typing import TYPE_CHECKING as _TYPE_CHECKING
 
 _drjit_dll_directory = None
-if _sys.platform == "win32" and hasattr(_os, "add_dll_directory"):
-    _drjit_dll_directory = _os.add_dll_directory(str(_pathlib.Path(_drjit.__file__).resolve().parent))
+if not _TYPE_CHECKING:
+    import drjit as _drjit
+
+    if _sys.platform == "win32" and hasattr(_os, "add_dll_directory"):
+        _drjit_dll_directory = _os.add_dll_directory(str(_pathlib.Path(_drjit.__file__).resolve().parent))
 
 from rayd.drjit._C import *  # noqa: F401,F403
 from rayd._impl.capabilities_jit import api_manifest, backend_capabilities

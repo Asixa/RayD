@@ -14,6 +14,7 @@ scripts/*
 !scripts/build_local.ps1
 !scripts/build_local.cmd
 !scripts/format_code.py
+!scripts/validate_release_tag.py
 AGENTS.md
 claude.md
 dev_notes.md

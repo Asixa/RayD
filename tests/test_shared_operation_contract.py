@@ -13,8 +13,8 @@ CONTRACT = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
 
 
 class SharedOperationContractTests(unittest.TestCase):
-    def test_schema_v4_has_per_operation_contracts(self):
-        self.assertEqual(CONTRACT["version"], 4)
+    def test_schema_v5_has_per_operation_contracts(self):
+        self.assertEqual(CONTRACT["version"], 5)
         operations = CONTRACT["operations"]
         self.assertEqual(
             set(operations),
@@ -40,6 +40,69 @@ class SharedOperationContractTests(unittest.TestCase):
                 self.assertTrue(operation["inputs"])
                 self.assertIn("result", operation)
                 self.assertIn("ad", operation)
+                self.assertTrue(operation["derivative_variants"])
+
+    def test_derivative_capabilities_resolve_every_variant_backend_and_domain(self):
+        statuses = set(CONTRACT["derivative_manifest"]["statuses"])
+        self.assertEqual(statuses, {"supported", "unsupported", "not_applicable"})
+        derivatives = CONTRACT["derivative_capabilities"]
+        self.assertEqual(set(derivatives), set(CONTRACT["operations"]))
+        for operation, variants in derivatives.items():
+            with self.subTest(operation=operation):
+                self.assertEqual(set(variants), set(CONTRACT["operations"][operation]["derivative_variants"]))
+            for variant, metadata in variants.items():
+                with self.subTest(operation=operation, variant=variant):
+                    self.assertEqual(set(metadata["primal"]), {"drjit", "torch"})
+                    self.assertTrue(all(type(value) is bool for value in metadata["primal"].values()))
+                    self.assertTrue(metadata["input_domains"])
+                for domain, backend_modes in metadata["input_domains"].items():
+                    with self.subTest(operation=operation, variant=variant, domain=domain):
+                        self.assertEqual(set(backend_modes), {"drjit", "torch"})
+                    for backend, modes in backend_modes.items():
+                        with self.subTest(operation=operation, variant=variant, domain=domain, backend=backend):
+                            self.assertEqual(set(modes), {"vjp", "jvp"})
+                            self.assertLessEqual(set(modes.values()), statuses)
+
+    def test_forward_only_variants_are_not_reported_as_not_applicable(self):
+        derivatives = CONTRACT["derivative_capabilities"]
+        forward_only = {
+            ("reflection_accumulation", "accumulate_reflections", "torch"),
+            ("diffraction_direct", "trace_dfr_paths", "torch"),
+            ("diffraction_direct", "accum_dfr_coherent_direct", "drjit"),
+            ("diffraction_direct", "accum_dfr_coherent_direct", "torch"),
+        }
+        for operation, variant, backend in forward_only:
+            domains = derivatives[operation][variant]["input_domains"]
+            with self.subTest(operation=operation, variant=variant, backend=backend):
+                self.assertTrue(
+                    all(modes[backend] == {"vjp": "unsupported", "jvp": "unsupported"} for modes in domains.values())
+                )
+
+    def test_reflection_variants_do_not_inherit_the_flat_ad_capability(self):
+        reflection = CONTRACT["derivative_capabilities"]["reflection_trace"]
+        self.assertEqual(
+            reflection["trace_reflections"]["input_domains"]["ray"]["torch"], {"vjp": "supported", "jvp": "supported"}
+        )
+        self.assertEqual(
+            reflection["trace_refl_epc"]["input_domains"]["receiver"]["torch"],
+            {"vjp": "unsupported", "jvp": "unsupported"},
+        )
+        self.assertEqual(
+            reflection["trace_refl_epc_field"]["input_domains"]["receiver"]["torch"],
+            {"vjp": "unsupported", "jvp": "unsupported"},
+        )
+        self.assertEqual(
+            reflection["trace_refl_epc_field"]["input_domains"]["material"]["torch"],
+            {"vjp": "not_applicable", "jvp": "not_applicable"},
+        )
+        self.assertEqual(
+            reflection["trace_refl_epc"]["input_domains"]["plane_geometry"]["torch"],
+            {"vjp": "unsupported", "jvp": "unsupported"},
+        )
+        self.assertEqual(
+            CONTRACT["derivative_capabilities"]["mixed_scene"]["transmittance"]["input_domains"]["ray"]["torch"],
+            {"vjp": "supported", "jvp": "supported"},
+        )
 
     def test_capability_names_cover_operation_names(self):
         required = set(CONTRACT["required_capability_keys"])
@@ -162,9 +225,9 @@ class SharedOperationContractTests(unittest.TestCase):
             "visibility_pair": ("per_ray", "sharded"),
             "visibility_edge": ("per_ray", "sharded"),
             "visibility_chain": ("per_ray", "sharded"),
-            "reflection_trace": ("per_ray", "sharded"),
-            "reflection_accumulation": ("grid_reduce", "single_device"),
-            "diffraction_direct": ("grid_reduce", "sharded"),
+            "reflection_trace": ("variant_specific", "variant_specific"),
+            "reflection_accumulation": ("grid_reduce", "sharded"),
+            "diffraction_direct": ("variant_specific", "sharded"),
             "diffraction_chain": ("grid_reduce", "sharded"),
             "sdf_intersect": ("per_ray", "single_device"),
             "mixed_scene": ("per_ray", "single_device"),
@@ -179,6 +242,21 @@ class SharedOperationContractTests(unittest.TestCase):
                 self.assertEqual(shardability["torch_multi_device"], disposition)
                 self.assertIn(klass, declared["classes"])
                 self.assertIn(disposition, declared["torch_multi_device"])
+
+    def test_variant_shardability_resolves_every_family_variant(self):
+        declared = CONTRACT["shardability_classes"]
+        for name, operation in CONTRACT["operations"].items():
+            shardability = operation["shardability"]
+            if "variant_specific" not in (shardability["class"], shardability["torch_multi_device"]):
+                self.assertNotIn("variant_shardability", shardability)
+                continue
+            variants = shardability["variant_shardability"]
+            with self.subTest(operation=name):
+                self.assertEqual(set(variants), set(operation["derivative_variants"]))
+            for variant, metadata in variants.items():
+                with self.subTest(operation=name, variant=variant):
+                    self.assertIn(metadata["class"], declared["classes"])
+                    self.assertIn(metadata["torch_multi_device"], declared["torch_multi_device"])
 
     def test_shardability_lane_window_defaults_are_declared(self):
         window = CONTRACT["shardability_classes"]["lane_window"]

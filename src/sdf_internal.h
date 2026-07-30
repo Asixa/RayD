@@ -49,6 +49,23 @@ struct SdfIntersectForwardOutputs {
     at::Tensor tape_base;    // [N, 3] int32
 };
 
+// Packed, shape-compatible grids queried by one CUDA launch. The caller owns
+// contiguous `[G, Nx, Ny, Nz]` values and row-major placement tensors.
+struct SdfBatchTensors {
+    at::Tensor values;
+    at::Tensor position;
+    at::Tensor rotation;
+    at::Tensor scale;
+};
+
+struct SdfBatchForwardOutputs {
+    at::Tensor t;            // [G, N] float32, +inf on miss
+    at::Tensor hit_mask;     // [G, N] bool
+    at::Tensor hit_position; // [G, N, 3] float32, +0.0 on miss
+    at::Tensor normal;       // [G, N, 3] float32, +0.0 on miss
+    at::Tensor steps;        // [G, N] int32
+};
+
 // Upstream gradients of the three differentiable outputs, plus which inputs the
 // caller actually needs a gradient for. A null gradient pointer is an absent
 // gradient, not a zero one; an unneeded input gets an undefined tensor back.
@@ -91,6 +108,9 @@ struct SdfIntersectJvpOutputs {
 
 SdfIntersectForwardOutputs sdf_intersect_forward_cuda(const SdfGridTensors& grid, const at::Tensor& origins,
                                                       const at::Tensor& directions, const SdfTraceParams& params);
+
+SdfBatchForwardOutputs sdf_batch_intersect_forward_cuda(const SdfBatchTensors& batch, const at::Tensor& origins,
+                                                        const at::Tensor& directions, const SdfTraceParams& params);
 
 SdfIntersectBackwardOutputs sdf_intersect_backward_cuda(const SdfGridTensors& grid, const at::Tensor& origins,
                                                         const at::Tensor& directions, const SdfTapeTensors& tape,

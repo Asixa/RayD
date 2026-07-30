@@ -3265,6 +3265,133 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertAlmostEqual(data["p"][0], 2.25, places=5)
         self.assertAlmostEqual(data["p"][1], 0.25, places=5)
 
+    def test_mesh_instance_shares_gas_and_keeps_instance_global_ids(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd.drjit as pj
+            import drjit as dr
+            import drjit.cuda as cuda
+
+            mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
+                                       [0.0, 0.0, 1.0],
+                                       [0.0, 0.0, 0.0]),
+                           cuda.Array3i([0], [1], [2]))
+            translate = cuda.Matrix4f([
+                [1.0, 0.0, 0.0, 2.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ])
+
+            scene = pj.Scene(edge_bvh_backend="drjit", trace_backend="optix")
+            geometry_id = scene.add_mesh(mesh)
+            instance_id = scene.add_instance(geometry_id, translate)
+            pj.native_launch_audit_clear()
+            scene.build()
+            build_audit = pj.native_launch_audit()
+
+            rays = pj.Ray(cuda.Array3f([0.25, 2.25], [0.25, 0.25], [-1.0, -1.0]),
+                          cuda.Array3f([0.0, 0.0], [0.0, 0.0], [1.0, 1.0]))
+            hit = scene.intersect(rays)
+            dr.eval(hit.shape_id, hit.local_prim_id, hit.global_prim_id)
+            shape_ids = [int(hit.shape_id[i]) for i in range(2)]
+            local_ids = [int(hit.local_prim_id[i]) for i in range(2)]
+            global_ids = [int(hit.global_prim_id[i]) for i in range(2)]
+
+            scene.set_mesh_transform(
+                instance_id,
+                cuda.Matrix4f([
+                    [1.0, 0.0, 0.0, 4.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ])
+            )
+            pj.native_launch_audit_clear()
+            scene.sync()
+            sync_audit = pj.native_launch_audit()
+            moved = scene.intersect(
+                pj.Ray(cuda.Array3f([4.25], [0.25], [-1.0]), cuda.Array3f([0.0], [0.0], [1.0]))
+            )
+
+            print(json.dumps({
+                "geometry_id": geometry_id,
+                "instance_id": instance_id,
+                "build_accel": int(build_audit["build"]["optix_accel_build"]),
+                "shape_ids": shape_ids,
+                "local_ids": local_ids,
+                "global_ids": global_ids,
+                "sync_accel": int(sync_audit["sync"]["optix_accel_build"]),
+                "sync_gas_ms": float(scene.last_sync_profile.optix_gas_update_ms),
+                "moved_shape": int(moved.shape_id[0]),
+                "moved_global": int(moved.global_prim_id[0]),
+            }))
+            """
+        )
+
+        self.assertEqual(data["geometry_id"], 0)
+        self.assertEqual(data["instance_id"], 1)
+        self.assertEqual(data["build_accel"], 2)
+        self.assertEqual(data["shape_ids"], [0, 1])
+        self.assertEqual(data["local_ids"], [0, 0])
+        self.assertEqual(data["global_ids"], [0, 1])
+        self.assertEqual(data["sync_accel"], 1)
+        self.assertEqual(data["sync_gas_ms"], 0.0)
+        self.assertEqual(data["moved_shape"], 1)
+        self.assertEqual(data["moved_global"], 1)
+
+    def test_mesh_instance_transform_supports_vjp_and_jvp(self):
+        common = """
+            import json
+            import rayd.drjit as pj
+            import drjit as dr
+            import drjit.cuda as cuda
+            import drjit.cuda.ad as ad
+
+            mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
+                                        [0.0, 0.0, 1.0],
+                                        [0.0, 0.0, 0.0]),
+                           cuda.Array3i([0], [1], [2]))
+            tz = ad.Float([0.0])
+            dr.enable_grad(tz)
+            transform = ad.Matrix4f([
+                [1.0, 0.0, 0.0, 2.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, tz],
+                [0.0, 0.0, 0.0, 1.0],
+            ])
+            scene = pj.Scene(edge_bvh_backend="drjit", trace_backend="optix")
+            geometry_id = scene.add_mesh(mesh)
+            scene.add_instance(geometry_id, transform)
+            scene.build()
+            ray = pj.RayAD(ad.Array3f([2.25], [0.25], [-1.0]),
+                           ad.Array3f([0.0], [0.0], [1.0]))
+            hit = scene.intersect(ray)
+        """
+        vjp = run_json_case(
+            common
+            + """
+            dr.backward(hit.t)
+            print(json.dumps({"valid": bool(hit.is_valid()[0]), "derivative": float(dr.grad(tz)[0])}))
+            """
+        )
+        jvp = run_json_case(
+            common
+            + """
+            dr.set_grad(tz, ad.Float([1.0]))
+            dr.forward(tz)
+            tangent = dr.grad(hit.t)
+            dr.eval(tangent)
+            print(json.dumps({"valid": bool(hit.is_valid()[0]), "derivative": float(tangent[0])}))
+            """
+        )
+
+        self.assertTrue(vjp["valid"])
+        self.assertTrue(jvp["valid"])
+        self.assertAlmostEqual(vjp["derivative"], 1.0, places=5)
+        self.assertAlmostEqual(jvp["derivative"], 1.0, places=5)
+
     def test_mixed_static_dynamic_optix_split_keeps_hits_and_shadow_queries_correct(self):
         data = run_json_case(
             """

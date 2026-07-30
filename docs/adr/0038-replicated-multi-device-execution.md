@@ -139,7 +139,7 @@ No gradient is ever detached, zeroed or approximated to make a shard work. An
 operation whose derivative cannot be reduced this way is not sharded at all
 (section 6).
 
-### 5. The Monte-Carlo lane window (D5)
+### 5. Diffraction lane windows (D5)
 
 Diffraction accumulation has no batch axis. Its cost is a Monte-Carlo lane
 space of `direct_samples + keller_samples + suffix_samples` lanes and its
@@ -160,7 +160,8 @@ record introduces:
   dereferenced outside its buffer.
 - The public parameters are `lane_offset` (default `0`) and `lane_count`
   (default `-1`, meaning every remaining lane), on `Scene.accum_dfr_direct`,
-  `Scene.accum_dfr`, their `autograd` entry points, and the
+  `Scene.accum_dfr`, `Scene.accum_dfr_coherent_direct`, their applicable
+  `autograd` entry points, and the
   `diffraction_accumulation_forward` dispatcher schema. The four AD ops
   (`diffraction_accumulation_direct_backward`, `_direct_jvp`,
   `_chain_backward`, `_chain_jvp`) take `lane_offset` alone, because their
@@ -174,27 +175,42 @@ record introduces:
   global lane space. A shard passes the caller's counts unchanged and selects a
   window of them, so a local lane runs the global lane the single launch would
   have run.
+- Coherent direct accumulation is forward-only and uses the same window rule
+  over its deterministic `state_count * grid_cell_count` lane space. Each
+  shard keeps the full states, material, and grid description; partial complex
+  fields and integer diagnostics are summed on the master. Its hard-budget
+  estimate charges the staged route's complete 36 bytes per lane (one int32
+  key plus eight float32 values); smaller non-staged launches retain that
+  conservative charge.
 - **`lane_offset = 0` with the default `lane_count` is bitwise the pre-ADR
   launch.** The pointer rebase is a no-op at zero offset and the window resolves
   to the whole space, so the unsharded path executes the code it always did.
 - `lane_offset != 0` requires the OptiX trace backend and raises on the
   pure-CUDA one, which has no windowed launch.
 
+Replicated accumulation with the CUDA trace backend therefore executes a
+zero-offset caller window once on the master. A requested chunk or memory
+budget that would split that window fails before launch; the orchestrator never
+submits a first shard and then discovers that the next offset is unsupported.
+
 **Contract.** A K-way split into contiguous, disjoint windows that covers the
 caller's window exactly draws exactly the samples the single launch draws; the
 multiset of drawn samples is independent of the split. Merging remains
 float-order-dependent under section 3.
 
-**Warp-multiple caveat.** Grid accumulation aggregates a warp's contributions
+**Warp-multiple caveat.** Diffraction grid accumulation aggregates a warp's contributions
 before its atomic, and a partially filled warp already drops contributions on a
 single device -- a plain `direct_samples = 20` launch accumulates fewer samples
 than it tapes, which predates sharding and is not corrected here. An unaligned
 split would drop a fraction of a warp per shard *in addition* to that. Every
 shard and chunk boundary the orchestrator cuts is therefore aligned to the
-32-lane warp relative to the caller's window: shard boundaries round to the
-nearest warp and chunk sizes round up to a whole warp, so every shard sees the
-same warp partition the single launch sees, including its trailing partial
-warp. A window narrower than one warp per device is legal and simply leaves the
+32-lane warp relative to the caller's window: diffraction shard boundaries round to the
+nearest warp, explicitly requested chunk sizes round up to a whole warp, and
+budget-derived chunk sizes round down so the hard memory limit is not exceeded.
+The post-alignment size is checked against the budget; a budget that cannot hold
+one safe warp fails loudly. Every shard therefore sees the same warp partition
+the single launch sees, including its trailing partial warp. A window narrower
+than one warp per device is legal and simply leaves the
 leading devices idle. **Merged-grid equality with a single launch is claimed
 only for warp-multiple windows.**
 
@@ -207,11 +223,24 @@ silently changes meaning.
 
 In the shipped layer:
 
-- `trace_dfr_paths` and `accum_dfr_coherent_direct` raise
-  `NotImplementedError` on a multi-device `Scene`, naming the phase that owns
-  the missing contract and telling the caller to build the scene without
-  `devices=[...]`. The `Compact` exporter's row placement and its device count
-  are launch-global, and coherent accumulation has no lane window to shard.
+- `trace_dfr_paths` requires `SourceLane` on a multi-device scene and shards
+  whole transmitter blocks while retaining the full receiver and state axes.
+  Each shard therefore emits one contiguous slice of the global
+  `((tx * rx_count + rx) * state_limit) + state` row space. Concatenation in
+  transmitter order is row-for-row identical to a single SourceLane launch;
+  valid local transmitter IDs are offset to their global IDs, and device counts
+  are summed without a host read or compaction. Explicit `Compact` requests,
+  chunking, and offload fail loudly instead of changing placement.
+- `accum_dfr_coherent_direct` uses the deterministic lane window from section 5
+  and the ordinary `grid_reduce` merge order from section 3.
+- `accumulate_reflections` shards warp-aligned ray-batch windows. Each launch
+  retains the unsplit batch's atomic/staged strategy, and the seven float grids
+  plus `reflection_count` are summed on the master in device order.
+  `WedgeEvents` is deliberately not reduced: its bounded atomic buffer has one
+  global capacity, overflow count, slot order, and ray-index space. Enabling
+  wedge collection therefore runs one complete master launch; combining it
+  with chunking, a memory budget, or offload fails loudly.
+- Multi-device `Scene.trace_refl_epc` calls still raise `NotImplementedError`.
 - Reflection-chain deduplication is a separate batch-coupled Torch op
   (`reflection_dedup_forward`) over a batch of chains, and the Dr.Jit
   `ReflectionTraceOptions.deduplicate` path is process-per-GPU only. The
@@ -229,7 +258,10 @@ At extreme batch sizes the binding constraint is tape and output memory rather
 than scene memory -- the reflection tape alone runs 40-50 bytes per ray per
 bounce -- so chunked execution is a first-class component rather than a fallback.
 
-- `MultiDeviceOptions.chunk_rays` sets the rows per launch verbatim;
+- `MultiDeviceOptions.chunk_rays` sets the rows per launch verbatim for
+  `per_ray` operations and reflection ray-batch accumulation. Diffraction
+  grid-reduce operations round it up to a 32-lane sample boundary so a shard
+  does not split their native warp reduction;
   `tape_memory_budget_bytes` asks for the largest chunk whose tape and outputs
   fit a budget; `offload` streams per-ray results instead of concatenating them.
   Any of the three engages the chunked executor, **including on a one-device
@@ -280,8 +312,8 @@ optional `options=` record; every existing operation shards and chunks
 transparently when the scene was built with several devices.
 
 The orchestration machinery -- replicas, sharder, chunked executor, calibration
--- lives in the private module
-`backends/torch/python/rayd/torch/_multi.py` and is not public API. The public
+-- lives in the private module `python/rayd/_impl/multi.py` and is not public
+API. The public
 surface this record adds is exactly:
 
 - `Scene(devices=[...], options=...)`;
@@ -290,7 +322,7 @@ surface this record adds is exactly:
 - `Scene.calibrate_devices(...)`, the latest/base `Scene.device_weights`
   property, and `Scene.device_weights_for(operation)` for the effective
   operation-local split;
-- `lane_offset` / `lane_count` on the two accumulation entry points (section 5).
+- `lane_offset` / `lane_count` on the three accumulation entry points (section 5).
 
 `MultiDeviceOptions` defaults are `weights=None` (equal split),
 `operation_weights=None`, `require_peer_access=True`,
@@ -385,21 +417,27 @@ as it was.
 
 ### 11. Shardability classification
 
-Every operation belongs to exactly one class, and the class is what decides how
-(and whether) it shards. The classes are declared in
-`shared/contracts/operations.json` as `shardability_classes`, and every
-operation entry carries a `shardability` block naming its class and what the
-Torch replicated layer does with it.
+Every operation or explicitly enumerated operation variant belongs to exactly
+one concrete class, and that class decides how (and whether) it shards. The
+classes are declared in `contracts/operations.json` as
+`shardability_classes`, and every operation entry carries a `shardability`
+block naming its family class and what the Torch replicated layer does with it.
+Families whose variants differ use `variant_specific` plus a complete
+`variant_shardability` map.
 
 | Class | Multi-device semantics |
 | --- | --- |
 | `per_ray` | shard the batch axis; the gathered result is bitwise the single-device result |
 | `grid_reduce` | shard the lane axis; per-shard partial grids merge on the master in float32 (section 3) |
+| `source_lane` | shard complete transmitter blocks and concatenate fixed `(tx, rx, state)` rows without compaction |
+| `variant_specific` | read the family's complete `variant_shardability` map |
 | `batch_coupled` | no slice-based semantics; explicit per-shard contract or a loud refusal (section 6) |
 
 The Torch dispositions are `sharded` (the replicated layer wraps it),
 `unsupported` (it raises on a multi-device scene) and `single_device` (it is
 outside the `Scene` surface the layer wraps, so it neither shards nor refuses).
+`variant_specific` means the family disposition must be resolved from the same
+variant map.
 
 | Operation | Class | Torch multi-device |
 | --- | --- | --- |
@@ -411,19 +449,24 @@ outside the `Scene` surface the layer wraps, so it neither shards nor refuses).
 | `visibility_pair` | `per_ray` | `sharded` |
 | `visibility_edge` | `per_ray` | `sharded` |
 | `visibility_chain` | `per_ray` | `sharded` |
-| `reflection_trace` | `per_ray` | `sharded` |
-| `reflection_accumulation` | `grid_reduce` | `single_device` |
-| `diffraction_direct` | `grid_reduce` | `sharded` |
+| `reflection_trace` | `variant_specific` | `variant_specific` |
+| `reflection_accumulation` | `grid_reduce` | `sharded` |
+| `diffraction_direct` | `variant_specific` | `sharded` |
 | `diffraction_chain` | `grid_reduce` | `sharded` |
 | `sdf_intersect` | `per_ray` | `single_device` |
 | `mixed_scene` | `per_ray` | `single_device` |
 
-`reflection_accumulation`, `sdf_intersect`, and `mixed_scene` are `single_device` for the same
-structural reason: none is reached through a wrapped `Scene` method -- the
-first is a dispatcher op, the second is a standalone primitive with no `Scene`
-membership (ADR-0037), and the third is the explicitly single-device
-`MixedScene` surface (ADR-0043) -- so a multi-device scene never sees them.
-Classifying them is not a promise to shard them.
+`reflection_trace` resolves `trace_reflections` and `trace_refl_epc_field` to
+`per_ray`/`sharded`, while `trace_refl_epc` is `per_ray`/`unsupported`.
+`diffraction_direct` resolves `trace_dfr_paths` to
+`source_lane`/`sharded`, and both accumulation variants to
+`grid_reduce`/`sharded`. `reflection_accumulation` is reached through the new
+  Torch `Scene.accumulate_reflections()` method and shards its ray batch; wedge
+  collection retains one master launch because its bounded event buffer is not
+  a reducible grid.
+`sdf_intersect` and `mixed_scene` remain `single_device`: the former is a
+standalone primitive with no `Scene` membership (ADR-0037), and the latter is
+the explicitly single-device `MixedScene` surface (ADR-0043).
 
 ## Measured results
 
@@ -542,9 +585,9 @@ must stay green throughout, not be repaired afterwards.
 - Replication costs one full copy of every acceleration structure per device
   and pays N module JITs on first touch (partly overlapped by the warm-up
   helper). A scene that does not fit twice does not fit this design at all.
-- Several families keep single-device semantics on a multi-device scene, two of
-  them by raising (`trace_dfr_paths`, `accum_dfr_coherent_direct`). A caller
-  that needs them shards by hand or runs one process per GPU.
+- `trace_refl_epc` keeps single-device semantics on a multi-device scene by
+  raising. Reflection accumulation now shards its reducible grid path while
+  preserving bounded wedge collection through a master launch.
 - Nothing about single-device execution changed except the Phase 0 guards, so a
   downstream that never passes `devices=` cannot be affected by any of this.
 
@@ -571,19 +614,14 @@ Each of these is excluded deliberately, not by omission.
 Recorded so the boundary of this record is legible. None is authorized here;
 each needs its own decision when it is picked up.
 
-1. `trace_dfr_paths` sharding, including the `SourceLane` layout of ADR-0032,
-   whose `(tx, rx, state)`-determined row placement is what would make a
-   sharded exporter row-for-row identical to a single-device one, and the
-   per-shard compaction plus concatenation that `Compact` would need.
-2. `deduplicate = true` cross-shard semantics: shard-local dedup equals
+1. `deduplicate = true` cross-shard semantics: shard-local dedup equals
    single-device dedup only when shards align with dedup key groups, and the
    general case needs an explicit flag and a merge pass.
-3. ADR-0033 failure-bit merging across shards, including the inertness rule
+2. ADR-0033 failure-bit merging across shards, including the inertness rule
    that would have to hold per shard.
-4. `accum_dfr_coherent_direct` under sharding, which needs a lane window it
-   does not have.
-5. Geometry partitioning and ray forwarding (plan Appendix A).
-6. A heterogeneous-device calibration claim. The verification machine's two
+3. Torch `trace_refl_epc` per-ray sharding.
+4. Geometry partitioning and ray forwarding (plan Appendix A).
+5. A heterogeneous-device calibration claim. The verification machine's two
    devices are identical, so the calibrated weights answer 1.00/1.00 on
    compute-bound probes and nothing here is evidence about unequal GPUs.
    `require_homogeneous_devices=False` permits such an experiment explicitly,

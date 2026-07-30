@@ -12,7 +12,11 @@
 > below remain in force. Schema 2 records the exact eight-header integration API
 > set, normalized per-header SHA-256 values, and its aggregate digest. The
 > backend-neutral `path_exchange.h` contract is bundled separately; the older
-> single integration-header hash description below is historical.
+> single integration-header hash description below is historical. Bundle dirty
+> state is the Git status of this canonical input allowlist only: every tracked
+> or untracked file covered by a bundled input marks the identity dirty, while
+> unrelated worktree paths do not change the bundle identity.
+
 ## Context
 
 Native consumers currently require an explicitly located RayD Git checkout in

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import IntFlag
+from enum import IntEnum, IntFlag
 import math
 from typing import TYPE_CHECKING
 import torch
@@ -108,6 +108,12 @@ class Intersection:
     local_prim_id: torch.Tensor
     global_prim_id: torch.Tensor
 
+    @property
+    def instance_id(self) -> torch.Tensor:
+        """Scene instance id; an alias of ``shape_id`` for instanced scenes."""
+
+        return self.shape_id
+
     def is_valid(self) -> torch.Tensor:
         if self.t.device.type == "cuda":
             return core_ops().intersection_valid(self.t, self.shape_id)
@@ -164,6 +170,10 @@ class _LazyIntersection:
         return self._ensure_full().shape_id
 
     @property
+    def instance_id(self) -> torch.Tensor:
+        return self._ensure_full().instance_id
+
+    @property
     def prim_id(self) -> torch.Tensor:
         return self._ensure_full().prim_id
 
@@ -215,6 +225,10 @@ class _ReducedIntersection:
     @property
     def shape_id(self) -> torch.Tensor:
         return self._empty_fields()[5]
+
+    @property
+    def instance_id(self) -> torch.Tensor:
+        return self.shape_id
 
     @property
     def prim_id(self) -> torch.Tensor:
@@ -363,6 +377,119 @@ class ReflEpcField:
 
 
 @dataclass(frozen=True)
+class ReflEpcOptions:
+    expected_prim_ids: torch.Tensor
+    direct_plane_points: torch.Tensor
+    direct_plane_normals: torch.Tensor
+    surface_group_id: torch.Tensor
+    surface_group_size: torch.Tensor
+    surface_group_members: torch.Tensor
+    visibility_ignore_mode: str = "primitive"
+    plane_tolerance: float = 1.0e-5
+
+
+@dataclass(frozen=True)
+class ReflEpc:
+    ray_count: int
+    max_bounces: int
+    valid: torch.Tensor
+    path_length: torch.Tensor
+    resolved_prim_ids: torch.Tensor
+    surface_group_ids: torch.Tensor
+    hit_points: torch.Tensor
+    normals: torch.Tensor
+
+
+@dataclass(frozen=True)
+class AccumGrid:
+    axis: int = 2
+    position: float = 0.0
+    coord0_min: float = 0.0
+    coord0_max: float = 0.0
+    coord1_min: float = 0.0
+    coord1_max: float = 0.0
+    resolution0: int = 0
+    resolution1: int = 0
+
+
+@dataclass(frozen=True)
+class AccumOptions:
+    wavelength: float = 1.0
+    solid_angle_per_ray: float = 1.0
+    collect_wedges: bool = False
+    collect_wedge_prefixes: bool = False
+    wedge_capacity: int = 0
+    wedge_sample_stride: int = 1
+    accumulation_strategy: int = 0
+    compact_min_samples: int = 0
+    staged_min_samples_per_cell: int = 0
+    procedural_sample_count: int = 0
+    include_los: bool = False
+
+
+@dataclass(frozen=True)
+class ReflMaterial:
+    eta_r: torch.Tensor
+    sigma: torch.Tensor
+    mu_r: torch.Tensor
+    gain: torch.Tensor
+    valid: torch.Tensor
+
+    @staticmethod
+    def default(count: int, *, device: torch.device, dtype: torch.dtype = torch.float32) -> "ReflMaterial":
+        return ReflMaterial(
+            eta_r=torch.ones((count,), device=device, dtype=dtype),
+            sigma=torch.zeros((count,), device=device, dtype=dtype),
+            mu_r=torch.ones((count,), device=device, dtype=dtype),
+            gain=torch.ones((count,), device=device, dtype=dtype),
+            valid=torch.ones((count,), device=device, dtype=torch.bool),
+        )
+
+
+@dataclass(frozen=True)
+class WedgeEvents:
+    capacity: int
+    count: torch.Tensor
+    ray_index: torch.Tensor
+    hit_points: torch.Tensor
+    normals: torch.Tensor
+    prim_id: torch.Tensor
+    directions: torch.Tensor
+    source_points: torch.Tensor
+    src_power: torch.Tensor
+    initial_directions: torch.Tensor
+    bounce_depth: torch.Tensor
+
+
+@dataclass(frozen=True)
+class AccumResult:
+    ray_count: int
+    max_bounces: int
+    grid_cell_count: int
+    reflection_power: torch.Tensor
+    reflection_field_x_re: torch.Tensor
+    reflection_field_x_im: torch.Tensor
+    reflection_field_y_re: torch.Tensor
+    reflection_field_y_im: torch.Tensor
+    reflection_field_z_re: torch.Tensor
+    reflection_field_z_im: torch.Tensor
+    reflection_count: torch.Tensor
+    wedge_events: WedgeEvents
+
+    @property
+    def reflection_field_x(self) -> torch.Tensor:
+        return torch.complex(self.reflection_field_x_re, self.reflection_field_x_im)
+
+    @property
+    def reflection_field_y(self) -> torch.Tensor:
+        return torch.complex(self.reflection_field_y_re, self.reflection_field_y_im)
+
+    @property
+    def reflection_field_z(self) -> torch.Tensor:
+        return torch.complex(self.reflection_field_z_re, self.reflection_field_z_im)
+
+
+@dataclass(frozen=True)
 class DfrGrid:
     axis: int = 2
     position: float = 0.0
@@ -399,6 +526,13 @@ class DfrMaterial:
             gain=torch.ones((count,), device=device, dtype=dtype),
             valid=torch.ones((count,), device=device, dtype=torch.bool),
         )
+
+
+class DfrPathLayout(IntEnum):
+    """Storage order for first-order diffraction path export rows."""
+
+    Compact = 0
+    SourceLane = 1
 
 
 @dataclass(frozen=True)
@@ -510,6 +644,7 @@ class DfrPaths:
     p0: torch.Tensor
     p1: torch.Tensor
     p2: torch.Tensor
+    layout: DfrPathLayout = DfrPathLayout.Compact
 
 
 @dataclass(frozen=True)

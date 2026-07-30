@@ -56,6 +56,84 @@ def _dr_vec3(value):
     return [float(value[axis][0]) for axis in range(3)]
 
 
+def _two_bounce_vertices():
+    tangent0 = (math.sqrt(0.5), math.sqrt(0.5), 0.0)
+    tangent1 = (0.9238795, 0.3826834, 0.0)
+    vertices = []
+    for hit, tangent in (((1.0, 0.0, 0.0), tangent0), ((1.0, 1.0, 0.0), tangent1)):
+        vertices.extend(
+            (
+                [hit[axis] - 0.2 * tangent[axis] - float(axis == 2) for axis in range(3)],
+                [hit[axis] + 0.2 * tangent[axis] - float(axis == 2) for axis in range(3)],
+                [hit[axis] + 2.0 * float(axis == 2) for axis in range(3)],
+            )
+        )
+    return vertices
+
+
+def _torch_two_bounce_scene(rt):
+    vertices = torch.tensor(_two_bounce_vertices(), device="cuda", dtype=torch.float32)
+    faces = torch.tensor([[0, 1, 2], [3, 4, 5]], device="cuda", dtype=torch.int32)
+    scene = rt.Scene()
+    scene.add_mesh(rt.Mesh(vertices, faces))
+    scene.build()
+    return scene
+
+
+def _drjit_two_bounce_scene(dr_backend, cuda):
+    vertices = _two_bounce_vertices()
+    vertex_columns = [[vertex[axis] for vertex in vertices] for axis in range(3)]
+    scene = dr_backend.Scene()
+    scene.add_mesh(dr_backend.Mesh(cuda.Array3f(*vertex_columns), cuda.Array3i([0, 3], [1, 4], [2, 5])))
+    scene.build()
+    return scene
+
+
+def _drjit_two_bounce_options(dr_backend, cuda, ad=None):
+    array3f = cuda.Array3f if ad is None else ad.Array3f
+    float_array = cuda.Float if ad is None else ad.Float
+    options = dr_backend.ReflEpcFieldOptions() if ad is None else dr_backend.ReflEpcFieldOptionsAD()
+    options.expected_prim_ids = cuda.Int([0, 1])
+    options.slot_plane_point = array3f([1.0, 1.0], [0.0, 1.0], [0.0, 0.0])
+    options.slot_plane_normal = array3f([math.sqrt(0.5), -0.3826834], [-math.sqrt(0.5), 0.9238795], [0.0, 0.0])
+    options.slot_eta_r = float_array([4.0, 4.0])
+    options.slot_mu_r = float_array([1.0, 1.0])
+    options.slot_sigma = float_array([0.0, 0.0])
+    options.slot_gain = float_array([1.0, 1.0])
+    return options
+
+
+def _rotate_two_bounce_vector(value):
+    return [value[2], value[0], value[1]]
+
+
+def _torch_two_bounce_field_scene(rt):
+    vertices = torch.tensor(
+        [_rotate_two_bounce_vector(vertex) for vertex in _two_bounce_vertices()], device="cuda", dtype=torch.float32
+    )
+    faces = torch.tensor([[0, 1, 2], [3, 4, 5]], device="cuda", dtype=torch.int32)
+    scene = rt.Scene()
+    scene.add_mesh(rt.Mesh(vertices, faces))
+    scene.build()
+    return scene
+
+
+def _drjit_two_bounce_field_scene(dr_backend, cuda):
+    vertices = [_rotate_two_bounce_vector(vertex) for vertex in _two_bounce_vertices()]
+    vertex_columns = [[vertex[axis] for vertex in vertices] for axis in range(3)]
+    scene = dr_backend.Scene()
+    scene.add_mesh(dr_backend.Mesh(cuda.Array3f(*vertex_columns), cuda.Array3i([0, 3], [1, 4], [2, 5])))
+    scene.build()
+    return scene
+
+
+def _drjit_two_bounce_field_options(dr_backend, cuda):
+    options = _drjit_two_bounce_options(dr_backend, cuda)
+    options.slot_plane_point = cuda.Array3f([0.0, 0.0], [1.0, 1.0], [0.0, 1.0])
+    options.slot_plane_normal = cuda.Array3f([0.0, 0.0], [math.sqrt(0.5), -0.3826834], [-math.sqrt(0.5), 0.9238795])
+    return options
+
+
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA torch is required")
 @unittest.skipUnless(os.environ.get("RAYD_TORCH_RUN_DR_JIT_PARITY") == "1", "external RayD parity is opt-in")
 class Share2AdParityTests(unittest.TestCase):
@@ -208,54 +286,29 @@ class Share2AdParityTests(unittest.TestCase):
         self.assertVectorClose(grad_t, grad_d)
         self.assertAlmostEqual(float(jvp_t[0]), jvp_d, delta=_GRAD_ATOL)
 
-    @unittest.skip(
-        "Torch trace_refl_epc_field currently returns an invalid sentinel for the public "
-        "single-plane fixtures; enable this parity gate when a valid shared fixture exists."
-    )
-    def test_reflection_field_fixed_hit_forward_vjp_jvp(self):
+    def test_reflection_field_two_bounce_valid_path_geometry_parity(self):
         dr_backend, rt, cuda = _load_backends()
         dr = importlib.import_module("drjit")
-        ad = importlib.import_module("drjit.cuda.ad")
-        vertices_t = torch.tensor([[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]], device="cuda")
-        source_t = torch.tensor([[-0.2, -0.2, -1.0]], device="cuda")
-        receiver_t = torch.tensor([[-0.2, -0.2, 1.0]], device="cuda", requires_grad=True)
-        tangent_t = torch.tensor([[0.03, -0.02, 0.04]], device="cuda")
-        scene_t = _torch_triangle_scene(rt, vertices_t)
-        field_t = scene_t.trace_refl_epc_field(source_t, receiver_t, max_bounces=1)
+        source_t = torch.tensor([[0.0, 0.0, 0.0]], device="cuda")
+        receiver_t = torch.tensor([[0.0, 2.0, 0.0]], device="cuda")
+        field_t = _torch_two_bounce_field_scene(rt).trace_refl_epc_field(source_t, receiver_t, max_bounces=2)
+
+        source_d = cuda.Array3f([0.0], [0.0], [0.0])
+        receiver_d = cuda.Array3f([0.0], [2.0], [0.0])
+        field_d = _drjit_two_bounce_field_scene(dr_backend, cuda).trace_refl_epc_field(
+            source_d, receiver_d, 2, _drjit_two_bounce_field_options(dr_backend, cuda), cuda.Bool([True])
+        )
+        dr.eval(field_d.valid, field_d.path_length, field_d.field_x_re, field_d.field_x_im)
+
+        expected_length = 2.0 + math.sqrt(2.0)
         self.assertTrue(bool(field_t.valid[0]))
-        loss_t = field_t.field_real.sum() + 0.25 * field_t.field_imag.sum()
-        loss_t.backward()
-        grad_t = receiver_t.grad.detach().flatten().tolist()
-
-        def torch_field(receiver):
-            out = scene_t.trace_refl_epc_field(source_t, receiver, max_bounces=1)
-            return out.field_real + 0.25 * out.field_imag
-
-        _, jvp_t = torch.func.jvp(torch_field, (receiver_t.detach(),), (tangent_t,))
-
-        source_d = ad.Array3f([-0.2], [-0.2], [-1.0])
-        receiver_d = ad.Array3f([-0.2], [-0.2], [1.0])
-        dr.enable_grad(receiver_d)
-        scene_d = _drjit_triangle_scene(dr_backend, cuda)
-        options_d = dr_backend.ReflEpcFieldOptionsAD()
-        field_d = scene_d.trace_refl_epc_field(source_d, receiver_d, 1, options_d, ad.Bool([True]))
         self.assertTrue(bool(field_d.valid[0]))
-        scalar_d = field_d.field_x_re + 0.25 * field_d.field_x_im
-        forward_d = float(scalar_d[0])
-        dr.backward(scalar_d)
-        grad_d = _dr_vec3(dr.grad(receiver_d))
-
-        receiver_j = ad.Array3f([-0.2], [-0.2], [1.0])
-        dr.enable_grad(receiver_j)
-        field_j = scene_d.trace_refl_epc_field(source_d, receiver_j, 1, options_d, ad.Bool([True]))
-        scalar_j = field_j.field_x_re + 0.25 * field_j.field_x_im
-        dr.set_grad(receiver_j, ad.Array3f([0.03], [-0.02], [0.04]))
-        dr.forward_from(receiver_j)
-        jvp_d = float(dr.grad(scalar_j)[0])
-
-        self.assertAlmostEqual(float(torch_field(receiver_t.detach())[0]), forward_d, delta=_FIELD_ABS)
-        self.assertVectorClose(grad_t, grad_d, delta=_FIELD_GRAD_ATOL)
-        self.assertAlmostEqual(float(jvp_t[0]), jvp_d, delta=_FIELD_GRAD_ATOL)
+        self.assertAlmostEqual(float(field_t.path_length[0]), expected_length, delta=_FORWARD_ATOL)
+        self.assertAlmostEqual(float(field_d.path_length[0]), expected_length, delta=_FORWARD_ATOL)
+        self.assertAlmostEqual(float(field_t.path_length[0]), float(field_d.path_length[0]), delta=_FORWARD_ATOL)
+        self.assertGreater(abs(complex(float(field_t.field_real[0]), float(field_t.field_imag[0]))), 1.0e-6)
+        self.assertAlmostEqual(float(field_t.field_real[0]), float(field_d.field_x_re[0]), delta=_FIELD_ABS)
+        self.assertAlmostEqual(float(field_t.field_imag[0]), float(field_d.field_x_im[0]), delta=_FIELD_ABS)
 
     def test_utd_direct_gain_forward_vjp_jvp(self):
         dr_backend, rt, cuda = _load_backends()

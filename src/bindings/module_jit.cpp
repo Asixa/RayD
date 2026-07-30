@@ -1693,6 +1693,7 @@ NB_MODULE(_C, m) {
         nb::class_<Scene>(m, "Scene")
             .def("__init__", &construct_scene, "edge_bvh_backend"_a = "auto", "trace_backend"_a = "auto")
             .def("add_mesh", &Scene::add_mesh, "mesh"_a, "dynamic"_a = false)
+            .def("add_instance", &Scene::add_instance, "geometry_id"_a, "transform"_a, "dynamic"_a = true)
             .def("build", &Scene::build)
             .def("update_mesh_vertices", &Scene::update_mesh_vertices, "mesh_id"_a, "positions"_a)
             .def("set_mesh_transform", &Scene::set_mesh_transform, "mesh_id"_a, "mat"_a, "set_left"_a = true)

@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "required_capability_keys": [
     "backend", "intersect", "nearest_edge_point", "nearest_edge_ray",
     "nearest_edges_topk", "edge_mask", "visibility", "visibility_pair",
@@ -8,6 +8,306 @@
     "diffraction_chain", "surfel", "sdf_intersect", "mixed_scene",
     "reverse_ad", "forward_ad", "torch_compile", "multi_device_replicated"
   ],
+  "derivative_manifest": {
+    "public_copy": "contracts/public_api.json",
+    "statuses": ["supported", "unsupported", "not_applicable"],
+    "rule": "Every operation variant and backend is explicit; no missing variant, input domain, VJP, or JVP entry implies support."
+  },
+  "derivative_capabilities": {
+    "intersect": {
+      "intersect": {
+        "primal": {"drjit": true, "torch": true},
+        "input_domains": {
+          "geometry": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "supported", "jvp": "supported"}
+          },
+          "ray": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "supported", "jvp": "supported"}
+          }
+        }
+      }
+    },
+    "nearest_edge_point": {
+      "nearest_edge": {
+        "primal": {"drjit": true, "torch": true},
+        "input_domains": {
+          "geometry": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "supported", "jvp": "supported"}
+          },
+          "point": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "supported", "jvp": "supported"}
+          }
+        }
+      }
+    },
+    "nearest_edge_ray": {
+      "nearest_edge": {
+        "primal": {"drjit": true, "torch": true},
+        "input_domains": {
+          "geometry": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "supported", "jvp": "supported"}
+          },
+          "ray": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "supported", "jvp": "supported"}
+          }
+        }
+      }
+    },
+    "nearest_edges_topk": {
+      "nearest_edges": {
+        "primal": {"drjit": true, "torch": true},
+        "input_domains": {
+          "geometry": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "supported", "jvp": "supported"}
+          },
+          "point": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "supported", "jvp": "supported"}
+          }
+        }
+      }
+    },
+    "visibility": {
+      "visible": {
+        "primal": {"drjit": true, "torch": true},
+        "input_domains": {
+          "continuous_inputs": {
+            "drjit": {"vjp": "not_applicable", "jvp": "not_applicable"},
+            "torch": {"vjp": "not_applicable", "jvp": "not_applicable"}
+          }
+        },
+        "note": "Visibility is a discrete boolean result."
+      }
+    },
+    "visibility_pair": {
+      "visible_pair": {
+        "primal": {"drjit": true, "torch": true},
+        "input_domains": {
+          "continuous_inputs": {
+            "drjit": {"vjp": "not_applicable", "jvp": "not_applicable"},
+            "torch": {"vjp": "not_applicable", "jvp": "not_applicable"}
+          }
+        },
+        "note": "Visibility is a discrete boolean result."
+      }
+    },
+    "visibility_edge": {
+      "visible_edge": {
+        "primal": {"drjit": true, "torch": true},
+        "input_domains": {
+          "continuous_inputs": {
+            "drjit": {"vjp": "not_applicable", "jvp": "not_applicable"},
+            "torch": {"vjp": "not_applicable", "jvp": "not_applicable"}
+          }
+        },
+        "note": "Visibility is a discrete boolean result."
+      }
+    },
+    "visibility_chain": {
+      "visible_chain": {
+        "primal": {"drjit": true, "torch": true},
+        "input_domains": {
+          "continuous_inputs": {
+            "drjit": {"vjp": "not_applicable", "jvp": "not_applicable"},
+            "torch": {"vjp": "not_applicable", "jvp": "not_applicable"}
+          }
+        },
+        "note": "Visibility and blocker identifiers are discrete results."
+      }
+    },
+    "reflection_trace": {
+      "trace_reflections": {
+        "primal": {"drjit": true, "torch": true},
+        "input_domains": {
+          "geometry": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "supported", "jvp": "supported"}
+          },
+          "ray": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "supported", "jvp": "supported"}
+          }
+        }
+      },
+      "trace_refl_epc": {
+        "primal": {"drjit": true, "torch": true},
+        "input_domains": {
+          "geometry": {
+            "drjit": {"vjp": "unsupported", "jvp": "unsupported"},
+            "torch": {"vjp": "unsupported", "jvp": "unsupported"}
+          },
+          "ray": {
+            "drjit": {"vjp": "unsupported", "jvp": "unsupported"},
+            "torch": {"vjp": "unsupported", "jvp": "unsupported"}
+          },
+          "receiver": {
+            "drjit": {"vjp": "unsupported", "jvp": "unsupported"},
+            "torch": {"vjp": "unsupported", "jvp": "unsupported"}
+          },
+          "plane_geometry": {
+            "drjit": {"vjp": "unsupported", "jvp": "unsupported"},
+            "torch": {"vjp": "unsupported", "jvp": "unsupported"}
+          }
+        },
+        "backend_notes": {
+          "drjit": "The native path-discovery overload explicitly rejects AD inputs.",
+          "torch": "Multi-bounce EPC receiver derivatives are not cross-backend validated."
+        }
+      },
+      "trace_refl_epc_field": {
+        "primal": {"drjit": true, "torch": true},
+        "input_domains": {
+          "geometry": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "unsupported", "jvp": "unsupported"}
+          },
+          "source": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "unsupported", "jvp": "unsupported"}
+          },
+          "receiver": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "unsupported", "jvp": "unsupported"}
+          },
+          "material": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "not_applicable", "jvp": "not_applicable"}
+          }
+        },
+        "backend_notes": {
+          "torch": "The public Torch EPC-field path is forward-only because its native derivatives do not differentiate the physical Fresnel and polarization forward computation."
+        }
+      }
+    },
+    "reflection_accumulation": {
+      "accumulate_reflections": {
+        "primal": {"drjit": true, "torch": true},
+        "input_domains": {
+          "geometry": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "unsupported", "jvp": "unsupported"}
+          },
+          "source_receiver": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "unsupported", "jvp": "unsupported"}
+          },
+          "material": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "unsupported", "jvp": "unsupported"}
+          }
+        },
+        "backend_notes": {
+          "torch": "The Torch high-level accumulation path is forward-only."
+        }
+      }
+    },
+    "diffraction_direct": {
+      "trace_dfr_paths": {
+        "primal": {"drjit": true, "torch": true},
+        "input_domains": {
+          "continuous_inputs": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "unsupported", "jvp": "unsupported"}
+          }
+        },
+        "backend_notes": {
+          "torch": "Torch diffraction path export is forward-only."
+        }
+      },
+      "accum_dfr_direct": {
+        "primal": {"drjit": true, "torch": true},
+        "input_domains": {
+          "geometry": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "supported", "jvp": "supported"}
+          },
+          "material": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "supported", "jvp": "supported"}
+          }
+        }
+      },
+      "accum_dfr_coherent_direct": {
+        "primal": {"drjit": true, "torch": true},
+        "input_domains": {
+          "continuous_inputs": {
+            "drjit": {"vjp": "unsupported", "jvp": "unsupported"},
+            "torch": {"vjp": "unsupported", "jvp": "unsupported"}
+          }
+        },
+        "note": "Coherent diffraction accumulation is forward-only."
+      }
+    },
+    "diffraction_chain": {
+      "accum_dfr": {
+        "primal": {"drjit": true, "torch": true},
+        "input_domains": {
+          "geometry": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "supported", "jvp": "supported"}
+          },
+          "material": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "supported", "jvp": "supported"}
+          }
+        }
+      }
+    },
+    "sdf_intersect": {
+      "intersect": {
+        "primal": {"drjit": true, "torch": true},
+        "input_domains": {
+          "sdf_values": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "supported", "jvp": "supported"}
+          },
+          "placement": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "supported", "jvp": "supported"}
+          },
+          "ray": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "supported", "jvp": "supported"}
+          }
+        }
+      }
+    },
+    "mixed_scene": {
+      "intersect": {
+        "primal": {"drjit": true, "torch": true},
+        "input_domains": {
+          "selected_geometry": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "supported", "jvp": "supported"}
+          },
+          "ray": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "supported", "jvp": "supported"}
+          }
+        }
+      },
+      "transmittance": {
+        "primal": {"drjit": true, "torch": true},
+        "input_domains": {
+          "surfel_fields": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "supported", "jvp": "supported"}
+          },
+          "ray": {
+            "drjit": {"vjp": "supported", "jvp": "supported"},
+            "torch": {"vjp": "supported", "jvp": "supported"}
+          }
+        }
+      }
+    }
+  },
   "standalone_geometry_scope": {
     "sdf": {
       "affects": ["visibility", "reflection_trace"],
@@ -23,7 +323,14 @@
     "geometry_order_on_exact_ties": ["mesh", "sdf_by_insertion", "surfel_scene_by_insertion", "surfel_id"],
     "global_primitive_id_space": ["mesh_faces", "sdf_grids", "surfels"],
     "sdf_broad_phase": "Each SdfGrid position, rotation, and scale define an oriented bounding box; sphere tracing is clipped to its ray interval.",
-    "execution": "One resident current-stream query per non-empty specialized acceleration owner followed by device-side fixed-winner selection; no host read, CPU fallback, or synchronization.",
+    "execution": "One resident current-stream query per non-empty specialized acceleration owner, except a caller-owned packed SdfGridBatch is one SDF query owner; device-side fixed-winner selection follows with no host read, CPU fallback, or synchronization.",
+    "sdf_batching": {
+      "torch_owner": "SdfGridBatch stores contiguous [G,Nx,Ny,Nz] values plus [G,3]/[G,4]/[G,3] placement rows and requires G >= 2.",
+      "primal": "An untracked packed batch submits one native CUDA query launch over the G*N grid-ray lanes.",
+      "ad": "A batch with VJP or JVP inputs uses the existing per-grid frozen-tape operation; only the selected logical grid contributes through MixedScene.",
+      "single_grid": "SdfGrid retains its original dispatcher and CUDA launch unchanged.",
+      "scope": "Closest-hit and reflection inherit batching; LOS may retain per-grid bias/query submission, transmission ignores SDF, and diffraction remains absent."
+    },
     "mesh_only_fast_path": "Direct delegation to the existing Scene query with no added CUDA or OptiX launch.",
     "affects": ["intersect", "visibility", "reflection_trace", "transmission"],
     "does_not_affect": ["diffraction_direct", "diffraction_chain"],
@@ -192,29 +499,33 @@
     "classes": {
       "per_ray": "Shards along the batch axis; the gathered multi-device result is bitwise the single-device result, at any weighting and any chunk count.",
       "grid_reduce": "Shards along the Monte-Carlo lane axis; per-shard and per-chunk partial grids are summed on the master, so a merged grid equals the single-launch grid only up to float32 summation order.",
+      "source_lane": "Shards whole transmitter blocks whose fixed SourceLane rows are concatenated without compaction or floating-point reduction.",
+      "variant_specific": "The operation family contains variants with different shardability classes; consumers must read variant_shardability.",
       "batch_coupled": "The result depends on the whole launch rather than on each row; sharding needs an explicit per-shard contract, and until it has one a multi-device scene refuses loudly."
     },
     "torch_multi_device": {
       "sharded": "The replicated layer wraps the operation and executes it across devices.",
       "unsupported": "The operation raises NotImplementedError on a multi-device Scene instead of changing meaning.",
-      "single_device": "The operation is outside the Scene surface the replicated layer wraps, so a multi-device Scene never sees it; it neither shards nor refuses."
+      "single_device": "The operation is outside the Scene surface the replicated layer wraps, so a multi-device Scene never sees it; it neither shards nor refuses.",
+      "variant_specific": "Variants in this operation family have different multi-device dispositions; consumers must read variant_shardability."
     },
     "merge_order": "Per-shard and per-chunk partials are summed on the master in devices order after each device accumulated its chunks in ascending lane order; integer counters merge exactly and float fields merge in float32, so a merged result matches the single launch only up to float32 summation order. No within-launch reduction is re-associated.",
     "lane_window": {
       "parameters": ["lane_offset", "lane_count"],
       "defaults": {"lane_offset": 0, "lane_count": -1},
-      "semantics": "The Monte-Carlo lane space is direct_samples + keller_samples + suffix_samples lanes; local lane l of a launch runs global lane lane_offset + l, and lane_count < 0 means every remaining lane.",
+      "semantics": "For stochastic diffraction accumulation the lane space is direct_samples + keller_samples + suffix_samples; coherent direct accumulation uses state_count * grid_cell_count deterministic lanes. Local lane l of a launch runs global lane lane_offset + l, and lane_count < 0 means every remaining lane.",
       "invariance": "lane_offset = 0 with the default lane_count is bitwise the unwindowed single launch.",
       "partition": "Contiguous, disjoint windows covering the caller's window draw exactly the samples the single launch draws; the multiset of drawn samples is independent of the split.",
       "warp_alignment": 32,
       "warp_alignment_rule": "Grid accumulation aggregates a warp's contributions before its atomic, so merged-grid equality with a single launch is claimed only for warp-multiple windows.",
-      "trace_backend": "A non-zero lane_offset requires the OptiX trace backend and is rejected on the pure-CUDA one."
+      "trace_backend": "A non-zero lane_offset requires the OptiX trace backend and is rejected on the pure-CUDA one. Replicated accumulation on the CUDA backend therefore runs the caller's complete zero-offset window once on the master; a chunking or budget request that would split it fails loudly."
     }
   },
   "operations": {
     "intersect": {
       "shardability": {"class": "per_ray", "torch_multi_device": "sharded"},
       "integration": {"drjit": ["jit_symbolic"], "torch": ["eager_native"]},
+      "derivative_variants": ["intersect"],
       "inputs": ["ray", "active_mask", "ray_flags"],
       "result": "intersection",
       "id_spaces": {"shape_id": "scene-shape", "local_prim_id": "shape-local", "global_prim_id": "scene-global"},
@@ -227,6 +538,7 @@
     "nearest_edge_point": {
       "shardability": {"class": "per_ray", "torch_multi_device": "sharded"},
       "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
+      "derivative_variants": ["nearest_edge"],
       "inputs": ["point", "active_mask"],
       "result": "nearest_edge_point",
       "id_spaces": {"edge_id": "shape-local", "global_edge_id": "scene-global"},
@@ -235,6 +547,7 @@
     "nearest_edge_ray": {
       "shardability": {"class": "per_ray", "torch_multi_device": "sharded"},
       "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
+      "derivative_variants": ["nearest_edge"],
       "inputs": ["ray", "active_mask"],
       "result": "nearest_edge_ray",
       "ray_domain": "[0, tmax] when tmax is finite",
@@ -244,6 +557,7 @@
     "nearest_edges_topk": {
       "shardability": {"class": "per_ray", "torch_multi_device": "sharded"},
       "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
+      "derivative_variants": ["nearest_edges"],
       "inputs": ["point", "k", "active_mask", "edge_mask"],
       "result": "nearest_edge_point[k]",
       "limits": {"min_k": 1, "max_k": 16},
@@ -253,6 +567,7 @@
     "visibility": {
       "shardability": {"class": "per_ray", "torch_multi_device": "sharded"},
       "integration": {"drjit": ["jit_symbolic", "eager_native"], "torch": ["eager_native"]},
+      "derivative_variants": ["visible"],
       "inputs": ["start", "end", "active_mask"],
       "result": "bool",
       "ray_domain": "finite segment with endpoint offsets",
@@ -261,6 +576,7 @@
     "visibility_pair": {
       "shardability": {"class": "per_ray", "torch_multi_device": "sharded"},
       "integration": {"drjit": ["jit_symbolic", "eager_native"], "torch": ["eager_native"]},
+      "derivative_variants": ["visible_pair"],
       "inputs": ["start", "end_a", "end_b", "active_mask"],
       "result": "bool_pair",
       "ray_domain": "two finite segments with endpoint offsets",
@@ -269,6 +585,7 @@
     "visibility_edge": {
       "shardability": {"class": "per_ray", "torch_multi_device": "sharded"},
       "integration": {"drjit": ["jit_symbolic", "eager_native"], "torch": ["eager_native"]},
+      "derivative_variants": ["visible_edge"],
       "inputs": ["source", "edge_position", "edge_direction", "edge_t_min", "edge_t_max", "sample_fractions", "active_mask"],
       "result": "bool",
       "limits": {"min_samples": 1, "max_samples": 16},
@@ -277,36 +594,41 @@
     "visibility_chain": {
       "shardability": {"class": "per_ray", "torch_multi_device": "sharded"},
       "integration": {"drjit": ["jit_symbolic", "eager_native"], "torch": ["eager_native"]},
+      "derivative_variants": ["visible_chain"],
       "inputs": ["points", "chain_length", "ignore_prim_per_segment", "active_mask"],
       "result": "chain_visibility_and_first_blocker",
       "id_space": "scene-global primitive IDs",
       "ad": "discrete result; no geometry derivative"
     },
     "reflection_trace": {
-      "shardability": {"class": "per_ray", "torch_multi_device": "sharded", "note": "Chain deduplication is a separate batch_coupled operation (the Torch reflection_dedup_forward op, the Dr.Jit ReflectionTraceOptions.deduplicate path) that the replicated layer does not wrap, so dedup keeps its single-launch meaning."},
+      "shardability": {"class": "variant_specific", "torch_multi_device": "variant_specific", "note": "trace_reflections and trace_refl_epc_field are per_ray/sharded. trace_refl_epc is per_ray/unsupported. Chain deduplication is a separate batch_coupled operation that the replicated layer does not wrap.", "variant_shardability": {"trace_reflections": {"class": "per_ray", "torch_multi_device": "sharded"}, "trace_refl_epc": {"class": "per_ray", "torch_multi_device": "unsupported"}, "trace_refl_epc_field": {"class": "per_ray", "torch_multi_device": "sharded"}}},
       "integration": {"drjit": ["jit_symbolic", "eager_native"], "torch": ["eager_native"]},
+      "derivative_variants": ["trace_reflections", "trace_refl_epc", "trace_refl_epc_field"],
       "inputs": ["source", "receiver", "max_depth", "active_mask"],
       "result": "reflection_chain",
       "id_space": "scene-global primitive IDs",
-      "ad": "fixed-path forward/VJP/JVP"
+      "ad": "Variant- and input-domain-specific fixed-path derivatives; see the derivative manifest."
     },
     "reflection_accumulation": {
-      "shardability": {"class": "grid_reduce", "torch_multi_device": "single_device", "note": "Torch reaches it through the dispatcher op rather than through a Scene method, so a multi-device Scene never dispatches it."},
+      "shardability": {"class": "grid_reduce", "torch_multi_device": "sharded", "note": "Torch shards warp-aligned ray-batch windows and sums the seven float grids plus reflection_count on the master in device order. Bounded WedgeEvents are not reducible: wedge collection preserves its global capacity, overflow, slot-order, and ray-index contract through one master launch, and rejects simultaneous chunking, a memory budget, or offload."},
       "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
+      "derivative_variants": ["accumulate_reflections"],
       "inputs": ["reflection_chain", "material", "frequency"],
       "result": "complex_field_and_power",
-      "ad": "fixed-path forward/VJP/JVP"
+      "ad": "Dr.Jit supports fixed-path VJP/JVP; the Torch high-level path is forward-only."
     },
     "diffraction_direct": {
-      "shardability": {"class": "grid_reduce", "torch_multi_device": "sharded", "note": "accum_dfr_direct shards through the lane window; trace_dfr_paths and accum_dfr_coherent_direct raise on a multi-device Scene."},
+      "shardability": {"class": "variant_specific", "torch_multi_device": "sharded", "note": "accum_dfr_direct and accum_dfr_coherent_direct are grid_reduce variants that shard through lane windows. trace_dfr_paths is a source_lane variant that concatenates transmitter-aligned blocks without compaction.", "variant_shardability": {"trace_dfr_paths": {"class": "source_lane", "torch_multi_device": "sharded"}, "accum_dfr_direct": {"class": "grid_reduce", "torch_multi_device": "sharded"}, "accum_dfr_coherent_direct": {"class": "grid_reduce", "torch_multi_device": "sharded"}}},
       "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
+      "derivative_variants": ["trace_dfr_paths", "accum_dfr_direct", "accum_dfr_coherent_direct"],
       "inputs": ["diffraction_states", "material", "grid", "frequency"],
       "result": "diffraction_accumulation",
-      "ad": "fixed-path forward/VJP/JVP"
+      "ad": "Variant-specific fixed-path derivatives; path export and coherent accumulation are forward-only."
     },
     "diffraction_chain": {
       "shardability": {"class": "grid_reduce", "torch_multi_device": "sharded", "note": "accum_dfr shards through the lane window."},
       "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
+      "derivative_variants": ["accum_dfr"],
       "inputs": ["diffraction_states", "material", "grid", "frequency", "max_depth"],
       "result": "diffraction_paths_or_accumulation",
       "ad": "fixed-path forward/VJP/JVP"
@@ -315,6 +637,7 @@
       "shardability": {"class": "per_ray", "torch_multi_device": "single_device", "note": "ADR-0037 keeps the primitive standalone with no Scene membership, so the replicated layer never sees it."},
       "record": "docs/adr/0037-differentiable-sdf-intersection.md",
       "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
+      "derivative_variants": ["intersect"],
       "inputs": [
         "values", "position", "rotation", "scale", "origins", "directions",
         "tmax", "max_steps", "relaxation", "eps_hit"
@@ -345,6 +668,7 @@
       "shardability": {"class": "per_ray", "torch_multi_device": "single_device", "note": "MixedScene is a single-device composition layer; mesh-only queries retain the ordinary Scene path."},
       "record": "docs/adr/0043-unified-mixed-geometry-scene.md",
       "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
+      "derivative_variants": ["intersect", "transmittance"],
       "inputs": ["meshes", "sdf_grids", "surfel_clouds", "ray", "active"],
       "result": "intersection",
       "operations": ["intersect", "visible", "trace_reflections", "transmittance"],

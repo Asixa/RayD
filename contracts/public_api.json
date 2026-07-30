@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "capability_keys": [
     "intersect",
     "nearest_edge_point",
@@ -23,6 +23,11 @@
     "multi_device_replicated"
   ],
   "stability_levels": ["stable", "provisional", "experimental", "deprecated"],
+  "derivative_statuses": {
+    "supported": "The backend implements and tests this derivative for the named variant and input domain.",
+    "unsupported": "The derivative has meaningful semantics but is unavailable or not validated for this backend path.",
+    "not_applicable": "The named input domain or variant has no derivative semantics."
+  },
   "naming_conventions": {
     "options": "New configuration records use PascalCase <Operation>Options; existing domain records retain compatibility names until a major release.",
     "results": "Result records use PascalCase semantic nouns; plural names denote collections and AD does not change the public result type name.",
@@ -98,6 +103,175 @@
         "torch_compile": false,
         "multi_device_replicated": false
       },
+      "derivatives": {
+        "intersect": {
+          "intersect": {
+            "primal": true,
+            "input_domains": {
+              "geometry": {"vjp": "supported", "jvp": "supported"},
+              "ray": {"vjp": "supported", "jvp": "supported"}
+            }
+          }
+        },
+        "nearest_edge_point": {
+          "nearest_edge": {
+            "primal": true,
+            "input_domains": {
+              "geometry": {"vjp": "supported", "jvp": "supported"},
+              "point": {"vjp": "supported", "jvp": "supported"}
+            }
+          }
+        },
+        "nearest_edge_ray": {
+          "nearest_edge": {
+            "primal": true,
+            "input_domains": {
+              "geometry": {"vjp": "supported", "jvp": "supported"},
+              "ray": {"vjp": "supported", "jvp": "supported"}
+            }
+          }
+        },
+        "nearest_edges_topk": {
+          "nearest_edges": {
+            "primal": true,
+            "input_domains": {
+              "geometry": {"vjp": "supported", "jvp": "supported"},
+              "point": {"vjp": "supported", "jvp": "supported"}
+            }
+          }
+        },
+        "visibility": {
+          "visible": {
+            "primal": true,
+            "input_domains": {
+              "continuous_inputs": {"vjp": "not_applicable", "jvp": "not_applicable"}
+            },
+            "note": "Visibility is a discrete boolean result."
+          }
+        },
+        "visibility_pair": {
+          "visible_pair": {
+            "primal": true,
+            "input_domains": {
+              "continuous_inputs": {"vjp": "not_applicable", "jvp": "not_applicable"}
+            },
+            "note": "Visibility is a discrete boolean result."
+          }
+        },
+        "visibility_edge": {
+          "visible_edge": {
+            "primal": true,
+            "input_domains": {
+              "continuous_inputs": {"vjp": "not_applicable", "jvp": "not_applicable"}
+            },
+            "note": "Visibility is a discrete boolean result."
+          }
+        },
+        "visibility_chain": {
+          "visible_chain": {
+            "primal": true,
+            "input_domains": {
+              "continuous_inputs": {"vjp": "not_applicable", "jvp": "not_applicable"}
+            },
+            "note": "Visibility and blocker identifiers are discrete results."
+          }
+        },
+        "reflection_trace": {
+          "trace_reflections": {
+            "primal": true,
+            "input_domains": {
+              "geometry": {"vjp": "supported", "jvp": "supported"},
+              "ray": {"vjp": "supported", "jvp": "supported"}
+            }
+          },
+          "trace_refl_epc": {
+            "primal": true,
+            "input_domains": {
+              "geometry": {"vjp": "unsupported", "jvp": "unsupported"},
+              "ray": {"vjp": "unsupported", "jvp": "unsupported"},
+              "receiver": {"vjp": "unsupported", "jvp": "unsupported"},
+              "plane_geometry": {"vjp": "unsupported", "jvp": "unsupported"}
+            },
+            "note": "The native path-discovery overload explicitly rejects AD inputs."
+          },
+          "trace_refl_epc_field": {
+            "primal": true,
+            "input_domains": {
+              "geometry": {"vjp": "supported", "jvp": "supported"},
+              "source": {"vjp": "supported", "jvp": "supported"},
+              "receiver": {"vjp": "supported", "jvp": "supported"},
+              "material": {"vjp": "supported", "jvp": "supported"}
+            }
+          }
+        },
+        "reflection_accumulation": {
+          "accumulate_reflections": {
+            "primal": true,
+            "input_domains": {
+              "geometry": {"vjp": "supported", "jvp": "supported"},
+              "source_receiver": {"vjp": "supported", "jvp": "supported"},
+              "material": {"vjp": "supported", "jvp": "supported"}
+            }
+          }
+        },
+        "diffraction_direct": {
+          "trace_dfr_paths": {
+            "primal": true,
+            "input_domains": {
+              "continuous_inputs": {"vjp": "supported", "jvp": "supported"}
+            }
+          },
+          "accum_dfr_direct": {
+            "primal": true,
+            "input_domains": {
+              "geometry": {"vjp": "supported", "jvp": "supported"},
+              "material": {"vjp": "supported", "jvp": "supported"}
+            }
+          },
+          "accum_dfr_coherent_direct": {
+            "primal": true,
+            "input_domains": {
+              "continuous_inputs": {"vjp": "unsupported", "jvp": "unsupported"}
+            },
+            "note": "Coherent diffraction accumulation is forward-only."
+          }
+        },
+        "diffraction_chain": {
+          "accum_dfr": {
+            "primal": true,
+            "input_domains": {
+              "geometry": {"vjp": "supported", "jvp": "supported"},
+              "material": {"vjp": "supported", "jvp": "supported"}
+            }
+          }
+        },
+        "sdf_intersect": {
+          "intersect": {
+            "primal": true,
+            "input_domains": {
+              "sdf_values": {"vjp": "supported", "jvp": "supported"},
+              "placement": {"vjp": "supported", "jvp": "supported"},
+              "ray": {"vjp": "supported", "jvp": "supported"}
+            }
+          }
+        },
+        "mixed_scene": {
+          "intersect": {
+            "primal": true,
+            "input_domains": {
+              "selected_geometry": {"vjp": "supported", "jvp": "supported"},
+              "ray": {"vjp": "supported", "jvp": "supported"}
+            }
+          },
+          "transmittance": {
+            "primal": true,
+            "input_domains": {
+              "surfel_fields": {"vjp": "supported", "jvp": "supported"},
+              "ray": {"vjp": "supported", "jvp": "supported"}
+            }
+          }
+        }
+      },
       "typing": "complete"
     },
     "torch": {
@@ -122,6 +296,178 @@
         "forward_ad": true,
         "torch_compile": true,
         "multi_device_replicated": true
+      },
+      "derivatives": {
+        "intersect": {
+          "intersect": {
+            "primal": true,
+            "input_domains": {
+              "geometry": {"vjp": "supported", "jvp": "supported"},
+              "ray": {"vjp": "supported", "jvp": "supported"}
+            }
+          }
+        },
+        "nearest_edge_point": {
+          "nearest_edge": {
+            "primal": true,
+            "input_domains": {
+              "geometry": {"vjp": "supported", "jvp": "supported"},
+              "point": {"vjp": "supported", "jvp": "supported"}
+            }
+          }
+        },
+        "nearest_edge_ray": {
+          "nearest_edge": {
+            "primal": true,
+            "input_domains": {
+              "geometry": {"vjp": "supported", "jvp": "supported"},
+              "ray": {"vjp": "supported", "jvp": "supported"}
+            }
+          }
+        },
+        "nearest_edges_topk": {
+          "nearest_edges": {
+            "primal": true,
+            "input_domains": {
+              "geometry": {"vjp": "supported", "jvp": "supported"},
+              "point": {"vjp": "supported", "jvp": "supported"}
+            }
+          }
+        },
+        "visibility": {
+          "visible": {
+            "primal": true,
+            "input_domains": {
+              "continuous_inputs": {"vjp": "not_applicable", "jvp": "not_applicable"}
+            },
+            "note": "Visibility is a discrete boolean result."
+          }
+        },
+        "visibility_pair": {
+          "visible_pair": {
+            "primal": true,
+            "input_domains": {
+              "continuous_inputs": {"vjp": "not_applicable", "jvp": "not_applicable"}
+            },
+            "note": "Visibility is a discrete boolean result."
+          }
+        },
+        "visibility_edge": {
+          "visible_edge": {
+            "primal": true,
+            "input_domains": {
+              "continuous_inputs": {"vjp": "not_applicable", "jvp": "not_applicable"}
+            },
+            "note": "Visibility is a discrete boolean result."
+          }
+        },
+        "visibility_chain": {
+          "visible_chain": {
+            "primal": true,
+            "input_domains": {
+              "continuous_inputs": {"vjp": "not_applicable", "jvp": "not_applicable"}
+            },
+            "note": "Visibility and blocker identifiers are discrete results."
+          }
+        },
+        "reflection_trace": {
+          "trace_reflections": {
+            "primal": true,
+            "input_domains": {
+              "geometry": {"vjp": "supported", "jvp": "supported"},
+              "ray": {"vjp": "supported", "jvp": "supported"}
+            }
+          },
+          "trace_refl_epc": {
+            "primal": true,
+            "input_domains": {
+              "geometry": {"vjp": "unsupported", "jvp": "unsupported"},
+              "ray": {"vjp": "unsupported", "jvp": "unsupported"},
+              "receiver": {"vjp": "unsupported", "jvp": "unsupported"},
+              "plane_geometry": {"vjp": "unsupported", "jvp": "unsupported"}
+            },
+            "note": "Multi-bounce EPC receiver derivatives are not cross-backend validated."
+          },
+          "trace_refl_epc_field": {
+            "primal": true,
+            "input_domains": {
+              "geometry": {"vjp": "unsupported", "jvp": "unsupported"},
+              "source": {"vjp": "unsupported", "jvp": "unsupported"},
+              "receiver": {"vjp": "unsupported", "jvp": "unsupported"},
+              "material": {"vjp": "not_applicable", "jvp": "not_applicable"}
+            },
+            "note": "The public Torch EPC-field path is forward-only because its native derivatives do not differentiate the physical Fresnel and polarization forward computation."
+          }
+        },
+        "reflection_accumulation": {
+          "accumulate_reflections": {
+            "primal": true,
+            "input_domains": {
+              "geometry": {"vjp": "unsupported", "jvp": "unsupported"},
+              "source_receiver": {"vjp": "unsupported", "jvp": "unsupported"},
+              "material": {"vjp": "unsupported", "jvp": "unsupported"}
+            },
+            "note": "The Torch high-level accumulation path is forward-only."
+          }
+        },
+        "diffraction_direct": {
+          "trace_dfr_paths": {
+            "primal": true,
+            "input_domains": {
+              "continuous_inputs": {"vjp": "unsupported", "jvp": "unsupported"}
+            },
+            "note": "Torch diffraction path export is forward-only."
+          },
+          "accum_dfr_direct": {
+            "primal": true,
+            "input_domains": {
+              "geometry": {"vjp": "supported", "jvp": "supported"},
+              "material": {"vjp": "supported", "jvp": "supported"}
+            }
+          },
+          "accum_dfr_coherent_direct": {
+            "primal": true,
+            "input_domains": {
+              "continuous_inputs": {"vjp": "unsupported", "jvp": "unsupported"}
+            },
+            "note": "Coherent diffraction accumulation is forward-only."
+          }
+        },
+        "diffraction_chain": {
+          "accum_dfr": {
+            "primal": true,
+            "input_domains": {
+              "geometry": {"vjp": "supported", "jvp": "supported"},
+              "material": {"vjp": "supported", "jvp": "supported"}
+            }
+          }
+        },
+        "sdf_intersect": {
+          "intersect": {
+            "primal": true,
+            "input_domains": {
+              "sdf_values": {"vjp": "supported", "jvp": "supported"},
+              "placement": {"vjp": "supported", "jvp": "supported"},
+              "ray": {"vjp": "supported", "jvp": "supported"}
+            }
+          }
+        },
+        "mixed_scene": {
+          "intersect": {
+            "primal": true,
+            "input_domains": {
+              "selected_geometry": {"vjp": "supported", "jvp": "supported"},
+              "ray": {"vjp": "supported", "jvp": "supported"}
+            }
+          },
+          "transmittance": {
+            "primal": true,
+            "input_domains": {
+              "surfel_fields": {"vjp": "supported", "jvp": "supported"},
+              "ray": {"vjp": "supported", "jvp": "supported"}
+            }
+          }
+        }
       },
       "typing": "complete"
     }

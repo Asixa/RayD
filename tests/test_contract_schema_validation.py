@@ -41,12 +41,28 @@ class ContractSchemaValidationTests(unittest.TestCase):
         invalid_integration_mode = _load("public_api.json")
         invalid_integration_mode["trace"]["integration_modes"] = ["jit_symbolic", "reactive_native"]
 
+        invalid_derivative_status = _load("public_api.json")
+        invalid_derivative_status["backends"]["torch"]["derivatives"]["reflection_trace"]["trace_refl_epc"][
+            "input_domains"
+        ]["receiver"]["vjp"] = "partial"
+
+        missing_derivative_mode = _load("public_api.json")
+        del missing_derivative_mode["backends"]["torch"]["derivatives"]["reflection_trace"]["trace_reflections"][
+            "input_domains"
+        ]["ray"]["jvp"]
+
+        empty_input_domains = _load("public_api.json")
+        empty_input_domains["backends"]["torch"]["derivatives"]["intersect"]["intersect"]["input_domains"] = {}
+
         cases = {
             "missing_required_trace": missing_required,
             "wrong_version_type": wrong_version_type,
             "unexpected_top_level_property": unexpected_property,
             "invalid_typing_enum": invalid_typing_enum,
             "invalid_integration_mode": invalid_integration_mode,
+            "invalid_derivative_status": invalid_derivative_status,
+            "missing_derivative_mode": missing_derivative_mode,
+            "empty_input_domains": empty_input_domains,
         }
         for label, broken in cases.items():
             with self.subTest(case=label):

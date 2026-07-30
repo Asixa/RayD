@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "rayd-torch"
-version = "0.7.0"
+version = "0.8.0"
 description = "Torch-native RayD geometry and multipath primitives."
 readme = "README.md"
 authors = [{ name = "Xingyu Chen", email = "xic063@ucsd.edu" }]

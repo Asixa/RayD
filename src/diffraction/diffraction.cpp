@@ -763,14 +763,15 @@ py::tuple diffraction_paths_order1_forward_op(
     at::Tensor state_edge_t_max, at::Tensor state_n0, at::Tensor state_n1, at::Tensor state_prim0,
     at::Tensor state_prim1, at::Tensor state_exterior_angle, at::Tensor state_src, at::Tensor state_src_power,
     at::Tensor material_eta_r, at::Tensor material_sigma, at::Tensor material_mu_r, at::Tensor material_gain,
-    at::Tensor material_valid, int64_t state_limit, int64_t capacity, double wavelength, double isb_taper_width_scale) {
+    at::Tensor material_valid, int64_t state_limit, int64_t capacity, double wavelength, double isb_taper_width_scale,
+    int64_t output_layout) {
     return diffraction_path_outputs_to_tuple(diffraction_paths_order1_forward_impl(
         get_scene(scene_handle), std::move(tx_pos), std::move(tx_pol), std::move(rx_pos), std::move(active),
         std::move(state_edge_index), std::move(state_edge_pos), std::move(state_edge_dir), std::move(state_edge_t_min),
         std::move(state_edge_t_max), std::move(state_n0), std::move(state_n1), std::move(state_prim0),
         std::move(state_prim1), std::move(state_exterior_angle), std::move(state_src), std::move(state_src_power),
         std::move(material_eta_r), std::move(material_sigma), std::move(material_mu_r), std::move(material_gain),
-        std::move(material_valid), state_limit, capacity, kDiffractionPathLayoutCompact, wavelength,
+        std::move(material_valid), state_limit, capacity, checked_i32(output_layout, "output_layout"), wavelength,
         isb_taper_width_scale));
 }
 
@@ -2339,7 +2340,8 @@ CoherentDiffractionOutputs diffraction_coherent_accumulation_forward_impl(
     at::Tensor material_gain, at::Tensor material_valid, int64_t state_limit_arg, int64_t grid_axis,
     double grid_position, double grid_coord0_min, double grid_coord0_max, double grid_coord1_min,
     double grid_coord1_max, int64_t grid_resolution0, int64_t grid_resolution1, double grid_cell_area,
-    double wavelength, bool select_diffraction_point, bool prefilter_visibility) {
+    double wavelength, bool select_diffraction_point, bool prefilter_visibility, int64_t lane_offset,
+    int64_t lane_count) {
     require_optional_mask(active, "active");
     require_flat_i32_strided(state_edge_index, "state_edge_index");
     require_vec3f_strided(state_edge_pos, "state_edge_pos");
@@ -2399,8 +2401,13 @@ CoherentDiffractionOutputs diffraction_coherent_accumulation_forward_impl(
     }
 
     const int64_t cell_count = grid_resolution0 * grid_resolution1;
-    const int64_t launch_count64 = state_count * cell_count;
+    const int64_t total_lane_count64 = state_count * cell_count;
+    const int32_t total_lane_count = checked_i32(total_lane_count64, "total_lane_count");
+    const int64_t launch_count64 = resolve_lane_window(lane_offset, lane_count, total_lane_count64);
+    const int32_t lane_begin = checked_i32(lane_offset, "lane_offset");
     const int32_t launch_count = checked_i32(launch_count64, "launch_count");
+    if (lane_begin != 0 && scene.trace_backend == TraceBackend::Cuda)
+        throw std::runtime_error("diffraction accumulation lane_offset requires the OptiX trace backend.");
     require_scene_device(scene, active, "active");
     require_scene_device(scene, state_edge_index, "state_edge_index");
     require_scene_device(scene, state_edge_pos, "state_edge_pos");
@@ -2469,7 +2476,8 @@ CoherentDiffractionOutputs diffraction_coherent_accumulation_forward_impl(
     params.primary_handle = scene.triangle_ias.traversable;
     params.secondary_handle = 0;
     params.split_mode = 0;
-    params.n_rays = launch_count;
+    params.n_rays = total_lane_count;
+    params.lane_offset = lane_begin;
     params.active_mask = optional_mask_ptr(active_contig);
     params.active_width = active_width_for_states(active_contig, "active_width");
     params.active_stride = active_stride_for_states(active_contig, "active_stride");
@@ -2572,10 +2580,13 @@ CoherentDiffractionOutputs diffraction_coherent_accumulation_forward_impl(
     params.out_multi_count = multi_count.data_ptr<int>();
     params.out_visibility_reject_count = visibility_reject_count.data_ptr<int>();
     params.out_utd_reject_count = utd_reject_count.data_ptr<int>();
-    params.coherent_stage_key = staged_coherent_accum ? coherent_stage_key.data_ptr<int>() : nullptr;
+    params.coherent_stage_key =
+        rebase_lane_buffer(staged_coherent_accum ? coherent_stage_key.data_ptr<int>() : nullptr, lane_begin);
     params.coherent_stage_value =
-        staged_coherent_accum ? reinterpret_cast<DfrCoherentStagedValue*>(coherent_stage_value.data_ptr<float>())
-                              : nullptr;
+        rebase_lane_buffer(staged_coherent_accum
+                               ? reinterpret_cast<DfrCoherentStagedValue*>(coherent_stage_value.data_ptr<float>())
+                               : nullptr,
+                           lane_begin);
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     if (scene.trace_backend == TraceBackend::Cuda) {
@@ -2626,14 +2637,14 @@ py::tuple diffraction_coherent_accumulation_forward_op(
     at::Tensor material_gain, at::Tensor material_valid, int64_t state_limit, int64_t grid_axis, double grid_position,
     double grid_coord0_min, double grid_coord0_max, double grid_coord1_min, double grid_coord1_max,
     int64_t grid_resolution0, int64_t grid_resolution1, double grid_cell_area, double wavelength,
-    bool select_diffraction_point, bool prefilter_visibility) {
+    bool select_diffraction_point, bool prefilter_visibility, int64_t lane_offset, int64_t lane_count) {
     return coherent_diffraction_outputs_to_tuple(diffraction_coherent_accumulation_forward_impl(
         get_scene(scene_handle), active, state_edge_index, state_edge_pos, state_edge_dir, state_edge_t_min,
         state_edge_t_max, state_n0, state_n1, state_prim0, state_prim1, state_exterior_angle, state_src,
         state_src_power, state_wi, state_d0, material_eta_r, material_sigma, material_mu_r, material_gain,
         material_valid, state_limit, grid_axis, grid_position, grid_coord0_min, grid_coord0_max, grid_coord1_min,
         grid_coord1_max, grid_resolution0, grid_resolution1, grid_cell_area, wavelength, select_diffraction_point,
-        prefilter_visibility));
+        prefilter_visibility, lane_offset, lane_count));
 }
 
 } // namespace rayd::torch_backend
@@ -2736,6 +2747,7 @@ DiffractionAccumulationResult diffraction_accumulation_forward(const SceneResour
 CoherentDiffractionResult diffraction_coherent_accumulation_forward(const SceneResource& scene,
                                                                     const CoherentDiffractionConfig& config) {
     torch_backend::SceneCache& scene_cache = detail::IntegrationAccess::scene_cache(scene);
+    // The stable typed boundary keeps its existing whole-lane-space contract.
     auto result = torch_backend::diffraction_coherent_accumulation_forward_impl(
         scene_cache, optional_defined_tensor(config.active), config.state.edge_index, config.state.edge_pos,
         config.state.edge_dir, config.state.edge_t_min, config.state.edge_t_max, config.state.n0, config.state.n1,
@@ -2744,7 +2756,7 @@ CoherentDiffractionResult diffraction_coherent_accumulation_forward(const SceneR
         config.material.sigma, config.material.mu_r, config.material.gain, config.material.valid, config.state_limit,
         config.grid.axis, config.grid.position, config.grid.coord0_min, config.grid.coord0_max, config.grid.coord1_min,
         config.grid.coord1_max, config.grid.resolution0, config.grid.resolution1, config.grid.cell_area,
-        config.wavelength, config.select_diffraction_point, config.prefilter_visibility);
+        config.wavelength, config.select_diffraction_point, config.prefilter_visibility, 0, -1);
     return {result.direct_x_re,     result.direct_x_im, result.direct_y_re,
             result.direct_y_im,     result.direct_z_re, result.direct_z_im,
             result.multi_x_re,      result.multi_x_im,  result.multi_y_re,

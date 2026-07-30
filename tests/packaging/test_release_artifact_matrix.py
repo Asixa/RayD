@@ -33,6 +33,7 @@ class ReleaseArtifactMatrixTests(unittest.TestCase):
             wheels = self.wheels(distribution)
             self.assertEqual(len(wheels), 10, (distribution, wheels))
             names = [wheel.name for wheel in wheels]
+            self.assertTrue(all(f"-{self.version}-" in name for name in names), (distribution, names))
             for python_tag in PYTHON_TAGS:
                 matching = [name for name in names if python_tag in name]
                 self.assertEqual(len(matching), 2, (distribution, python_tag, matching))

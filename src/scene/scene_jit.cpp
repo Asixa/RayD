@@ -1,6 +1,7 @@
 // Copyright Xingyu Chen.
 // Implements scene support for scene Dr.Jit.
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <iostream>
@@ -673,6 +674,34 @@ int Scene::add_mesh(const Mesh& mesh, bool dynamic) {
     record.mesh = std::make_unique<Mesh>(mesh);
     record.mesh->set_mesh_id(static_cast<int>(mesh_records_.size()));
     record.dynamic = dynamic;
+    record.geometry_owner_id = static_cast<int>(mesh_records_.size());
+    mesh_records_.push_back(std::move(record));
+
+    mesh_count_ = static_cast<int>(mesh_records_.size());
+    is_ready_ = false;
+    pending_updates_ = false;
+    vertex_offsets_ = Int();
+    global_geometry_ = SceneGeometry();
+    edge_mask_ = Mask();
+    pending_edge_bvh_dirty_ranges_.clear();
+    edge_bvh_dirty_ = false;
+    mask_dirty_ = false;
+    trace_backend_.reset();
+    reset_multipath_pipelines();
+    return mesh_count_ - 1;
+}
+
+int Scene::add_instance(int geometry_id, const Matrix4fAD& transform, bool dynamic) {
+    const SceneMeshRecord& source = mesh_record(geometry_id);
+    const SceneMeshRecord& owner = mesh_record(source.geometry_owner_id);
+    require(!owner.dynamic, "Scene::add_instance(): dynamic source geometry cannot be instanced.");
+
+    SceneMeshRecord record;
+    record.mesh = std::make_unique<Mesh>(*source.mesh);
+    record.mesh->append_transform(transform, true);
+    record.mesh->set_mesh_id(static_cast<int>(mesh_records_.size()));
+    record.dynamic = dynamic;
+    record.geometry_owner_id = source.geometry_owner_id;
     mesh_records_.push_back(std::move(record));
 
     mesh_count_ = static_cast<int>(mesh_records_.size());
@@ -909,7 +938,9 @@ void Scene::build() {
         vertex_offsets.push_back(vertex_offsets.back() + mesh.vertex_count());
         face_offsets.push_back(face_offsets.back() + mesh.face_count());
         edge_offsets.push_back(edge_offsets.back() + mesh_edge_count);
-        mesh_descs.push_back({&mesh, record.dynamic, record.face_offset, static_cast<int>(mesh_index)});
+        const SceneMeshRecord& owner = mesh_records_[static_cast<size_t>(record.geometry_owner_id)];
+        mesh_descs.push_back({&mesh, record.dynamic, owner.dynamic, record.face_offset, static_cast<int>(mesh_index),
+                              record.geometry_owner_id});
     }
 
     mesh_count_ = static_cast<int>(mesh_records_.size());
@@ -1139,6 +1170,8 @@ void Scene::update_mesh_vertices(int mesh_id, const Vector3fAD& positions) {
     require_build_device("Scene::update_mesh_vertices()");
 
     SceneMeshRecord& record = mesh_record(mesh_id);
+    require(record.geometry_owner_id == mesh_id,
+            "Scene::update_mesh_vertices(): instance geometry is shared; update its source mesh instead.");
     require(record.dynamic, "Scene::update_mesh_vertices(): target mesh is not dynamic.");
     require(static_cast<int>(slices(positions)) == record.mesh->vertex_count(),
             "Scene::update_mesh_vertices(): vertex count must remain unchanged.");
@@ -1213,7 +1246,9 @@ void Scene::sync() {
 
     for (size_t mesh_index = 0; mesh_index < mesh_records_.size(); ++mesh_index) {
         SceneMeshRecord& record = mesh_records_[mesh_index];
-        mesh_descs.push_back({record.mesh.get(), record.dynamic, record.face_offset, static_cast<int>(mesh_index)});
+        const SceneMeshRecord& owner = mesh_records_[static_cast<size_t>(record.geometry_owner_id)];
+        mesh_descs.push_back({record.mesh.get(), record.dynamic, owner.dynamic, record.face_offset,
+                              static_cast<int>(mesh_index), record.geometry_owner_id});
 
         if (!record.vertices_dirty && !record.transform_dirty) {
             continue;
@@ -2263,6 +2298,7 @@ struct OptixState {
 
     std::vector<HitGroupSbtRecord> hg_sbts;
     std::vector<OptixMeshState> mesh_states;
+    std::vector<size_t> gas_owner_indices;
     std::vector<OptixInstance> instances;
 
     void* instance_buffer = nullptr;
@@ -2540,7 +2576,8 @@ static void update_gas(OptixState* state, OptixMeshState& mesh_state, const Mesh
 static void initialize_instances(OptixState* state, const std::vector<OptixSceneMeshDesc>& meshes) {
     state->instances.resize(meshes.size());
     for (size_t mesh_index = 0; mesh_index < meshes.size(); ++mesh_index) {
-        write_optix_instance(state->instances[mesh_index], meshes[mesh_index], state->mesh_states[mesh_index]);
+        write_optix_instance(state->instances[mesh_index], meshes[mesh_index],
+                             state->mesh_states[state->gas_owner_indices[mesh_index]]);
     }
 
     upload_instance_span(state, 0, state->instances.size());
@@ -2560,7 +2597,7 @@ static void update_dirty_instances(OptixState* state, const std::vector<OptixSce
         require(mesh_index >= 0 && mesh_index < static_cast<int>(meshes.size()),
                 "OptixScene::sync(): dirty instance index is out of range.");
         write_optix_instance(state->instances[static_cast<size_t>(mesh_index)], meshes[static_cast<size_t>(mesh_index)],
-                             state->mesh_states[static_cast<size_t>(mesh_index)]);
+                             state->mesh_states[state->gas_owner_indices[static_cast<size_t>(mesh_index)]]);
     }
 
     if (dirty_instance_indices.size() == state->instances.size()) {
@@ -2705,14 +2742,25 @@ void OptixScene::build(const std::vector<OptixSceneMeshDesc>& meshes, const Opti
     }
 
     m_accel->mesh_states.resize(meshes.size());
+    m_accel->gas_owner_indices.resize(meshes.size());
     for (size_t mesh_index = 0; mesh_index < meshes.size(); ++mesh_index) {
+        const int owner_id = meshes[mesh_index].geometry_owner_id;
+        require(owner_id >= 0 && owner_id < static_cast<int>(meshes.size()),
+                "OptixScene::build(): shared GAS owner is absent from the scene.");
+        const size_t owner_index = static_cast<size_t>(owner_id);
+        require(meshes[owner_index].mesh_id == owner_id && meshes[owner_index].geometry_owner_id == owner_id,
+                "OptixScene::build(): shared GAS owner id does not name an owning mesh.");
+        m_accel->gas_owner_indices[mesh_index] = owner_index;
+
         OptixMeshState& mesh_state = m_accel->mesh_states[mesh_index];
-        mesh_state.dynamic = meshes[mesh_index].dynamic;
+        mesh_state.dynamic = meshes[mesh_index].geometry_dynamic;
         mesh_state.face_offset = meshes[mesh_index].face_offset;
         mesh_state.mesh_id = meshes[mesh_index].mesh_id;
-        m_accel->has_dynamic_meshes |= mesh_state.dynamic;
-        m_accel->has_static_meshes |= !mesh_state.dynamic;
-        build_gas(m_accel, mesh_state, meshes[mesh_index]);
+        m_accel->has_dynamic_meshes |= meshes[mesh_index].dynamic;
+        m_accel->has_static_meshes |= !meshes[mesh_index].dynamic;
+        if (owner_index == mesh_index) {
+            build_gas(m_accel, mesh_state, meshes[mesh_index]);
+        }
     }
 
     initialize_instances(m_accel, meshes);
@@ -2747,14 +2795,22 @@ void OptixScene::sync(const std::vector<OptixSceneMeshDesc>& meshes, const std::
             continue;
         }
 
-        OptixMeshState& mesh_state = m_accel->mesh_states[static_cast<size_t>(update.mesh_id)];
+        const size_t instance_index = static_cast<size_t>(update.mesh_id);
+        const size_t owner_index = m_accel->gas_owner_indices[instance_index];
+        require(owner_index == instance_index,
+                "OptixScene::sync(): instance vertices cannot update shared source geometry.");
+        OptixMeshState& mesh_state = m_accel->mesh_states[owner_index];
         require(mesh_state.dynamic, "OptixScene::sync(): attempted to update a non-dynamic mesh.");
         const auto gas_start = Clock::now();
         const OptixTraversableHandle previous_handle = mesh_state.gas_handle;
-        update_gas(m_accel, mesh_state, *meshes[static_cast<size_t>(update.mesh_id)].mesh);
+        update_gas(m_accel, mesh_state, *meshes[instance_index].mesh);
         last_sync_profile_.gas_update_ms += std::chrono::duration<double, std::milli>(Clock::now() - gas_start).count();
         if (mesh_state.gas_handle != previous_handle) {
-            dirty_instance_mask[static_cast<size_t>(update.mesh_id)] = 1;
+            for (size_t mesh_index = 0; mesh_index < m_accel->gas_owner_indices.size(); ++mesh_index) {
+                if (m_accel->gas_owner_indices[mesh_index] == owner_index) {
+                    dirty_instance_mask[mesh_index] = 1;
+                }
+            }
         }
     }
 

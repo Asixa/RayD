@@ -6,8 +6,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-_SCHEMA_VERSION = 2
-_SCHEMA_SHA256 = "eb33e4d848c4c62a737d1f5427a47ef198f8df22e3d59294b1d421d98c19c1bc"
+_SCHEMA_VERSION = 3
+_SCHEMA_SHA256 = "a9f179cf24656ef33f5cda4725f1f8609337d5a8238649fba2b735ca7d86dcf9"
 _BACKEND = "torch"
 _TYPING = "complete"
 
@@ -76,6 +76,99 @@ _ALIASES = {
     }
 }
 
+_DERIVATIVE_STATUSES = {
+    "supported": "The backend implements and tests this derivative for the named variant and input domain.",
+    "unsupported": "The derivative has meaningful semantics but is unavailable or not validated for this backend path.",
+    "not_applicable": "The named input domain or variant has no derivative semantics.",
+}
+
+_SUPPORTED = {"drjit": ("supported", "supported"), "torch": ("supported", "supported")}
+_UNSUPPORTED = {"drjit": ("unsupported", "unsupported"), "torch": ("unsupported", "unsupported")}
+_NOT_APPLICABLE = {"drjit": ("not_applicable", "not_applicable"), "torch": ("not_applicable", "not_applicable")}
+_DRJIT_ONLY = {"drjit": ("supported", "supported"), "torch": ("unsupported", "unsupported")}
+_DRJIT_SUPPORTED_TORCH_NA = {"drjit": ("supported", "supported"), "torch": ("not_applicable", "not_applicable")}
+
+_DERIVATIVE_CONTRACT = {
+    "intersect": {"intersect": {"geometry": _SUPPORTED, "ray": _SUPPORTED}},
+    "nearest_edge_point": {"nearest_edge": {"geometry": _SUPPORTED, "point": _SUPPORTED}},
+    "nearest_edge_ray": {"nearest_edge": {"geometry": _SUPPORTED, "ray": _SUPPORTED}},
+    "nearest_edges_topk": {"nearest_edges": {"geometry": _SUPPORTED, "point": _SUPPORTED}},
+    "visibility": {
+        "visible": {
+            "domains": {"continuous_inputs": _NOT_APPLICABLE},
+            "note": "Visibility is a discrete boolean result.",
+        }
+    },
+    "visibility_pair": {
+        "visible_pair": {
+            "domains": {"continuous_inputs": _NOT_APPLICABLE},
+            "note": "Visibility is a discrete boolean result.",
+        }
+    },
+    "visibility_edge": {
+        "visible_edge": {
+            "domains": {"continuous_inputs": _NOT_APPLICABLE},
+            "note": "Visibility is a discrete boolean result.",
+        }
+    },
+    "visibility_chain": {
+        "visible_chain": {
+            "domains": {"continuous_inputs": _NOT_APPLICABLE},
+            "note": "Visibility and blocker identifiers are discrete results.",
+        }
+    },
+    "reflection_trace": {
+        "trace_reflections": {"geometry": _SUPPORTED, "ray": _SUPPORTED},
+        "trace_refl_epc": {
+            "domains": {
+                "geometry": _UNSUPPORTED,
+                "ray": _UNSUPPORTED,
+                "receiver": _UNSUPPORTED,
+                "plane_geometry": _UNSUPPORTED,
+            },
+            "backend_notes": {
+                "drjit": "The native path-discovery overload explicitly rejects AD inputs.",
+                "torch": "Multi-bounce EPC receiver derivatives are not cross-backend validated.",
+            },
+        },
+        "trace_refl_epc_field": {
+            "domains": {
+                "geometry": _DRJIT_ONLY,
+                "source": _DRJIT_ONLY,
+                "receiver": _DRJIT_ONLY,
+                "material": _DRJIT_SUPPORTED_TORCH_NA,
+            },
+            "backend_notes": {
+                "torch": "The public Torch EPC-field path is forward-only because its native derivatives do not "
+                "differentiate the physical Fresnel and polarization forward computation."
+            },
+        },
+    },
+    "reflection_accumulation": {
+        "accumulate_reflections": {
+            "domains": {"geometry": _DRJIT_ONLY, "source_receiver": _DRJIT_ONLY, "material": _DRJIT_ONLY},
+            "backend_notes": {"torch": "The Torch high-level accumulation path is forward-only."},
+        }
+    },
+    "diffraction_direct": {
+        "trace_dfr_paths": {
+            "domains": {"continuous_inputs": _DRJIT_ONLY},
+            "backend_notes": {"torch": "Torch diffraction path export is forward-only."},
+        },
+        "accum_dfr_direct": {"geometry": _SUPPORTED, "material": _SUPPORTED},
+        "accum_dfr_coherent_direct": {
+            "domains": {"continuous_inputs": _UNSUPPORTED},
+            "note": "Coherent diffraction accumulation is forward-only.",
+        },
+    },
+    "diffraction_chain": {"accum_dfr": {"geometry": _SUPPORTED, "material": _SUPPORTED}},
+    "sdf_intersect": {"intersect": {"sdf_values": _SUPPORTED, "placement": _SUPPORTED, "ray": _SUPPORTED}},
+    "mixed_scene": {
+        "intersect": {"selected_geometry": _SUPPORTED, "ray": _SUPPORTED},
+        "transmittance": {"surfel_fields": _SUPPORTED, "ray": _SUPPORTED},
+    },
+}
+
 _TRACE = {
     "backends": {
         "optix": {
@@ -95,6 +188,27 @@ _TRACE = {
 }
 
 
+def _backend_derivatives() -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for operation, variants in _DERIVATIVE_CONTRACT.items():
+        resolved_variants = {}
+        for variant, metadata in variants.items():
+            domains = metadata.get("domains", metadata)
+            resolved = {
+                "primal": True,
+                "input_domains": {
+                    domain: {"vjp": statuses[_BACKEND][0], "jvp": statuses[_BACKEND][1]}
+                    for domain, statuses in domains.items()
+                },
+            }
+            note = metadata.get("backend_notes", {}).get(_BACKEND, metadata.get("note"))
+            if note is not None:
+                resolved["note"] = note
+            resolved_variants[variant] = resolved
+        result[operation] = resolved_variants
+    return result
+
+
 def backend_capabilities() -> dict[str, bool | str]:
     """Return the backward-compatible flat backend capability mapping."""
     return {"backend": _BACKEND, **_CAPABILITIES}
@@ -108,6 +222,8 @@ def api_manifest() -> dict[str, Any]:
         "backend": _BACKEND,
         "typing": _TYPING,
         "naming_conventions": deepcopy(_NAMING_CONVENTIONS),
+        "derivative_statuses": deepcopy(_DERIVATIVE_STATUSES),
+        "derivatives": _backend_derivatives(),
         "capabilities": backend_capabilities(),
         "apis": {
             name: {"category": category, "stability": stability}

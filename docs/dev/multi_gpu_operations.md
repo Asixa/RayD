@@ -1,6 +1,6 @@
 # Multi-Device Operation (Torch Backend)
 
-Date: 2026-07-27
+Date: 2026-07-30
 
 This note is the operational contract for running RayD on more than one GPU
 today, and the decisions behind it are
@@ -272,6 +272,34 @@ device can only win when a row's compute costs more than its bytes cost to
 move. This section is the measured version of that sentence, and the benchmark
 that produced it is
 [`benchmarks/torch/benchmark_multi_device.py`](../../benchmarks/torch/benchmark_multi_device.py):
+
+The replicated operation surface also includes two diffraction contracts that
+were added after the benchmark evidence below:
+
+- `trace_dfr_paths` uses `DfrPathLayout.SourceLane` and shards whole
+  transmitter blocks. Rows retain their global `(tx, rx, state)` positions and
+  are concatenated without compacting or reading the device count on the host.
+  The wrapper validates every endpoint, state, material, and active tensor on
+  the master before any replica copy, so sharding cannot repair a caller device
+  or mask-layout violation.
+- `accum_dfr_coherent_direct` shards its deterministic
+  `state_count * grid_cell_count` lane space and sums partial complex grids and
+  diagnostics on the master.
+- `accumulate_reflections` shards warp-aligned ray-batch windows and sums its
+  seven float grids plus `reflection_count` on the master in device order.
+  Forward-only inputs are rejected before any replica copy. `WedgeEvents`
+  retains one complete master launch because independent bounded atomic event
+  buffers cannot preserve the global capacity, overflow, slot order, and ray
+  IDs; wedge collection combined with chunking, a memory budget, or offload
+  fails loudly.
+
+All three variants are forward-only in Torch. Tracked or forward-dual endpoints,
+states, materials, or scene geometry fail loudly before dispatch.
+
+Their two-device numerical acceptance lives in
+`tests.scene.test_multi_device_scene` and
+`tests.test_multi_device_reflection_accum`; no speedup claim is attached to
+them until the benchmark records those operations explicitly.
 
 By default construction also requires bidirectional CUDA peer access between
 the master and every replica. This is fail-safe: silently routing the pipeline
@@ -742,6 +770,12 @@ the problem. Accumulation also reserves its replicated state/material payload
 and fixed grid partials. CUDA allocator granularity, already-resident
 scene/caller tensors, and allocations performed by the user's hook are not
 part of this incremental estimate.
+Lane chunks derived from the hard budget align down to a complete 32-lane warp;
+if one warp does not fit, the call fails. Explicit chunk sizes align up and are
+checked again after alignment so that policy cannot exceed the same budget.
+The CUDA trace backend cannot execute a non-zero lane offset, so replicated
+accumulation keeps a complete zero-offset caller window on the master. A
+chunking or budget request that would split it fails before any launch.
 Multi-chunk AD results likewise require `offload` plus per-chunk backward.
 Inference accumulation reuses a fixed grid buffer, but AD accumulation retains
 one frozen tape per chunk and therefore fails when a budget would require
@@ -900,7 +934,8 @@ done
 is therefore the one test here that can fail on a busy host; re-run it alone
 before believing a single red result),
 `test_multi_device_scene` the replicated-`Scene` suite (sharding, broadcast
-mutation, autograd, the row floor, the loud refusals),
+mutation, autograd, the row floor, SourceLane path export, coherent-grid
+reduction, and the remaining loud refusals),
 `test_chunked_executor` the chunked and pipelined executor, and
 `test_lane_offset` the lane window of D5.
 
@@ -922,6 +957,8 @@ compile-flag policy from drifting apart.
 python -m unittest \
     tests.test_adr0038_multi_device \
     tests.test_multi_device_benchmark_evidence \
+    tests.test_multi_device_diffraction_paths \
+    tests.test_multi_device_coherent_accum \
     tests.test_shared_operation_contract \
     tests.test_public_api_manifest \
     tests.test_ptx_source_digest \

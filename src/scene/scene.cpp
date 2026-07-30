@@ -40,21 +40,23 @@ MeshRecord integration_mesh_record(at::Tensor vertices, at::Tensor faces, at::Te
     record.face_uv = std::move(face_uv);
     record.to_world_left = std::move(to_world_left);
     record.to_world_right = std::move(to_world_right);
+    record.instance_transform = at::empty({0, 4}, record.vertices.options());
     record.use_face_normals = (flags & kMeshUseFaceNormals) != 0;
     record.edges_enabled = (flags & kMeshEdgesEnabled) != 0;
     record.dynamic = (flags & kMeshDynamic) != 0;
     return record;
 }
 
-c10::intrusive_ptr<SceneHandle> create_scene_cache_from_flat(std::vector<at::Tensor> vertices,
-                                                             std::vector<at::Tensor> faces, std::vector<at::Tensor> uv,
-                                                             std::vector<at::Tensor> face_uv,
-                                                             std::vector<at::Tensor> to_world_left,
-                                                             std::vector<at::Tensor> to_world_right,
-                                                             std::vector<int64_t> mesh_flags) {
+c10::intrusive_ptr<SceneHandle> create_scene_cache_from_flat(
+    std::vector<at::Tensor> vertices, std::vector<at::Tensor> faces, std::vector<at::Tensor> uv,
+    std::vector<at::Tensor> face_uv, std::vector<at::Tensor> to_world_left, std::vector<at::Tensor> to_world_right,
+    std::vector<at::Tensor> instance_transforms, std::vector<int64_t> mesh_flags,
+    std::vector<int64_t> geometry_owner_ids) {
     const size_t mesh_count = vertices.size();
     if (faces.size() != mesh_count || uv.size() != mesh_count || face_uv.size() != mesh_count ||
-        to_world_left.size() != mesh_count || to_world_right.size() != mesh_count || mesh_flags.size() != mesh_count) {
+        to_world_left.size() != mesh_count || to_world_right.size() != mesh_count ||
+        instance_transforms.size() != mesh_count || mesh_flags.size() != mesh_count ||
+        geometry_owner_ids.size() != mesh_count) {
         throw std::runtime_error("Scene init lists must have the same length.");
     }
     TraceBackend trace_backend = TraceBackend::Auto;
@@ -74,6 +76,8 @@ c10::intrusive_ptr<SceneHandle> create_scene_cache_from_flat(std::vector<at::Ten
         meshes.push_back(integration_mesh_record(std::move(vertices[i]), std::move(faces[i]), std::move(uv[i]),
                                                  std::move(face_uv[i]), std::move(to_world_left[i]),
                                                  std::move(to_world_right[i]), mesh_flags[i]));
+        meshes.back().instance_transform = std::move(instance_transforms[i]);
+        meshes.back().geometry_owner_id = geometry_owner_ids[i];
     }
     auto owner = create_scene_cache(std::move(meshes), trace_backend, edge_backend);
     const int64_t handle = owner->handle;
@@ -93,9 +97,11 @@ int64_t create_scene_op(py::list mesh_specs) {
         record.face_uv = spec["face_uv"].cast<at::Tensor>();
         record.to_world_left = spec["to_world_left"].cast<at::Tensor>();
         record.to_world_right = spec["to_world_right"].cast<at::Tensor>();
+        record.instance_transform = at::empty({0, 4}, record.vertices.options());
         record.use_face_normals = spec["use_face_normals"].cast<bool>();
         record.edges_enabled = spec["edges_enabled"].cast<bool>();
         record.dynamic = spec["dynamic"].cast<bool>();
+        record.geometry_owner_id = static_cast<int64_t>(meshes.size());
         meshes.push_back(record);
     }
     return create_scene(std::move(meshes));
@@ -266,7 +272,6 @@ SceneEdgeRecordsResult scene_edge_records(const SceneResource& scene) {
 
 #include <algorithm>
 #include <atomic>
-#include <array>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -386,16 +391,25 @@ OptixTriangleAccel build_triangle_accel(const MeshRecord& mesh, OptixDeviceConte
     return accel;
 }
 
-void write_identity_instance(OptixInstance& instance, unsigned int instance_id, OptixTraversableHandle traversable) {
+bool write_instance(OptixInstance& instance, unsigned int instance_id, OptixTraversableHandle traversable,
+                    const at::Tensor& transform, cudaStream_t stream) {
     std::memset(&instance, 0, sizeof(instance));
     instance.transform[0] = 1.0f;
     instance.transform[5] = 1.0f;
     instance.transform[10] = 1.0f;
+    bool copied_transform = false;
+    if (transform.defined() && transform.numel() != 0) {
+        cuda_check(cudaMemcpyAsync(instance.transform, transform.data_ptr<float>(), sizeof(instance.transform),
+                                   cudaMemcpyDeviceToHost, stream),
+                   "cudaMemcpyAsync(instance transform)");
+        copied_transform = true;
+    }
     instance.instanceId = instance_id;
     instance.sbtOffset = 0;
     instance.visibilityMask = 255u;
     instance.flags = OPTIX_INSTANCE_FLAG_NONE;
     instance.traversableHandle = traversable;
+    return copied_transform;
 }
 
 void build_triangle_ias(SceneCache& scene, OptixDeviceContext optix_context, cudaStream_t stream) {
@@ -403,10 +417,15 @@ void build_triangle_ias(SceneCache& scene, OptixDeviceContext optix_context, cud
         throw std::runtime_error("build_triangle_ias(): missing triangle acceleration structures.");
 
     std::vector<OptixInstance> instances(scene.triangle_accels.size());
+    bool copied_transform = false;
     for (size_t mesh_index = 0; mesh_index < scene.triangle_accels.size(); ++mesh_index) {
-        write_identity_instance(instances[mesh_index], static_cast<unsigned int>(mesh_index),
-                                scene.triangle_accels[mesh_index].traversable);
+        copied_transform = write_instance(instances[mesh_index], static_cast<unsigned int>(mesh_index),
+                                          scene.triangle_accels[mesh_index].traversable,
+                                          scene.meshes[mesh_index].instance_transform, stream) ||
+                           copied_transform;
     }
+    if (copied_transform)
+        cuda_check(cudaStreamSynchronize(stream), "cudaStreamSynchronize(instance transforms)");
 
     at::TensorOptions byte_options =
         at::TensorOptions().device(at::Device(at::kCUDA, scene.device_index)).dtype(at::kByte);
@@ -424,13 +443,14 @@ void build_triangle_ias(SceneCache& scene, OptixDeviceContext optix_context, cud
     build_input.instanceArray.instanceStride = sizeof(OptixInstance);
 
     OptixAccelBuildOptions accel_options = {};
-    accel_options.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
+    accel_options.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE | OPTIX_BUILD_FLAG_ALLOW_UPDATE;
     accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
 
     OptixAccelBufferSizes buffer_sizes = {};
     rayd_torch_OPTIX_CHECK(optixAccelComputeMemoryUsage(optix_context, &accel_options, &build_input, 1, &buffer_sizes));
 
-    scene.triangle_ias.ias_temp_buffer = at::empty({static_cast<int64_t>(buffer_sizes.tempSizeInBytes)}, byte_options);
+    const size_t temp_size = std::max(buffer_sizes.tempSizeInBytes, buffer_sizes.tempUpdateSizeInBytes);
+    scene.triangle_ias.ias_temp_buffer = at::empty({static_cast<int64_t>(temp_size)}, byte_options);
     scene.triangle_ias.ias_buffer = at::empty({static_cast<int64_t>(buffer_sizes.outputSizeInBytes)}, byte_options);
 
     rayd_torch_OPTIX_CHECK(
@@ -439,6 +459,40 @@ void build_triangle_ias(SceneCache& scene, OptixDeviceContext optix_context, cud
                         buffer_sizes.tempSizeInBytes,
                         reinterpret_cast<CUdeviceptr>(scene.triangle_ias.ias_buffer.data_ptr<uint8_t>()),
                         buffer_sizes.outputSizeInBytes, &scene.triangle_ias.traversable, nullptr, 0));
+}
+
+void update_triangle_ias(SceneCache& scene, OptixDeviceContext optix_context, cudaStream_t stream) {
+    std::vector<OptixInstance> instances(scene.triangle_accels.size());
+    bool copied_transform = false;
+    for (size_t mesh_index = 0; mesh_index < scene.triangle_accels.size(); ++mesh_index) {
+        copied_transform = write_instance(instances[mesh_index], static_cast<unsigned int>(mesh_index),
+                                          scene.triangle_accels[mesh_index].traversable,
+                                          scene.meshes[mesh_index].instance_transform, stream) ||
+                           copied_transform;
+    }
+    if (copied_transform)
+        cuda_check(cudaStreamSynchronize(stream), "cudaStreamSynchronize(instance transforms)");
+    cuda_check(cudaMemcpyAsync(scene.triangle_ias.instance_buffer.data_ptr<uint8_t>(), instances.data(),
+                               sizeof(OptixInstance) * instances.size(), cudaMemcpyHostToDevice, stream),
+               "cudaMemcpyAsync(triangle IAS instance update)");
+
+    CUdeviceptr instance_buffer = reinterpret_cast<CUdeviceptr>(scene.triangle_ias.instance_buffer.data_ptr<uint8_t>());
+    OptixBuildInput build_input = {};
+    build_input.type = OPTIX_BUILD_INPUT_TYPE_INSTANCES;
+    build_input.instanceArray.instances = instance_buffer;
+    build_input.instanceArray.numInstances = static_cast<unsigned int>(instances.size());
+    build_input.instanceArray.instanceStride = sizeof(OptixInstance);
+
+    OptixAccelBuildOptions accel_options = {};
+    accel_options.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE | OPTIX_BUILD_FLAG_ALLOW_UPDATE;
+    accel_options.operation = OPTIX_BUILD_OPERATION_UPDATE;
+    rayd_torch_OPTIX_CHECK(
+        optixAccelBuild(optix_context, stream, &accel_options, &build_input, 1,
+                        reinterpret_cast<CUdeviceptr>(scene.triangle_ias.ias_temp_buffer.data_ptr<uint8_t>()),
+                        static_cast<size_t>(scene.triangle_ias.ias_temp_buffer.numel()),
+                        reinterpret_cast<CUdeviceptr>(scene.triangle_ias.ias_buffer.data_ptr<uint8_t>()),
+                        static_cast<size_t>(scene.triangle_ias.ias_buffer.numel()), &scene.triangle_ias.traversable,
+                        nullptr, 0));
 }
 
 void refresh_global_geometry(SceneCache& scene) {
@@ -821,15 +875,36 @@ std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes, T
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     if (torch_ctx.device_index != device_index)
         throw std::runtime_error("Scene.build(): current CUDA device does not match mesh tensors.");
-    for (const MeshRecord& mesh : meshes) {
+    for (size_t mesh_index = 0; mesh_index < meshes.size(); ++mesh_index) {
+        MeshRecord& mesh = meshes[mesh_index];
+        if (mesh.geometry_owner_id < 0)
+            mesh.geometry_owner_id = static_cast<int64_t>(mesh_index);
         require_vec3f(mesh.vertices, "mesh.vertices");
         require_vec3i(mesh.faces, "mesh.faces");
         require_optional_matrix4(mesh.to_world_left, "mesh.to_world_left");
         require_optional_matrix4(mesh.to_world_right, "mesh.to_world_right");
+        require_optional_matrix4(mesh.instance_transform, "mesh.instance_transform");
         if (mesh.vertices.get_device() != device_index || mesh.faces.get_device() != device_index)
             throw std::runtime_error("Scene.build(): all tensors must be on the same CUDA device.");
         if (mesh.to_world_left.get_device() != device_index || mesh.to_world_right.get_device() != device_index)
             throw std::runtime_error("Scene.build(): transform tensors must be on the scene device.");
+        if (mesh.instance_transform.get_device() != device_index)
+            throw std::runtime_error("Scene.build(): instance transforms must be on the scene device.");
+        if (mesh.geometry_owner_id < 0 || mesh.geometry_owner_id > static_cast<int64_t>(mesh_index))
+            throw std::runtime_error("Scene.build(): geometry owner must be an existing mesh.");
+        const MeshRecord& owner = meshes[static_cast<size_t>(mesh.geometry_owner_id)];
+        if (owner.geometry_owner_id >= 0 && owner.geometry_owner_id != mesh.geometry_owner_id)
+            throw std::runtime_error("Scene.build(): instance-of-instance geometry is not supported.");
+        if (mesh.geometry_owner_id != static_cast<int64_t>(mesh_index)) {
+            if (owner.dynamic)
+                throw std::runtime_error("Scene.build(): dynamic source geometry cannot be instanced.");
+            if (mesh.faces.sizes() != owner.faces.sizes() || mesh.vertices.sizes() != owner.vertices.sizes())
+                throw std::runtime_error("Scene.build(): instance geometry must match its owner.");
+            if (mesh.instance_transform.numel() == 0)
+                throw std::runtime_error("Scene.build(): an instance requires a (4, 4) transform.");
+        } else if (mesh.instance_transform.numel() != 0) {
+            throw std::runtime_error("Scene.build(): owner geometry cannot carry an instance transform.");
+        }
     }
 
     auto scene_unique = std::make_unique<SceneCache>();
@@ -851,9 +926,17 @@ std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes, T
     scene->meshes = std::move(meshes);
     refresh_global_geometry(*scene);
     if (scene->trace_backend == TraceBackend::Optix) {
-        scene->triangle_accels.reserve(scene->meshes.size());
-        for (const MeshRecord& mesh : scene->meshes)
-            scene->triangle_accels.push_back(build_triangle_accel(mesh, optix_entry->optix_context, torch_ctx.stream));
+        scene->triangle_accels.resize(scene->meshes.size());
+        for (size_t mesh_index = 0; mesh_index < scene->meshes.size(); ++mesh_index) {
+            const MeshRecord& mesh = scene->meshes[mesh_index];
+            const size_t owner_index = static_cast<size_t>(mesh.geometry_owner_id);
+            if (owner_index == mesh_index) {
+                scene->triangle_accels[mesh_index] =
+                    build_triangle_accel(mesh, optix_entry->optix_context, torch_ctx.stream);
+            } else {
+                scene->triangle_accels[mesh_index] = scene->triangle_accels[owner_index];
+            }
+        }
         build_triangle_ias(*scene, optix_entry->optix_context, torch_ctx.stream);
     } else {
         ensure_custom_triangle_bvh(*scene);
@@ -917,6 +1000,16 @@ int64_t scene_num_meshes(int64_t handle) {
     return static_cast<int64_t>(get_scene(handle).meshes.size());
 }
 
+int64_t scene_num_geometries(int64_t handle) {
+    const SceneCache& scene = get_scene(handle);
+    int64_t count = 0;
+    for (size_t mesh_index = 0; mesh_index < scene.meshes.size(); ++mesh_index) {
+        if (scene.meshes[mesh_index].geometry_owner_id == static_cast<int64_t>(mesh_index))
+            ++count;
+    }
+    return count;
+}
+
 int64_t scene_edge_count(int64_t handle) {
     return get_scene(handle).edge_v0.size(0);
 }
@@ -936,6 +1029,8 @@ void update_mesh_vertices(int64_t handle, int64_t mesh_id, at::Tensor vertices) 
     MeshRecord& mesh = scene.meshes[mesh_id];
     if (!mesh.dynamic)
         throw std::runtime_error("update_mesh_vertices(): target mesh is not dynamic.");
+    if (mesh.geometry_owner_id != mesh_id)
+        throw std::runtime_error("update_mesh_vertices(): instance vertices are owned by source geometry.");
     require_vec3f(vertices, "vertices");
     if (vertices.get_device() != scene.device_index)
         throw std::runtime_error("update_mesh_vertices(): vertices must stay on the scene device.");
@@ -945,8 +1040,32 @@ void update_mesh_vertices(int64_t handle, int64_t mesh_id, at::Tensor vertices) 
     mesh.pending_update = true;
 }
 
+void update_instance_transform(int64_t handle, int64_t mesh_id, at::Tensor vertices, at::Tensor transform) {
+    SceneCache& scene = get_scene(handle);
+    if (mesh_id < 0 || mesh_id >= static_cast<int64_t>(scene.meshes.size()))
+        throw std::runtime_error("update_instance_transform(): invalid instance id.");
+    MeshRecord& mesh = scene.meshes[mesh_id];
+    if (mesh.geometry_owner_id == mesh_id)
+        throw std::runtime_error("update_instance_transform(): target is not an instance.");
+    if (!mesh.dynamic)
+        throw std::runtime_error("update_instance_transform(): target instance is not dynamic.");
+    require_vec3f(vertices, "vertices");
+    require_optional_matrix4(transform, "transform");
+    if (transform.numel() == 0)
+        throw std::runtime_error("update_instance_transform(): transform must have shape (4, 4).");
+    if (vertices.get_device() != scene.device_index || transform.get_device() != scene.device_index)
+        throw std::runtime_error("update_instance_transform(): tensors must stay on the scene device.");
+    if (vertices.sizes() != mesh.vertices.sizes())
+        throw std::runtime_error("update_instance_transform(): vertex shape must stay unchanged.");
+    mesh.vertices = vertices.contiguous();
+    mesh.instance_transform = transform.contiguous();
+    mesh.pending_transform = true;
+}
+
 void sync_scene(int64_t handle) {
     SceneCache& scene = get_scene(handle);
+    scene.last_sync_gas_updates = 0;
+    scene.last_sync_ias_updates = 0;
     c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     if (torch_ctx.device_index != scene.device_index)
@@ -956,23 +1075,33 @@ void sync_scene(int64_t handle) {
         optix_entry = &get_optix_context(static_cast<int>(scene.device_index));
 
     bool changed = false;
+    bool geometry_changed = false;
+    bool transform_changed = false;
     for (int64_t mesh_id = 0; mesh_id < static_cast<int64_t>(scene.meshes.size()); ++mesh_id) {
         MeshRecord& mesh = scene.meshes[mesh_id];
-        if (!mesh.pending_update)
+        if (!mesh.pending_update && !mesh.pending_transform)
             continue;
-        if (scene.trace_backend == TraceBackend::Optix) {
+        if (mesh.pending_update && scene.trace_backend == TraceBackend::Optix) {
             update_triangle_accel(mesh, scene.triangle_accels[mesh_id], optix_entry->optix_context, torch_ctx.stream);
+            ++scene.last_sync_gas_updates;
         }
+        geometry_changed = geometry_changed || mesh.pending_update;
+        transform_changed = transform_changed || mesh.pending_transform;
         mesh.pending_update = false;
+        mesh.pending_transform = false;
         changed = true;
     }
     if (changed) {
         refresh_global_geometry(scene);
         scene.version += 1;
         scene.edge_version += 1;
-        if (scene.trace_backend == TraceBackend::Optix)
-            build_triangle_ias(scene, optix_entry->optix_context, torch_ctx.stream);
-        else
+        if (scene.trace_backend == TraceBackend::Optix) {
+            if (geometry_changed)
+                build_triangle_ias(scene, optix_entry->optix_context, torch_ctx.stream);
+            else if (transform_changed)
+                update_triangle_ias(scene, optix_entry->optix_context, torch_ctx.stream);
+            ++scene.last_sync_ias_updates;
+        } else
             ensure_custom_triangle_bvh(scene);
         if (scene.edge_backend == EdgeBackend::Optix) {
             if (!update_edge_accel(scene, optix_entry->optix_context, torch_ctx.stream))
@@ -1501,6 +1630,23 @@ void set_scene_edge_mask(c10::intrusive_ptr<SceneHandle> scene_handle, at::Tenso
 
 void update_mesh_vertices(c10::intrusive_ptr<SceneHandle> scene, int64_t mesh_id, at::Tensor vertices) {
     update_mesh_vertices(scene->handle, mesh_id, std::move(vertices));
+}
+
+int64_t scene_num_geometries(c10::intrusive_ptr<SceneHandle> scene) {
+    return scene_num_geometries(scene->handle);
+}
+
+int64_t scene_last_sync_gas_updates(c10::intrusive_ptr<SceneHandle> scene) {
+    return get_scene(scene->handle).last_sync_gas_updates;
+}
+
+int64_t scene_last_sync_ias_updates(c10::intrusive_ptr<SceneHandle> scene) {
+    return get_scene(scene->handle).last_sync_ias_updates;
+}
+
+void update_instance_transform(c10::intrusive_ptr<SceneHandle> scene, int64_t mesh_id, at::Tensor vertices,
+                               at::Tensor transform) {
+    update_instance_transform(scene->handle, mesh_id, std::move(vertices), std::move(transform));
 }
 
 void sync_scene(c10::intrusive_ptr<SceneHandle> scene) {

@@ -728,7 +728,11 @@ void OptixTraceBackend::build(const std::vector<OptixSceneMeshDesc>& mesh_descs,
         }
     }
 
-    split_active_ = should_split_optix_scene(active_optix_split_mode(), static_mesh_count, dynamic_mesh_count);
+    const bool has_shared_gas = std::any_of(mesh_descs.begin(), mesh_descs.end(), [](const OptixSceneMeshDesc& desc) {
+        return desc.geometry_owner_id != desc.mesh_id;
+    });
+    split_active_ =
+        !has_shared_gas && should_split_optix_scene(active_optix_split_mode(), static_mesh_count, dynamic_mesh_count);
     static_mesh_indices_.clear();
     dynamic_mesh_indices_.clear();
     dynamic_mesh_local_index_.assign(dynamic_flags.size(), -1);

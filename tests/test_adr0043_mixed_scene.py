@@ -26,14 +26,30 @@ class MixedSceneContractTests(unittest.TestCase):
             scope["geometry_order_on_exact_ties"],
             ["mesh", "sdf_by_insertion", "surfel_scene_by_insertion", "surfel_id"],
         )
+        batching = scope["sdf_batching"]
+        self.assertIn("one native CUDA query launch", batching["primal"])
+        self.assertIn("per-grid frozen-tape", batching["ad"])
+        self.assertIn("SdfGrid retains", batching["single_grid"])
 
     def test_public_surfaces_expose_mixed_scene_without_diffraction(self) -> None:
         torch_source = (ROOT / "python" / "rayd" / "torch" / "__init__.py").read_text(encoding="utf-8")
         jit_header = (ROOT / "include" / "rayd" / "jit" / "mixed_scene.h").read_text(encoding="utf-8")
         self.assertIn('"MixedScene"', torch_source)
+        self.assertIn('"SdfGridBatch"', torch_source)
         self.assertIn("class MixedScene final", jit_header)
         for forbidden in ("trace_dfr", "diffraction", "nearest_edge"):
             self.assertNotIn(forbidden, jit_header)
+
+    def test_torch_packed_sdf_owner_has_one_native_primal_launch_site(self) -> None:
+        cuda_source = (ROOT / "src" / "sdf.cu").read_text(encoding="utf-8")
+        library = (ROOT / "src" / "bindings" / "library.cpp").read_text(encoding="utf-8")
+        mixed = (ROOT / "python" / "rayd" / "_impl" / "mixed.py").read_text(encoding="utf-8")
+        sdf = (ROOT / "python" / "rayd" / "_impl" / "sdf.py").read_text(encoding="utf-8")
+        self.assertEqual(cuda_source.count("sdf_batch_intersect_forward_kernel<<<"), 1)
+        self.assertEqual(library.count('m.def("sdf_batch_intersect_forward('), 1)
+        self.assertEqual(sdf.count("torch.ops.rayd_torch.sdf_batch_intersect_forward("), 1)
+        self.assertIn("def add_sdf_batch(", mixed)
+        self.assertIn("_needs_reverse_or_forward_ad(", sdf)
 
     def test_accepted_adr_and_stress_evidence_are_complete(self) -> None:
         adr = (ROOT / "docs" / "adr" / "0043-unified-mixed-geometry-scene.md").read_text(encoding="utf-8")

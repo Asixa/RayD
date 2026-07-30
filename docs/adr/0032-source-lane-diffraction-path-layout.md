@@ -47,9 +47,11 @@ helper chooses either the historical warp-aggregated compact row or the launch
 lane while the diagnostic count keeps the existing warp-aggregated integer
 reservation. The generic shared algorithm has the equivalent layout choice and treats
 parameter records without an `output_layout` field as `Compact`, preserving
-the Dr.Jit and host-smoke contracts. The RayD dispatcher and Python surface
-continue to request `Compact`; this decision adds no Python argument or
-compatibility path.
+the Dr.Jit and host-smoke contracts. The Torch Python surface exposes
+`DfrPathLayout`: single-device calls default to `Compact`, while the replicated
+multi-device layer requires `SourceLane` so transmitter-aligned shards can be
+concatenated without compaction. The stable typed default remains `Compact`,
+and no compatibility alias is added.
 
 The existing capacity rule remains `capacity >= tx_count * rx_count *
 state_limit`. Invalid layout values fail before initialization or launch.
@@ -88,7 +90,7 @@ atomically.
 ## Stop conditions
 
 Stop if the implementation duplicates exporter physics, changes traversal or
-UTD math, makes source-lane the Python default, reads inactive payload, uses the
+UTD math, makes source-lane the single-device Python default, reads inactive payload, uses the
 count as a host-visible shape, adds synchronization or a host transfer, changes
 compact output semantics, performs a floating-point reduction, or introduces a
 generation-suffixed name or compatibility shim.

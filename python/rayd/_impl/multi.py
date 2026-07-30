@@ -18,12 +18,14 @@ from the chunked executor).
 
 Two of the plan's shardability classes are wrapped here. The `per_ray`
 operations shard the batch axis and their sharded result is field-for-field the
-single-device result. The `grid_reduce` diffraction accumulation operations
-shard the Monte-Carlo *sample* axis instead (see below), and their merged grid
-is the single-device grid up to float32 summation order. Everything else --
-`trace_dfr_paths`, whose exporter row placement is batch-coupled, and
-`accum_dfr_coherent_direct`, which has no lane window to shard -- still raises
-`NotImplementedError`, because it needs the explicit per-shard contract of D6.
+single-device result. Reflection accumulation shards its ray batch, while the
+`grid_reduce` diffraction accumulation operations shard the Monte-Carlo
+*sample* axis instead (see below); both merge partial grids in device order and
+match a single-device grid up to float32 summation order. `trace_dfr_paths`
+shards whole transmitter row blocks in `SourceLane` layout, which preserves
+the global `(tx, rx, state)` row order without compaction.
+`accum_dfr_coherent_direct` shards its deterministic `(state, grid-cell)` lane
+space and merges the partial grids on the master.
 
 Execution is deliberately single-threaded on the host: every device is driven
 from the calling thread, and overlap comes from streams and events rather than
@@ -202,15 +204,20 @@ from __future__ import annotations
 import sys
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Mapping, NamedTuple, Sequence
 
 import torch
 
 from .geometry import (
+    AccumOptions,
+    AccumResult,
     AxialEdgeVisibility,
     DfrAccum,
+    DfrCoherentAccum,
     DfrMaterial,
+    DfrPathLayout,
+    DfrPaths,
     DfrStates,
     Intersection,
     NearestEdgesTopK,
@@ -219,9 +226,11 @@ from .geometry import (
     Ray,
     RayFlags,
     ReflEpcField,
+    ReflMaterial,
     ReflectionChain,
     SegmentChainVisibility,
     SegmentPairVisibility,
+    WedgeEvents,
     _ReducedIntersection,
 )
 
@@ -407,10 +416,22 @@ _VISIBLE_EDGE_ROW_BYTES = 1
 _VISIBLE_CHAIN_ROW_BYTES = 9
 _REFL_EPC_FIELD_ROW_BYTES = 13
 
+# Reflection accumulation copies four vec3 rows plus tmax/active (53 bytes) and
+# the native facade splits those vec3 tensors into another four SoA rows. The
+# staged strategy additionally keeps one int32 cell and eight float32 values
+# for each ray/depth pair. Charging all of it makes a memory budget conservative
+# for either accumulation strategy.
+_REFL_ACCUM_INPUT_AND_SOA_BYTES = 101
+_REFL_ACCUM_STAGED_BYTES_PER_RAY_DEPTH = 36
+
 # Diffraction accumulation's per-row cost is per Monte-Carlo lane, not per ray:
 # the AD tape (1 + 4 + 4 + 4 + 4 bytes) plus the visibility scratch byte, or the
 # no-AD staging pair (4 + 16 bytes) plus that same byte, whichever is larger.
 _DFR_ACCUM_LANE_BYTES = 21
+# Coherent staging stores one int32 key and eight float32 values per lane.
+# Smaller launches bypass staging, so this remains a conservative hard-budget
+# charge for every coherent chunk.
+_DFR_COHERENT_STAGED_LANE_BYTES = 36
 
 # The shipped small-batch floor was measured for a full intersection row:
 # 24 input bytes plus 76 output bytes. Wider rows need proportionally more
@@ -571,11 +592,92 @@ def _lane_chunk_size(chunk_rays: int, count: int) -> int:
     return size
 
 
+def _finalize_lane_chunk_plan(plan: ChunkPlan, count: int) -> None:
+    """Align a lane chunk without violating a hard memory budget."""
+
+    rows = max(int(count), 0)
+    if plan.source == "budget" and 0 < plan.chunk_rays < rows:
+        aligned = (plan.chunk_rays // _LANE_ALIGNMENT) * _LANE_ALIGNMENT
+        if aligned == 0:
+            minimum_rows = min(rows, _LANE_ALIGNMENT)
+            minimum_bytes = plan.fixed_output_bytes + minimum_rows * plan.row_bytes * plan.resident_chunks
+            raise RuntimeError(
+                f"{plan.operation}: tape_memory_budget_bytes={plan.budget_bytes} cannot hold one "
+                f"warp-aligned lane chunk; at least {minimum_bytes} bytes are required."
+            )
+        plan.chunk_rays = aligned
+    else:
+        plan.chunk_rays = _lane_chunk_size(plan.chunk_rays, rows)
+
+    if plan.budget_bytes is not None:
+        effective = min(plan.chunk_rays, rows) if rows else plan.chunk_rays
+        required = plan.fixed_output_bytes + effective * plan.row_bytes * plan.resident_chunks
+        if required > plan.budget_bytes:
+            raise RuntimeError(
+                f"{plan.operation}: the warp-aligned lane chunk requires an estimated {required} bytes, "
+                f"exceeding tape_memory_budget_bytes={plan.budget_bytes}."
+            )
+
+
 def _to(value: torch.Tensor | None, device: torch.device) -> torch.Tensor | None:
     """Replicate one whole (unsharded) input onto `device`."""
     if value is None or value.device == device:
         return value
     return value.to(device, non_blocking=True)
+
+
+def _validate_source_lane_active(active: torch.Tensor, state_limit: int, master: torch.device) -> None:
+    """Preserve the native path export mask contract before replication."""
+
+    if not active.is_cuda:
+        raise RuntimeError("active must be CUDA.")
+    if not active.is_contiguous():
+        raise RuntimeError("active must be contiguous.")
+    if active.dtype != torch.bool:
+        raise RuntimeError("active has the wrong dtype.")
+    if active.dim() != 1:
+        raise RuntimeError("active has the wrong rank.")
+    if active.size(0) != state_limit:
+        raise RuntimeError("active must have shape [state_limit].")
+    if active.device != master:
+        raise RuntimeError("active must share one CUDA device.")
+
+
+def _validate_source_lane_devices(
+    tx_positions: torch.Tensor,
+    rx_positions: torch.Tensor,
+    states: DfrStates,
+    material: DfrMaterial,
+    master: torch.device,
+) -> None:
+    """Reject inputs that replication would otherwise move onto a valid device."""
+
+    named = (
+        ("tx_positions", tx_positions),
+        ("rx_positions", rx_positions),
+        ("state_edge_index", states.edge_index),
+        ("state_edge_pos", states.edge_pos),
+        ("state_edge_dir", states.edge_dir),
+        ("state_edge_t_min", states.edge_t_min),
+        ("state_edge_t_max", states.edge_t_max),
+        ("state_n0", states.n0),
+        ("state_n1", states.n1),
+        ("state_prim0", states.prim0),
+        ("state_prim1", states.prim1),
+        ("state_exterior_angle", states.exterior_angle),
+        ("state_src", states.src),
+        ("state_src_power", states.src_power),
+        ("material_eta_r", material.eta_r),
+        ("material_sigma", material.sigma),
+        ("material_mu_r", material.mu_r),
+        ("material_gain", material.gain),
+        ("material_valid", material.valid),
+    )
+    for name, value in named:
+        if not value.is_cuda:
+            raise RuntimeError(f"{name} must be CUDA.")
+        if value.device != master:
+            raise RuntimeError(f"{name} must share one CUDA device.")
 
 
 def _states_to(states: DfrStates, device: torch.device) -> DfrStates:
@@ -642,6 +744,22 @@ def _material_requires_grad(material: DfrMaterial) -> bool:
     return any(value.requires_grad for value in (material.eta_r, material.sigma, material.mu_r, material.gain))
 
 
+def _refl_material_to(material: ReflMaterial, device: torch.device) -> ReflMaterial:
+    if material.eta_r.device == device:
+        return material
+    return ReflMaterial(
+        eta_r=_to(material.eta_r, device),
+        sigma=_to(material.sigma, device),
+        mu_r=_to(material.mu_r, device),
+        gain=_to(material.gain, device),
+        valid=_to(material.valid, device),
+    )
+
+
+def _refl_material_bytes(material: ReflMaterial) -> int:
+    return sum(_tensor_bytes(getattr(material, name)) for name in ("eta_r", "sigma", "mu_r", "gain", "valid"))
+
+
 def _add_accum(left: DfrAccum, right: DfrAccum) -> DfrAccum:
     """Sum two partial accumulation results field by field, on their device."""
     return DfrAccum(left.grid_cell_count, *(getattr(left, name) + getattr(right, name) for name in _DFR_ACCUM_FIELDS))
@@ -665,6 +783,146 @@ def _accum_to(result: DfrAccum, device: torch.device) -> DfrAccum:
         return result
     return DfrAccum(
         result.grid_cell_count, *(getattr(result, name).to(device, non_blocking=True) for name in _DFR_ACCUM_FIELDS)
+    )
+
+
+def _add_coherent_accum(left: DfrCoherentAccum, right: DfrCoherentAccum) -> DfrCoherentAccum:
+    """Sum two forward-only coherent partial grids on their current device."""
+    return DfrCoherentAccum(
+        left.grid_cell_count, *(getattr(left, name) + getattr(right, name) for name in _DFR_COHERENT_ACCUM_FIELDS)
+    )
+
+
+def _add_coherent_accum_in_place(left: DfrCoherentAccum, right: DfrCoherentAccum) -> DfrCoherentAccum:
+    """Merge coherent partials without another full-grid allocation."""
+    for name in _DFR_COHERENT_ACCUM_FIELDS:
+        getattr(left, name).add_(getattr(right, name))
+    return left
+
+
+def _coherent_accum_to(result: DfrCoherentAccum, device: torch.device) -> DfrCoherentAccum:
+    first = getattr(result, _DFR_COHERENT_ACCUM_FIELDS[0])
+    if first.device == device:
+        return result
+    return DfrCoherentAccum(
+        result.grid_cell_count,
+        *(getattr(result, name).to(device, non_blocking=True) for name in _DFR_COHERENT_ACCUM_FIELDS),
+    )
+
+
+def _wedge_events_to(events: WedgeEvents, device: torch.device) -> WedgeEvents:
+    first = events.count
+    if first.device == device:
+        return events
+    return WedgeEvents(
+        events.capacity, *(getattr(events, name).to(device, non_blocking=True) for name in _WEDGE_EVENT_FIELDS)
+    )
+
+
+def _reflection_accum_to(result: AccumResult, device: torch.device) -> AccumResult:
+    if result.reflection_power.device == device:
+        return result
+    return AccumResult(
+        result.ray_count,
+        result.max_bounces,
+        result.grid_cell_count,
+        *(getattr(result, name).to(device, non_blocking=True) for name in _REFL_ACCUM_FIELDS),
+        _wedge_events_to(result.wedge_events, device),
+    )
+
+
+def _add_reflection_accum(left: AccumResult, right: AccumResult) -> AccumResult:
+    """Merge forward-only partial reflection grids in the caller's order."""
+
+    if left.max_bounces != right.max_bounces or left.grid_cell_count != right.grid_cell_count:
+        raise RuntimeError("reflection accumulation partials have incompatible result metadata.")
+    if left.wedge_events.capacity != 0 or right.wedge_events.capacity != 0:
+        raise RuntimeError("sharded reflection accumulation cannot merge bounded wedge-event buffers.")
+    wedges = WedgeEvents(
+        0,
+        left.wedge_events.count + right.wedge_events.count,
+        *(getattr(left.wedge_events, name) for name in _WEDGE_EVENT_PAYLOAD_FIELDS),
+    )
+    return AccumResult(
+        left.ray_count + right.ray_count,
+        left.max_bounces,
+        left.grid_cell_count,
+        *(getattr(left, name) + getattr(right, name) for name in _REFL_ACCUM_FIELDS),
+        wedges,
+    )
+
+
+def _add_reflection_accum_in_place(left: AccumResult, right: AccumResult) -> AccumResult:
+    """Merge a forward-only partial without allocating another full grid."""
+
+    if left.max_bounces != right.max_bounces or left.grid_cell_count != right.grid_cell_count:
+        raise RuntimeError("reflection accumulation partials have incompatible result metadata.")
+    if left.wedge_events.capacity != 0 or right.wedge_events.capacity != 0:
+        raise RuntimeError("sharded reflection accumulation cannot merge bounded wedge-event buffers.")
+    for name in _REFL_ACCUM_FIELDS:
+        getattr(left, name).add_(getattr(right, name))
+    left.wedge_events.count.add_(right.wedge_events.count)
+    return AccumResult(
+        left.ray_count + right.ray_count,
+        left.max_bounces,
+        left.grid_cell_count,
+        *(getattr(left, name) for name in _REFL_ACCUM_FIELDS),
+        left.wedge_events,
+    )
+
+
+def _resolved_reflection_accum_options(
+    options: AccumOptions, ray_count: int, max_bounces: int, grid_cell_count: int
+) -> AccumOptions:
+    """Pin auto strategy to the choice the unsplit batch would make."""
+
+    if int(options.accumulation_strategy) != 0:
+        return options
+    depth_count = max(int(max_bounces) + 1, 1)
+    sample_count = int(ray_count) * depth_count
+    staged_min = int(options.compact_min_samples) if int(options.compact_min_samples) > 0 else 2048
+    staged_per_cell = int(options.staged_min_samples_per_cell) if int(options.staged_min_samples_per_cell) > 0 else 4
+    staged = (
+        sample_count <= 2**31 - 1 and sample_count >= staged_min and sample_count >= grid_cell_count * staged_per_cell
+    )
+    return replace(options, accumulation_strategy=2 if staged else 1)
+
+
+def _merge_source_lane_paths(parts: Sequence[tuple[int, DfrPaths]], *, capacity: int, master: torch.device) -> DfrPaths:
+    """Join transmitter-aligned SourceLane blocks without compacting rows."""
+
+    def gather(name: str) -> torch.Tensor:
+        values = [getattr(result, name).to(master, non_blocking=True) for _start, result in parts]
+        return values[0] if len(values) == 1 else torch.cat(values, dim=0)
+
+    counts = [result.count.to(master, non_blocking=True) for _start, result in parts]
+    count = torch.stack(counts).sum(dim=0, dtype=counts[0].dtype)
+    tx_ids = [
+        torch.where(result.valid, result.tx_id + int(start), result.tx_id).to(master, non_blocking=True)
+        for start, result in parts
+    ]
+    tx_id = tx_ids[0] if len(tx_ids) == 1 else torch.cat(tx_ids, dim=0)
+    return DfrPaths(
+        int(capacity),
+        count,
+        gather("valid"),
+        tx_id,
+        gather("rx_id"),
+        gather("order"),
+        gather("edge0"),
+        gather("edge1"),
+        gather("edge2"),
+        gather("delay"),
+        gather("field_x_re"),
+        gather("field_x_im"),
+        gather("field_y_re"),
+        gather("field_y_im"),
+        gather("field_z_re"),
+        gather("field_z_im"),
+        gather("p0"),
+        gather("p1"),
+        gather("p2"),
+        layout=DfrPathLayout.SourceLane,
     )
 
 
@@ -1155,6 +1413,17 @@ class _ReplicatedScene:
         """Public-Scene debug accessor for one operation's effective split."""
         self.require_healthy()
         return self._weights_for(operation)
+
+    def _require_master_tensors(self, operation: str, values: Sequence[tuple[str, torch.Tensor | None]]) -> None:
+        """Reject cross-device inputs before any replicated scatter is submitted."""
+
+        master = self.master_device
+        for name, value in values:
+            if value is not None and value.device != master:
+                raise ValueError(
+                    f"Scene(devices=...) requires {operation} input {name} on the master "
+                    f"device {master}, got {value.device}."
+                )
 
     def _shards(self, total: int, operation: str | None = None) -> list[tuple]:
         """Contiguous weighted `[start, stop)` slices, one per device.
@@ -2351,6 +2620,171 @@ class _ReplicatedScene:
 
     # -- grid_reduce operations --------------------------------------------
 
+    def accumulate_reflections(
+        self,
+        *,
+        ray: Ray,
+        tx_position: torch.Tensor,
+        grid,
+        material: ReflMaterial,
+        max_bounces: int,
+        options: AccumOptions,
+        active: torch.Tensor | None,
+        tx_polarization: torch.Tensor | None,
+    ) -> AccumResult:
+        """Shard the ray batch and merge partial reflection grids on the master."""
+
+        self.require_healthy()
+        operation = "accumulate_reflections"
+        total = int(ray.o.shape[0])
+        grid_cell_count = int(grid.resolution0) * int(grid.resolution1)
+        self._require_master_tensors(
+            operation,
+            (
+                ("ray.o", ray.o),
+                ("ray.d", ray.d),
+                ("ray.tmax", ray.tmax),
+                ("tx_position", tx_position),
+                ("active", active),
+                ("tx_polarization", tx_polarization),
+                ("material.eta_r", material.eta_r),
+                ("material.sigma", material.sigma),
+                ("material.mu_r", material.mu_r),
+                ("material.gain", material.gain),
+                ("material.valid", material.valid),
+            ),
+        )
+
+        for name, value in (("tx_position", tx_position), ("tx_polarization", tx_polarization)):
+            if value is not None and (value.ndim < 1 or int(value.shape[0]) != total):
+                raise ValueError(
+                    f"Scene(devices=...) can only shard {name} when its first dimension "
+                    f"is the batch axis; expected {total} rows, got shape {tuple(value.shape)}."
+                )
+        if active is not None and active.numel() != 0 and (active.ndim < 1 or int(active.shape[0]) != total):
+            raise ValueError(
+                "Scene(devices=...) can only shard active when it is empty or its first "
+                f"dimension is the batch axis; expected {total} rows, got shape {tuple(active.shape)}."
+            )
+
+        def shard_active(begin: int, stop: int, device: torch.device) -> torch.Tensor | None:
+            if active is None:
+                return None
+            if active.numel() == 0:
+                return _to(active, device)
+            return self._slice(active, begin, stop, device)
+
+        def master() -> AccumResult:
+            self.last_dispatch = "master"
+            return self.master().accumulate_reflections(
+                ray, tx_position, grid, material, max_bounces, options, active, tx_polarization
+            )
+
+        # A bounded atomic event buffer is not a reducible grid: independent
+        # launches have local ray IDs, independent overflow counters and no
+        # recoverable global slot order. Preserve the exact native contract with
+        # one complete launch instead of returning a plausible but different
+        # subset. Explicit chunking is a memory promise and cannot be ignored.
+        if options.collect_wedges:
+            if self.chunked:
+                raise NotImplementedError(
+                    "Scene.accumulate_reflections() cannot combine wedge collection with "
+                    "MultiDeviceOptions chunking, a memory budget, or offload: WedgeEvents has one "
+                    "global capacity, overflow counter, slot order, and ray-index space."
+                )
+            return master()
+        if self.options.offload is not None:
+            raise NotImplementedError(
+                "Scene.accumulate_reflections() returns one reduced grid and does not support "
+                "MultiDeviceOptions.offload; use chunk_rays or tape_memory_budget_bytes without offload."
+            )
+        if total == 0:
+            return master()
+
+        candidate_shards = self._lane_shards(0, total, operation)
+        remote_counts = [
+            shard_count for _replica, device, _begin, shard_count in candidate_shards if device != self.master_device
+        ]
+        grid_bytes = grid_cell_count * 7 * 4 + 8
+        # Each remote returns one fixed grid. Express that transfer as the
+        # equivalent number of baseline rows and add it to the measured lane
+        # floor, evaluated against every actual weighted remote shard.
+        grid_transfer_rows = (grid_bytes + _DISPATCH_BASELINE_TRANSFER_BYTES - 1) // _DISPATCH_BASELINE_TRANSFER_BYTES
+        remote_floor = self.min_lanes_per_device + grid_transfer_rows
+        force_master = not remote_counts or any(count < remote_floor for count in remote_counts)
+        explicit_chunking = self.options.chunk_rays is not None or self.options.tape_memory_budget_bytes is not None
+        if force_master and not explicit_chunking:
+            return master()
+
+        shards = [(self.master(), self.master_device, 0, total)] if force_master else candidate_shards
+        resolved_options = _resolved_reflection_accum_options(options, total, max_bounces, grid_cell_count)
+        staged_bytes = (
+            _REFL_ACCUM_STAGED_BYTES_PER_RAY_DEPTH * max(int(max_bounces) + 1, 1)
+            if int(resolved_options.accumulation_strategy) == 2
+            else 0
+        )
+        row_bytes = _REFL_ACCUM_INPUT_AND_SOA_BYTES + staged_bytes
+        remote_material_copies = sum(1 for _replica, device, _begin, _count in shards if device != self.master_device)
+        material_bytes = _refl_material_bytes(material) if remote_material_copies else 0
+        master_grid_bytes = (3 if remote_material_copies else 2) * grid_bytes
+        remote_grid_bytes = 2 * grid_bytes + material_bytes if remote_material_copies else 0
+        budget = self.options.tape_memory_budget_bytes
+        plan = calibrate_chunk_size(
+            operation,
+            total,
+            row_bytes=row_bytes,
+            chunk_rays=self.options.chunk_rays,
+            budget_bytes=budget,
+            resident_chunks=1,
+            # The budget is per-device: take the larger of the master merge
+            # peak and one remote partial/result pair plus its material.
+            fixed_output_bytes=(max(master_grid_bytes, remote_grid_bytes) if budget is not None else 0),
+        )
+        self.last_chunk_plan = plan
+        self.last_dispatch = "batch-chunked" if explicit_chunking else "batch-sharded"
+
+        shard_materials = [_refl_material_to(material, device) for _replica, device, _begin, _count in shards]
+        queues = []
+        for _replica, _device, shard_begin, shard_count in shards:
+            shard_stop = shard_begin + shard_count
+            queues.append(
+                [
+                    (chunk_begin, min(chunk_begin + plan.chunk_rays, shard_stop))
+                    for chunk_begin in range(shard_begin, shard_stop, plan.chunk_rays)
+                ]
+            )
+        plan.chunk_count = sum(len(chunks) for chunks in queues)
+
+        partials: list[AccumResult | None] = [None] * len(shards)
+        for step in range(max(len(chunks) for chunks in queues)):
+            for index, chunks in enumerate(queues):
+                if step >= len(chunks):
+                    continue
+                begin, stop = chunks[step]
+                replica, device, _shard_begin, _shard_count = shards[index]
+                result = replica.accumulate_reflections(
+                    self._shard_ray(ray, begin, stop, device),
+                    self._slice_rows(tx_position, "tx_position", total, begin, stop, device),
+                    grid,
+                    shard_materials[index],
+                    max_bounces,
+                    resolved_options,
+                    shard_active(begin, stop, device),
+                    self._slice_rows(tx_polarization, "tx_polarization", total, begin, stop, device),
+                )
+                partial = partials[index]
+                partials[index] = result if partial is None else _add_reflection_accum_in_place(partial, result)
+
+        merged = None
+        for partial in partials:
+            if partial is None:
+                continue
+            hosted = _reflection_accum_to(partial, self.master_device)
+            merged = hosted if merged is None else _add_reflection_accum_in_place(merged, hosted)
+        if merged is None:
+            return master()
+        return merged
+
     def _run_lane_shards(
         self,
         operation: str,
@@ -2363,7 +2797,13 @@ class _ReplicatedScene:
         requires_grad: bool = False,
         grid_cell_count: int = 0,
         fixed_input_bytes: int = 0,
-    ) -> DfrAccum:
+        add_result=_add_accum,
+        add_result_in_place=_add_accum_in_place,
+        move_result=_accum_to,
+        result_requires_grad=_accum_requires_grad,
+        grid_payload_bytes: int | None = None,
+        lane_row_bytes: int = _DFR_ACCUM_LANE_BYTES,
+    ):
         """One launch per (device, chunk) lane window, merged on the master.
 
         `scatter` replicates the whole-batch inputs onto one device once, and
@@ -2375,29 +2815,50 @@ class _ReplicatedScene:
         """
         self.require_healthy()
         begin, count = _resolve_lane_window(lane_offset, lane_count, total_samples)
+        cuda_trace = self._trace_backend == "cuda" or (
+            self._trace_backend == "auto" and self.master().trace_backend == "cuda"
+        )
+        if cuda_trace and begin != 0:
+            self.last_dispatch = "master"
+            return call(self.master(), scatter(self.master_device), begin, count)
         candidate_shards = self._lane_shards(begin, count, operation)
         remote_counts = [
             shard_count for _replica, device, _begin, shard_count in candidate_shards if device != self.master_device
         ]
-        force_master = not remote_counts or any(rows < self.min_lanes_per_device for rows in remote_counts)
+        force_master = (
+            cuda_trace or not remote_counts or any(rows < self.min_lanes_per_device for rows in remote_counts)
+        )
         budget = self.options.tape_memory_budget_bytes
         # Seven float grids plus seven int32 counters. Keep three full payloads
         # in the estimate: the running partial, the next native result, and the
         # master-side merge/copy.
-        grid_bytes = max(int(grid_cell_count), 0) * 7 * 4 + 7 * 4
+        grid_bytes = (
+            max(int(grid_cell_count), 0) * 7 * 4 + 7 * 4
+            if grid_payload_bytes is None
+            else max(int(grid_payload_bytes), 0)
+        )
         replicated_input_bytes = max(int(fixed_input_bytes), 0) if len(self.devices) > 1 and not force_master else 0
         plan = calibrate_chunk_size(
             operation,
             count,
-            row_bytes=_DFR_ACCUM_LANE_BYTES,
+            row_bytes=lane_row_bytes,
             chunk_rays=self.options.chunk_rays,
             budget_bytes=budget,
             resident_chunks=1,
             fixed_output_bytes=(3 * grid_bytes + replicated_input_bytes if budget is not None else 0),
         )
-        plan.chunk_rays = _lane_chunk_size(plan.chunk_rays, count)
+        _finalize_lane_chunk_plan(plan, count)
         self.last_chunk_plan = plan
         explicit_lane_chunking = self.options.chunk_rays is not None or budget is not None
+        if cuda_trace:
+            if plan.chunk_rays < count:
+                raise RuntimeError(
+                    f"{operation}: the CUDA trace backend cannot split a lane window because every "
+                    "launch after the first would require a non-zero lane_offset."
+                )
+            self.last_dispatch = "master"
+            plan.chunk_count = 1
+            return call(self.master(), scatter(self.master_device), begin, count)
         if count == 0:
             self.last_dispatch = "master"
             plan.chunk_count = 1
@@ -2450,21 +2911,115 @@ class _ReplicatedScene:
                 result = call(replicas[index], inputs[index], chunk_begin, chunk_count)
                 if partials[index] is None:
                     partials[index] = result
-                elif requires_grad or _accum_requires_grad(partials[index]) or _accum_requires_grad(result):
-                    partials[index] = _add_accum(partials[index], result)
+                elif requires_grad or result_requires_grad(partials[index]) or result_requires_grad(result):
+                    partials[index] = add_result(partials[index], result)
                 else:
-                    partials[index] = _add_accum_in_place(partials[index], result)
+                    partials[index] = add_result_in_place(partials[index], result)
 
         master = self.master_device
         merged = None
         for partial in partials:
-            hosted = _accum_to(partial, master)
+            hosted = move_result(partial, master)
             merged = (
                 hosted
                 if merged is None
-                else (_add_accum(merged, hosted) if requires_grad else _add_accum_in_place(merged, hosted))
+                else (add_result(merged, hosted) if requires_grad else add_result_in_place(merged, hosted))
             )
         return merged
+
+    def trace_dfr_paths(
+        self,
+        *,
+        tx_positions: torch.Tensor,
+        rx_positions: torch.Tensor,
+        states: DfrStates,
+        material: DfrMaterial,
+        active: torch.Tensor,
+        max_paths: int,
+        wavelength: float,
+    ) -> DfrPaths:
+        """Export fixed source-lane rows from transmitter-aligned shards.
+
+        Every shard keeps the complete receiver and state dimensions, so its
+        rows are one contiguous block of the global
+        ``((tx * rx_count + rx) * state_limit) + state`` layout. Concatenating
+        those blocks is therefore a placement operation, not compaction.
+        """
+
+        self.require_healthy()
+        operation = "trace_dfr_paths"
+        tx_count = int(tx_positions.shape[0])
+        rx_count = int(rx_positions.shape[0])
+        state_limit = min(states.state_count, int(max_paths))
+        if state_limit < 0:
+            raise RuntimeError("state_limit must be non-negative.")
+        _validate_source_lane_devices(tx_positions, rx_positions, states, material, self.master_device)
+        _validate_source_lane_active(active, state_limit, self.master_device)
+        lanes_per_tx = rx_count * state_limit
+        capacity = tx_count * lanes_per_tx
+        if capacity > 2**31 - 1:
+            raise RuntimeError("capacity does not fit in int32.")
+
+        def master() -> DfrPaths:
+            self.last_dispatch = "master"
+            return self.master().trace_dfr_paths(
+                tx_positions=tx_positions,
+                rx_positions=rx_positions,
+                states=states,
+                material=material,
+                active=active,
+                max_paths=max_paths,
+                wavelength=wavelength,
+                layout=DfrPathLayout.SourceLane,
+            )
+
+        if self.chunked:
+            raise NotImplementedError(
+                "Scene.trace_dfr_paths() does not yet support MultiDeviceOptions chunking or offload. "
+                "Build the multi-device Scene without chunk_rays, tape_memory_budget_bytes, or offload."
+            )
+        if tx_count == 0 or lanes_per_tx == 0:
+            return master()
+        if len(self.devices) < 2:
+            return master()
+
+        shards = self._shards(tx_count, operation)
+        remote_lanes = [
+            (stop - start) * lanes_per_tx for _replica, device, start, stop in shards if device != self.master_device
+        ]
+        if not remote_lanes or any(lanes < self.min_rays_per_device for lanes in remote_lanes):
+            return master()
+
+        inputs = []
+        for replica, device, start, stop in shards:
+            inputs.append(
+                (
+                    replica,
+                    start,
+                    self._slice(tx_positions, start, stop, device),
+                    _to(rx_positions, device),
+                    _states_to(states, device),
+                    _material_to(material, device),
+                    _to(active, device),
+                )
+            )
+
+        results = []
+        for replica, start, shard_tx, shard_rx, shard_states, shard_material, shard_active in inputs:
+            result = replica.trace_dfr_paths(
+                tx_positions=shard_tx,
+                rx_positions=shard_rx,
+                states=shard_states,
+                material=shard_material,
+                active=shard_active,
+                max_paths=max_paths,
+                wavelength=wavelength,
+                layout=DfrPathLayout.SourceLane,
+            )
+            results.append((start, result))
+
+        self.last_dispatch = "sharded"
+        return _merge_source_lane_paths(results, capacity=capacity, master=self.master_device)
 
     def accum_dfr_direct(
         self,
@@ -2510,6 +3065,56 @@ class _ReplicatedScene:
             requires_grad=_states_require_grad(states) or _material_requires_grad(material),
             grid_cell_count=int(grid.resolution0) * int(grid.resolution1),
             fixed_input_bytes=_states_bytes(states) + _material_bytes(material) + _tensor_bytes(active),
+        )
+
+    def accum_dfr_coherent_direct(
+        self,
+        *,
+        states: DfrStates,
+        grid,
+        material: DfrMaterial,
+        active,
+        wavelength: float,
+        select_diffraction_point: bool,
+        prefilter_visibility: bool,
+        lane_offset: int,
+        lane_count: int,
+    ) -> DfrCoherentAccum:
+        """Shard the deterministic `(state, grid-cell)` lane space."""
+
+        def scatter(device):
+            return (_states_to(states, device), _material_to(material, device), _to(active, device))
+
+        def call(replica, moved, begin, count):
+            shard_states, shard_material, shard_active = moved
+            return replica.accum_dfr_coherent_direct(
+                states=shard_states,
+                grid=grid,
+                material=shard_material,
+                active=shard_active,
+                wavelength=wavelength,
+                select_diffraction_point=select_diffraction_point,
+                prefilter_visibility=prefilter_visibility,
+                lane_offset=begin,
+                lane_count=count,
+            )
+
+        grid_cell_count = int(grid.resolution0) * int(grid.resolution1)
+        return self._run_lane_shards(
+            "accum_dfr_coherent_direct",
+            int(states.state_count) * grid_cell_count,
+            lane_offset,
+            lane_count,
+            scatter,
+            call,
+            grid_cell_count=grid_cell_count,
+            fixed_input_bytes=_states_bytes(states) + _material_bytes(material) + _tensor_bytes(active),
+            add_result=_add_coherent_accum,
+            add_result_in_place=_add_coherent_accum_in_place,
+            move_result=_coherent_accum_to,
+            result_requires_grad=lambda _result: False,
+            grid_payload_bytes=grid_cell_count * len(_DFR_COHERENT_ACCUM_FIELDS) * 4,
+            lane_row_bytes=_DFR_COHERENT_STAGED_LANE_BYTES,
         )
 
     def accum_dfr(
@@ -2655,6 +3260,32 @@ _AXIAL_EDGE_FIELDS = ("any_visible",)
 _SEGMENT_CHAIN_FIELDS = ("all_visible", "first_blocked_segment", "first_blocked_prim")
 _REFL_EPC_FIELD_FIELDS = ("field_real", "field_imag", "path_length", "valid", "resolved_prim_ids")
 
+# Reflection accumulation's seven float grids and scalar count are additive.
+# Wedge payloads are not: they retain one global bounded atomic buffer and only
+# appear on the master-only branch above.
+_REFL_ACCUM_FIELDS = (
+    "reflection_power",
+    "reflection_field_x_re",
+    "reflection_field_x_im",
+    "reflection_field_y_re",
+    "reflection_field_y_im",
+    "reflection_field_z_re",
+    "reflection_field_z_im",
+    "reflection_count",
+)
+_WEDGE_EVENT_PAYLOAD_FIELDS = (
+    "ray_index",
+    "hit_points",
+    "normals",
+    "prim_id",
+    "directions",
+    "source_points",
+    "src_power",
+    "initial_directions",
+    "bounce_depth",
+)
+_WEDGE_EVENT_FIELDS = ("count", *_WEDGE_EVENT_PAYLOAD_FIELDS)
+
 # Every `DfrAccum` payload is a partial: the float grids merge by float32
 # summation, the integer counters merge exactly.
 _DFR_ACCUM_FIELDS = (
@@ -2672,4 +3303,23 @@ _DFR_ACCUM_FIELDS = (
     "edge_vis_rejects",
     "utd_rejects",
     "edge_uses",
+)
+
+_DFR_COHERENT_ACCUM_FIELDS = (
+    "direct_field_x_re",
+    "direct_field_x_im",
+    "direct_field_y_re",
+    "direct_field_y_im",
+    "direct_field_z_re",
+    "direct_field_z_im",
+    "multi_field_x_re",
+    "multi_field_x_im",
+    "multi_field_y_re",
+    "multi_field_y_im",
+    "multi_field_z_re",
+    "multi_field_z_im",
+    "direct_count",
+    "multi_count",
+    "visibility_reject_count",
+    "utd_reject_count",
 )

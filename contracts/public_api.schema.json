@@ -3,7 +3,54 @@
   "$id": "https://rayd.dev/schemas/public_api.schema.json",
   "title": "RayD public API and capability manifest",
   "type": "object",
-  "required": ["version", "capability_keys", "stability_levels", "naming_conventions", "apis", "aliases", "backends", "trace"],
+  "required": [
+    "version",
+    "capability_keys",
+    "stability_levels",
+    "derivative_statuses",
+    "naming_conventions",
+    "apis",
+    "aliases",
+    "backends",
+    "trace"
+  ],
+  "$defs": {
+    "derivativeStatus": {
+      "enum": ["supported", "unsupported", "not_applicable"]
+    },
+    "derivativePair": {
+      "type": "object",
+      "required": ["vjp", "jvp"],
+      "properties": {
+        "vjp": {"$ref": "#/$defs/derivativeStatus"},
+        "jvp": {"$ref": "#/$defs/derivativeStatus"}
+      },
+      "additionalProperties": false
+    },
+    "derivativeVariant": {
+      "type": "object",
+      "required": ["primal", "input_domains"],
+      "properties": {
+        "primal": {"type": "boolean"},
+        "input_domains": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {"$ref": "#/$defs/derivativePair"}
+        },
+        "note": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "operationDerivatives": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "minProperties": 1,
+        "additionalProperties": {"$ref": "#/$defs/derivativeVariant"}
+      }
+    }
+  },
   "properties": {
     "version": {"type": "integer", "minimum": 1},
     "capability_keys": {
@@ -15,6 +62,16 @@
       "type": "array",
       "items": {"enum": ["stable", "provisional", "experimental", "deprecated"]},
       "uniqueItems": true
+    },
+    "derivative_statuses": {
+      "type": "object",
+      "required": ["supported", "unsupported", "not_applicable"],
+      "properties": {
+        "supported": {"type": "string", "minLength": 1},
+        "unsupported": {"type": "string", "minLength": 1},
+        "not_applicable": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
     },
     "naming_conventions": {
       "type": "object",
@@ -45,9 +102,10 @@
       "required": ["drjit", "torch"],
       "additionalProperties": {
         "type": "object",
-        "required": ["capabilities", "typing"],
+        "required": ["capabilities", "derivatives", "typing"],
         "properties": {
           "capabilities": {"type": "object", "additionalProperties": {"type": "boolean"}},
+          "derivatives": {"$ref": "#/$defs/operationDerivatives"},
           "typing": {"enum": ["none", "partial", "complete"]}
         },
         "additionalProperties": false

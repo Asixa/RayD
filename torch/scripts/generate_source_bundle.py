@@ -107,7 +107,7 @@ def generate(
     workspace = workspace.resolve(strict=True)
     git_commit = _git_value(workspace, "rev-parse", "HEAD")
     git_repository_url = _git_value(workspace, "remote", "get-url", "origin")
-    git_status = _git_value(workspace, "status", "--porcelain", "--untracked-files=normal")
+    git_status = _git_value(workspace, "status", "--porcelain", "--untracked-files=normal", "--", *SOURCE_INPUTS)
     resolved_commit = commit or git_commit
     resolved_repository_url = repository_url or git_repository_url
     if not resolved_commit or len(resolved_commit) != 40:

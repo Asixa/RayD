@@ -14,8 +14,10 @@ ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_DIR = ROOT / "contracts"
 MANIFEST_PATH = CONTRACT_DIR / "public_api.json"
 SCHEMA_PATH = CONTRACT_DIR / "public_api.schema.json"
+OPERATIONS_PATH = CONTRACT_DIR / "operations.json"
 MANIFEST = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
 SCHEMA = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+OPERATIONS = json.loads(OPERATIONS_PATH.read_text(encoding="utf-8"))
 DRJIT_BINDING_SOURCE = ROOT / "src" / "bindings" / "module_jit.cpp"
 
 DRJIT_PACKAGE = ROOT / "python" / "rayd" / "drjit"
@@ -25,24 +27,11 @@ DRJIT_CAPABILITIES = IMPL_PACKAGE / "capabilities_jit.py"
 TORCH_CAPABILITIES = IMPL_PACKAGE / "capabilities.py"
 DRJIT_RUNTIME = IMPL_PACKAGE / "runtime_jit.py"
 TORCH_GEOMETRY = IMPL_PACKAGE / "geometry.py"
-DRJIT_NATIVE_STUB = DRJIT_PACKAGE / "_C.pyi"
-# `rayd/drjit/__init__.pyi` is the one shadow stub that has to stay. It carries
-# no annotations of its own -- it re-exports `_C` and the two `_capabilities`
-# helpers -- but by shadowing `__init__.py` it also keeps a type checker from
-# following that module's runtime `import drjit as _drjit`. Dr.Jit 1.3.1 ships
-# a syntactically invalid `drjit/__init__.pyi` (line 1176 is `def \1(...)`),
-# and mypy answers a syntax error in a followed file by abandoning the whole
-# run, which drops every `rayd.drjit` public symbol to untyped. `rayd-drjit`
-# pins `drjit==1.3.1` exactly, so that is not an incidental environment, and
-# the import is required at runtime for the win32 DLL-directory branch, so
-# there is no annotation-only way to hide it. Drop this stub once the pin moves
-# to a Dr.Jit release with a parsable stub.
-DRJIT_TOP_LEVEL_STUB = DRJIT_PACKAGE / "__init__.pyi"
+DRJIT_NATIVE_STUB = DRJIT_PACKAGE / "_C" / "__init__.pyi"
 
 # The public modules of each backend package. Every one of them is typed
-# inline: the two stubs above are the only ones in the repository, because the
-# nanobind extension has no Python source to annotate and the top-level stub
-# shields the checker from a broken third-party stub.
+# inline. The package-shaped `_C` stub is the only exception because the
+# nanobind extension has no Python source to annotate.
 DRJIT_PUBLIC_MODULES = ("__init__", "path_exchange")
 TORCH_PUBLIC_MODULES = ("__init__", "path_exchange")
 
@@ -274,15 +263,33 @@ def _drjit_bound_names():
     return names
 
 
+def _resolved_operation_derivatives(backend: str):
+    result = {}
+    for operation, variants in OPERATIONS["derivative_capabilities"].items():
+        resolved_variants = {}
+        for variant, metadata in variants.items():
+            resolved = {
+                "primal": metadata["primal"][backend],
+                "input_domains": {domain: modes[backend] for domain, modes in metadata["input_domains"].items()},
+            }
+            note = metadata.get("backend_notes", {}).get(backend, metadata.get("note"))
+            if note is not None:
+                resolved["note"] = note
+            resolved_variants[variant] = resolved
+        result[operation] = resolved_variants
+    return result
+
+
 class PublicApiManifestTests(unittest.TestCase):
     def test_manifest_matches_schema_enums_and_required_fields(self):
-        self.assertEqual(MANIFEST["version"], 2)
+        self.assertEqual(MANIFEST["version"], 3)
         self.assertEqual(
             set(SCHEMA["required"]),
             {
                 "version",
                 "capability_keys",
                 "stability_levels",
+                "derivative_statuses",
                 "naming_conventions",
                 "apis",
                 "aliases",
@@ -293,6 +300,7 @@ class PublicApiManifestTests(unittest.TestCase):
         categories = {"core", "multipath", "surfel", "experimental"}
         stability = set(MANIFEST["stability_levels"])
         self.assertEqual(stability, {"stable", "provisional", "experimental", "deprecated"})
+        self.assertEqual(set(MANIFEST["derivative_statuses"]), {"supported", "unsupported", "not_applicable"})
         self.assertEqual(set(MANIFEST["apis"]), set(MANIFEST["capability_keys"]))
         for name, metadata in MANIFEST["apis"].items():
             with self.subTest(api=name):
@@ -314,6 +322,7 @@ class PublicApiManifestTests(unittest.TestCase):
             entry = MANIFEST["backends"][backend]
             self.assertEqual(set(entry["capabilities"]), required)
             self.assertTrue(all(type(value) is bool for value in entry["capabilities"].values()))
+            self.assertEqual(entry["derivatives"], _resolved_operation_derivatives(backend))
             self.assertEqual(entry["typing"], "complete")
 
     def test_runtime_modules_are_validated_copies_of_shared_manifest(self):
@@ -332,6 +341,8 @@ class PublicApiManifestTests(unittest.TestCase):
             self.assertEqual(rich["schema_sha256"], schema_hash)
             self.assertEqual(rich["typing"], MANIFEST["backends"][backend]["typing"])
             self.assertEqual(rich["naming_conventions"], MANIFEST["naming_conventions"])
+            self.assertEqual(rich["derivative_statuses"], MANIFEST["derivative_statuses"])
+            self.assertEqual(rich["derivatives"], MANIFEST["backends"][backend]["derivatives"])
             for name, metadata in rich["apis"].items():
                 self.assertEqual(metadata["category"], MANIFEST["apis"][name]["category"])
                 self.assertEqual(metadata["stability"], MANIFEST["apis"][name]["stability"])
@@ -394,39 +405,24 @@ class PublicApiManifestTests(unittest.TestCase):
 
         `rayd.drjit` re-exports the whole nanobind extension, so the stub is
         the only place its bound names can be typed. Both re-exports are
-        asserted, because the two files answer different questions: the `.py`
-        is what `import rayd.drjit` actually runs, while the `.pyi` shadows it
-        for a type checker and is therefore the only one a checker reads. Drop
-        `from ._C import *` from the shield and mypy answers `rd.Scene` with
-        `Module has no attribute "Scene"` and `Any` -- the whole public surface
-        of the backend at once -- while every runtime test stays green.
+        asserted because they answer different questions: the `.py` is what
+        `import rayd.drjit` actually runs, while the package-shaped `.pyi`
+        describes the compiled `_C` module without shadowing a runtime Python
+        file or taking over scikit-build-core's editable finder.
         """
         ast.parse(DRJIT_NATIVE_STUB.read_text(encoding="utf-8"), filename=str(DRJIT_NATIVE_STUB))
         frontend = _module_statements(DRJIT_PACKAGE / "__init__.py")
         runtime = _module_statements(DRJIT_RUNTIME)
-        shield = _module_statements(DRJIT_TOP_LEVEL_STUB)
         self.assertIn("rayd._impl.runtime_jit", _star_imported_modules(frontend))
         self.assertIn("rayd.drjit._C", _star_imported_modules(runtime))
-        self.assertIn("_C", _star_imported_modules(shield))
-        # `__all__` names the extension does not bind have to be re-exported by
-        # the shield explicitly, or they are unresolvable for the same reason.
-        _, declared = _declared_all(runtime)
-        self.assertLessEqual(
-            declared - _drjit_bound_names(),
-            _reexported_names(shield),
-            "rayd/drjit/__init__.pyi shadows __init__.py, so a name it does not "
-            "re-export is untyped for every downstream type checker",
-        )
 
     def test_no_shadow_stub_shadows_an_inline_annotated_module(self):
         """A stub next to a `.py` silently wins over its inline annotations.
 
         Re-introducing one leaves the repository in a mixed state where a stale
         stub overrides corrected annotations, which is worse than either pure
-        option. `_C.pyi` is exempt because it shadows nothing, and
-        `drjit/__init__.pyi` is exempt for the measured third-party reason
-        recorded next to `DRJIT_TOP_LEVEL_STUB`; every other module is typed
-        inline.
+        option. The package-shaped `_C/__init__.pyi` is exempt because the
+        extension has no Python source; every other module is typed inline.
         """
         found = sorted(
             path.relative_to(ROOT).as_posix()
@@ -435,16 +431,8 @@ class PublicApiManifestTests(unittest.TestCase):
         )
         self.assertEqual(
             found,
-            sorted(path.relative_to(ROOT).as_posix() for path in (DRJIT_NATIVE_STUB, DRJIT_TOP_LEVEL_STUB)),
-            "the backend packages are typed inline; the nanobind extension stub "
-            "and the Dr.Jit top-level shield are the only stubs allowed to ship",
-        )
-        # The shield must stay a pure re-export: anything else in it would be a
-        # second, silently authoritative copy of an inline-annotated surface.
-        shield = ast.parse(DRJIT_TOP_LEVEL_STUB.read_text(encoding="utf-8"), filename=str(DRJIT_TOP_LEVEL_STUB))
-        self.assertTrue(
-            all(isinstance(node, ast.ImportFrom) for node in shield.body),
-            "rayd/drjit/__init__.pyi may only re-export; it must not declare types",
+            [DRJIT_NATIVE_STUB.relative_to(ROOT).as_posix()],
+            "the backend packages are typed inline; only the package-shaped nanobind extension stub may ship",
         )
 
     def test_public_python_modules_are_annotated_inline(self):

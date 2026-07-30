@@ -2,6 +2,34 @@
 
 All notable changes to RayD are documented in this file.
 
+## [0.8.0] - 2026-07-30
+
+### Added
+
+- Added true mesh instancing with shared geometry acceleration structures,
+  per-instance transforms and IDs, scene-global primitive IDs, transform
+  derivatives, and transform-only acceleration-structure updates.
+- Added Torch high-level reflection accumulation and EPC APIs, a valid
+  cross-backend EPC-field numerical parity fixture, replicated multi-GPU
+  diffraction path, coherent diffraction, and reflection-accumulation
+  execution, and conditional packed SDF-grid batching.
+
+### Changed
+
+- Replaced backend-wide AD claims with operation- and input-domain-level
+  VJP/JVP capabilities; Torch EPC-field evaluation is now explicitly
+  forward-only until its physical Fresnel and polarization derivatives are
+  implemented.
+- Expanded single- and multi-GPU CUDA/OptiX CI, Stable ABI checks, wheel
+  install/uninstall lifecycle validation, and release-artifact verification.
+
+### Fixed
+
+- Restored the `rayd.drjit._C` package stub layout and repaired editable-source
+  validation so tests cannot silently exercise stale installed frontends.
+- Fixed Torch reflection material defaults and EPC-field parity coverage so a
+  validated reflected path produces and compares a nonzero physical field.
+
 ## [0.7.0] - 2026-07-23
 
 ### Added
@@ -67,5 +95,6 @@ All notable changes to RayD are documented in this file.
   diffraction accumulation, EPC bindings, and native AD propagation across
   both backends.
 
+[0.8.0]: https://github.com/Asixa/RayD/releases/tag/v0.8.0
 [0.7.0]: https://github.com/Asixa/RayD/releases/tag/v0.7.0
 [0.6.0]: https://github.com/Asixa/RayD/releases/tag/v0.6.0

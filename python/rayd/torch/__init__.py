@@ -14,11 +14,15 @@ _EXTENSION_IMPORT_ERROR = _runtime.EXTENSION_IMPORT_ERROR
 from rayd._impl.camera import Camera
 from rayd._impl.capabilities import api_manifest, backend_capabilities
 from rayd._impl.geometry import (
+    AccumGrid,
+    AccumOptions,
+    AccumResult,
     AxialEdgeVisibility,
     DfrAccum,
     DfrCoherentAccum,
     DfrGrid,
     DfrMaterial,
+    DfrPathLayout,
     DfrPaths,
     DfrStates,
     Intersection,
@@ -27,17 +31,21 @@ from rayd._impl.geometry import (
     NearestRayEdge,
     Ray,
     RayFlags,
+    ReflEpc,
     ReflEpcField,
+    ReflEpcOptions,
+    ReflMaterial,
     ReflectionChain,
     SceneGlobalGeometry,
     SdfIntersection,
     SegmentChainVisibility,
     SegmentPairVisibility,
+    WedgeEvents,
 )
 from rayd._impl.mixed import MixedScene
 from rayd._impl.scene import Mesh
 from rayd._impl.scene import Scene
-from rayd._impl.sdf import SdfGrid, SdfTraceOptions, sdf_intersect
+from rayd._impl.sdf import SdfGrid, SdfGridBatch, SdfTraceOptions, sdf_intersect
 from rayd._impl.surfel import SurfelCloud, SurfelComposite, SurfelIntersection, SurfelScene, SurfelTraceOptions
 
 if TYPE_CHECKING:
@@ -55,10 +63,14 @@ if not TYPE_CHECKING:
 
 
 __all__ = [
+    "AccumGrid",
+    "AccumOptions",
+    "AccumResult",
     "DfrAccum",
     "DfrCoherentAccum",
     "DfrGrid",
     "DfrMaterial",
+    "DfrPathLayout",
     "DfrPaths",
     "DfrStates",
     "Camera",
@@ -72,11 +84,15 @@ __all__ = [
     "NearestRayEdge",
     "Ray",
     "RayFlags",
+    "ReflEpc",
     "ReflEpcField",
+    "ReflEpcOptions",
+    "ReflMaterial",
     "ReflectionChain",
     "Scene",
     "SceneGlobalGeometry",
     "SdfGrid",
+    "SdfGridBatch",
     "SdfIntersection",
     "SdfTraceOptions",
     "SurfelCloud",
@@ -86,6 +102,7 @@ __all__ = [
     "SurfelTraceOptions",
     "SegmentChainVisibility",
     "SegmentPairVisibility",
+    "WedgeEvents",
     "api_manifest",
     "backend_capabilities",
     "sdf_intersect",

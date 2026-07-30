@@ -27,13 +27,14 @@ from rayd._impl.multi import (
     _add_accum,
     _add_accum_in_place,
     _device_index,
+    _finalize_lane_chunk_plan,
     calibrate_chunk_size,
     plan as plan_multi_device,
 )
 from rayd._impl.geometry import DfrAccum
 
 
-def _planned(options: rt.MultiDeviceOptions) -> _ReplicatedScene:
+def _planned(options: rt.MultiDeviceOptions, *, trace_backend: str = "optix") -> _ReplicatedScene:
     """Create a policy layer without touching CUDA streams or native scenes."""
     with (
         mock.patch.object(torch.cuda, "is_available", return_value=True),
@@ -43,7 +44,7 @@ def _planned(options: rt.MultiDeviceOptions) -> _ReplicatedScene:
             torch.cuda, "get_device_properties", return_value=SimpleNamespace(name="Test GPU", major=9, minor=0)
         ),
     ):
-        layer = plan_multi_device([0, 1], options, trace_backend="optix", edge_bvh_backend="optix")
+        layer = plan_multi_device([0, 1], options, trace_backend=trace_backend, edge_bvh_backend="optix")
     if not isinstance(layer, _ReplicatedScene):
         raise AssertionError("two devices must create a replicated policy layer")
     # Policy helpers need replica identity but do not invoke replica methods.
@@ -219,6 +220,34 @@ class OperationPolicyTests(unittest.TestCase):
         self.assertEqual(calls, ["master"])
         self.assertEqual(layer.last_dispatch, "master")
 
+    def test_cuda_grid_reduce_never_creates_a_nonzero_offset_shard(self) -> None:
+        layer = _planned(rt.MultiDeviceOptions(warm_up=False, min_lanes_per_device=1), trace_backend="cuda")
+        calls = []
+        answer = object()
+
+        def call(replica, _inputs, begin, count):
+            calls.append((replica, begin, count))
+            return answer
+
+        result = layer._run_lane_shards("accum_dfr_direct", 4096, 0, -1, lambda device: device, call)
+        self.assertIs(result, answer)
+        self.assertEqual(calls, [("master", 0, 4096)])
+        self.assertEqual(layer.last_dispatch, "master")
+
+    def test_cuda_grid_reduce_rejects_chunking_that_would_need_an_offset(self) -> None:
+        layer = _planned(
+            rt.MultiDeviceOptions(warm_up=False, chunk_rays=32, min_lanes_per_device=1), trace_backend="cuda"
+        )
+        with self.assertRaisesRegex(RuntimeError, "CUDA trace backend cannot split"):
+            layer._run_lane_shards(
+                "accum_dfr_direct",
+                64,
+                0,
+                -1,
+                lambda device: device,
+                lambda *_args: self.fail("the invalid chunk plan must not launch"),
+            )
+
 
 class MemoryBudgetPolicyTests(unittest.TestCase):
     @staticmethod
@@ -234,6 +263,28 @@ class MemoryBudgetPolicyTests(unittest.TestCase):
         )
         self.assertLessEqual(plan.chunk_rays * row_bytes * 3, budget)
         self.assertGreater((plan.chunk_rays + 1) * row_bytes * 3, budget)
+
+    def test_lane_budget_aligns_down_without_exceeding_the_limit(self) -> None:
+        for affordable, expected in ((33, 32), (63, 32), (64, 64)):
+            with self.subTest(affordable=affordable):
+                plan = calibrate_chunk_size(
+                    "accum_dfr_coherent_direct", 1024, row_bytes=36, budget_bytes=36 * affordable
+                )
+                _finalize_lane_chunk_plan(plan, 1024)
+                self.assertEqual(plan.chunk_rays, expected)
+                self.assertLessEqual(plan.chunk_rays * plan.row_bytes, plan.budget_bytes)
+
+    def test_lane_budget_rejects_less_than_one_safe_warp(self) -> None:
+        plan = calibrate_chunk_size("accum_dfr_coherent_direct", 1024, row_bytes=36, budget_bytes=36 * 31)
+        with self.assertRaisesRegex(RuntimeError, "warp-aligned lane chunk"):
+            _finalize_lane_chunk_plan(plan, 1024)
+
+    def test_requested_lane_chunk_is_rechecked_after_alignment(self) -> None:
+        plan = calibrate_chunk_size(
+            "accum_dfr_coherent_direct", 1024, row_bytes=36, chunk_rays=33, budget_bytes=36 * 33
+        )
+        with self.assertRaisesRegex(RuntimeError, "warp-aligned lane chunk requires"):
+            _finalize_lane_chunk_plan(plan, 1024)
 
     def test_fixed_concatenated_output_is_reserved_before_chunk_sizing(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "(?i)fixed|returned output|budget"):

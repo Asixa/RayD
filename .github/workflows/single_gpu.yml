@@ -1,0 +1,149 @@
+# Single-GPU CUDA and OptiX acceptance.
+#
+# EXTERNAL RUNNER REQUIRED. Register a runner carrying every label in
+# `runs-on` below (`self-hosted`, `linux`, `x64`, `cuda`, `single-gpu`) with
+# CUDA Torch, Dr.Jit, the native build dependencies, and OptiX headers.
+# Labelled PRs opt in with `run-gpu-ci`; the weekly run detects driver and
+# pipeline drift; manual dispatch remains available for release validation.
+
+name: Single-GPU CUDA and OptiX Acceptance
+
+on:
+  pull_request:
+    types: [labeled]
+  schedule:
+    - cron: "41 8 * * 4"
+  workflow_dispatch:
+    inputs:
+      python:
+        description: >-
+          Interpreter of the prepared CUDA build environment on the runner.
+          It must contain CUDA Torch, Dr.Jit, Ninja, CMake, scikit-build-core,
+          nanobind, and access to the OptiX headers.
+        required: false
+        default: python
+
+concurrency:
+  group: single-gpu-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  single-gpu:
+    name: CUDA and OptiX acceptance / 1+ GPU (self-hosted)
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      (github.event_name == 'pull_request' &&
+       github.event.label.name == 'run-gpu-ci')
+    runs-on: [self-hosted, linux, x64, cuda, single-gpu]
+    timeout-minutes: 180
+    env:
+      PYTHON: ${{ inputs.python || 'python' }}
+      PYTHONPATH: ${{ github.workspace }}/python
+      OPTIX_CACHE_PATH: ${{ runner.temp }}/rayd-optix-${{ github.run_id }}-${{ github.run_attempt }}
+      RAYD_CI_BUILD_ROOT: ${{ runner.temp }}/rayd-build-${{ github.run_id }}-${{ github.run_attempt }}
+      RAYD_CI_BUILD_MARKER: ${{ runner.temp }}/rayd-build-${{ github.run_id }}-${{ github.run_attempt }}.marker
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Report the runner's GPUs
+        shell: bash
+        run: nvidia-smi
+
+      - name: Require a working CUDA device in Torch and Dr.Jit
+        shell: bash
+        run: "$PYTHON" -I tests/support/single_gpu_ci_preflight.py device
+
+      - name: Build both backends from the checked-out source
+        shell: bash
+        run: |
+          mkdir -p "$OPTIX_CACHE_PATH"
+          mkdir -p "$RAYD_CI_BUILD_ROOT"
+          "$PYTHON" -m pip uninstall -y rayd-drjit rayd-torch
+          touch "$RAYD_CI_BUILD_MARKER"
+          "$PYTHON" -m pip install --no-deps --no-build-isolation -e drjit \
+            -Cbuild-dir="$RAYD_CI_BUILD_ROOT/drjit"
+          "$PYTHON" -m pip install --no-deps --no-build-isolation -e torch \
+            -Cbuild-dir="$RAYD_CI_BUILD_ROOT/torch"
+
+      - name: Print import paths and require both OptiX backends
+        shell: bash
+        run: "$PYTHON" -I tests/support/single_gpu_ci_preflight.py optix
+
+      - name: Torch CUDA and OptiX core
+        shell: bash
+        run: |
+          status=0
+          for module in \
+            tests.parity.test_cuda_geometry \
+            tests.parity.test_cuda_multipath \
+            tests.native.test_dispatcher_bindings \
+            tests.native.test_multipath \
+            tests.scene.test_mesh_instancing \
+            tests.reflection.test_torch_high_level_api
+          do
+            echo "::group::$module"
+            "$PYTHON" -m unittest "$module" -v || status=1
+            echo "::endgroup::"
+          done
+          exit "$status"
+
+      - name: Dr.Jit CUDA and OptiX core
+        shell: bash
+        run: |
+          status=0
+          for module in \
+            tests.scene.test_geometry_jit \
+            tests.reflection.test_epc_jit \
+            tests.reflection.test_accumulation_jit \
+            tests.diffraction.test_accumulation_jit \
+            tests.visibility.test_visibility_topk_jit
+          do
+            echo "::group::$module"
+            "$PYTHON" -m unittest "$module" -v || status=1
+            echo "::endgroup::"
+          done
+          exit "$status"
+
+      - name: Dr.Jit cold OptiX pipeline matrix
+        shell: bash
+        run: "$PYTHON" -m unittest tests.native.test_optix_pipeline_cold_create_jit -v
+
+      - name: Mixed geometry and SDF acceptance
+        shell: bash
+        run: |
+          status=0
+          for module in \
+            tests.mixed.test_mixed_torch \
+            tests.mixed.test_mixed_jit \
+            tests.sdf.test_intersect \
+            tests.sdf.test_operations \
+            tests.sdf.test_operations_jit
+          do
+            echo "::group::$module"
+            "$PYTHON" -m unittest "$module" -v || status=1
+            echo "::endgroup::"
+          done
+          exit "$status"
+
+      - name: Cross-backend numerical and AD parity
+        shell: bash
+        env:
+          RAYD_TORCH_RUN_DR_JIT_PARITY: "1"
+        run: |
+          "$PYTHON" -m unittest \
+            tests.parity.test_drjit \
+            tests.parity.test_share2_ad -v
+
+      - name: CI and numerical contract governance
+        shell: bash
+        run: |
+          "$PYTHON" -m unittest \
+            tests.governance.test_gpu_ci_contract \
+            tests.test_public_api_manifest \
+            tests.test_ptx_source_digest \
+            tests.test_compile_flag_policy_contract -v

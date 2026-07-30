@@ -267,7 +267,10 @@ class ConceptAxisLayoutTests(unittest.TestCase):
         self.assertFalse((ROOT / "torch" / "python").exists())
         self.assertEqual(
             {path.name for path in (namespace / "drjit").iterdir() if path.is_file()},
-            {"__init__.py", "__init__.pyi", "_C.pyi", "path_exchange.py", "py.typed"},
+            {"__init__.py", "path_exchange.py", "py.typed"},
+        )
+        self.assertEqual(
+            {path.name for path in (namespace / "drjit" / "_C").iterdir() if path.is_file()}, {"__init__.pyi"}
         )
         self.assertEqual(
             {path.name for path in (namespace / "torch").iterdir() if path.is_file()},

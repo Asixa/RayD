@@ -1,6 +1,7 @@
 # Copyright Xingyu Chen.
 # Exercises multipath in a native smoke test.
 
+from dataclasses import replace
 import unittest
 from unittest import mock
 
@@ -365,7 +366,7 @@ class MultipathTests(unittest.TestCase):
         ) / (2.0 * eps)
         torch.testing.assert_close(vjp_dot, fd, atol=3e-2, rtol=3e-2)
 
-    def test_reflection_epc_field_backward_matches_intersect_t_vjp_nonuniform(self):
+    def test_reflection_epc_field_rejects_reverse_mode_inputs(self):
         verts = torch.tensor(
             [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
             device="cuda",
@@ -385,52 +386,10 @@ class MultipathTests(unittest.TestCase):
         receiver = torch.tensor(
             [[0.0, 0.0, 1.0], [0.2, 0.1, 1.0], [-0.2, 0.2, 1.0]], device="cuda", dtype=torch.float32, requires_grad=True
         )
-        out = scene.trace_refl_epc_field(source, receiver, max_bounces=1)
-        grad_real = torch.tensor([[0.25, 9.0], [-1.5, 9.0], [0.75, 9.0]], device="cuda", dtype=torch.float32)[:, 0]
-        grad_imag = torch.tensor([[1.25, 9.0], [-0.5, 9.0], [0.0, 9.0]], device="cuda", dtype=torch.float32)[:, 0]
-        grad_path = torch.tensor([[-0.25, 9.0], [0.6, 9.0], [2.0, 9.0]], device="cuda", dtype=torch.float32)[:, 0]
-        self.assertFalse(grad_real.is_contiguous())
-        self.assertFalse(grad_imag.is_contiguous())
-        self.assertFalse(grad_path.is_contiguous())
-        with mock.patch(
-            "torch.zeros_like",
-            side_effect=AssertionError("Scene.trace_refl_epc_field() backward must not fill grads in Python."),
-        ):
-            torch.autograd.backward(
-                (out.field_real, out.field_imag, out.path_length), (grad_real, grad_imag, grad_path)
-            )
-        self.assertIsNotNone(verts.grad)
-        self.assertIsNotNone(source.grad)
-        self.assertIsNotNone(receiver.grad)
+        with self.assertRaisesRegex(RuntimeError, "forward-only"):
+            scene.trace_refl_epc_field(source, receiver, max_bounces=1)
 
-        active = torch.empty((0,), device="cuda", dtype=torch.bool)
-        values = torch.ops.rayd_torch.trace_refl_epc_field_forward(
-            scene._require_native_scene(), source.detach(), receiver.detach(), active, 1
-        )
-        tape_prim_id, tape_barycentric, tape_t = values[5], values[6], values[2]
-        inv_denom = 1.0 / (1.0 + tape_t)
-        real_dt = -torch.sin(tape_t) * inv_denom - torch.cos(tape_t) * inv_denom * inv_denom
-        imag_dt = torch.cos(tape_t) * inv_denom - torch.sin(tape_t) * inv_denom * inv_denom
-        grad_t = grad_path + grad_real * real_dt + grad_imag * imag_dt
-        ray_d = (receiver.detach() - source.detach()).contiguous()
-        expected_vertices, expected_source_ray, expected_ray_d, _ = torch.ops.rayd_torch.intersect_backward_t(
-            scene._require_native_scene(),
-            source.detach(),
-            ray_d,
-            active,
-            tape_prim_id,
-            tape_barycentric,
-            grad_t.contiguous(),
-            True,
-            True,
-            True,
-            True,
-        )
-        torch.testing.assert_close(verts.grad, expected_vertices, atol=2e-5, rtol=2e-5)
-        torch.testing.assert_close(source.grad, expected_source_ray - expected_ray_d, atol=2e-5, rtol=2e-5)
-        torch.testing.assert_close(receiver.grad, expected_ray_d, atol=2e-5, rtol=2e-5)
-
-    def test_reflection_epc_field_jvp_avoids_python_zero_tangents(self):
+    def test_reflection_epc_field_rejects_forward_mode_inputs(self):
         verts = torch.tensor(
             [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]], device="cuda", dtype=torch.float32
         )
@@ -444,30 +403,13 @@ class MultipathTests(unittest.TestCase):
         receiver = torch.tensor(
             [[0.0, 0.0, 1.0], [0.2, 0.1, 1.0], [-0.2, 0.2, 1.0]], device="cuda", dtype=torch.float32
         )
-        tangent_receiver = torch.tensor(
-            [[0.05, -0.03, 0.02], [-0.02, 0.04, 0.01], [0.1, 0.2, -0.1]], device="cuda", dtype=torch.float32
-        ).t()
-        self.assertFalse(tangent_receiver.is_contiguous())
+        tangent_receiver = torch.full_like(receiver, 0.05)
+        with torch.autograd.forward_ad.dual_level():
+            receiver_dual = torch.autograd.forward_ad.make_dual(receiver, tangent_receiver)
+            with self.assertRaisesRegex(RuntimeError, "forward-only"):
+                scene.trace_refl_epc_field(source, receiver_dual, max_bounces=1)
 
-        def fn(receiver_value):
-            return scene.trace_refl_epc_field(source, receiver_value, max_bounces=1).path_length
-
-        with (
-            mock.patch(
-                "torch.zeros_like",
-                side_effect=AssertionError("Scene.trace_refl_epc_field() jvp must not fill tangents in Python."),
-            ),
-            mock.patch(
-                "torch.empty",
-                side_effect=AssertionError(
-                    "Scene.trace_refl_epc_field() jvp must not create active mask sentinels in Python."
-                ),
-            ),
-        ):
-            _primal, jvp = torch.func.jvp(fn, (receiver,), (tangent_receiver,))
-        torch.testing.assert_close(jvp, torch.zeros_like(jvp), atol=0.0, rtol=0.0)
-
-    def test_multi_mesh_reflection_epc_field_backward_avoids_python_cat(self):
+    def test_multi_mesh_reflection_epc_field_rejects_tracked_geometry(self):
         verts0 = torch.tensor(
             [[10.0, -1.0, 0.0], [12.0, -1.0, 0.0], [10.0, 1.0, 0.0]],
             device="cuda",
@@ -487,25 +429,8 @@ class MultipathTests(unittest.TestCase):
         scene.build()
         source = torch.tensor([[0.0, 0.0, -1.0]], device="cuda", dtype=torch.float32)
         receiver = torch.tensor([[0.0, 0.0, 1.0]], device="cuda", dtype=torch.float32)
-        upstream_real = torch.ones_like(source[:, 0])
-        upstream_imag = torch.full_like(source[:, 0], -0.5)
-        with (
-            mock.patch("torch.cat", side_effect=AssertionError("Scene.trace_refl_epc_field() must not use torch.cat.")),
-            mock.patch.object(
-                torch.Tensor,
-                "contiguous",
-                side_effect=AssertionError("Scene.trace_refl_epc_field() must not copy source/receiver in Python."),
-            ),
-            mock.patch(
-                "torch.zeros_like",
-                side_effect=AssertionError("Scene.trace_refl_epc_field() backward must not fill grads in Python."),
-            ),
-        ):
-            out = scene.trace_refl_epc_field(source, receiver, max_bounces=1)
-            torch.autograd.backward((out.field_real, out.field_imag), (upstream_real, upstream_imag))
-        self.assertIsNotNone(verts0.grad)
-        self.assertIsNotNone(verts1.grad)
-        torch.testing.assert_close(verts0.grad, torch.zeros_like(verts0), atol=1e-5, rtol=1e-5)
+        with self.assertRaisesRegex(RuntimeError, "forward-only"):
+            scene.trace_refl_epc_field(source, receiver, max_bounces=1)
 
     def test_reflection_dedup_native_binding_smoke(self):
         ray_count = 2
@@ -665,6 +590,12 @@ class MultipathTests(unittest.TestCase):
         self.assertGreaterEqual(count, 0)
         self.assertEqual(out[1].shape, (8,))
         self.assertEqual(out[8].dtype, torch.float32)
+
+        source_lane = torch.ops.rayd_torch.diffraction_paths_order1_forward(*args, 1)
+        self.assertTrue(torch.equal(source_lane[0], out[0]))
+        self.assertTrue(torch.equal(source_lane[1][:1], out[1][:1]))
+        with self.assertRaisesRegex(RuntimeError, "layout is invalid"):
+            torch.ops.rayd_torch.diffraction_paths_order1_forward(*args, 77)
 
         missing_args = args[:4]
         with self.assertRaises(RuntimeError):
@@ -826,6 +757,57 @@ class MultipathTests(unittest.TestCase):
             )
         self.assertEqual(tuple(coherent.direct_field_x_re.shape), (2, 2))
 
+        tracked_states = replace(states, edge_pos=states.edge_pos.detach().requires_grad_())
+        tracked_material = replace(material, gain=material.gain.detach().requires_grad_())
+        for operation in (
+            lambda: scene.trace_dfr_paths(
+                tx_positions=tx_pos,
+                rx_positions=rx_pos,
+                states=tracked_states,
+                material=material,
+                active=torch.ones((1,), device="cuda", dtype=torch.bool),
+            ),
+            lambda: scene.accum_dfr_coherent_direct(states=tracked_states, grid=grid, material=material),
+            lambda: scene.trace_dfr_paths(
+                tx_positions=tx_pos,
+                rx_positions=rx_pos,
+                states=states,
+                material=tracked_material,
+                active=torch.ones((1,), device="cuda", dtype=torch.bool),
+            ),
+            lambda: scene.accum_dfr_coherent_direct(states=states, grid=grid, material=tracked_material),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "forward-only"):
+                operation()
+
+        with torch.autograd.forward_ad.dual_level():
+            dual_tx = torch.autograd.forward_ad.make_dual(tx_pos, torch.ones_like(tx_pos))
+            with self.assertRaisesRegex(RuntimeError, "JVP"):
+                scene.trace_dfr_paths(
+                    tx_positions=dual_tx,
+                    rx_positions=rx_pos,
+                    states=states,
+                    material=material,
+                    active=torch.ones((1,), device="cuda", dtype=torch.bool),
+                )
+            dual_edge_pos = torch.autograd.forward_ad.make_dual(states.edge_pos, torch.ones_like(states.edge_pos))
+            with self.assertRaisesRegex(RuntimeError, "JVP"):
+                scene.accum_dfr_coherent_direct(
+                    states=replace(states, edge_pos=dual_edge_pos), grid=grid, material=material
+                )
+
+        verts.requires_grad_()
+        with self.assertRaisesRegex(RuntimeError, "forward-only"):
+            scene.trace_dfr_paths(
+                tx_positions=tx_pos,
+                rx_positions=rx_pos,
+                states=states,
+                material=material,
+                active=torch.ones((1,), device="cuda", dtype=torch.bool),
+            )
+        with self.assertRaisesRegex(RuntimeError, "forward-only"):
+            scene.accum_dfr_coherent_direct(states=states, grid=grid, material=material)
+
     def test_diffraction_paths_require_contiguous_active_while_accumulation_accepts_strided(self):
         verts = torch.tensor(
             [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]], device="cuda", dtype=torch.float32
@@ -882,6 +864,20 @@ class MultipathTests(unittest.TestCase):
             wavelength=1.0,
         )
         self.assertEqual(tuple(paths_contig.valid.shape), (2,))
+        self.assertEqual(paths_contig.layout, rt.DfrPathLayout.Compact)
+        paths_source_lane = scene.trace_dfr_paths(
+            tx_positions=tx_pos,
+            rx_positions=rx_pos,
+            states=states,
+            material=material,
+            active=active_contig,
+            max_paths=2,
+            wavelength=1.0,
+            layout=rt.DfrPathLayout.SourceLane,
+        )
+        self.assertEqual(paths_source_lane.layout, rt.DfrPathLayout.SourceLane)
+        self.assertEqual(tuple(paths_source_lane.valid.shape), (2,))
+        self.assertTrue(torch.equal(paths_source_lane.count, paths_contig.count))
 
         accum_strided = scene.accum_dfr_direct(
             states=states,

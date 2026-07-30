@@ -62,9 +62,12 @@ class CoverageTests(unittest.TestCase):
             for name in entry["scenes"]:
                 self.assertIn(name, self.scene_names, f"{case} references unknown scene {name!r}")
 
-    def test_instances_are_marked_not_applicable(self):
-        self.assertEqual(self.coverage["not_golden"]["instance"]["status"], "na")
-        self.assertIn("no instancing", self.coverage["not_golden"]["instance"]["rationale"])
+    def test_instances_are_covered_by_the_backend_specific_native_suite(self):
+        record = self.coverage["not_golden"]["instance"]
+        self.assertEqual(record["status"], "covered_elsewhere")
+        self.assertIn("test_mesh_instance_shares_gas", record["reference"])
+        self.assertIn("test_mesh_instancing.py", record["reference"])
+        self.assertIn("shape_id == instance_id", record["rationale"])
 
     def test_not_golden_entries_have_a_status_and_rationale(self):
         for case, entry in self.coverage["not_golden"].items():

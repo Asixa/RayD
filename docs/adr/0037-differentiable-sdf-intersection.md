@@ -417,8 +417,7 @@ Phase 4 of the plan lands the following, as one change:
 7. Torch Python surface: `types.py`, `sdf.py`, `autograd.py`, `__init__.py`,
    each typed inline (the shadow `.pyi` files these modules once carried were
    removed; the Torch package ships no stub at all, and the only stubs left in
-   the repository are `backends/drjit/python/rayd/drjit/_C.pyi` and
-   `backends/drjit/python/rayd/drjit/__init__.pyi`).
+   the repository is `python/rayd/drjit/_C/__init__.pyi`).
    `tests/test_public_api_manifest.py::test_torch_top_level_reexports_match_runtime_all`
    requires `__all__` and the module's actual re-exports to agree exactly, and
    `test_public_python_modules_are_annotated_inline` iterates a fixed module

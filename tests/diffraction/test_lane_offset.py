@@ -9,6 +9,9 @@ execute any sub-window of it: local lane `l` runs global lane
 `lane_offset + l`, so a K-way split into `(offset_i, count_i)` windows draws
 exactly the samples the single launch would draw, and the default window
 `(0, -1)` is the unsharded launch it has always been.
+
+Coherent direct accumulation uses the same window rule over its deterministic
+`state_count * grid_cell_count` lane space.
 """
 
 import unittest
@@ -47,6 +50,30 @@ def _states(requires_grad: bool = False):
         exterior_angle=scalars([torch.pi, torch.pi]),
         src=vec3([[0.0, -1.0, 0.25], [0.0, -1.0, 0.25]]),
         src_power=scalars([1.0, 1.0]),
+    )
+
+
+def _repeat_states(states, copies):
+    """Repeat a state fixture without changing its field schema."""
+
+    def repeat(name):
+        value = getattr(states, name)
+        factors = (copies,) + (1,) * (value.ndim - 1)
+        return value.repeat(factors)
+
+    return rt.DfrStates(
+        edge_index=repeat("edge_index"),
+        edge_pos=repeat("edge_pos"),
+        edge_dir=repeat("edge_dir"),
+        edge_t_min=repeat("edge_t_min"),
+        edge_t_max=repeat("edge_t_max"),
+        n0=repeat("n0"),
+        n1=repeat("n1"),
+        prim0=repeat("prim0"),
+        prim1=repeat("prim1"),
+        exterior_angle=repeat("exterior_angle"),
+        src=repeat("src"),
+        src_power=repeat("src_power"),
     )
 
 
@@ -175,6 +202,49 @@ def _forward(
     if lane_window is not None:
         args += [None, None, int(lane_window[0]), int(lane_window[1])]
     return torch.ops.rayd_torch.diffraction_accumulation_forward(*args)
+
+
+def _coherent_forward(scene, states, grid, material, lane_window=None):
+    """Call coherent accumulation with omitted or explicit lane arguments."""
+    args = [
+        scene._require_native_scene(),
+        None,
+        states.edge_index,
+        states.edge_pos,
+        states.edge_dir,
+        states.edge_t_min,
+        states.edge_t_max,
+        states.n0,
+        states.n1,
+        states.prim0,
+        states.prim1,
+        states.exterior_angle,
+        states.src,
+        states.src_power,
+        states.wi,
+        states.d0,
+        material.eta_r,
+        material.sigma,
+        material.mu_r,
+        material.gain,
+        material.valid,
+        states.state_count,
+        int(grid.axis),
+        float(grid.position),
+        float(grid.coord0_min),
+        float(grid.coord0_max),
+        float(grid.coord1_min),
+        float(grid.coord1_max),
+        int(grid.resolution0),
+        int(grid.resolution1),
+        grid.resolved_cell_area(),
+        1.0,
+        True,
+        True,
+    ]
+    if lane_window is not None:
+        args += [int(lane_window[0]), int(lane_window[1])]
+    return torch.ops.rayd_torch.diffraction_coherent_accumulation_forward(*args)
 
 
 def _tape_rows(values):
@@ -347,6 +417,107 @@ class LaneOffsetTests(unittest.TestCase):
         self.assertIsNotNone(expected)
         self.assertGreater(float(expected.abs().sum().item()), 0.0)
         torch.testing.assert_close(split_states.edge_pos.grad, expected, rtol=1e-4, atol=1e-6)
+
+
+@unittest.skipUnless(torch.cuda.is_available(), "CUDA torch is required")
+class CoherentLaneWindowTests(unittest.TestCase):
+    def setUp(self):
+        self.scene = _tri_scene()
+        self.states = _states()
+        self.grid = _grid()
+        self.material = _material()
+
+    def test_default_window_is_bitwise_identical_to_omitting_the_arguments(self):
+        omitted = _coherent_forward(self.scene, self.states, self.grid, self.material)
+        explicit = _coherent_forward(self.scene, self.states, self.grid, self.material, (0, -1))
+        self.assertGreater(sum(int(value.sum().item()) for value in omitted[12:]), 0)
+        for index, (actual, expected) in enumerate(zip(explicit, omitted)):
+            self.assertTrue(torch.equal(actual, expected), f"output {index} differs")
+
+    def test_public_split_windows_merge_back_to_the_full_lane_space(self):
+        full = self.scene.accum_dfr_coherent_direct(
+            states=self.states, grid=self.grid, material=self.material, wavelength=1.0
+        )
+        first = self.scene.accum_dfr_coherent_direct(
+            states=self.states, grid=self.grid, material=self.material, wavelength=1.0, lane_offset=0, lane_count=4
+        )
+        second = self.scene.accum_dfr_coherent_direct(
+            states=self.states, grid=self.grid, material=self.material, wavelength=1.0, lane_offset=4, lane_count=4
+        )
+        for name in (
+            "direct_field_x_re",
+            "direct_field_x_im",
+            "direct_field_y_re",
+            "direct_field_y_im",
+            "direct_field_z_re",
+            "direct_field_z_im",
+            "multi_field_x_re",
+            "multi_field_x_im",
+            "multi_field_y_re",
+            "multi_field_y_im",
+            "multi_field_z_re",
+            "multi_field_z_im",
+        ):
+            torch.testing.assert_close(getattr(first, name) + getattr(second, name), getattr(full, name))
+        for name in ("direct_count", "multi_count", "visibility_reject_count", "utd_reject_count"):
+            self.assertTrue(torch.equal(getattr(first, name) + getattr(second, name), getattr(full, name)))
+
+    def test_staged_nonzero_window_merges_back_to_the_full_lane_space(self):
+        states = _repeat_states(self.states, 1024)
+        total_lanes = states.state_count * self.grid.resolution0 * self.grid.resolution1
+        split = total_lanes // 2
+        full = self.scene.accum_dfr_coherent_direct(
+            states=states, grid=self.grid, material=self.material, wavelength=1.0
+        )
+        first = self.scene.accum_dfr_coherent_direct(
+            states=states, grid=self.grid, material=self.material, wavelength=1.0, lane_offset=0, lane_count=split
+        )
+        second = self.scene.accum_dfr_coherent_direct(
+            states=states,
+            grid=self.grid,
+            material=self.material,
+            wavelength=1.0,
+            lane_offset=split,
+            lane_count=total_lanes - split,
+        )
+        for name in (
+            "direct_field_x_re",
+            "direct_field_x_im",
+            "direct_field_y_re",
+            "direct_field_y_im",
+            "direct_field_z_re",
+            "direct_field_z_im",
+            "multi_field_x_re",
+            "multi_field_x_im",
+            "multi_field_y_re",
+            "multi_field_y_im",
+            "multi_field_z_re",
+            "multi_field_z_im",
+        ):
+            torch.testing.assert_close(getattr(first, name) + getattr(second, name), getattr(full, name))
+        for name in ("direct_count", "multi_count", "visibility_reject_count", "utd_reject_count"):
+            self.assertTrue(torch.equal(getattr(first, name) + getattr(second, name), getattr(full, name)))
+
+    def test_invalid_windows_and_cuda_nonzero_offset_are_rejected(self):
+        total_lanes = self.states.state_count * self.grid.resolution0 * self.grid.resolution1
+        for lane_offset, lane_count, message in (
+            (-1, -1, "lane_offset must be non-negative"),
+            (total_lanes + 1, -1, "lane_offset must not exceed"),
+            (1, total_lanes, "lane_offset \\+ lane_count must not exceed"),
+        ):
+            with self.subTest(lane_offset=lane_offset, lane_count=lane_count):
+                with self.assertRaisesRegex(RuntimeError, message):
+                    _coherent_forward(self.scene, self.states, self.grid, self.material, (lane_offset, lane_count))
+
+        cuda_scene = rt.Scene(trace_backend="cuda")
+        verts = torch.tensor(
+            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]], device="cuda", dtype=torch.float32
+        )
+        faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
+        cuda_scene.add_mesh(rt.Mesh(verts, faces))
+        cuda_scene.build()
+        with self.assertRaisesRegex(RuntimeError, "lane_offset requires the OptiX trace backend"):
+            _coherent_forward(cuda_scene, self.states, self.grid, self.material, (1, 1))
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA torch is required")

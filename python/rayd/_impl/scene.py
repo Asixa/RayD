@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING, overload
 
 import torch
 
-from .multipath import _require_native_dispatcher
+from .multipath import _dfr_input_tensors, _reject_forward_only_ad, _require_native_dispatcher
+from .multipath import accumulate_reflections_native as _accumulate_reflections
 from .multipath import accum_dfr_chain_native as _accum_dfr_chain
 from .multipath import accum_dfr_coherent_direct_native as _accum_dfr_coherent_direct
 from .multipath import accum_dfr_direct_native as _accum_dfr_direct
@@ -16,16 +17,22 @@ from .multipath import intersect as _intersect
 from .multipath import nearest_edge as _nearest_edge
 from .multipath import nearest_edge_ray as _nearest_edge_ray
 from .multipath import trace_dfr_paths_order1_native as _trace_dfr_paths
+from .multipath import trace_refl_epc_native as _trace_refl_epc
 from .multipath import trace_refl_epc_field as _trace_refl_epc_field
 from .multipath import trace_reflections as _trace_reflections
 from .multipath import visible as _visible
 from .geometry import (
+    AccumGrid,
+    AccumOptions,
     DfrGrid,
     DfrMaterial,
+    DfrPathLayout,
     DfrStates,
     Intersection,
     Ray,
     RayFlags,
+    ReflEpcOptions,
+    ReflMaterial,
     _LazyIntersection,
     _ReducedIntersection,
 )
@@ -39,6 +46,7 @@ if TYPE_CHECKING:
 
     from . import multi as _multi
     from .geometry import (
+        AccumResult,
         AxialEdgeVisibility,
         DfrAccum,
         DfrCoherentAccum,
@@ -46,6 +54,7 @@ if TYPE_CHECKING:
         NearestEdgesTopK,
         NearestPointEdge,
         NearestRayEdge,
+        ReflEpc,
         ReflEpcField,
         ReflectionChain,
         SceneGlobalGeometry,
@@ -80,6 +89,12 @@ def _require_transform(value: torch.Tensor, name: str) -> None:
     _require_tensor(value, name, torch.float32, 2, 4)
     if value.shape[0] not in (0, 4):
         raise ValueError(f"{name} must be empty or have shape (4, 4).")
+
+
+def _transform_vertices(vertices: torch.Tensor, transform: torch.Tensor) -> torch.Tensor:
+    """Apply a row-major homogeneous transform while retaining Torch AD."""
+
+    return (vertices @ transform[:3, :3].transpose(0, 1) + transform[:3, 3]).contiguous()
 
 
 @dataclass
@@ -162,6 +177,8 @@ class Scene:
         self._trace_backend_code = trace_backends[trace_backend]
         self._edge_backend_code = edge_backends[edge_bvh_backend]
         self._meshes: list[tuple[Mesh, bool]] = []
+        self._geometry_owner_ids: list[int] = []
+        self._instance_transforms: list[torch.Tensor] = []
         self._native_scene = None
         self._native_handle = 0
         self._ready = False
@@ -192,11 +209,51 @@ class Scene:
         if self._multi is not None:
             self._multi.discard()
         self._meshes.append((mesh, bool(dynamic)))
+        mesh_id = len(self._meshes) - 1
+        self._geometry_owner_ids.append(mesh_id)
+        self._instance_transforms.append(mesh.to_world_left[:0])
+        self._ready = False
+        self._pending_updates = False
+        return mesh_id
+
+    def add_instance(self, geometry_id: int, transform: torch.Tensor, dynamic: bool = True) -> int:
+        """Add a transformed instance that shares an existing static mesh GAS."""
+
+        if self._multi is not None:
+            raise NotImplementedError("Scene.add_instance() does not yet support Scene(devices=...) orchestration.")
+        if isinstance(geometry_id, bool) or not isinstance(geometry_id, int):
+            raise TypeError("Scene.add_instance() expects an integer geometry_id.")
+        if geometry_id < 0 or geometry_id >= len(self._meshes):
+            raise ValueError(f"Scene.add_instance(): invalid geometry_id {geometry_id}.")
+        _require_transform(transform, "transform")
+        if transform.shape[0] != 4:
+            raise ValueError("Scene.add_instance(): transform must have shape (4, 4).")
+        if self._geometry_owner_ids[geometry_id] != geometry_id:
+            raise ValueError("Scene.add_instance(): instance-of-instance geometry is not supported.")
+        owner, owner_dynamic = self._meshes[geometry_id]
+        if owner_dynamic:
+            raise ValueError("Scene.add_instance(): dynamic source geometry cannot be instanced.")
+        if transform.device != owner.vertices.device:
+            raise ValueError("Scene.add_instance(): transform must be on the source geometry device.")
+
+        instance = Mesh(
+            vertices=_transform_vertices(owner.vertices, transform),
+            faces=owner.faces,
+            uv=owner.uv,
+            face_uv=owner.face_uv,
+            use_face_normals=owner.use_face_normals,
+            edges_enabled=owner.edges_enabled,
+        )
+        if self._native_scene is not None:
+            self._native_scene = None
+        self._meshes.append((instance, bool(dynamic)))
+        self._geometry_owner_ids.append(geometry_id)
+        self._instance_transforms.append(transform.contiguous())
         self._ready = False
         self._pending_updates = False
         return len(self._meshes) - 1
 
-    def _mesh_spec(self, mesh: Mesh, dynamic: bool) -> dict[str, object]:
+    def _mesh_spec(self, mesh_id: int, mesh: Mesh, dynamic: bool) -> dict[str, object]:
         return {
             "vertices": _native_scene_tensor(mesh.vertices),
             "faces": _native_scene_tensor(mesh.faces),
@@ -207,6 +264,8 @@ class Scene:
             "use_face_normals": mesh.use_face_normals,
             "edges_enabled": mesh.edges_enabled,
             "dynamic": dynamic,
+            "instance_transform": _native_scene_tensor(self._instance_transforms[mesh_id]),
+            "geometry_owner_id": self._geometry_owner_ids[mesh_id],
         }
 
     def build(self) -> None:
@@ -229,7 +288,7 @@ class Scene:
             self._pending_updates = False
             return
         _require_native_dispatcher()
-        specs = [self._mesh_spec(mesh, dynamic) for mesh, dynamic in self._meshes]
+        specs = [self._mesh_spec(mesh_id, mesh, dynamic) for mesh_id, (mesh, dynamic) in enumerate(self._meshes)]
         mesh_flags = []
         for mesh, dynamic in self._meshes:
             flags = 0
@@ -251,7 +310,9 @@ class Scene:
                 [spec["face_uv"] for spec in specs],
                 [spec["to_world_left"] for spec in specs],
                 [spec["to_world_right"] for spec in specs],
+                [spec["instance_transform"] for spec in specs],
                 mesh_flags,
+                [spec["geometry_owner_id"] for spec in specs],
             )
         self._native_scene = native_scene
         self._native_handle = int(native_scene.handle())
@@ -382,6 +443,13 @@ class Scene:
         return int(scene.num_meshes())
 
     @property
+    def num_geometries(self) -> int:
+        """Number of distinct GAS-owning mesh geometries."""
+
+        scene = self._require_native_scene()
+        return int(scene.num_geometries())
+
+    @property
     def version(self) -> int:
         scene = self._require_native_scene()
         return int(scene.version())
@@ -437,7 +505,9 @@ class Scene:
         scene = self._require_native_scene()
         mesh_vertices = self._mesh_vertex_tensors()
         if isinstance(point, Ray):
-            return _nearest_edge_ray(scene, mesh_vertices[0], point.o, point.d, point.tmax, None)
+            return _nearest_edge_ray(
+                scene, mesh_vertices[0], point.o, point.d, point.tmax, None, mesh_vertices=mesh_vertices
+            )
         return _nearest_edge(scene, mesh_vertices[0], point, mesh_vertices=mesh_vertices)
 
     def visible(self, start: torch.Tensor, end: torch.Tensor, active: torch.Tensor | None = None) -> torch.Tensor:
@@ -458,12 +528,96 @@ class Scene:
     def trace_refl_epc_field(
         self, source: torch.Tensor, receiver: torch.Tensor, max_bounces: int, active: torch.Tensor | None = None
     ) -> ReflEpcField:
+        mesh_vertices = self._mesh_vertex_tensors()
+        if _has_reverse_or_forward_ad(*mesh_vertices, source, receiver):
+            raise RuntimeError(
+                "Scene.trace_refl_epc_field() is forward-only and does not support reverse-mode AD or JVP."
+            )
         if self._multi is not None:
             return self._multi.trace_refl_epc_field(source, receiver, int(max_bounces), active)
         scene = self._require_native_scene()
-        mesh_vertices = self._mesh_vertex_tensors()
         return _trace_refl_epc_field(
             scene, mesh_vertices[0], source, receiver, active, int(max_bounces), mesh_vertices=mesh_vertices
+        )
+
+    def trace_refl_epc(
+        self,
+        source: torch.Tensor,
+        receiver: torch.Tensor,
+        max_bounces: int,
+        options: ReflEpcOptions,
+        active: torch.Tensor | None = None,
+    ) -> ReflEpc:
+        if self._multi is not None:
+            self._multi.unsupported("trace_refl_epc")
+        if not isinstance(options, ReflEpcOptions):
+            raise TypeError("Scene.trace_refl_epc() requires rayd.torch.ReflEpcOptions.")
+        scene = self._require_native_scene()
+        mesh_vertices = self._mesh_vertex_tensors()
+        if _has_reverse_or_forward_ad(*mesh_vertices):
+            raise RuntimeError("Scene.trace_refl_epc() is forward-only and does not support reverse-mode AD or JVP.")
+        return _trace_refl_epc(scene, source, receiver, max_bounces=int(max_bounces), options=options, active=active)
+
+    def accumulate_reflections(
+        self,
+        ray: Ray,
+        tx_position: torch.Tensor,
+        grid: AccumGrid,
+        material: ReflMaterial,
+        max_bounces: int,
+        options: AccumOptions | None = None,
+        active: torch.Tensor | None = None,
+        tx_polarization: torch.Tensor | None = None,
+    ) -> AccumResult:
+        if not isinstance(grid, AccumGrid):
+            raise TypeError("Scene.accumulate_reflections() expects rayd.torch.AccumGrid.")
+        if not isinstance(material, ReflMaterial):
+            raise TypeError("Scene.accumulate_reflections() expects rayd.torch.ReflMaterial.")
+        resolved_options = AccumOptions() if options is None else options
+        if not isinstance(resolved_options, AccumOptions):
+            raise TypeError("Scene.accumulate_reflections() expects rayd.torch.AccumOptions.")
+        mesh_vertices = self._mesh_vertex_tensors()
+        ad_inputs = [
+            *mesh_vertices,
+            ray.o,
+            ray.d,
+            ray.tmax,
+            tx_position,
+            material.eta_r,
+            material.sigma,
+            material.mu_r,
+            material.gain,
+            material.valid,
+        ]
+        ad_inputs.extend(value for value in (active, tx_polarization) if value is not None)
+        if _has_reverse_or_forward_ad(*ad_inputs):
+            raise RuntimeError(
+                "Scene.accumulate_reflections() is forward-only and does not support reverse-mode AD or JVP."
+            )
+        if self._multi is not None:
+            return self._multi.accumulate_reflections(
+                ray=ray,
+                tx_position=tx_position,
+                grid=grid,
+                material=material,
+                max_bounces=int(max_bounces),
+                options=resolved_options,
+                active=active,
+                tx_polarization=tx_polarization,
+            )
+        scene = self._require_native_scene()
+        return _accumulate_reflections(
+            scene,
+            ray.o,
+            ray.d,
+            ray.tmax,
+            tx_position,
+            grid,
+            material,
+            max_bounces=int(max_bounces),
+            options=resolved_options,
+            active=active,
+            tx_polarization=tx_polarization,
         )
 
     def _default_dfr_material(self, *, like: torch.Tensor) -> DfrMaterial:
@@ -480,14 +634,44 @@ class Scene:
         active: torch.Tensor,
         max_paths: int | None = None,
         wavelength: float = 1.0,
+        layout: DfrPathLayout | None = None,
     ) -> DfrPaths:
-        if self._multi is not None:
-            self._multi.unsupported("trace_dfr_paths")
-        scene = self._require_native_scene()
         if material is None:
             material = self._default_dfr_material(like=states.edge_pos)
         if max_paths is None:
             max_paths = states.state_count
+        if layout is None:
+            resolved_layout = DfrPathLayout.SourceLane if self._multi is not None else DfrPathLayout.Compact
+        else:
+            try:
+                resolved_layout = DfrPathLayout(layout)
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    f"Scene.trace_dfr_paths(): layout must be a DfrPathLayout value, got {layout!r}."
+                ) from error
+        _reject_forward_only_ad(
+            "Scene.trace_dfr_paths()",
+            *self._mesh_vertex_tensors(),
+            tx_positions,
+            rx_positions,
+            *_dfr_input_tensors(states, material),
+        )
+        if self._multi is not None:
+            if resolved_layout is not DfrPathLayout.SourceLane:
+                raise ValueError(
+                    "Scene.trace_dfr_paths() on a multi-device scene requires DfrPathLayout.SourceLane "
+                    "so every output row retains its global (tx, rx, state) identity."
+                )
+            return self._multi.trace_dfr_paths(
+                tx_positions=tx_positions,
+                rx_positions=rx_positions,
+                states=states,
+                material=material,
+                active=active,
+                max_paths=int(max_paths),
+                wavelength=float(wavelength),
+            )
+        scene = self._require_native_scene()
         return _trace_dfr_paths(
             scene,
             tx_positions,
@@ -497,6 +681,7 @@ class Scene:
             active=active,
             max_paths=int(max_paths),
             wavelength=float(wavelength),
+            layout=resolved_layout,
         )
 
     def accum_dfr_direct(
@@ -626,12 +811,27 @@ class Scene:
         wavelength: float = 1.0,
         select_diffraction_point: bool = True,
         prefilter_visibility: bool = True,
+        lane_offset: int = 0,
+        lane_count: int = -1,
     ) -> DfrCoherentAccum:
-        if self._multi is not None:
-            self._multi.unsupported("accum_dfr_coherent_direct")
-        scene = self._require_native_scene()
         if material is None:
             material = self._default_dfr_material(like=states.edge_pos)
+        _reject_forward_only_ad(
+            "Scene.accum_dfr_coherent_direct()", *self._mesh_vertex_tensors(), *_dfr_input_tensors(states, material)
+        )
+        if self._multi is not None:
+            return self._multi.accum_dfr_coherent_direct(
+                states=states,
+                grid=grid,
+                material=material,
+                active=active,
+                wavelength=float(wavelength),
+                select_diffraction_point=bool(select_diffraction_point),
+                prefilter_visibility=bool(prefilter_visibility),
+                lane_offset=int(lane_offset),
+                lane_count=int(lane_count),
+            )
+        scene = self._require_native_scene()
         return _accum_dfr_coherent_direct(
             scene,
             states,
@@ -641,6 +841,8 @@ class Scene:
             wavelength=float(wavelength),
             select_diffraction_point=bool(select_diffraction_point),
             prefilter_visibility=bool(prefilter_visibility),
+            lane_offset=int(lane_offset),
+            lane_count=int(lane_count),
         )
 
     def update_mesh_vertices(self, mesh_id: int, positions: torch.Tensor) -> None:
@@ -648,6 +850,8 @@ class Scene:
         mesh, dynamic = self._meshes[mesh_id]
         if not dynamic:
             raise RuntimeError("Scene.update_mesh_vertices(): target mesh is not dynamic.")
+        if self._geometry_owner_ids[mesh_id] != mesh_id:
+            raise RuntimeError("Scene.update_mesh_vertices(): instance vertices are owned by source geometry.")
         updated_vertices = positions.contiguous()
         if self._multi is not None:
             # Broadcast: every replica takes its own copy of the new positions,
@@ -667,6 +871,33 @@ class Scene:
         mesh.vertices = updated_vertices
         with torch._C._DisableFuncTorch():
             scene.update_vertices(int(mesh_id), _native_scene_tensor(mesh.vertices))
+        self._pending_updates = True
+
+    def set_instance_transform(self, instance_id: int, transform: torch.Tensor) -> None:
+        """Queue a backend-specific instance refresh without rebuilding the OptiX owner GAS."""
+
+        scene = self._require_native_scene()
+        if instance_id < 0 or instance_id >= len(self._meshes):
+            raise ValueError(f"Scene.set_instance_transform(): invalid instance_id {instance_id}.")
+        owner_id = self._geometry_owner_ids[instance_id]
+        if owner_id == instance_id:
+            raise ValueError("Scene.set_instance_transform(): target is not an instance.")
+        mesh, dynamic = self._meshes[instance_id]
+        if not dynamic:
+            raise RuntimeError("Scene.set_instance_transform(): target instance is not dynamic.")
+        _require_transform(transform, "transform")
+        if transform.shape[0] != 4:
+            raise ValueError("Scene.set_instance_transform(): transform must have shape (4, 4).")
+        owner = self._meshes[owner_id][0]
+        if transform.device != owner.vertices.device:
+            raise ValueError("Scene.set_instance_transform(): transform must stay on the scene device.")
+        world_vertices = _transform_vertices(owner.vertices, transform)
+        mesh.vertices = world_vertices
+        self._instance_transforms[instance_id] = transform.contiguous()
+        with torch._C._DisableFuncTorch():
+            scene.update_transform(
+                int(instance_id), _native_scene_tensor(world_vertices), _native_scene_tensor(transform.contiguous())
+            )
         self._pending_updates = True
 
     def sync(self) -> None:

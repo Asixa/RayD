@@ -39,6 +39,7 @@ jobs:
         run: |
           python -m unittest \
             tests.packaging.test_project_metadata \
+            tests.governance.test_gpu_ci_contract \
             tests.governance.test_drjit_project_metadata \
             tests.governance.test_verify_cuda_binary_arches_jit \
             tests.test_rt_host_compile \

@@ -2,11 +2,10 @@
 #
 # This workflow is the CI half of Phase 4 item 3 of
 # `docs/dev/multi_gpu_plan.md`. It runs the multi-device acceptance set that
-# the Phase 2-3 verifications ran by hand, and it is the only job in this
-# repository that needs a GPU: every other workflow (`ci.yml`,
-# `stable-abi-ci.yml`, `pypi.yml`) builds wheels on GitHub-hosted runners,
-# which have no CUDA device at all. Those jobs are untouched by this file, and
-# nothing here changes what they run.
+# the Phase 2-3 verifications ran by hand. The hosted workflows (`ci.yml`,
+# `stable-abi-ci.yml`, `pypi.yml`) build wheels without CUDA devices. The
+# separate `single_gpu.yml` workflow owns routine one-or-more-GPU CUDA/OptiX
+# execution; this file owns only the two-device replicated-scene acceptance.
 #
 # EXTERNAL RUNNER REQUIRED. GitHub-hosted runners do not satisfy the labels
 # below. A labelled PR, scheduled run, or manual dispatch only queues while no
@@ -130,7 +129,10 @@ jobs:
             tests.scene.test_chunked_executor \
             tests.scene.test_multi_device_policy \
             tests.scene.test_multi_device_resilience \
-            tests.diffraction.test_lane_offset
+            tests.diffraction.test_lane_offset \
+            tests.test_multi_device_diffraction_paths \
+            tests.test_multi_device_coherent_accum \
+            tests.test_multi_device_reflection_accum
           do
             echo "::group::$module"
             "$PYTHON" -m unittest "$module" -v || status=1

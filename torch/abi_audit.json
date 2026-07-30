@@ -14,7 +14,7 @@
     "_legacy_ops": {
       "links_native_core": true,
       "links_torch_python": true,
-      "operator_count": 57,
+      "operator_count": 58,
       "operators": [
         "camera_sample_ray",
         "camera_sample_ray_backward",
@@ -57,6 +57,7 @@
         "reflection_dedup_forward",
         "reflection_epc_paths_forward",
         "reflection_trace_stats",
+        "sdf_batch_intersect_forward",
         "sdf_intersect_backward",
         "sdf_intersect_forward",
         "sdf_intersect_jvp",
@@ -106,7 +107,7 @@
   },
   "inventory": {
     "compatibility_pybind_export_count": 2,
-    "legacy_dispatcher_operator_count": 57,
+    "legacy_dispatcher_operator_count": 58,
     "py_object_occurrence_count": 104,
     "py_object_occurrences_by_file": {
       "src/bindings/library.cpp": 49,
@@ -141,6 +142,6 @@
       "segment_penetration_complete_family": "dormant_same_graph_batched_optix_fixed_winner_ad"
     }
   },
-  "source_sha256": "26e077754118e93ffda5e6bb5adcec1b018a37047f6308c55175720276a4775a",
+  "source_sha256": "1ccdf0f0ccfcf9644a6517b84a809049327536c0132f53e12c3a10079f3bae59",
   "version": 2
 }

@@ -12,6 +12,11 @@ from pathlib import Path, PurePosixPath
 
 from tests.support.hashing import header_set_sha256, normalized_text_sha256, sha256_bytes
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
+
 
 class WheelLayoutTests(unittest.TestCase):
     SOURCE_PREFIX = "rayd/torch/_source/"
@@ -44,6 +49,10 @@ class WheelLayoutTests(unittest.TestCase):
         cls.meta_wheel = Path(meta)
         cls.drjit_wheel = Path(drjit)
         cls.torch_wheel = Path(torch)
+        root = Path(__file__).resolve().parents[2]
+        cls.workspace_version = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"][
+            "version"
+        ]
 
     @staticmethod
     def names(path):
@@ -149,6 +158,9 @@ class WheelLayoutTests(unittest.TestCase):
             manifest_bytes = wheel.read(manifest_name)
             manifest = json.loads(manifest_bytes)
             self.assertEqual(metadata["schema_version"], 2)
+            self.assertFalse(metadata["dirty"])
+            self.assertEqual(metadata["distribution"], {"name": "rayd-torch", "version": self.workspace_version})
+            self.assertEqual(metadata["distribution"]["version"], self.metadata(self.torch_wheel)["Version"])
             self.assertEqual(metadata["source_root"], "source")
             self.assertEqual(metadata["source_manifest"]["path"], "source-files.json")
             self.assertEqual(metadata["source_manifest"]["sha256"], self.sha256(manifest_bytes))
@@ -159,9 +171,7 @@ class WheelLayoutTests(unittest.TestCase):
             self.assertEqual(len(paths), len(set(paths)))
             manifest_by_path = {entry["path"]: entry for entry in entries}
             self.assertIn("include/rayd/path_exchange.h", manifest_by_path)
-            self.assertEqual(
-                {path for path in paths if path.startswith("include/rayd/")}, self.TORCH_SOURCE_HEADERS
-            )
+            self.assertEqual({path for path in paths if path.startswith("include/rayd/")}, self.TORCH_SOURCE_HEADERS)
             self.assertFalse(any(path.startswith("include/rayd/jit/") for path in paths))
             for source_path in paths:
                 with self.subTest(source_path=source_path):
@@ -211,17 +221,16 @@ class WheelLayoutTests(unittest.TestCase):
 
         The backend packages are typed inline, so a module's `.py` is its own
         type surface and `py.typed` is what lets a downstream type checker read
-        it. Two stubs still ship, both from the Dr.Jit wheel:
-        `rayd/drjit/_C.pyi`, because the nanobind extension it describes has no
-        Python source to annotate, and `rayd/drjit/__init__.pyi`, which shields
-        a type checker from Dr.Jit 1.3.1's syntactically invalid own stub (see
-        `DRJIT_TOP_LEVEL_STUB` in tests/test_public_api_manifest.py).
+        it. One package-shaped stub ships from the Dr.Jit wheel at
+        `rayd/drjit/_C/__init__.pyi`, because the nanobind extension it
+        describes has no Python source to annotate. Keeping it under `_C/`
+        prevents a `.pyi` file from replacing a runtime module in
+        scikit-build-core's editable finder.
         """
         drjit = self.names(self.drjit_wheel)
         torch = self.names(self.torch_wheel)
         self.assertIn("rayd/drjit/py.typed", drjit)
-        self.assertIn("rayd/drjit/_C.pyi", drjit)
-        self.assertIn("rayd/drjit/__init__.pyi", drjit)
+        self.assertIn("rayd/drjit/_C/__init__.pyi", drjit)
         self.assertIn("rayd/torch/py.typed", torch)
         for name in ("__init__.py", "path_exchange.py", "py.typed"):
             self.assertIn(f"rayd/drjit/{name}", drjit)
@@ -229,9 +238,7 @@ class WheelLayoutTests(unittest.TestCase):
             self.assertIn(f"rayd/torch/{name}", torch)
         # No other shipped stub may shadow an inline-annotated module: a stale
         # stub silently wins over the annotations next to it.
-        self.assertEqual(
-            {name for name in drjit if name.endswith(".pyi")}, {"rayd/drjit/_C.pyi", "rayd/drjit/__init__.pyi"}
-        )
+        self.assertEqual({name for name in drjit if name.endswith(".pyi")}, {"rayd/drjit/_C/__init__.pyi"})
         self.assertEqual({name for name in torch if name.endswith(".pyi")}, set())
 
     def test_meta_wheel_is_file_free_and_pins_both_backends(self):

@@ -24,6 +24,50 @@ namespace sm = shared::sdf_math;
 // (ADR-0037 section 9).
 constexpr float kMissDistance = std::numeric_limits<float>::infinity();
 
+__device__ __forceinline__ void sdf_intersect_forward_lane(
+    const float* values, int nx, int ny, int nz, const float* box_position, const float* box_rotation,
+    const float* box_scale, const float* origins, const float* directions, float tmax, int max_steps, float relaxation,
+    float eps_hit_request, int64_t ray, int64_t output, float* out_t, bool* out_hit, float* out_position,
+    float* out_normal, int* out_steps, float* out_tape_t, int* out_tape_base) {
+    out_t[output] = kMissDistance;
+    out_hit[output] = false;
+    out_steps[output] = 0;
+    if (out_tape_t != nullptr)
+        out_tape_t[output] = 0.0f;
+    for (int axis = 0; axis < 3; ++axis) {
+        out_position[output * 3 + axis] = 0.0f;
+        out_normal[output * 3 + axis] = 0.0f;
+        if (out_tape_base != nullptr)
+            out_tape_base[output * 3 + axis] = 0;
+    }
+
+    const sm::Lane lane =
+        sm::make_lane(box_position, box_rotation, box_scale,
+                      sm::vmath::make_vec3(origins[ray * 3 + 0], origins[ray * 3 + 1], origins[ray * 3 + 2]),
+                      sm::vmath::make_vec3(directions[ray * 3 + 0], directions[ray * 3 + 1], directions[ray * 3 + 2]),
+                      sm::core::GridExtent{nx, ny, nz});
+    const sm::ForwardResult result = sm::intersect_forward(values, lane, tmax, max_steps, relaxation, eps_hit_request);
+    out_steps[output] = result.steps;
+    if (!result.hit)
+        return;
+
+    out_t[output] = result.t;
+    out_hit[output] = true;
+    if (out_tape_t != nullptr)
+        out_tape_t[output] = result.t;
+    if (out_tape_base != nullptr) {
+        out_tape_base[output * 3 + 0] = result.base.i;
+        out_tape_base[output * 3 + 1] = result.base.j;
+        out_tape_base[output * 3 + 2] = result.base.k;
+    }
+    out_position[output * 3 + 0] = result.position.x;
+    out_position[output * 3 + 1] = result.position.y;
+    out_position[output * 3 + 2] = result.position.z;
+    out_normal[output * 3 + 0] = result.normal.x;
+    out_normal[output * 3 + 1] = result.normal.y;
+    out_normal[output * 3 + 2] = result.normal.z;
+}
+
 __global__ void sdf_intersect_forward_kernel(
     const float* __restrict__ values, int nx, int ny, int nz, const float* __restrict__ box_position,
     const float* __restrict__ box_rotation, const float* __restrict__ box_scale, const float* __restrict__ origins,
@@ -34,41 +78,29 @@ __global__ void sdf_intersect_forward_kernel(
     const int64_t ray = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (ray >= ray_count)
         return;
+    sdf_intersect_forward_lane(values, nx, ny, nz, box_position, box_rotation, box_scale, origins, directions, tmax,
+                               max_steps, relaxation, eps_hit_request, ray, ray, out_t, out_hit, out_position,
+                               out_normal, out_steps, out_tape_t, out_tape_base);
+}
 
-    // Every lane writes its whole row exactly once, so a missed lane is bitwise
-    // inert by construction rather than by a later fixup (ADR-0037 section 5).
-    out_t[ray] = kMissDistance;
-    out_hit[ray] = false;
-    out_steps[ray] = 0;
-    out_tape_t[ray] = 0.0f;
-    for (int axis = 0; axis < 3; ++axis) {
-        out_position[ray * 3 + axis] = 0.0f;
-        out_normal[ray * 3 + axis] = 0.0f;
-        out_tape_base[ray * 3 + axis] = 0;
-    }
-
-    const sm::Lane lane =
-        sm::make_lane(box_position, box_rotation, box_scale,
-                      sm::vmath::make_vec3(origins[ray * 3 + 0], origins[ray * 3 + 1], origins[ray * 3 + 2]),
-                      sm::vmath::make_vec3(directions[ray * 3 + 0], directions[ray * 3 + 1], directions[ray * 3 + 2]),
-                      sm::core::GridExtent{nx, ny, nz});
-    const sm::ForwardResult result = sm::intersect_forward(values, lane, tmax, max_steps, relaxation, eps_hit_request);
-    out_steps[ray] = result.steps;
-    if (!result.hit)
+__global__ void sdf_batch_intersect_forward_kernel(
+    const float* __restrict__ values, int grid_count, int nx, int ny, int nz, const float* __restrict__ box_positions,
+    const float* __restrict__ box_rotations, const float* __restrict__ box_scales, const float* __restrict__ origins,
+    const float* __restrict__ directions, float tmax, int max_steps, float relaxation, float eps_hit_request,
+    int64_t ray_count, int64_t lane_count, float* __restrict__ out_t, bool* __restrict__ out_hit,
+    float* __restrict__ out_position, float* __restrict__ out_normal, int* __restrict__ out_steps) {
+    const int64_t lane = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (lane >= lane_count)
         return;
-
-    out_t[ray] = result.t;
-    out_hit[ray] = true;
-    out_tape_t[ray] = result.t;
-    out_tape_base[ray * 3 + 0] = result.base.i;
-    out_tape_base[ray * 3 + 1] = result.base.j;
-    out_tape_base[ray * 3 + 2] = result.base.k;
-    out_position[ray * 3 + 0] = result.position.x;
-    out_position[ray * 3 + 1] = result.position.y;
-    out_position[ray * 3 + 2] = result.position.z;
-    out_normal[ray * 3 + 0] = result.normal.x;
-    out_normal[ray * 3 + 1] = result.normal.y;
-    out_normal[ray * 3 + 2] = result.normal.z;
+    const int grid = static_cast<int>(lane / ray_count);
+    if (grid >= grid_count)
+        return;
+    const int64_t ray = lane - static_cast<int64_t>(grid) * ray_count;
+    const int64_t value_stride = static_cast<int64_t>(nx) * ny * nz;
+    sdf_intersect_forward_lane(values + static_cast<int64_t>(grid) * value_stride, nx, ny, nz, box_positions + grid * 3,
+                               box_rotations + grid * 4, box_scales + grid * 3, origins, directions, tmax, max_steps,
+                               relaxation, eps_hit_request, ray, lane, out_t, out_hit, out_position, out_normal,
+                               out_steps, nullptr, nullptr);
 }
 
 } // namespace
@@ -99,6 +131,35 @@ SdfIntersectForwardOutputs sdf_intersect_forward_cuda(const SdfGridTensors& grid
         static_cast<float>(params.eps_hit), ray_count, out.t.data_ptr<float>(), out.hit_mask.data_ptr<bool>(),
         out.hit_position.data_ptr<float>(), out.normal.data_ptr<float>(), out.steps.data_ptr<int>(),
         out.tape_t.data_ptr<float>(), out.tape_base.data_ptr<int>());
+    return out;
+}
+
+SdfBatchForwardOutputs sdf_batch_intersect_forward_cuda(const SdfBatchTensors& batch, const at::Tensor& origins,
+                                                        const at::Tensor& directions, const SdfTraceParams& params) {
+    const int64_t grid_count = batch.values.size(0);
+    const int64_t ray_count = origins.size(0);
+    const int64_t lane_count = grid_count * ray_count;
+    const auto float_options = origins.options();
+    SdfBatchForwardOutputs out;
+    out.t = at::empty({grid_count, ray_count}, float_options);
+    out.hit_mask = at::empty({grid_count, ray_count}, float_options.dtype(at::kBool));
+    out.hit_position = at::empty({grid_count, ray_count, 3}, float_options);
+    out.normal = at::empty({grid_count, ray_count, 3}, float_options);
+    out.steps = at::empty({grid_count, ray_count}, float_options.dtype(at::kInt));
+    if (lane_count == 0)
+        return out;
+
+    const int threads = 128;
+    const int blocks = static_cast<int>((lane_count + threads - 1) / threads);
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream(origins.get_device()).stream();
+    sdf_batch_intersect_forward_kernel<<<blocks, threads, 0, stream>>>(
+        batch.values.data_ptr<float>(), static_cast<int>(grid_count), static_cast<int>(batch.values.size(1)),
+        static_cast<int>(batch.values.size(2)), static_cast<int>(batch.values.size(3)),
+        batch.position.data_ptr<float>(), batch.rotation.data_ptr<float>(), batch.scale.data_ptr<float>(),
+        origins.data_ptr<float>(), directions.data_ptr<float>(), static_cast<float>(params.tmax),
+        static_cast<int>(params.max_steps), static_cast<float>(params.relaxation), static_cast<float>(params.eps_hit),
+        ray_count, lane_count, out.t.data_ptr<float>(), out.hit_mask.data_ptr<bool>(),
+        out.hit_position.data_ptr<float>(), out.normal.data_ptr<float>(), out.steps.data_ptr<int>());
     return out;
 }
 
