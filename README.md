@@ -515,7 +515,7 @@ python -m pip install cmake ninja scikit-build-core
 Build the Dr.Jit backend:
 
 ```powershell
-python -m pip install "drjit==1.3.1" "nanobind==2.9.2"
+python -m pip install "drjit==1.3.1" "nanobind==2.11.0"
 .\scripts\build_local.cmd -Backend drjit
 ```
 

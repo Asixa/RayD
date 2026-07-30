@@ -174,7 +174,7 @@ class GpuCiContractTests(unittest.TestCase):
 
         windows_command_tails = (
             'python -m pip install --upgrade pip build twine "scikit-build-core>=0.10" "cmake>=3.22" ninja',
-            'python -m pip install --constraint .github/constraints/drjit-build.txt "nanobind==2.9.2" "drjit==1.3.1"',
+            'python -m pip install --constraint .github/constraints/drjit-build.txt "nanobind==2.11.0" "drjit==1.3.1"',
             'python -m pip install --upgrade pip build twine "scikit-build-core>=0.10" "cmake>=3.26" ninja',
             "--index-url https://download.pytorch.org/whl/cu128",
             "python drjit/scripts/verify_cuda_binary_arches.py --stem _C $wheel",
@@ -202,6 +202,12 @@ class GpuCiContractTests(unittest.TestCase):
         for command in compatibility_command_tails:
             with self.subTest(command=command):
                 self.assertIn(f"{command}\n          {fail_fast}", compatibility)
+
+    def test_drjit_ci_nanobind_pin_matches_drjit_registry_abi(self) -> None:
+        for name, workflow in (("hosted", self.hosted), ("release", self.release)):
+            with self.subTest(workflow=name):
+                self.assertIn('"nanobind==2.11.0" "drjit==1.3.1"', workflow)
+                self.assertNotIn('"nanobind==2.9.2" "drjit==1.3.1"', workflow)
 
     def test_windows_release_matrix_installs_imports_and_removes_each_built_wheel(self) -> None:
         self.assertIn("Validate wheel install and uninstall lifecycle", self.release)

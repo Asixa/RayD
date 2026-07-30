@@ -63,13 +63,27 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertIn("from camera import ExampleCamera", renderer_source)
         self.assertNotIn("rd.Camera", renderer_source)
 
-    def test_readme_matches_pinned_nanobind_version(self):
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    def test_build_surfaces_pin_nanobind_to_drjit_abi_version(self):
+        pinned_surfaces = (
+            ROOT / "pyproject.toml",
+            ROOT / "README.md",
+            WORKSPACE_ROOT / "README.md",
+            WORKSPACE_ROOT / ".github" / "constraints" / "drjit-build.txt",
+        )
 
-        self.assertIn("nanobind==2.9.2", pyproject)
-        self.assertIn("nanobind==2.9.2", readme)
-        self.assertNotIn("nanobind==2.11.0", readme)
+        for path in pinned_surfaces:
+            with self.subTest(path=path):
+                text = path.read_text(encoding="utf-8")
+                self.assertIn("nanobind==2.11.0", text)
+                self.assertNotIn("nanobind==2.9.2", text)
+
+    def test_cmake_requires_exact_drjit_and_nanobind_registry_abi_versions(self):
+        cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+
+        self.assertIn("find_package(drjit 1.3.1 EXACT CONFIG REQUIRED)", cmake)
+        self.assertIn("find_package(nanobind 2.11.0 EXACT CONFIG REQUIRED)", cmake)
+        self.assertNotIn("find_package(drjit CONFIG REQUIRED)", cmake)
+        self.assertNotIn("find_package(nanobind CONFIG REQUIRED)", cmake)
 
     def test_release_ci_covers_supported_python_and_cuda_architectures(self):
         workflow = (WORKSPACE_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
@@ -126,6 +140,14 @@ class ProjectMetadataTests(unittest.TestCase):
 
         self.assertIsNone(eager_cuda_default.search(bindings))
         self.assertIn('"tx_polarization"_a = nb::make_tuple(1.f, 0.f, 0.f)', bindings)
+
+    def test_drjit_type_lookup_borrows_the_registered_python_type(self):
+        bindings = (WORKSPACE_ROOT / "src" / "bindings" / "module_jit.cpp").read_text(encoding="utf-8")
+
+        self.assertIn("nb::handle type = nb::type<T>();", bindings)
+        self.assertIn("if (!type.is_valid())", bindings)
+        self.assertNotIn("static nb::object type", bindings)
+        self.assertNotIn("drjit::bind_array<T>", bindings)
 
     def test_multipath_optix_pipeline_uses_dedicated_exception_flags(self):
         cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")

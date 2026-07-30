@@ -1,6 +1,10 @@
 // Copyright Xingyu Chen.
 // Implements scene support for scene.
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 #include <src/scene/cache.h>
 #include <src/scene/cache_kernels.h>
 #include <src/bindings/tensor_contract.h>
@@ -258,6 +262,7 @@ SceneEdgeRecordsResult scene_edge_records(const SceneResource& scene) {
 
 #include <src/scene/cache.h>
 #include <src/runtime/optix_context.h>
+#include <optix_stubs.h>
 #include <src/bindings/tensor_contract.h>
 #include <src/edge/bvh.h>
 #include <src/scene/cache_kernels.h>

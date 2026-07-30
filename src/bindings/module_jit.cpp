@@ -79,12 +79,11 @@ int set_rayd_device(int device, bool initialize_optix) {
     return jit_cuda_device();
 }
 
-/// The Python type object for Dr.Jit array type \p T, bound once and cached.
-template <typename T> nb::object drjit_python_type() {
-    static nb::object type = []() {
-        drjit::ArrayBinding b;
-        return drjit::bind_array<T>(b);
-    }();
+/// Borrow the registered Python type object for Dr.Jit array type \p T.
+template <typename T> nb::handle drjit_python_type() {
+    nb::handle type = nb::type<T>();
+    if (!type.is_valid())
+        throw std::runtime_error("The requested Dr.Jit array type is not registered.");
     return type;
 }
 

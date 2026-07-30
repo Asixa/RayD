@@ -203,7 +203,7 @@ Existing RayD scenes, OptiX pipelines, and BVHs should not be reused across devi
 
 RayD is a Python package with a C++/CUDA extension.
 
-You need Python `>=3.10,<3.15`, CUDA Toolkit `>=11.0`, CMake, a C++17 compiler, `drjit==1.3.1`, `nanobind==2.9.2`, and `scikit-build-core`.
+You need Python `>=3.10,<3.15`, CUDA Toolkit `>=11.0`, CMake, a C++17 compiler, `drjit==1.3.1`, `nanobind==2.11.0`, and `scikit-build-core`. The nanobind pin must match the version embedded by the pinned Dr.Jit release so both extensions share one nanobind registry ABI.
 
 On Windows, use Visual Studio 2022 with Desktop C++ tools. On Linux, use GCC or Clang with C++17 support.
 
@@ -213,7 +213,7 @@ Recommended environment:
 conda create -n myenv python=3.10 -y
 conda activate myenv
 python -m pip install -U pip setuptools wheel
-python -m pip install cmake scikit-build-core nanobind==2.9.2
+python -m pip install cmake scikit-build-core nanobind==2.11.0
 python -m pip install drjit==1.3.1
 ```
 

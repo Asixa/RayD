@@ -74,6 +74,7 @@ class ProjectMetadataTests(unittest.TestCase):
     def test_legacy_library_resolves_the_cuda_driver_lazily(self):
         cmake = (TORCH_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
         runtime = (WORKSPACE_ROOT / "src" / "runtime" / "optix.cpp").read_text(encoding="utf-8")
+        scene = (WORKSPACE_ROOT / "src" / "scene" / "scene.cpp").read_text(encoding="utf-8")
         readme = (TORCH_ROOT / "README.md").read_text(encoding="utf-8")
         verifier = (TORCH_ROOT / "scripts" / "verify_driver_independence.py").read_text(encoding="utf-8")
 
@@ -85,9 +86,19 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertIn("PFN_cuCtxGetCurrent", runtime)
         self.assertNotIn("cudaDriverEntryPointQueryResult", runtime)
         self.assertNotIn("cuCtxGetCurrent(&cu_ctx)", runtime)
+        self.assertIn("#include <optix_stubs.h>", scene)
+        function_table_owners = [
+            path
+            for path in (WORKSPACE_ROOT / "src").rglob("*")
+            if path.suffix in {".h", ".hpp", ".cuh", ".cc", ".cpp", ".cu"}
+            and "optix_function_table_definition.h" in path.read_text(encoding="utf-8")
+        ]
+        self.assertEqual(function_table_owners, [WORKSPACE_ROOT / "src" / "runtime" / "optix.cpp"])
         self.assertIn("CUDA Toolkit 11.3 or newer", readme)
         for dependency in ("libcuda.so", "nvcuda.dll"):
             self.assertIn(dependency, verifier)
+        for marker in ("dynamic_symbol_listing", '" UND "', "optix[A-Z]"):
+            self.assertIn(marker, verifier)
 
     def test_local_cuda_build_targets_native_gpu(self):
         cmake = (TORCH_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
