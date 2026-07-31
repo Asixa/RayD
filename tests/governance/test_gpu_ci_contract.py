@@ -164,6 +164,19 @@ class GpuCiContractTests(unittest.TestCase):
         validation = self.release.split("  validate-wheel-set:", 1)[1].split("  publish-drjit:", 1)[0]
         self.assertIn("- test-torch-full-wheel-compatibility", validation)
 
+    def test_release_artifact_validation_installs_real_runtime_dependencies(self) -> None:
+        validation = self.release.split("  validate-wheel-set:", 1)[1].split("  publish-drjit:", 1)[0]
+        drjit_install = 'python -m pip install --constraint .github/constraints/drjit-build.txt "drjit==1.3.1"'
+        torch_install = "python -m pip install --constraint .github/constraints/torch-build.txt torch"
+        matrix_probe = "tests.packaging.test_wheel_install_matrix"
+
+        self.assertIn(drjit_install, validation)
+        self.assertIn(torch_install, validation)
+        self.assertIn("torch --no-cache-dir", validation)
+        self.assertIn("--index-url https://download.pytorch.org/whl/cu128", validation)
+        self.assertLess(validation.index(drjit_install), validation.index(matrix_probe))
+        self.assertLess(validation.index(torch_install), validation.index(matrix_probe))
+
     def test_windows_native_release_commands_fail_immediately(self) -> None:
         fail_fast = "$nativeExit=$LASTEXITCODE; if ($nativeExit -ne 0) { exit $nativeExit }"
         windows = self.release.split("  build-windows-wheels:", 1)[1].split(

@@ -6,7 +6,6 @@ import os
 import posixpath
 import unittest
 import zipfile
-from collections import Counter
 from email.parser import BytesParser
 from pathlib import Path, PurePosixPath
 
@@ -125,6 +124,8 @@ class WheelLayoutTests(unittest.TestCase):
             "rayd/_impl/multipath.py",
             "rayd/_impl/camera.py",
             "rayd/_impl/sdf.py",
+            "rayd/_impl/surfel.py",
+            "rayd/_impl/mixed.py",
         }
         self.assertTrue(drjit)
         self.assertTrue(torch)

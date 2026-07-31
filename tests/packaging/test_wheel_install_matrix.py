@@ -13,6 +13,7 @@ from pathlib import Path
 
 PROBE = r"""
 import importlib
+import importlib.util
 import json
 import os
 import sys
@@ -29,6 +30,8 @@ rayd.__path__ = [str(Path(sysconfig.get_path("purelib")) / "rayd")]
 expected = json.loads(os.environ["RAYD_ACCEPTANCE_EXPECTED"])
 absent = json.loads(os.environ["RAYD_ACCEPTANCE_ABSENT"])
 for backend in expected:
+    dependency = importlib.util.find_spec(backend)
+    assert dependency is not None and dependency.origin is not None, dependency
     module = importlib.import_module(f"rayd.{backend}")
     assert module.backend_capabilities()["backend"] == backend
 for backend in absent:
@@ -69,7 +72,14 @@ class WheelInstallMatrixTests(unittest.TestCase):
         env["RAYD_ACCEPTANCE_BASE_SITE"] = self.base_site
         env["RAYD_ACCEPTANCE_EXPECTED"] = json.dumps(expected)
         env["RAYD_ACCEPTANCE_ABSENT"] = json.dumps(absent)
-        completed = subprocess.run([str(python), "-c", PROBE], env=env, text=True, capture_output=True, check=False)
+        completed = subprocess.run(
+            [str(python), "-c", PROBE],
+            cwd=Path(python).resolve().parents[1],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
         if completed.returncode:
             self.fail(f"wheel probe failed\n{completed.stdout}\n{completed.stderr}")
 
