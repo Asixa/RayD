@@ -100,20 +100,16 @@ if(RAYD_CUDA_ARCHS_SET)
     message(STATUS "RayD RAYD_CUDA_ARCHS: SASS ${RAYD_CUDA_ARCHS_SASS}; PTX ${RAYD_CUDA_ARCHS_PTX}")
 endif()
 
-# The ray-tracing PTX keeps its release architecture unless a requested CUDA
-# target is older, because OptiX rejects PTX newer than the device.
-set(RAYD_TORCH_OPTIX_PTX_ARCH_DEFAULT 75)
+# OptiX rejects PTX newer than the device and compiles older PTX forward, so the
+# ray-tracing PTX targets the sm_70 floor and every build runs on every supported
+# GPU. Recorded for the runtime device check; the PTX commands below spell it.
+set(RAYD_TORCH_OPTIX_PTX_ARCH 70)
 if(NOT RAYD_TORCH_CUDA_GENCODE_FLAGS STREQUAL "")
     rayd_cuda_targets_from_gencode("${RAYD_TORCH_CUDA_GENCODE_FLAGS}" RAYD_TORCH_SASS_ARCHS RAYD_TORCH_PTX_ARCHS)
     set(RAYD_TORCH_ARCHS_KNOWN TRUE)
 else()
     rayd_cuda_targets_from_architectures("${CMAKE_CUDA_ARCHITECTURES}" RAYD_TORCH_ARCHS_KNOWN
         RAYD_TORCH_SASS_ARCHS RAYD_TORCH_PTX_ARCHS)
-endif()
-rayd_optix_ptx_arch(RAYD_TORCH_OPTIX_PTX_ARCH ${RAYD_TORCH_OPTIX_PTX_ARCH_DEFAULT}
-    ${RAYD_TORCH_SASS_ARCHS} ${RAYD_TORCH_PTX_ARCHS})
-if(NOT RAYD_TORCH_OPTIX_PTX_ARCH EQUAL RAYD_TORCH_OPTIX_PTX_ARCH_DEFAULT)
-    message(STATUS "RayD Torch OptiX PTX: compute_${RAYD_TORCH_OPTIX_PTX_ARCH}")
 endif()
 
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
@@ -210,8 +206,8 @@ install(
 # re-derives it from here. ADR-0035 profile: fast_math for the ten OptiX PTX
 # modules that read the variable below. Divergence D8: this option is the only
 # place either backend can be switched between profiles, and Dr.Jit has no
-# equivalent. Divergence D2: Dr.Jit targets compute_70.
-set(RAYD_TORCH_OPTIX_NVCC_FLAGS --std=c++17 --gpu-architecture=compute_${RAYD_TORCH_OPTIX_PTX_ARCH})
+# equivalent. Both backends target compute_70 (ADR-0044).
+set(RAYD_TORCH_OPTIX_NVCC_FLAGS --std=c++17 --gpu-architecture=compute_70)
 if(RAYD_TORCH_OPTIX_FAST_MATH)
     list(APPEND RAYD_TORCH_OPTIX_NVCC_FLAGS --use_fast_math)
 endif()
@@ -814,7 +810,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
             --std=c++17
-            --gpu-architecture=compute_${RAYD_TORCH_OPTIX_PTX_ARCH}
+            --gpu-architecture=compute_70
             --ftz=false
             --prec-div=true
             --prec-sqrt=true

@@ -28,13 +28,14 @@ def _load():
 ds = _load()
 
 RELEASE_DRJIT = ds.BuildTargets("drjit", (70, 75, 80, 86, 87, 89, 90, 100, 101, 120), (120,), 70)
-RELEASE_TORCH = ds.BuildTargets("torch", (70, 75, 80, 86, 87, 89, 90, 100, 101, 120), (120,), 75)
+RELEASE_TORCH = ds.BuildTargets("torch", (70, 75, 80, 86, 87, 89, 90, 100, 101, 120), (120,), 70)
+OPTIX_ABOVE_VOLTA = ds.BuildTargets("torch", (70, 75, 80, 86, 87, 89, 90, 100, 101, 120), (120,), 75)
 CLEAN_ENVIRONMENT = {ds.SKIP_ENVIRONMENT: "", ds.DISABLE_OPTIX_ENVIRONMENT: ""}
 
 
 class CompatibilityRuleTests(unittest.TestCase):
     def test_release_builds_run_on_covered_gpus(self):
-        for cc in (75, 80, 86, 89, 90, 100, 103, 120, 121):
+        for cc in (70, 75, 80, 86, 89, 90, 100, 103, 120, 121):
             with self.subTest(cc=cc):
                 self.assertEqual(ds.problems(RELEASE_DRJIT, cc), [])
                 self.assertEqual(ds.problems(RELEASE_TORCH, cc), [])
@@ -52,16 +53,12 @@ class CompatibilityRuleTests(unittest.TestCase):
         self.assertEqual(ds.problems(targets, 120), [])
         self.assertIn("no CUDA kernel image runs on sm_70", ds.problems(targets, 70)[0])
 
-    def test_torch_release_optix_excludes_volta(self):
-        # The Torch OptiX PTX targets compute_75, so Volta runs only its CUDA paths.
-        self.assertEqual(ds.problems(RELEASE_DRJIT, 70), [])
-        found = ds.problems(RELEASE_TORCH, 70)
+    def test_optix_newer_than_the_device_is_rejected(self):
+        found = ds.problems(OPTIX_ABOVE_VOLTA, 70)
         self.assertEqual(len(found), 1)
         self.assertIn("compute_75", found[0])
-        self.assertEqual(ds.problems(RELEASE_TORCH, 70, optix=False), [])
-
-    def test_torch_source_build_for_volta_runs_optix(self):
-        self.assertEqual(ds.problems(ds.BuildTargets("torch", (70, 89), (), 70), 70), [])
+        self.assertEqual(ds.problems(OPTIX_ABOVE_VOLTA, 70, optix=False), [])
+        self.assertEqual(ds.problems(OPTIX_ABOVE_VOLTA, 75), [])
 
     def test_below_volta_is_never_supported(self):
         for cc in (37, 52, 61):
@@ -77,7 +74,8 @@ class CompatibilityRuleTests(unittest.TestCase):
 
     def test_lowest_supported(self):
         self.assertEqual(RELEASE_DRJIT.lowest_supported, 70)
-        self.assertEqual(RELEASE_TORCH.lowest_supported, 75)
+        self.assertEqual(RELEASE_TORCH.lowest_supported, 70)
+        self.assertEqual(OPTIX_ABOVE_VOLTA.lowest_supported, 75)
         self.assertEqual(ds.BuildTargets("torch", (70, 89), (), 70).lowest_supported, 70)
         self.assertEqual(ds.BuildTargets("drjit", (89,), (), 70).lowest_supported, 89)
         self.assertIsNone(ds.BuildTargets("drjit", None, (), None).lowest_supported)
@@ -91,7 +89,7 @@ class MessageTests(unittest.TestCase):
         return str(caught.exception)
 
     def test_message_names_gpu_range_and_build_command(self):
-        text = self._error(RELEASE_TORCH, ds.Device(0, "Tesla V100-SXM2-16GB", 70))
+        text = self._error(OPTIX_ABOVE_VOLTA, ds.Device(0, "Tesla V100-SXM2-16GB", 70))
         self.assertIn("rayd-torch cannot run on CUDA device 0 'Tesla V100-SXM2-16GB'", text)
         self.assertIn("compute capability 7.0, sm_70", text)
         self.assertIn("supports sm_75 and newer", text)
@@ -131,9 +129,9 @@ class MessageTests(unittest.TestCase):
 
     def test_environment_overrides(self):
         with mock.patch.dict(os.environ, {**CLEAN_ENVIRONMENT, ds.DISABLE_OPTIX_ENVIRONMENT: "1"}):
-            ds.check(RELEASE_TORCH, ds.Device(0, "Tesla V100", 70))
+            ds.check(OPTIX_ABOVE_VOLTA, ds.Device(0, "Tesla V100", 70))
         with mock.patch.dict(os.environ, {**CLEAN_ENVIRONMENT, ds.SKIP_ENVIRONMENT: "1"}):
-            ds.check(RELEASE_TORCH, ds.Device(0, "GTX 1080", 61))
+            ds.check(OPTIX_ABOVE_VOLTA, ds.Device(0, "GTX 1080", 61))
 
 
 class VisibleDeviceTests(unittest.TestCase):
@@ -197,6 +195,14 @@ class BuildSourceAgreementTests(unittest.TestCase):
         )
         self.assertIsNotNone(recorded)
         self.assertEqual(emitted, {recorded.group(1)})
+
+    def test_torch_record_matches_the_compiled_ptx_arch(self):
+        cmake = (ROOT / "torch" / "CMakeLists.txt").read_text(encoding="utf-8")
+        emitted = set(re.findall(r"--gpu-architecture=compute_(\d+)", cmake))
+        recorded = re.search(r"^set\(RAYD_TORCH_OPTIX_PTX_ARCH (\d+)\)$", cmake, re.MULTILINE)
+        self.assertIsNotNone(recorded)
+        self.assertEqual(emitted, {recorded.group(1)})
+        self.assertEqual(int(recorded.group(1)), ds.MIN_COMPUTE_CAPABILITY)
 
 
 class DriverQueryTests(unittest.TestCase):

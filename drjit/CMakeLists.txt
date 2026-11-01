@@ -238,8 +238,8 @@ foreach(RAYD_CUDA_ARCH IN LISTS RAYD_CUDA_PTX_ARCH_LIST)
 endforeach()
 string(JOIN " " RAYD_CUDA_GENCODE_FLAGS ${RAYD_CUDA_GENCODE_FLAGS_LIST})
 
-# The OptiX PTX is the committed compute_70 blob that rayd_embed_ptx() emits.
-# It already equals the sm_70 source-build floor, so no target list lowers it.
+# The OptiX PTX is the committed compute_70 blob that rayd_embed_ptx() emits,
+# which is the sm_70 floor, so no target list changes it.
 set(RAYD_DRJIT_OPTIX_PTX_ARCH 70)
 if(RAYD_CUDA_SASS_ARCH_LIST)
     set(RAYD_CUDA_ARCHS_KNOWN TRUE)
@@ -428,7 +428,7 @@ rayd_cuda_object(
 # RAYD_REGENERATE_*_PTX options rebuild them from source against an OptiX SDK.
 #
 # ADR-0035 profile: fast_math at compute_70 for all eight, set once in the
-# shared PTX command shape. Divergence D2: the Torch backend targets compute_75.
+# shared PTX command shape. Both backends target compute_70 (ADR-0044).
 # Divergence D9: every option below defaults OFF, so these flags describe how a
 # module is regenerated, not provably how the committed header was produced.
 rayd_embed_ptx(

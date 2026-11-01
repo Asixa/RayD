@@ -53,10 +53,6 @@ NUMERIC_RE = re.compile(r"^--?(use_fast_math|fmad=\w+|ftz=\w+|prec-div=\w+|prec-
 # spelling produces an unknown profile and a loud failure, never a silent drop.
 SUSPECT_RE = re.compile(r"fast_math|fmad|ftz|prec-div|prec-sqrt", re.IGNORECASE)
 ARCH_RE = re.compile(r"^(?:-arch=|--gpu-architecture=)(\w+)$")
-# Each backend spells its ray-tracing PTX arch through one CMake variable so a
-# source build for an older GPU can lower it. The contract records the declared
-# release default, which every build uses unless RAYD_CUDA_ARCHS goes lower.
-ARCH_DEFAULT_RE = re.compile(r"^[ \t]*set\((RAYD_\w+_OPTIX_PTX_ARCH)_DEFAULT[ \t]+(\d+)\)", re.MULTILINE)
 COMPILE_OPTION_RE = re.compile(r"^\$<\$<COMPILE_LANGUAGE:CUDA>:([^>]*)>$")
 TOKEN_RE = re.compile(r'"([^"]*)"|(\S+)')
 INCLUDE_RE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*[<"]([^">]+)[">]', re.MULTILINE)
@@ -73,25 +69,6 @@ INCLUDE_DIRS = {"drjit": (ROOT, ROOT / "include", DRJIT), "torch": (ROOT, ROOT /
 
 def strip_comments(text: str) -> str:
     return re.sub(r"#[^\n]*", "", text)
-
-
-def _arch_defaults() -> dict[str, str]:
-    found = {}
-    for path in (DRJIT / "CMakeLists.txt", TORCH / "CMakeLists.txt"):
-        for name, value in ARCH_DEFAULT_RE.findall(path.read_text(encoding="utf-8")):
-            found["${" + name + "}"] = value
-    return found
-
-
-ARCH_DEFAULTS = _arch_defaults()
-
-
-def arch_of(token: str) -> str | None:
-    """The PTX arch an `-arch=`/`--gpu-architecture=` token names under release defaults."""
-    for variable, value in ARCH_DEFAULTS.items():
-        token = token.replace(variable, value)
-    match = ARCH_RE.match(token)
-    return match.group(1) if match else None
 
 
 def call_bodies(text: str, opener: str):
@@ -236,7 +213,7 @@ def drjit_helper_flags() -> dict[str, object]:
         per_branch_arch = {}
         for platform_name, branch in branches.items():
             per_branch[platform_name] = numeric_flags(branch.split())
-            per_branch_arch[platform_name] = {arch for t in branch.split() if (arch := arch_of(t))}
+            per_branch_arch[platform_name] = {ARCH_RE.match(t).group(1) for t in branch.split() if ARCH_RE.match(t)}
         # Branch agreement is asserted by
         # test_helper_command_shapes_agree_across_platform_branches, not here:
         # this helper runs at import time, and failing here would abort
@@ -349,7 +326,7 @@ def torch_units() -> dict[tuple[str, str], dict]:
         variable = re.match(r"^\$\{(\w+)\}$", items[items.index("OUTPUT") + 1])
         assert variable, "PTX custom command output is not a plain CMake variable"
         source = resolve(command[command.index("--ptx") + 1], TORCH, {"RAYD_ROOT_DIR": ".."})
-        arches = {arch for t in expanded if (arch := arch_of(t))}
+        arches = {ARCH_RE.match(t).group(1) for t in expanded if ARCH_RE.match(t)}
         assert len(arches) == 1, f"{variable.group(1)} declares arches {arches}"
         units[("torch", variable.group(1).lower())] = {
             "backend": "torch",
@@ -540,8 +517,8 @@ class CompileFlagPolicyContractTests(unittest.TestCase):
                 )
             with self.subTest(helper=name, aspect="ptx_arch"):
                 self.assertEqual(
-                    {arch for t in branches["win32"].split() if (arch := arch_of(t))},
-                    {arch for t in branches["posix"].split() if (arch := arch_of(t))},
+                    {ARCH_RE.match(t).group(1) for t in branches["win32"].split() if ARCH_RE.match(t)},
+                    {ARCH_RE.match(t).group(1) for t in branches["posix"].split() if ARCH_RE.match(t)},
                     f"{name}() PTX arch differs between the WIN32 and POSIX branches",
                 )
 
@@ -695,6 +672,15 @@ class CompileFlagPolicyContractTests(unittest.TestCase):
                     )
                 for header in divergence["shared_headers"]:
                     self.assertTrue((ROOT / header).is_file(), header)
+
+    def test_ray_tracing_ptx_targets_the_support_floor(self):
+        # ADR-0044: OptiX rejects PTX newer than the device, so one higher arch
+        # silently drops a supported GPU from that module.
+        arches = {key: unit["arch"] for key, unit in DECLARED.items() if unit["kind"] == "ptx"}
+        self.assertEqual(len(arches), 19)
+        self.assertEqual(set(arches.values()), {"compute_70"}, arches)
+        ids = {divergence["id"] for divergence in CONTRACT["frozen_divergences"]}
+        self.assertNotIn("D2", ids)
 
     def test_structural_divergences_still_describe_the_build(self):
         torch_text = (TORCH / "CMakeLists.txt").read_text(encoding="utf-8")

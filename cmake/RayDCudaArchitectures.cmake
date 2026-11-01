@@ -144,19 +144,6 @@ function(rayd_cuda_targets_from_gencode FLAGS OUT_SASS OUT_PTX)
     set(${OUT_PTX} "${_ptx}" PARENT_SCOPE)
 endfunction()
 
-# OptiX PTX must not target a newer architecture than the device. Keep the
-# release default unless a requested target is older, then follow the oldest;
-# RAYD_MIN_CUDA_ARCH bounds how far it can fall.
-function(rayd_optix_ptx_arch OUT_VAR DEFAULT)
-    set(_arch "${DEFAULT}")
-    foreach(_target IN LISTS ARGN)
-        if(_target LESS _arch)
-            set(_arch "${_target}")
-        endif()
-    endforeach()
-    set(${OUT_VAR} "${_arch}" PARENT_SCOPE)
-endfunction()
-
 # Write the `_build_config.json` record read by rayd/_impl/device_support.py.
 # KNOWN is FALSE when the CUDA kernels used the compiler default architecture.
 function(rayd_write_build_config PATH BACKEND KNOWN SASS PTX OPTIX)

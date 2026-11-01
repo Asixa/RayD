@@ -293,7 +293,7 @@
       "target": "rayd_torch_native_core",
       "profile": "fast_math",
       "default_enabled": true,
-      "arch": "compute_75"
+      "arch": "compute_70"
     },
     {
       "backend": "torch",
@@ -303,7 +303,7 @@
       "target": "rayd_torch_native_core",
       "profile": "fast_math",
       "default_enabled": true,
-      "arch": "compute_75"
+      "arch": "compute_70"
     },
     {
       "backend": "torch",
@@ -313,7 +313,7 @@
       "target": "rayd_torch_native_core",
       "profile": "fast_math",
       "default_enabled": true,
-      "arch": "compute_75"
+      "arch": "compute_70"
     },
     {
       "backend": "torch",
@@ -323,7 +323,7 @@
       "target": "rayd_torch_native_core",
       "profile": "fast_math",
       "default_enabled": true,
-      "arch": "compute_75"
+      "arch": "compute_70"
     },
     {
       "backend": "torch",
@@ -333,7 +333,7 @@
       "target": "rayd_torch_native_core",
       "profile": "fast_math",
       "default_enabled": true,
-      "arch": "compute_75"
+      "arch": "compute_70"
     },
     {
       "backend": "torch",
@@ -343,7 +343,7 @@
       "target": "rayd_torch_native_core",
       "profile": "fast_math",
       "default_enabled": true,
-      "arch": "compute_75"
+      "arch": "compute_70"
     },
     {
       "backend": "torch",
@@ -353,7 +353,7 @@
       "target": "rayd_torch_native_core",
       "profile": "fast_math",
       "default_enabled": true,
-      "arch": "compute_75"
+      "arch": "compute_70"
     },
     {
       "backend": "torch",
@@ -363,7 +363,7 @@
       "target": "rayd_torch_native_core",
       "profile": "fast_math",
       "default_enabled": true,
-      "arch": "compute_75"
+      "arch": "compute_70"
     },
     {
       "backend": "torch",
@@ -373,7 +373,7 @@
       "target": "rayd_torch_native_core",
       "profile": "fast_math",
       "default_enabled": true,
-      "arch": "compute_75"
+      "arch": "compute_70"
     },
     {
       "backend": "torch",
@@ -383,7 +383,7 @@
       "target": "rayd_torch_native_core",
       "profile": "fast_math",
       "default_enabled": true,
-      "arch": "compute_75"
+      "arch": "compute_70"
     },
     {
       "backend": "torch",
@@ -393,7 +393,7 @@
       "target": "rayd_torch_native_core",
       "profile": "precise_no_ftz",
       "default_enabled": true,
-      "arch": "compute_75"
+      "arch": "compute_70"
     },
     {
       "backend": "torch",
@@ -860,33 +860,6 @@
       "status": "frozen"
     },
     {
-      "id": "D2",
-      "aspect": "ptx_arch",
-      "summary": "Ray-tracing PTX modules target compute_70 in the Dr.Jit backend and compute_75 in the Torch backend.",
-      "sides": [
-        {
-          "backend": "drjit",
-          "unit": "reflection_trace",
-          "value": "compute_70"
-        },
-        {
-          "backend": "torch",
-          "unit": "rayd_torch_reflection_trace_ptx",
-          "value": "compute_75"
-        }
-      ],
-      "shared_headers": [
-        "src/reflection/reflection_algorithms.cuh",
-        "include/rayd/math.h"
-      ],
-      "evidence": [
-        "cmake/RayDOptix.cmake: rayd_embed_ptx() emits -arch=compute_70 in both the Windows and POSIX branches",
-        "torch/CMakeLists.txt: RAYD_TORCH_OPTIX_NVCC_FLAGS and the penetration PTX command carry --gpu-architecture=compute_${RAYD_TORCH_OPTIX_PTX_ARCH}, whose release default is RAYD_TORCH_OPTIX_PTX_ARCH_DEFAULT 75",
-        "The Torch variable keeps its release default unless a RAYD_CUDA_ARCHS source build targets sm_70, the source floor, which lowers it to compute_70 (cmake/RayDCudaArchitectures.cmake: rayd_optix_ptx_arch); Dr.Jit already targets that floor"
-      ],
-      "status": "frozen"
-    },
-    {
       "id": "D3",
       "aspect": "numeric_profile",
       "summary": "shared/utd/utd.h is compiled under three numeric profiles inside the Torch backend alone: fast-math in the wedge translation unit and the diffraction PTX modules, nvcc-default through the fused multipath executor and the scattering primal, and no-fmad through the nine ADR-0026 lockstep/AD translation units.",
@@ -1178,12 +1151,13 @@
   },
   "uncontracted": [
     "No decision record explains why src/scene/multipath_jit.cu is the only Dr.Jit object translation unit compiled with --use_fast_math (D1).",
-    "No decision record explains why every ray-tracing PTX module on both backends is compiled with --use_fast_math, nor why the two backends chose different virtual architectures (D2).",
+    "No decision record explains why every ray-tracing PTX module on both backends is compiled with --use_fast_math.",
     "No decision record explains why src/diffraction/wedge.cu is fast-math while every other Torch consumer of the same UTD math is not (D3).",
     "No decision record covers the ADR-0033 cross-check oracle's compile flags (D10).",
     "No mechanism keeps a shared device-math header from acquiring a new profile when a translation unit that includes it changes family."
   ],
   "notes": [
+    "Former divergence D2 (ray-tracing PTX at compute_70 in Dr.Jit and compute_75 in Torch) was deliberately aligned at compute_70 by docs/adr/0044-torch-optix-ptx-at-the-volta-floor.md, decided by the user on 2026-11-01 for Xingyu Chen to review. Its id is retired, not reused.",
     "This contract records flags as written in CMake. It proves declared-versus-CMake consistency, not declared-versus-effective-command consistency: CMake's build-type defaults, CUDA-language handling, and generator expressions are resolved later. An effective-command proof belongs to the per-family activation evidence procedures, not to a text test.",
     "Profile equality is necessary but not sufficient for numerical equality. D7 is the standing counterexample.",
     "The four profiles are closed. A translation unit that needs a fifth combination requires a schema change, a profile entry, and a decision record, in that order."
