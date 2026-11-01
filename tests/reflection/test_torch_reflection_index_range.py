@@ -32,7 +32,7 @@ class TorchReflectionIndexRangeTests(unittest.TestCase):
     def test_rejects_image_source_index_overflow_before_allocating(self):
         chain = self.scene.trace_reflections(self._rays(OVERFLOW_RAYS), OVERFLOW_BOUNCES)
         with self.assertRaisesRegex(RuntimeError, "int32 output index range"):
-            chain.image_sources
+            _ = chain.image_sources
         torch.cuda.synchronize()
 
     def test_rejects_scalar_output_index_overflow_before_allocating(self):
@@ -40,7 +40,7 @@ class TorchReflectionIndexRangeTests(unittest.TestCase):
             with self.subTest(ray_count=ray_count, max_bounces=max_bounces):
                 chain = self.scene.trace_reflections(self._rays(ray_count), max_bounces)
                 with self.assertRaisesRegex(RuntimeError, "int32 output index range"):
-                    chain.t
+                    _ = chain.t
         torch.cuda.synchronize()
 
     def test_rejects_differentiable_trace_index_overflow(self):
