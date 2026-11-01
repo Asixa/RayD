@@ -508,9 +508,18 @@ The prebuilt wheels run on NVIDIA compute capability 7.0 (Volta) and newer:
 
 | GPU | Prebuilt wheels | From source |
 | --- | --- | --- |
-| Maxwell, Pascal, and older (`sm_6x` and below) | no | no: RayD's device code uses Volta-only warp intrinsics |
-| Volta (`sm_70`, Tesla V100) | `rayd-drjit` fully; `rayd-torch` CUDA paths only (its OptiX PTX is `compute_75`) | yes, both backends |
+| Maxwell, Pascal, and older (`sm_6x` and below) | no | no: not supported, because RayD's device code uses Volta-only warp intrinsics |
+| Volta (`sm_70`, Tesla V100) | yes | yes |
 | Turing through Blackwell (`sm_75`-`sm_12x`) | yes | yes |
+
+Volta support is verified by compilation and PTX inspection, not yet on Volta
+hardware.
+
+**Driver minimum for one feature:** Dr.Jit `accumulate_reflections` needs an R575
+or newer driver. On an older driver it fails with `OptiX error in
+optixModuleCreate(multipath)`, and the OptiX log names the missing intrinsic
+`optix.ptx.copysign.f32`. Torch builds made with CUDA 12.9 or newer hit the same
+failure on those drivers. Everything else needs R555 or newer.
 
 On a GPU the installed build cannot run, RayD fails at first use with an
 `UnsupportedDeviceError` that names the GPU, its compute capability, the
@@ -553,7 +562,8 @@ cd RayD
 `RAYD_CUDA_ARCHS` (and `-CudaArch`) accepts `native` (every GPU on this
 machine), one compute capability such as `70` or `7.0`, a list such as
 `70,86,89`, and a `+PTX` suffix such as `8.9+PTX` for forward-compatible PTX.
-It drives every CUDA target and the OptiX PTX architecture of both backends.
+It drives every CUDA target of both backends; the OptiX PTX is `compute_70` in
+every build.
 `build_local` initializes MSVC, installs editable into the current `python`
 (pass `-PythonExe <path>` otherwise), and keeps one build directory per target
 list. Without `-CudaArch` it targets the first local GPU. The multi-architecture

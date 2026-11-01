@@ -12,10 +12,11 @@ This document records the release-wheel compatibility contract shared by RayD an
 | CUDA build toolkit | CUDA 12.8 Update 1 on Windows; CUDA 12.8 latest update from the RHEL 8 repository in manylinux |
 | Native SASS | `sm_70`, `sm_75`, `sm_80`, `sm_86`, `sm_87`, `sm_89`, `sm_90`, `sm_100`, `sm_101`, `sm_120` |
 | Forward-compatible PTX | `compute_120` |
+| OptiX PTX, both backends | `compute_70` (ADR-0044) |
 | Oldest explicitly covered consumer GPU | Turing / RTX 2080 class (`sm_75`) |
 | Newest explicitly covered families | Data-center and GeForce/RTX PRO Blackwell (`sm_100`, `sm_101`, `sm_120`) |
 
-The `sm_70` image is retained for Volta-class accelerators even though the named consumer baseline is `sm_75`.
+The `sm_70` image and the `compute_70` OptiX PTX are retained for Volta-class accelerators even though the named consumer baseline is `sm_75`. Pascal, Maxwell, and older are not supported; see [`gpu_support.md`](gpu_support.md).
 
 ## Package-specific ABI matrix
 
@@ -186,7 +187,7 @@ CMake detects the first local GPU and compiles one native SASS image. Release
 wheels must always set both variables explicitly and never depend on local GPU
 detection.
 
-The Torch backend uses the equivalent `CMAKE_CUDA_ARCHITECTURES` list for `_C`, `_stable_ops`, and their linked CUDA objects. Its separately embedded OptiX PTX is a distinct compatibility layer.
+The Torch backend uses the equivalent `CMAKE_CUDA_ARCHITECTURES` list for `_C`, `_stable_ops`, and their linked CUDA objects. Its separately embedded OptiX PTX is a distinct compatibility layer: every build compiles it for `compute_70`, whatever the CUDA target list, and OptiX compiles it forward on newer GPUs.
 
 ## Artifact validation
 
@@ -199,13 +200,13 @@ is available, and that uninstall removes its namespace portion cleanly.
 
 This distinction matters: a matrix entry or an `nvcc` flag in YAML is an intention, while `cuobjdump` verifies the artifact users actually install.
 
-GitHub-hosted runners do not provide the full physical GPU matrix. CI therefore proves compilation and binary contents, not execution on every listed GPU. GPU runtime regressions should additionally be run on available Turing and Blackwell hardware before a high-risk native release.
+GitHub-hosted runners do not provide the full physical GPU matrix. CI therefore proves compilation and binary contents, not execution on every listed GPU. GPU runtime regressions should additionally be run on available Volta, Turing, and Blackwell hardware before a high-risk native release. No CI job runs on Volta, so prebuilt Volta support is proven only by the `sm_70` image and the `compute_70` PTX. The `single_gpu` job builds for its runner's GPU with `RAYD_CUDA_ARCHS: native` and exercises that same `compute_70` PTX.
 
 ## Driver and runtime boundary
 
 - CUDA SASS is architecture-specific; PTX provides forward JIT compatibility on later architectures supported by the installed driver.
 - CUDA 12.8 is required to compile native Blackwell targets including `sm_100`, `sm_101`, and `sm_120`.
-- End users need an NVIDIA driver new enough for the CUDA 12.x runtime and OptiX version used by Dr.Jit/RayD.
+- End users need an NVIDIA driver new enough for the CUDA 12.x runtime and OptiX version used by Dr.Jit/RayD. Dr.Jit `accumulate_reflections` needs R575 or newer; see [`gpu_support.md`](gpu_support.md#driver-requirements).
 - The CUDA toolkit is a build dependency. A toolkit is not required merely to install a prebuilt wheel.
 
 References:
