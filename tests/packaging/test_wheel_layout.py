@@ -113,9 +113,15 @@ class WheelLayoutTests(unittest.TestCase):
     def test_backend_files_are_disjoint(self):
         drjit = {name for name in self.names(self.drjit_wheel) if name.startswith("rayd/") and not name.endswith("/")}
         torch = {name for name in self.names(self.torch_wheel) if name.startswith("rayd/") and not name.endswith("/")}
-        drjit_impl = {"rayd/_impl/runtime_jit.py", "rayd/_impl/capabilities_jit.py", "rayd/_impl/path_exchange_jit.py"}
+        drjit_impl = {
+            "rayd/_impl/runtime_jit.py",
+            "rayd/_impl/capabilities_jit.py",
+            "rayd/_impl/path_exchange_jit.py",
+            "rayd/_impl/device_support_jit.py",
+        }
         torch_impl = {
             "rayd/_impl/runtime.py",
+            "rayd/_impl/device_support.py",
             "rayd/_impl/capabilities.py",
             "rayd/_impl/path_exchange.py",
             "rayd/_impl/geometry.py",

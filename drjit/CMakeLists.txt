@@ -252,6 +252,10 @@ install(
         ${RAYD_ROOT}/python/rayd/_impl/capabilities_jit.py
         ${RAYD_ROOT}/python/rayd/_impl/path_exchange_jit.py
     DESTINATION rayd/_impl)
+# The Torch backend owns device_support.py; this wheel ships the same source
+# under its own suffixed name so the two distributions never share a file.
+install(FILES ${RAYD_ROOT}/python/rayd/_impl/device_support.py
+    DESTINATION rayd/_impl RENAME device_support_jit.py)
 
 if(WIN32)
     # nvcc drives cl.exe, so the generated .bat wrappers need an initialized MSVC

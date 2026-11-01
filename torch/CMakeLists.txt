@@ -145,6 +145,7 @@ endif()
 install(
     FILES
         ${RAYD_ROOT_DIR}/python/rayd/_impl/runtime.py
+        ${RAYD_ROOT_DIR}/python/rayd/_impl/device_support.py
         ${RAYD_ROOT_DIR}/python/rayd/_impl/capabilities.py
         ${RAYD_ROOT_DIR}/python/rayd/_impl/path_exchange.py
         ${RAYD_ROOT_DIR}/python/rayd/_impl/geometry.py

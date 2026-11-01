@@ -77,6 +77,7 @@ def _stable_ops():
         raise RuntimeError(
             f"RayD Torch stable ABI operators are unavailable: {_library_name('_stable_ops')} did not load."
         ) from _STABLE_LOAD_ERROR
+    require_supported_device()
     return torch.ops.rayd_torch_stable
 
 
@@ -147,6 +148,42 @@ except ImportError:
 NATIVE_AVAILABLE = AVAILABLE or is_registered()
 C = _extension if NATIVE_AVAILABLE else None
 EXTENSION_IMPORT_ERROR = None if NATIVE_AVAILABLE else LOAD_ERROR
+
+
+# ---- GPU compatibility ----
+
+from . import device_support as _device_support
+
+# Reading the build record touches no CUDA state, so the import stays safe
+# before a fork; the device itself is queried on first native use.
+BUILD_TARGETS = _device_support.load_build_targets("torch", "rayd.torch._C")
+_SUPPORTED_DEVICES: set[int] = set()
+
+
+def require_supported_device(device: int | str | torch.device | None = None) -> None:
+    """Fail with build-from-source guidance when `device` cannot run this build.
+
+    `None` checks the current CUDA device, and only once CUDA is initialized:
+    a native call made before then has no CUDA tensor to run on. Each device is
+    queried once; an unsupported device raises on every call.
+    """
+    if BUILD_TARGETS is None or not torch.cuda.is_available():
+        return
+    if device is None:
+        if not torch.cuda.is_initialized():
+            return
+        index = torch.cuda.current_device()
+    else:
+        resolved = torch.device("cuda", device) if isinstance(device, int) else torch.device(device)
+        if resolved.type != "cuda":
+            return
+        index = torch.cuda.current_device() if resolved.index is None else resolved.index
+    if index in _SUPPORTED_DEVICES:
+        return
+    properties = torch.cuda.get_device_properties(index)
+    capability = properties.major * 10 + properties.minor
+    _device_support.check(BUILD_TARGETS, _device_support.Device(index, properties.name, capability))
+    _SUPPORTED_DEVICES.add(index)
 
 
 def _fake_intersect_forward_tape_h(scene_handle, vertices, ray_o, ray_d, ray_tmax):
