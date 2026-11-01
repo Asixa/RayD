@@ -7,6 +7,8 @@ import torch
 
 import rayd.torch as rt
 
+from tests.support.geometry import box_mesh
+
 # The discovery raygen stores each chain in per-lane arrays of this size (ReflEpcMaxBounces).
 NATIVE_EPC_MAX_BOUNCES = 8
 
@@ -15,29 +17,7 @@ NATIVE_EPC_MAX_BOUNCES = 8
 class TorchEpcBounceLimitTests(unittest.TestCase):
     @staticmethod
     def _box_scene():
-        vertices = torch.tensor(
-            [[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1], [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]],
-            device="cuda",
-            dtype=torch.float32,
-        )
-        faces = torch.tensor(
-            [
-                [0, 2, 1],
-                [0, 3, 2],
-                [4, 5, 6],
-                [4, 6, 7],
-                [0, 1, 5],
-                [0, 5, 4],
-                [1, 2, 6],
-                [1, 6, 5],
-                [2, 3, 7],
-                [2, 7, 6],
-                [3, 0, 4],
-                [3, 4, 7],
-            ],
-            device="cuda",
-            dtype=torch.int32,
-        )
+        vertices, faces = box_mesh(torch.device("cuda"))
         scene = rt.Scene()
         scene.add_mesh(rt.Mesh(vertices, faces))
         scene.build()

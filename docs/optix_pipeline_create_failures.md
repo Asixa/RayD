@@ -50,6 +50,15 @@ The fix that generalized across all failing APIs was to separate multipath OptiX
 - keep multipath module optimization at the production level by default
 - use `RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS=11` for multipath pipeline compile/link
 
+The Torch backend has the same split. Its scene, intersect, and edge pipelines keep exception flags `0`, while
+`OptixLaunchPipeline::build()` in `src/runtime/optix.cpp` uses `kMultipathExceptionFlags`
+(`OPTIX_EXCEPTION_FLAG_STACK_OVERFLOW | OPTIX_EXCEPTION_FLAG_TRACE_DEPTH`). The Torch value omits the legacy
+`OPTIX_EXCEPTION_FLAG_DEBUG` bit because OptiX 9 headers no longer define it. Before 2026-10-31 the Torch multipath
+pipelines also used `0`: a Torch build compiled against the OptiX SDK 9.0 headers then failed cold
+`optixPipelineCreate(multipath)` (code 7251) for `trace_dfr_paths()` on an RTX 4090 Laptop GPU, while the release
+wheel, which is built against OptiX 8.1 headers, passed. `tests/native/test_optix_pipeline_cold_create.py` covers
+the Torch multipath operations in fresh processes.
+
 Two experimental fixes were rejected because they were not causal:
 
 - splitting `trace_reflections()` into primary/one-bounce raygen variants did not fix production cold creation
