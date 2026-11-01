@@ -170,7 +170,8 @@ string(JOIN " " RAYD_CUDA_DEFINITIONS ${RAYD_CUDA_DEFINITIONS_LIST})
 
 # Release wheels pass these through the environment because the CUDA sources
 # are compiled by explicit nvcc custom commands rather than CMake's CUDA
-# language. Local source builds may leave them empty and use nvcc's default.
+# language. Source builds use RAYD_CUDA_ARCHS instead, or leave both empty to
+# target the first local GPU.
 set(RAYD_CUDA_GENCODE_ARCHES "" CACHE STRING
     "Comma-separated CUDA architectures that receive native SASS (for example 75,80,120).")
 set(RAYD_CUDA_PTX_ARCH "" CACHE STRING
@@ -181,7 +182,18 @@ endif()
 if(DEFINED ENV{RAYD_CUDA_PTX_ARCH} AND NOT "$ENV{RAYD_CUDA_PTX_ARCH}" STREQUAL "")
     set(RAYD_CUDA_PTX_ARCH "$ENV{RAYD_CUDA_PTX_ARCH}")
 endif()
-if(RAYD_CUDA_GENCODE_ARCHES STREQUAL "")
+include("${RAYD_ROOT}/cmake/RayDCudaArchitectures.cmake")
+rayd_parse_cuda_archs(RAYD_CUDA_ARCHS_SET RAYD_CUDA_ARCHS_SASS RAYD_CUDA_ARCHS_PTX)
+set(RAYD_CUDA_PTX_ARCH_LIST "${RAYD_CUDA_PTX_ARCH}")
+if(RAYD_CUDA_ARCHS_SET)
+    if(NOT RAYD_CUDA_GENCODE_ARCHES STREQUAL "" OR NOT RAYD_CUDA_PTX_ARCH STREQUAL "")
+        message(FATAL_ERROR
+            "Set either RAYD_CUDA_ARCHS or RAYD_CUDA_GENCODE_ARCHES/RAYD_CUDA_PTX_ARCH, not both.")
+    endif()
+    string(JOIN "," RAYD_CUDA_GENCODE_ARCHES ${RAYD_CUDA_ARCHS_SASS})
+    set(RAYD_CUDA_PTX_ARCH_LIST "${RAYD_CUDA_ARCHS_PTX}")
+    message(STATUS "RayD RAYD_CUDA_ARCHS: SASS ${RAYD_CUDA_ARCHS_SASS}; PTX ${RAYD_CUDA_ARCHS_PTX}")
+elseif(RAYD_CUDA_GENCODE_ARCHES STREQUAL "")
     find_program(RAYD_NVIDIA_SMI_EXECUTABLE NAMES nvidia-smi)
     if(RAYD_NVIDIA_SMI_EXECUTABLE)
         execute_process(
@@ -204,6 +216,7 @@ if(RAYD_CUDA_GENCODE_ARCHES STREQUAL "")
 endif()
 string(REPLACE "," ";" RAYD_CUDA_GENCODE_ARCH_LIST "${RAYD_CUDA_GENCODE_ARCHES}")
 set(RAYD_CUDA_GENCODE_FLAGS_LIST "")
+set(RAYD_CUDA_SASS_ARCH_LIST "")
 foreach(RAYD_CUDA_ARCH IN LISTS RAYD_CUDA_GENCODE_ARCH_LIST)
     string(STRIP "${RAYD_CUDA_ARCH}" RAYD_CUDA_ARCH)
     if(RAYD_CUDA_ARCH STREQUAL "")
@@ -212,17 +225,29 @@ foreach(RAYD_CUDA_ARCH IN LISTS RAYD_CUDA_GENCODE_ARCH_LIST)
     if(NOT RAYD_CUDA_ARCH MATCHES "^[0-9]+$")
         message(FATAL_ERROR "Invalid CUDA architecture '${RAYD_CUDA_ARCH}' in RAYD_CUDA_GENCODE_ARCHES.")
     endif()
+    list(APPEND RAYD_CUDA_SASS_ARCH_LIST "${RAYD_CUDA_ARCH}")
     list(APPEND RAYD_CUDA_GENCODE_FLAGS_LIST
         "-gencode=arch=compute_${RAYD_CUDA_ARCH},code=sm_${RAYD_CUDA_ARCH}")
 endforeach()
-if(NOT RAYD_CUDA_PTX_ARCH STREQUAL "")
-    if(NOT RAYD_CUDA_PTX_ARCH MATCHES "^[0-9]+$")
-        message(FATAL_ERROR "Invalid CUDA architecture '${RAYD_CUDA_PTX_ARCH}' in RAYD_CUDA_PTX_ARCH.")
+foreach(RAYD_CUDA_ARCH IN LISTS RAYD_CUDA_PTX_ARCH_LIST)
+    if(NOT RAYD_CUDA_ARCH MATCHES "^[0-9]+$")
+        message(FATAL_ERROR "Invalid CUDA architecture '${RAYD_CUDA_ARCH}' in RAYD_CUDA_PTX_ARCH.")
     endif()
     list(APPEND RAYD_CUDA_GENCODE_FLAGS_LIST
-        "-gencode=arch=compute_${RAYD_CUDA_PTX_ARCH},code=compute_${RAYD_CUDA_PTX_ARCH}")
-endif()
+        "-gencode=arch=compute_${RAYD_CUDA_ARCH},code=compute_${RAYD_CUDA_ARCH}")
+endforeach()
 string(JOIN " " RAYD_CUDA_GENCODE_FLAGS ${RAYD_CUDA_GENCODE_FLAGS_LIST})
+
+# The OptiX PTX is the committed compute_70 blob that rayd_embed_ptx() emits.
+# It already equals the sm_70 source-build floor, so no target list lowers it.
+set(RAYD_DRJIT_OPTIX_PTX_ARCH 70)
+if(RAYD_CUDA_SASS_ARCH_LIST)
+    set(RAYD_CUDA_ARCHS_KNOWN TRUE)
+else()
+    set(RAYD_CUDA_ARCHS_KNOWN FALSE)
+endif()
+rayd_write_build_config("${CMAKE_CURRENT_BINARY_DIR}/_build_config.json" drjit ${RAYD_CUDA_ARCHS_KNOWN}
+    "${RAYD_CUDA_SASS_ARCH_LIST}" "${RAYD_CUDA_PTX_ARCH_LIST}" ${RAYD_DRJIT_OPTIX_PTX_ARCH})
 
 set(RAYD_INCLUDE_DIR "${RAYD_INCLUDE_ROOT}/rayd")
 set(RAYD_CORE_SOURCE_FILES
@@ -611,6 +636,7 @@ if(WIN32)
 endif()
 
 install(TARGETS _C DESTINATION rayd/drjit)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/_build_config.json" DESTINATION rayd/drjit)
 install(TARGETS rayd_core
     ARCHIVE DESTINATION rayd/drjit/lib
     LIBRARY DESTINATION rayd/drjit/lib

@@ -178,6 +178,25 @@ class BuildRecordTests(unittest.TestCase):
                 self.assertIsNone(ds.load_build_targets("drjit", "rayd.drjit._C"))
 
 
+class BuildSourceAgreementTests(unittest.TestCase):
+    def test_cmake_and_python_share_the_floor(self):
+        text = (ROOT / "cmake" / "RayDCudaArchitectures.cmake").read_text(encoding="utf-8")
+        floor = re.search(r"^set\(RAYD_MIN_CUDA_ARCH (\d+)\)$", text, re.MULTILINE)
+        self.assertIsNotNone(floor)
+        self.assertEqual(int(floor.group(1)), ds.MIN_COMPUTE_CAPABILITY)
+
+    def test_drjit_record_matches_the_committed_ptx_arch(self):
+        optix = (ROOT / "cmake" / "RayDOptix.cmake").read_text(encoding="utf-8")
+        emitted = set(re.findall(r"-arch=compute_(\d+)", optix))
+        recorded = re.search(
+            r"^set\(RAYD_DRJIT_OPTIX_PTX_ARCH (\d+)\)$",
+            (ROOT / "drjit" / "CMakeLists.txt").read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(recorded)
+        self.assertEqual(emitted, {recorded.group(1)})
+
+
 class DriverQueryTests(unittest.TestCase):
     def _fake_driver(self, devices):
         def write(pointer, value):

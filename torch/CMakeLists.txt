@@ -69,6 +69,53 @@ elseif(NOT DEFINED CMAKE_CUDA_ARCHITECTURES
         FORCE)
 endif()
 
+# RAYD_CUDA_ARCHS is the documented source-build switch shared with the Dr.Jit
+# backend. It replaces both CMake's and Caffe2's architecture lists so the two
+# never disagree.
+include("${RAYD_ROOT_DIR}/cmake/RayDCudaArchitectures.cmake")
+rayd_parse_cuda_archs(RAYD_CUDA_ARCHS_SET RAYD_CUDA_ARCHS_SASS RAYD_CUDA_ARCHS_PTX)
+if(RAYD_CUDA_ARCHS_SET)
+    if(NOT RAYD_TORCH_CUDA_GENCODE_FLAGS STREQUAL "")
+        message(FATAL_ERROR "Set either RAYD_CUDA_ARCHS or RAYD_TORCH_CUDA_GENCODE_FLAGS, not both.")
+    endif()
+    set(RAYD_TORCH_REQUESTED_ARCHITECTURES "")
+    set(TORCH_CUDA_ARCH_LIST "")
+    foreach(RAYD_CUDA_ARCH IN LISTS RAYD_CUDA_ARCHS_SASS)
+        list(APPEND RAYD_TORCH_REQUESTED_ARCHITECTURES "${RAYD_CUDA_ARCH}-real")
+        math(EXPR RAYD_CUDA_ARCH_MAJOR "${RAYD_CUDA_ARCH} / 10")
+        math(EXPR RAYD_CUDA_ARCH_MINOR "${RAYD_CUDA_ARCH} % 10")
+        set(RAYD_TORCH_ARCH_ENTRY "${RAYD_CUDA_ARCH_MAJOR}.${RAYD_CUDA_ARCH_MINOR}")
+        if(RAYD_CUDA_ARCH IN_LIST RAYD_CUDA_ARCHS_PTX)
+            list(APPEND RAYD_TORCH_REQUESTED_ARCHITECTURES "${RAYD_CUDA_ARCH}-virtual")
+            string(APPEND RAYD_TORCH_ARCH_ENTRY "+PTX")
+        endif()
+        list(APPEND TORCH_CUDA_ARCH_LIST "${RAYD_TORCH_ARCH_ENTRY}")
+    endforeach()
+    set(
+        CMAKE_CUDA_ARCHITECTURES
+        "${RAYD_TORCH_REQUESTED_ARCHITECTURES}"
+        CACHE STRING
+        "CUDA architectures for RayD Torch native kernels."
+        FORCE)
+    message(STATUS "RayD RAYD_CUDA_ARCHS: SASS ${RAYD_CUDA_ARCHS_SASS}; PTX ${RAYD_CUDA_ARCHS_PTX}")
+endif()
+
+# The ray-tracing PTX keeps its release architecture unless a requested CUDA
+# target is older, because OptiX rejects PTX newer than the device.
+set(RAYD_TORCH_OPTIX_PTX_ARCH_DEFAULT 75)
+if(NOT RAYD_TORCH_CUDA_GENCODE_FLAGS STREQUAL "")
+    rayd_cuda_targets_from_gencode("${RAYD_TORCH_CUDA_GENCODE_FLAGS}" RAYD_TORCH_SASS_ARCHS RAYD_TORCH_PTX_ARCHS)
+    set(RAYD_TORCH_ARCHS_KNOWN TRUE)
+else()
+    rayd_cuda_targets_from_architectures("${CMAKE_CUDA_ARCHITECTURES}" RAYD_TORCH_ARCHS_KNOWN
+        RAYD_TORCH_SASS_ARCHS RAYD_TORCH_PTX_ARCHS)
+endif()
+rayd_optix_ptx_arch(RAYD_TORCH_OPTIX_PTX_ARCH ${RAYD_TORCH_OPTIX_PTX_ARCH_DEFAULT}
+    ${RAYD_TORCH_SASS_ARCHS} ${RAYD_TORCH_PTX_ARCHS})
+if(NOT RAYD_TORCH_OPTIX_PTX_ARCH EQUAL RAYD_TORCH_OPTIX_PTX_ARCH_DEFAULT)
+    message(STATUS "RayD Torch OptiX PTX: compute_${RAYD_TORCH_OPTIX_PTX_ARCH}")
+endif()
+
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
 option(RAYD_TORCH_BUILD_NATIVE "Build the RayD Torch extension." ON)
@@ -164,7 +211,7 @@ install(
 # modules that read the variable below. Divergence D8: this option is the only
 # place either backend can be switched between profiles, and Dr.Jit has no
 # equivalent. Divergence D2: Dr.Jit targets compute_70.
-set(RAYD_TORCH_OPTIX_NVCC_FLAGS --std=c++17 --gpu-architecture=compute_75)
+set(RAYD_TORCH_OPTIX_NVCC_FLAGS --std=c++17 --gpu-architecture=compute_${RAYD_TORCH_OPTIX_PTX_ARCH})
 if(RAYD_TORCH_OPTIX_FAST_MATH)
     list(APPEND RAYD_TORCH_OPTIX_NVCC_FLAGS --use_fast_math)
 endif()
@@ -270,6 +317,14 @@ if(RAYD_TORCH_BUILD_NATIVE)
         message(STATUS "RayD Torch CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
     endif()
     message(STATUS "RayD Torch/Caffe2 CUDA architectures: ${TORCH_CUDA_ARCH_LIST}")
+
+    # Caffe2 adds its own -gencode flags for TORCH_CUDA_ARCH_LIST, so the
+    # installed record covers both lists.
+    rayd_cuda_targets_from_gencode("${CMAKE_CUDA_FLAGS}" RAYD_TORCH_CAFFE2_SASS_ARCHS RAYD_TORCH_CAFFE2_PTX_ARCHS)
+    rayd_write_build_config("${CMAKE_CURRENT_BINARY_DIR}/_build_config.json" torch ${RAYD_TORCH_ARCHS_KNOWN}
+        "${RAYD_TORCH_SASS_ARCHS};${RAYD_TORCH_CAFFE2_SASS_ARCHS}"
+        "${RAYD_TORCH_PTX_ARCHS};${RAYD_TORCH_CAFFE2_PTX_ARCHS}" ${RAYD_TORCH_OPTIX_PTX_ARCH})
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/_build_config.json" DESTINATION rayd/torch)
 
     # Stable ABI shims are exported by torch_cpu and torch_cuda. Link those
     # provider libraries directly: ${TORCH_LIBRARIES} also pulls in the
@@ -759,7 +814,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
             --std=c++17
-            --gpu-architecture=compute_75
+            --gpu-architecture=compute_${RAYD_TORCH_OPTIX_PTX_ARCH}
             --ftz=false
             --prec-div=true
             --prec-sqrt=true

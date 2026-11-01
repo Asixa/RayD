@@ -881,7 +881,8 @@
       ],
       "evidence": [
         "cmake/RayDOptix.cmake: rayd_embed_ptx() emits -arch=compute_70 in both the Windows and POSIX branches",
-        "torch/CMakeLists.txt: RAYD_TORCH_OPTIX_NVCC_FLAGS carries --gpu-architecture=compute_75"
+        "torch/CMakeLists.txt: RAYD_TORCH_OPTIX_NVCC_FLAGS and the penetration PTX command carry --gpu-architecture=compute_${RAYD_TORCH_OPTIX_PTX_ARCH}, whose release default is RAYD_TORCH_OPTIX_PTX_ARCH_DEFAULT 75",
+        "The Torch variable keeps its release default unless a RAYD_CUDA_ARCHS source build targets sm_70, the source floor, which lowers it to compute_70 (cmake/RayDCudaArchitectures.cmake: rayd_optix_ptx_arch); Dr.Jit already targets that floor"
       ],
       "status": "frozen"
     },
