@@ -100,8 +100,11 @@ int hitgroup_record_capacity(int hitgroup_record_count) {
 } // namespace
 
 OptixLaunchPipeline::~OptixLaunchPipeline() {
+    // Each event is recorded after this pipeline's optixLaunch, so waiting on all of them guarantees no launch
+    // still uses the pipeline when it is destroyed below (the cache evicts pipelines while the process runs).
     for (cudaEvent_t& event : params_staging_events_) {
         if (event != nullptr) {
+            cudaEventSynchronize(event);
             cudaEventDestroy(event);
             event = nullptr;
         }
@@ -262,7 +265,27 @@ std::shared_ptr<OptixLaunchPipeline> shared_optix_launch_pipeline(OptixDeviceCon
         return it->second;
 
     auto pipeline = std::make_shared<OptixLaunchPipeline>();
-    pipeline->build(context, device_index, hitgroup_capacity, config);
+    try {
+        pipeline->build(context, device_index, hitgroup_capacity, config);
+    } catch (const std::exception&) {
+        // Some drivers cannot hold several large multipath pipelines in one context at once: optixPipelineCreate()
+        // then fails with a generic COMPILE ERROR although the same pipeline creates fine on its own. Release the
+        // cached pipelines of this context that no caller still holds, then build once more. The rebuilt pipeline
+        // is the same module and configuration, so results are unchanged; a second failure is reported as is.
+        bool evicted = false;
+        for (auto entry = cache.begin(); entry != cache.end();) {
+            if (std::get<0>(entry->first) == context && entry->second.use_count() == 1) {
+                entry = cache.erase(entry);
+                evicted = true;
+            } else {
+                ++entry;
+            }
+        }
+        if (!evicted)
+            throw;
+        pipeline = std::make_shared<OptixLaunchPipeline>();
+        pipeline->build(context, device_index, hitgroup_capacity, config);
+    }
     cache[key] = pipeline;
     return pipeline;
 }

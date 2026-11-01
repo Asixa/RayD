@@ -59,6 +59,15 @@ pipelines also used `0`: a Torch build compiled against the OptiX SDK 9.0 header
 wheel, which is built against OptiX 8.1 headers, passed. `tests/native/test_optix_pipeline_cold_create.py` covers
 the Torch multipath operations in fresh processes.
 
+A second, order-dependent failure has the same message. On driver 572.16 (RTX 4090 Laptop GPU) one Torch OptiX
+context could not hold the diffraction-accumulation pipeline (about 2.3 MB of PTX) and the diffraction-path pipeline
+(about 0.9 MB) at once: whichever was created second failed with `COMPILE ERROR: failed to create pipeline`, in the
+released 0.8.0 wheel as well, with or without the OptiX disk cache. Each pipeline created fine alone, and the second
+one created fine once the first was destroyed. `shared_optix_launch_pipeline()` therefore releases the cached
+pipelines of that context that no caller still holds when a build fails, then builds once more; the destructor waits
+for the pipeline's launches before destroying it. Alternating such operations rebuilds pipelines (a disk-cache hit
+when the cache is enabled) but no longer aborts. `test_large_multipath_pipelines_alternate_in_one_process` covers it.
+
 Two experimental fixes were rejected because they were not causal:
 
 - splitting `trace_reflections()` into primary/one-bounce raygen variants did not fix production cold creation

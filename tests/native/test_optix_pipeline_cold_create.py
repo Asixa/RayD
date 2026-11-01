@@ -83,6 +83,27 @@ class TorchOptixPipelineColdCreateTests(unittest.TestCase):
                 data = run_json_case(compose(PRELUDE, body, EPILOGUE), timeout=300)
                 self.assertTrue(data["finite"])
 
+    def test_large_multipath_pipelines_alternate_in_one_process(self):
+        # On some drivers the diffraction-path and diffraction-accumulation pipelines cannot both live in one
+        # OptiX context; whichever was created second used to fail optixPipelineCreate(multipath).
+        order = ("accum_dfr_direct", "trace_dfr_paths", "accum_dfr_coherent_direct", "trace_dfr_paths")
+        steps = []
+        for index, name in enumerate(order):
+            steps.append(CASES[name])
+            steps.append(f"results_{index} = [value.detach().cpu() for value in values]")
+        body = compose(*steps)
+        epilogue = """
+            torch.cuda.synchronize()
+            outputs = [results_0, results_1, results_2, results_3]
+            print(json.dumps({
+                "finite": all(bool(torch.isfinite(value).all()) for result in outputs for value in result),
+                "paths_repeat_equal": all(torch.equal(a, b) for a, b in zip(results_1, results_3)),
+            }))
+        """
+        data = run_json_case(compose(PRELUDE, body, epilogue), timeout=300)
+        self.assertTrue(data["finite"])
+        self.assertTrue(data["paths_repeat_equal"])
+
 
 if __name__ == "__main__":
     unittest.main()
