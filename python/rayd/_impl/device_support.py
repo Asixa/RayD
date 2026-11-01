@@ -177,7 +177,9 @@ def message(targets: BuildTargets, device: Device, found: list[str], platform: s
         lines.append(f"This build supports {_sm(lowest)} and newer.")
     if cc < MIN_COMPUTE_CAPABILITY:
         return "\n".join(lines)
-    lines.append("Build RayD from source for this GPU (CUDA Toolkit 12.x and OptiX SDK 8.1+ headers):")
+    # The Dr.Jit backend embeds committed OptiX PTX; only Torch compiles its own.
+    needs = "CUDA Toolkit 12.x and OptiX SDK 8.1+ headers" if targets.backend == "torch" else "CUDA Toolkit 12.x"
+    lines.append(f"Build RayD from source for this GPU ({needs}):")
     lines += ["    " + line for line in build_command(targets.backend, cc, platform).splitlines()]
     if cc < 75:
         lines.append("CUDA 13 cannot compile for this GPU; use a CUDA 12.x toolkit.")

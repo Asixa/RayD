@@ -105,6 +105,8 @@ class MessageTests(unittest.TestCase):
         text = self._error(ds.BuildTargets("drjit", (89,), (), 70), ds.Device(1, "NVIDIA A100", 80))
         self.assertIn("no CUDA kernel image runs on sm_80 (cubins: sm_89; PTX: none)", text)
         self.assertIn("supports sm_89 and newer", text)
+        self.assertIn("(CUDA Toolkit 12.x):", text)
+        self.assertNotIn("OptiX SDK", text)
         self.assertIn("80", ds.build_command("drjit", 80))
 
     def test_build_command_per_platform(self):
