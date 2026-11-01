@@ -753,6 +753,9 @@ std::vector<at::Tensor> trace_refl_epc_field_forward_native_impl(int64_t scene_h
     at::Tensor active_ctx = active.defined() ? active : at::empty({0}, source.options().dtype(at::kBool));
     if (max_bounces < 1)
         throw std::runtime_error("max_bounces must be at least 1.");
+    // The discovery raygen keeps the chain in fixed ReflEpcMaxBounces-sized per-lane arrays.
+    if (max_bounces > ReflEpcMaxBounces)
+        throw std::runtime_error("max_bounces exceeds the native EPC limit (ReflEpcMaxBounces).");
 
     SceneCache& scene = get_scene(scene_handle);
     require_scene_device(scene, source, "source");
@@ -970,6 +973,8 @@ std::vector<at::Tensor> reflection_epc_paths_forward_native_impl(
     require_flat_i32(surface_group_members, "surface_group_members");
     if (max_bounces < 1)
         throw std::runtime_error("max_bounces must be at least 1.");
+    if (max_bounces > ReflEpcMaxBounces)
+        throw std::runtime_error("max_bounces exceeds the native EPC limit (ReflEpcMaxBounces).");
     if (!(plane_tolerance >= 0.0) || !std::isfinite(plane_tolerance))
         throw std::runtime_error("plane_tolerance must be finite and non-negative.");
     if (expected_prim_ids.size(0) != source.size(0) || expected_prim_ids.size(1) != max_bounces)
