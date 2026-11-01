@@ -95,8 +95,8 @@ R575 is the driver branch CUDA 12.9 requires
 ([CUDA 12.9 release notes](https://docs.nvidia.com/cuda/archive/12.9.0/cuda-toolkit-release-notes/index.html):
 576.02 on Windows, 575.51.03 on Linux). The failure is reproduced on 572.16; no
 R575 or newer driver and no CUDA 12.9 Torch build has been tested. RayD does not
-check the driver version at
-run time. The committed PTX and `math.h` are deliberately left unchanged, because
+check the driver version at run time. The committed PTX and `math.h` are
+deliberately left unchanged, because
 `math.h` is in every committed module's include closure and a rewrite would mean
 regenerating all eight (ADR-0035 `A4`).
 
