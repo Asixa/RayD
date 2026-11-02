@@ -138,6 +138,26 @@ RAYD_HOST_DEVICE math::Vec3f spawn_from_surface(math::Vec3f point, math::Vec3f o
     return math::add(point, math::scale(outgoing_normal, surface_spawn_offset(coordinate_scale)));
 }
 
+/// Where a visibility segment should end for a point on a wedge's edge: just off both faces, along the exterior
+/// bisector. A segment ending exactly on the edge grazes the wedge's own faces, and one running into the solid crosses
+/// no face at all before it stops. That end takes no along-segment bias, which could step across a face it has to
+/// cross. Opposite normals (a thin screen) have no bisector, so the point stays and keeps the bias instead.
+struct WedgeVisibilityEnd {
+    math::Vec3f point;
+    float bias;
+};
+
+RAYD_HOST_DEVICE WedgeVisibilityEnd wedge_visibility_end(math::Vec3f edge_point, math::Vec3f n0, math::Vec3f n1,
+                                                         float bias) {
+    const math::Vec3f bisector = math::add(n0, n1);
+    const float squared = math::dot(bisector, bisector);
+    if (!(squared > 1.0e-12f)) {
+        return {edge_point, bias};
+    }
+    const float offset = fmaxf(bias, surface_spawn_offset(coordinate_magnitude(edge_point)));
+    return {math::add(edge_point, math::scale(bisector, offset / sqrtf(squared))), 0.0f};
+}
+
 /// The plane of a candidate blocker, as stored for the scene's triangles.
 struct SurfacePlane {
     math::Vec3f point;

@@ -139,6 +139,11 @@ template <typename Policy, typename Traverser> struct DiffractionAccumulationAlg
     }
     RAYD_HOST_DEVICE static int state_edge_index_at(int i) { return Policy::state_edge_index_at(i); }
     RAYD_HOST_DEVICE static Vec3f state_edge_pos_at(int i) { return Policy::state_edge_pos_at(i); }
+    /// The point on this state's edge as a visibility segment should see it. The physics keeps the true edge point.
+    RAYD_HOST_DEVICE static ::rayd::shared::rt::WedgeVisibilityEnd edge_visibility_end(int i, Vec3f edge_point) {
+        return ::rayd::shared::rt::wedge_visibility_end(edge_point, Policy::state_n0_at(i), Policy::state_n1_at(i),
+                                                        kDfrRayBias);
+    }
     RAYD_HOST_DEVICE static Vec3f state_edge_dir_at(int i) { return Policy::state_edge_dir_at(i); }
     RAYD_HOST_DEVICE static float state_edge_t_min_at(int i) { return Policy::state_edge_t_min_at(i); }
     RAYD_HOST_DEVICE static float state_edge_t_max_at(int i) { return Policy::state_edge_t_max_at(i); }
@@ -183,14 +188,19 @@ template <typename Policy, typename Traverser> struct DiffractionAccumulationAlg
     }
 
     template <bool PrimaryOnly> RAYD_DEVICE bool visible_segment_impl(Vec3f start, Vec3f end) const {
+        return visible_segment_impl<PrimaryOnly>(start, end, kDfrRayBias, kDfrRayBias);
+    }
+
+    template <bool PrimaryOnly>
+    RAYD_DEVICE bool visible_segment_impl(Vec3f start, Vec3f end, float start_bias, float end_bias) const {
         const Vec3f delta = end - start;
         const float dist = ::rayd::shared::math::length_f32(delta);
         if (dist <= 1e-5f) {
             return true;
         }
         const Vec3f dir = (1.f / dist) * delta;
-        const Vec3f origin = start + kDfrRayBias * dir;
-        const float tmax = fmaxf(dist - 2.f * kDfrRayBias, 0.f);
+        const Vec3f origin = start + start_bias * dir;
+        const float tmax = fmaxf(dist - start_bias - end_bias, 0.f);
         if (primary.trace_occluded(origin, dir, kRayTMin, tmax)) {
             return false;
         }
@@ -492,7 +502,8 @@ template <typename Policy, typename Traverser> struct DiffractionAccumulationAlg
             const int ignore1 = Policy::params().coherent_adjacent_face1 != nullptr
                                     ? Policy::params().coherent_adjacent_face1[state_idx]
                                     : -1;
-            if (!visible_segment_ignore_two_prims_impl<PrimaryOnly>(visibility_point, target, ignore0, ignore1)) {
+            if (!visible_segment_ignore_two_prims_impl<PrimaryOnly>(
+                    edge_visibility_end(state_idx, visibility_point).point, target, ignore0, ignore1)) {
                 if (Policy::params().collect_debug_counts != 0 &&
                     Policy::params().out_visibility_reject_count != nullptr) {
                     atomic_add(Policy::params().out_visibility_reject_count + cell, 1);
@@ -877,17 +888,21 @@ template <typename Policy, typename Traverser> struct DiffractionAccumulationAlg
             }
         }
 
-        const bool source_visible = visible_segment_impl<PrimaryOnly>(source, edge_point);
+        const ::rayd::shared::rt::WedgeVisibilityEnd visibility_end = edge_visibility_end(state_idx, edge_point);
+        const Vec3f visibility_point = visibility_end.point;
+        const bool source_visible =
+            visible_segment_impl<PrimaryOnly>(source, visibility_point, kDfrRayBias, visibility_end.bias);
         bool target_visible = true;
         if constexpr (IncludeDirect || IncludeKeller) {
             if (is_direct || is_keller) {
-                target_visible = visible_segment_impl<PrimaryOnly>(edge_point, target);
+                target_visible =
+                    visible_segment_impl<PrimaryOnly>(visibility_point, target, visibility_end.bias, kDfrRayBias);
             }
         }
         if constexpr (IncludeSuffix) {
             if (is_suffix) {
                 target_visible =
-                    visible_segment_ignore_prim_impl<PrimaryOnly>(edge_point, connection_target, suffix_prim) &&
+                    visible_segment_ignore_prim_impl<PrimaryOnly>(visibility_point, connection_target, suffix_prim) &&
                     visible_segment_ignore_prim_impl<PrimaryOnly>(connection_target, target, suffix_prim);
             }
         }
@@ -993,7 +1008,9 @@ template <typename Policy, typename Traverser> struct DiffractionAccumulationAlg
         const Vec3f edge_dir = ::rayd::shared::math::normalize_f32(state_edge_dir_at(state_idx));
         const Vec3f edge_point = edge_pos + edge_t * edge_dir;
         const Vec3f source = state_src_at(state_idx);
-        Policy::params().temp_visibility[lane] = visible_segment_impl<PrimaryOnly>(source, edge_point) ? 1u : 0u;
+        const ::rayd::shared::rt::WedgeVisibilityEnd visibility_end = edge_visibility_end(state_idx, edge_point);
+        Policy::params().temp_visibility[lane] =
+            visible_segment_impl<PrimaryOnly>(source, visibility_end.point, kDfrRayBias, visibility_end.bias) ? 1u : 0u;
     }
 
     template <bool PrimaryOnly>
@@ -1044,7 +1061,8 @@ template <typename Policy, typename Traverser> struct DiffractionAccumulationAlg
             return;
         }
 
-        if (!visible_segment_impl<PrimaryOnly>(edge_point, target)) {
+        const ::rayd::shared::rt::WedgeVisibilityEnd visibility_end = edge_visibility_end(state_idx, edge_point);
+        if (!visible_segment_impl<PrimaryOnly>(visibility_end.point, target, visibility_end.bias, kDfrRayBias)) {
             if (Policy::params().collect_debug_counts != 0) {
                 atomic_add(Policy::params().out_vis_rejects, 1);
             }
@@ -1154,7 +1172,9 @@ template <typename Policy, typename Traverser> struct DiffractionAccumulationAlg
             return;
         }
 
-        const bool visible = visible_segment_ignore_prim_impl<PrimaryOnly>(edge_point, connection_target, suffix_prim);
+        const bool visible =
+            visible_segment_ignore_prim_impl<PrimaryOnly>(edge_visibility_end(state_idx, edge_point).point,
+                                                          connection_target, suffix_prim);
         Policy::params().temp_visibility[lane] = visible ? 1u : 0u;
         if (!visible && Policy::params().collect_debug_counts != 0) {
             atomic_add(Policy::params().out_vis_rejects, 1);
@@ -1307,8 +1327,12 @@ template <typename Policy, typename Traverser> struct DiffractionAccumulationAlg
         const Vec3f visibility_edge_point = edge_pos + visibility_edge_t * edge_dir;
 
         if (Policy::params().prefilter_visibility != 0) {
-            const bool source_visible = visible_segment_impl<PrimaryOnly>(source, visibility_edge_point);
-            const bool target_visible = visible_segment_impl<PrimaryOnly>(visibility_edge_point, target);
+            const ::rayd::shared::rt::WedgeVisibilityEnd visibility_end =
+                edge_visibility_end(state_idx, visibility_edge_point);
+            const bool source_visible =
+                visible_segment_impl<PrimaryOnly>(source, visibility_end.point, kDfrRayBias, visibility_end.bias);
+            const bool target_visible =
+                visible_segment_impl<PrimaryOnly>(visibility_end.point, target, visibility_end.bias, kDfrRayBias);
             if (!source_visible || !target_visible) {
                 if (Policy::params().collect_debug_counts != 0 &&
                     Policy::params().out_visibility_reject_count != nullptr) {

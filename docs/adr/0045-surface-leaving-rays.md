@@ -40,8 +40,13 @@ records the value.
   segment lies in the plane. Native paths retry up to four times, one retry per plane at a corner; Dr.Jit's HitObject
   path casts three times, because it is recorded inline and cannot branch on the hit count. A blocker still reported
   after the last attempt stands, so the answer errs towards blocked.
-- **Diffraction segments** are unchanged. A scaled along-segment bias was tried and rejected: at 200 km it reached
-  9.5 cm and multiplied the paths of a far-moved room tenfold against the same room near the origin.
+- **Diffraction segments** that end on a wedge's edge end just off both faces instead, along the exterior bisector,
+  by `max(1e-4, 2t)`, with no along-segment bias at that end (`rt::wedge_visibility_end`). A segment ending exactly on
+  the edge grazes the wedge's own faces, and one running into the solid crosses no face before it stops. Only Torch's
+  OptiX path export had this; the shared path export and all accumulation did not, which made the backends disagree.
+  A thin screen has opposite normals and no bisector, so its point stays and keeps the bias. A scaled along-segment
+  bias was tried first and rejected: at 200 km it reached 9.5 cm and multiplied the paths of a far-moved room tenfold
+  against the same room near the origin.
 - **Gradients** do not see the offset. It is detached in Dr.Jit, and Torch's backward and JVP replay from the surface
   point. This removes the old `1e-5 * direction` term from those derivatives, which was a tiny artifact, not physics.
 - The minimum ray distance stays `1e-5`, and every value in `numeric_policy` stays frozen.
