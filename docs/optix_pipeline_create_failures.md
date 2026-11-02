@@ -72,8 +72,11 @@ flags, optimization level and register count only changed the outcome by changin
 changes can look like fixes. Treat a change in this message after a one-line kernel edit as this cache effect first.
 
 `shared_optix_launch_pipeline()` therefore answers a failed build by releasing the cached pipelines of that context
-that no caller still holds and building once more with the disk cache off; the destructor waits for the pipeline's
-launches before destroying it. Alternating such operations rebuilds pipelines but no longer aborts.
+that no caller still holds and building again, then, if that fails too, building without the disk cache; the
+destructor waits for the pipeline's launches before destroying it. Alternating such operations rebuilds pipelines
+(a cache hit of a few seconds) but no longer aborts. An unhealthy cache makes every process pay the full compile, 19 s
+for the diffraction-accumulation module on an RTX 4090 Laptop GPU: if that module is slow to start in every process,
+try a fresh `OPTIX_CACHE_PATH` before looking elsewhere.
 `test_large_multipath_pipelines_alternate_in_one_process` covers it.
 
 Two experimental fixes were rejected because they were not causal:

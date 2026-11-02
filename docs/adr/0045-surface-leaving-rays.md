@@ -87,6 +87,11 @@ Rays RayD spawns itself (`trace_reflections`, EPC, `visible`) already do this.
 - Dr.Jit's symbolic reflection path traces through `scene.intersect`, so its `1e-3` minimum still hides geometry
   closer than 1 mm along the ray. The native path (`symbolic=False`) does not have this limit.
 - Surfel, SDF, mixed-scene and the dormant penetration paths keep their own policies.
+- Known open difference: on identical inputs in a town model with coordinates up to about 6500, Torch OptiX and CUDA
+  still differ by about 8% in first-order diffraction paths and 14% in diffraction accumulation hits, OptiX higher;
+  total power differs by 2-8%. The same scenes near the origin agree within 0.5%. Which backend is right at large
+  coordinates is not established. Comparing the two with different random inputs overstates this: diffraction samples
+  few edges, so job-to-job sampling noise alone reaches tens of percent.
 
 ## Consequences
 
