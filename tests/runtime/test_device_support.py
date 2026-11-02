@@ -48,6 +48,21 @@ class CompatibilityRuleTests(unittest.TestCase):
         self.assertEqual(ds.problems(targets, 86), [])
         self.assertTrue(ds.problems(targets, 90))
 
+    def test_jetson_and_discrete_cubins_do_not_cross(self):
+        self.assertIn("no CUDA kernel image runs on sm_89", ds.problems(ds.BuildTargets("drjit", (87,), (), 70), 89)[0])
+        self.assertTrue(ds.problems(ds.BuildTargets("drjit", (72,), (), 70), 75))
+        self.assertTrue(ds.problems(ds.BuildTargets("drjit", (80, 86), (), 70), 87))
+        self.assertTrue(ds.problems(ds.BuildTargets("drjit", (70,), (), 70), 72))
+        for arch in (72, 87):
+            with self.subTest(arch=arch):
+                self.assertEqual(ds.problems(ds.BuildTargets("drjit", (arch,), (), 70), arch), [])
+
+    def test_release_builds_run_on_jetson(self):
+        self.assertEqual(ds.problems(RELEASE_TORCH, 87), [])
+
+    def test_ptx_runs_forward_on_jetson(self):
+        self.assertEqual(ds.problems(ds.BuildTargets("drjit", (), (75,), 70), 87), [])
+
     def test_ptx_runs_forward_only(self):
         targets = ds.BuildTargets("drjit", (), (75,), 70)
         self.assertEqual(ds.problems(targets, 120), [])
@@ -78,6 +93,8 @@ class CompatibilityRuleTests(unittest.TestCase):
         self.assertEqual(OPTIX_ABOVE_VOLTA.lowest_supported, 75)
         self.assertEqual(ds.BuildTargets("torch", (70, 89), (), 70).lowest_supported, 70)
         self.assertEqual(ds.BuildTargets("drjit", (89,), (), 70).lowest_supported, 89)
+        self.assertEqual(ds.BuildTargets("drjit", (87, 120), (120,), 70).lowest_supported, 120)
+        self.assertEqual(ds.BuildTargets("drjit", (87,), (), 70).lowest_supported, 87)
         self.assertIsNone(ds.BuildTargets("drjit", None, (), None).lowest_supported)
 
 
@@ -106,6 +123,12 @@ class MessageTests(unittest.TestCase):
         self.assertIn("(CUDA Toolkit 12.x):", text)
         self.assertNotIn("OptiX SDK", text)
         self.assertIn("80", ds.build_command("drjit", 80))
+
+    def test_message_for_a_jetson_only_build(self):
+        text = self._error(ds.BuildTargets("torch", (87,), (), 70), ds.Device(0, "NVIDIA GeForce RTX 4090", 89))
+        self.assertIn("no CUDA kernel image runs on sm_89 (cubins: sm_87; PTX: none)", text)
+        self.assertIn("supports only sm_87 (Jetson)", text)
+        self.assertNotIn("and newer", text)
 
     def test_build_command_per_platform(self):
         self.assertIn(

@@ -51,7 +51,7 @@ Each layer has its own compatibility rule:
 
 | Layer | Rule | Below sm_70 | Volta (sm_70) |
 | --- | --- | --- | --- |
-| RayD CUDA kernels | A cubin for `sm_X.y` runs on `sm_X.z` with `z >= y`; PTX JIT-compiles forward to newer GPUs only ([CUDA application compatibility](https://docs.nvidia.com/cuda/archive/12.8.1/cuda-c-programming-guide/index.html#application-compatibility)). Release wheels carry `sm_70`..`sm_120` cubins and `compute_120` PTX. | No kernel image; launches fail with "no kernel image is available for execution on the device". | Runs (`sm_70` cubin). |
+| RayD CUDA kernels | A cubin for `sm_X.y` runs on `sm_X.z` with `z >= y`, except that Jetson (`sm_72`, `sm_87`) and discrete GPU cubins never cross; PTX JIT-compiles forward to newer GPUs only ([CUDA application compatibility](https://docs.nvidia.com/cuda/archive/12.8.1/cuda-c-programming-guide/index.html#application-compatibility)). Release wheels carry `sm_70`..`sm_120` cubins and `compute_120` PTX. | No kernel image; launches fail with "no kernel image is available for execution on the device". | Runs (`sm_70` cubin). |
 | RayD OptiX programs | OptiX rejects a module whose PTX target is newer than the device, so PTX must be built for the oldest GPU to support ([NVIDIA OptiX forum guidance](https://forums.developer.nvidia.com/t/problem-with-running-optix-6-5-program-invalid-value-for-gpu-architecture/157284/2)). Dr.Jit ships committed `compute_70` PTX and Torch compiles `compute_70` PTX ([ADR-0044](../adr/0044-torch-optix-ptx-at-the-volta-floor.md)). | Module creation fails. | Both backends target it. |
 | Dr.Jit 1.3.1 | Generates its own PTX for the device at run time; requires compute capability 5.0 or newer ([drjit-core](https://github.com/mitsuba-renderer/drjit-core)). | Dr.Jit itself works; RayD kernels do not. | Runs. |
 | PyTorch 2.10 | `cu128` wheels contain `sm_70`..`sm_120`; Maxwell and Pascal need the `cu126` wheels ([PyTorch announcement](https://dev-discuss.pytorch.org/t/cuda-toolkit-version-and-architecture-support-update-maxwell-and-pascal-architecture-support-removed-in-cuda-12-8-and-12-9-builds/3128)). | PyTorch `cu128` itself cannot run. | Runs. |
@@ -109,7 +109,9 @@ OptiX PTX architecture compiled into that build
 compares the record with the device's compute capability:
 
 - CUDA kernels run when a cubin has the device's major version and an equal or
-  lower minor version, or when a PTX target is at or below the device.
+  lower minor version, or when a PTX target is at or below the device. Jetson
+  architectures (`sm_72`, `sm_87`) run only their own cubin, and discrete GPUs
+  never run a Jetson cubin.
 - OptiX programs run when their PTX target is at or below the device; this part
   is skipped when `RAYD_DISABLE_OPTIX=1` turns OptiX off.
 - Anything below `sm_70` is rejected outright, without a build suggestion.

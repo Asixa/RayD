@@ -30,6 +30,10 @@ from pathlib import Path
 # from source. cmake/RayDCudaArchitectures.cmake holds the same floor.
 MIN_COMPUTE_CAPABILITY = 70
 
+# Jetson architectures. Cubins do not cross between these and discrete GPUs in
+# either direction, so a sm_87 cubin fails on sm_89 with "no kernel image".
+TEGRA_COMPUTE_CAPABILITIES = frozenset({72, 87})
+
 SKIP_ENVIRONMENT = "RAYD_SKIP_DEVICE_CHECK"
 DISABLE_OPTIX_ENVIRONMENT = "RAYD_DISABLE_OPTIX"
 REPOSITORY_URL = "https://github.com/Asixa/RayD"
@@ -65,7 +69,9 @@ class BuildTargets:
         """Lowest compute capability that can run every compiled component."""
         floors = []
         if self.sass is not None:
-            floors.append(min(self.sass + self.ptx))
+            arches = self.sass + self.ptx
+            discrete = [arch for arch in arches if arch not in TEGRA_COMPUTE_CAPABILITIES]
+            floors.append(min(discrete or arches))
         if self.optix_ptx is not None:
             floors.append(self.optix_ptx)
         return max(floors + [MIN_COMPUTE_CAPABILITY]) if floors else None
@@ -124,12 +130,21 @@ def load_build_targets(backend: str, extension: str) -> BuildTargets | None:
     return targets
 
 
+def _cubin_runs(arch: int, compute_capability: int) -> bool:
+    if arch == compute_capability:
+        return True
+    if arch in TEGRA_COMPUTE_CAPABILITIES or compute_capability in TEGRA_COMPUTE_CAPABILITIES:
+        return False
+    return arch // 10 == compute_capability // 10 and arch < compute_capability
+
+
 def problems(targets: BuildTargets, compute_capability: int, *, optix: bool = True) -> list[str]:
     """Reasons `targets` cannot run on `compute_capability`; empty when it can.
 
     A cubin runs on its own major architecture at the same or a higher minor
-    revision, PTX runs on its own architecture and every later one, and OptiX
-    rejects programs whose PTX target is newer than the device.
+    revision, except that Jetson cubins and discrete GPU cubins never cross. PTX
+    runs on its own architecture and every later one, and OptiX rejects programs
+    whose PTX target is newer than the device.
     """
     cc = compute_capability
     found = []
@@ -140,7 +155,7 @@ def problems(targets: BuildTargets, compute_capability: int, *, optix: bool = Tr
         )
         return found
     if targets.sass is not None:
-        native = any(arch // 10 == cc // 10 and arch <= cc for arch in targets.sass)
+        native = any(_cubin_runs(arch, cc) for arch in targets.sass)
         forward = any(arch <= cc for arch in targets.ptx)
         if not native and not forward:
             images = ", ".join(_sm(arch) for arch in targets.sass) or "none"
@@ -173,7 +188,9 @@ def message(targets: BuildTargets, device: Device, found: list[str], platform: s
     ]
     lines += [f"  - {item}" for item in found]
     lowest = targets.lowest_supported
-    if lowest is not None:
+    if lowest in TEGRA_COMPUTE_CAPABILITIES:
+        lines.append(f"This build supports only {_sm(lowest)} (Jetson).")
+    elif lowest is not None:
         lines.append(f"This build supports {_sm(lowest)} and newer.")
     if cc < MIN_COMPUTE_CAPABILITY:
         return "\n".join(lines)
