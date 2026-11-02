@@ -30,9 +30,12 @@ from pathlib import Path
 # from source. cmake/RayDCudaArchitectures.cmake holds the same floor.
 MIN_COMPUTE_CAPABILITY = 70
 
-# Jetson architectures. Cubins do not cross between these and discrete GPUs in
-# either direction, so a sm_87 cubin fails on sm_89 with "no kernel image".
-TEGRA_COMPUTE_CAPABILITIES = frozenset({72, 87})
+# Jetson and embedded architectures, which run only their own cubin. NVIDIA supports
+# no binary compatibility on Tegra or between Tegra and desktop, so a sm_87 cubin
+# fails on sm_89 with "no kernel image". NVIDIA lists Xavier at 7.2, Orin at 8.7, and
+# Thor at 11.0. It names no product for 10.1, which follows PyTorch's exclusion of
+# 10.1 from sm_100 hardware; a wrong rejection here only asks for a rebuild.
+EXACT_CUBIN_COMPUTE_CAPABILITIES = frozenset({72, 87, 101, 110})
 
 SKIP_ENVIRONMENT = "RAYD_SKIP_DEVICE_CHECK"
 DISABLE_OPTIX_ENVIRONMENT = "RAYD_DISABLE_OPTIX"
@@ -64,17 +67,33 @@ class BuildTargets:
     def distribution(self) -> str:
         return _DISTRIBUTIONS.get(self.backend, f"rayd-{self.backend}")
 
-    @property
-    def lowest_supported(self) -> int | None:
-        """Lowest compute capability that can run every compiled component."""
-        floors = []
-        if self.sass is not None:
-            arches = self.sass + self.ptx
-            discrete = [arch for arch in arches if arch not in TEGRA_COMPUTE_CAPABILITIES]
-            floors.append(min(discrete or arches))
-        if self.optix_ptx is not None:
-            floors.append(self.optix_ptx)
-        return max(floors + [MIN_COMPUTE_CAPABILITY]) if floors else None
+    def coverage(self) -> str | None:
+        """The GPUs every compiled component runs on, in words; None when the record does not say.
+
+        A cubin reaches only later minor revisions of its own major version, so
+        "and newer" is true only of forward-compatible PTX.
+        """
+        if self.sass is None:
+            return None
+        floor = max(self.optix_ptx or 0, MIN_COMPUTE_CAPABILITY)
+        exact = [arch for arch in sorted(self.sass) if arch in EXACT_CUBIN_COMPUTE_CAPABILITIES and arch >= floor]
+        families: dict[int, int] = {}
+        for arch in sorted(self.sass):
+            if arch not in EXACT_CUBIN_COMPUTE_CAPABILITIES:
+                families.setdefault(arch // 10, arch)
+        discrete = [
+            f"sm_{major}x from {_sm(max(lowest, floor))}"
+            for major, lowest in families.items()
+            if max(lowest, floor) // 10 == major
+        ]
+        parts = []
+        if discrete:
+            parts.append("discrete GPUs " + ", ".join(discrete))
+        if exact:
+            parts.append("exactly " + ", ".join(_sm(arch) for arch in exact) + " (Jetson and embedded GPUs)")
+        if self.ptx:
+            parts.append(f"{_sm(max(min(self.ptx), floor))} and newer through PTX")
+        return "; ".join(parts) or None
 
 
 @dataclass(frozen=True)
@@ -133,7 +152,7 @@ def load_build_targets(backend: str, extension: str) -> BuildTargets | None:
 def _cubin_runs(arch: int, compute_capability: int) -> bool:
     if arch == compute_capability:
         return True
-    if arch in TEGRA_COMPUTE_CAPABILITIES or compute_capability in TEGRA_COMPUTE_CAPABILITIES:
+    if arch in EXACT_CUBIN_COMPUTE_CAPABILITIES or compute_capability in EXACT_CUBIN_COMPUTE_CAPABILITIES:
         return False
     return arch // 10 == compute_capability // 10 and arch < compute_capability
 
@@ -187,11 +206,9 @@ def message(targets: BuildTargets, device: Device, found: list[str], platform: s
         f"(compute capability {_version(cc)}, {_sm(cc)})."
     ]
     lines += [f"  - {item}" for item in found]
-    lowest = targets.lowest_supported
-    if lowest in TEGRA_COMPUTE_CAPABILITIES:
-        lines.append(f"This build supports only {_sm(lowest)} (Jetson).")
-    elif lowest is not None:
-        lines.append(f"This build supports {_sm(lowest)} and newer.")
+    coverage = targets.coverage()
+    if coverage is not None:
+        lines.append(f"This build runs on {coverage}.")
     if cc < MIN_COMPUTE_CAPABILITY:
         return "\n".join(lines)
     # The Dr.Jit backend embeds committed OptiX PTX; only Torch compiles its own.

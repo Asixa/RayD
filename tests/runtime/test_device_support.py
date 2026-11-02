@@ -35,7 +35,7 @@ CLEAN_ENVIRONMENT = {ds.SKIP_ENVIRONMENT: "", ds.DISABLE_OPTIX_ENVIRONMENT: ""}
 
 class CompatibilityRuleTests(unittest.TestCase):
     def test_release_builds_run_on_covered_gpus(self):
-        for cc in (70, 75, 80, 86, 89, 90, 100, 103, 120, 121):
+        for cc in (70, 75, 80, 86, 87, 89, 90, 100, 101, 103, 120, 121):
             with self.subTest(cc=cc):
                 self.assertEqual(ds.problems(RELEASE_DRJIT, cc), [])
                 self.assertEqual(ds.problems(RELEASE_TORCH, cc), [])
@@ -53,12 +53,19 @@ class CompatibilityRuleTests(unittest.TestCase):
         self.assertTrue(ds.problems(ds.BuildTargets("drjit", (72,), (), 70), 75))
         self.assertTrue(ds.problems(ds.BuildTargets("drjit", (80, 86), (), 70), 87))
         self.assertTrue(ds.problems(ds.BuildTargets("drjit", (70,), (), 70), 72))
-        for arch in (72, 87):
+        self.assertTrue(ds.problems(ds.BuildTargets("drjit", (100,), (), 70), 101))
+        self.assertTrue(ds.problems(ds.BuildTargets("drjit", (101,), (), 70), 103))
+        self.assertTrue(ds.problems(ds.BuildTargets("drjit", (100,), (), 70), 110))
+        for arch in (72, 87, 101, 110):
             with self.subTest(arch=arch):
                 self.assertEqual(ds.problems(ds.BuildTargets("drjit", (arch,), (), 70), arch), [])
 
-    def test_release_builds_run_on_jetson(self):
-        self.assertEqual(ds.problems(RELEASE_TORCH, 87), [])
+    def test_discrete_minor_revisions_still_share_cubins(self):
+        self.assertEqual(ds.problems(ds.BuildTargets("drjit", (100,), (), 70), 103), [])
+        self.assertEqual(ds.problems(ds.BuildTargets("drjit", (80,), (), 70), 89), [])
+
+    def test_thor_is_not_covered_by_release_builds(self):
+        self.assertIn("no CUDA kernel image runs on sm_110", ds.problems(RELEASE_TORCH, 110)[0])
 
     def test_ptx_runs_forward_on_jetson(self):
         self.assertEqual(ds.problems(ds.BuildTargets("drjit", (), (75,), 70), 87), [])
@@ -87,15 +94,36 @@ class CompatibilityRuleTests(unittest.TestCase):
         self.assertEqual(ds.problems(targets, 75), [])
         self.assertEqual(len(ds.problems(targets, 70)), 1)
 
-    def test_lowest_supported(self):
-        self.assertEqual(RELEASE_DRJIT.lowest_supported, 70)
-        self.assertEqual(RELEASE_TORCH.lowest_supported, 70)
-        self.assertEqual(OPTIX_ABOVE_VOLTA.lowest_supported, 75)
-        self.assertEqual(ds.BuildTargets("torch", (70, 89), (), 70).lowest_supported, 70)
-        self.assertEqual(ds.BuildTargets("drjit", (89,), (), 70).lowest_supported, 89)
-        self.assertEqual(ds.BuildTargets("drjit", (87, 120), (120,), 70).lowest_supported, 120)
-        self.assertEqual(ds.BuildTargets("drjit", (87,), (), 70).lowest_supported, 87)
-        self.assertIsNone(ds.BuildTargets("drjit", None, (), None).lowest_supported)
+    def test_coverage_of_a_release_build(self):
+        self.assertEqual(
+            RELEASE_TORCH.coverage(),
+            "discrete GPUs sm_7x from sm_70, sm_8x from sm_80, sm_9x from sm_90, sm_10x from sm_100, "
+            "sm_12x from sm_120; "
+            "exactly sm_87, sm_101 (Jetson and embedded GPUs); sm_120 and newer through PTX",
+        )
+
+    def test_coverage_claims_newer_gpus_only_through_ptx(self):
+        self.assertEqual(ds.BuildTargets("drjit", (89,), (), 70).coverage(), "discrete GPUs sm_8x from sm_89")
+        self.assertEqual(
+            ds.BuildTargets("torch", (70, 89), (), 70).coverage(), "discrete GPUs sm_7x from sm_70, sm_8x from sm_89"
+        )
+        self.assertEqual(ds.BuildTargets("drjit", (), (75,), 70).coverage(), "sm_75 and newer through PTX")
+
+    def test_coverage_of_jetson_builds(self):
+        self.assertEqual(ds.BuildTargets("drjit", (87,), (), 70).coverage(), "exactly sm_87 (Jetson and embedded GPUs)")
+        self.assertEqual(
+            ds.BuildTargets("drjit", (87, 120), (120,), 70).coverage(),
+            "discrete GPUs sm_12x from sm_120; exactly sm_87 (Jetson and embedded GPUs); sm_120 and newer through PTX",
+        )
+
+    def test_coverage_respects_the_optix_target(self):
+        self.assertIn("sm_7x from sm_75", OPTIX_ABOVE_VOLTA.coverage())
+        self.assertEqual(ds.BuildTargets("drjit", (70, 89), (), 80).coverage(), "discrete GPUs sm_8x from sm_89")
+        self.assertIsNone(ds.BuildTargets("drjit", (87,), (), 89).coverage())
+
+    def test_coverage_is_unknown_without_a_cuda_record(self):
+        self.assertIsNone(ds.BuildTargets("drjit", None, (), None).coverage())
+        self.assertIsNone(ds.BuildTargets("torch", None, (), 75).coverage())
 
 
 class MessageTests(unittest.TestCase):
@@ -109,7 +137,7 @@ class MessageTests(unittest.TestCase):
         text = self._error(OPTIX_ABOVE_VOLTA, ds.Device(0, "Tesla V100-SXM2-16GB", 70))
         self.assertIn("rayd-torch cannot run on CUDA device 0 'Tesla V100-SXM2-16GB'", text)
         self.assertIn("compute capability 7.0, sm_70", text)
-        self.assertIn("supports sm_75 and newer", text)
+        self.assertIn("This build runs on discrete GPUs sm_7x from sm_75", text)
         for line in ds.build_command("torch", 70).splitlines():
             self.assertIn(line, text)
         self.assertIn("CUDA 12.x", text)
@@ -119,7 +147,7 @@ class MessageTests(unittest.TestCase):
     def test_message_for_a_source_build_that_omits_the_gpu(self):
         text = self._error(ds.BuildTargets("drjit", (89,), (), 70), ds.Device(1, "NVIDIA A100", 80))
         self.assertIn("no CUDA kernel image runs on sm_80 (cubins: sm_89; PTX: none)", text)
-        self.assertIn("supports sm_89 and newer", text)
+        self.assertIn("This build runs on discrete GPUs sm_8x from sm_89.", text)
         self.assertIn("(CUDA Toolkit 12.x):", text)
         self.assertNotIn("OptiX SDK", text)
         self.assertIn("80", ds.build_command("drjit", 80))
@@ -127,7 +155,18 @@ class MessageTests(unittest.TestCase):
     def test_message_for_a_jetson_only_build(self):
         text = self._error(ds.BuildTargets("torch", (87,), (), 70), ds.Device(0, "NVIDIA GeForce RTX 4090", 89))
         self.assertIn("no CUDA kernel image runs on sm_89 (cubins: sm_87; PTX: none)", text)
-        self.assertIn("supports only sm_87 (Jetson)", text)
+        self.assertIn("This build runs on exactly sm_87 (Jetson and embedded GPUs).", text)
+        self.assertNotIn("and newer", text)
+
+    def test_message_on_jetson_does_not_claim_newer_gpus(self):
+        text = self._error(ds.BuildTargets("torch", (80,), (), 70), ds.Device(0, "Jetson AGX Orin", 87))
+        self.assertIn("no CUDA kernel image runs on sm_87 (cubins: sm_80; PTX: none)", text)
+        self.assertIn("This build runs on discrete GPUs sm_8x from sm_80.", text)
+        self.assertNotIn("and newer", text)
+
+    def test_message_on_a_newer_major_version_does_not_claim_newer_gpus(self):
+        text = self._error(ds.BuildTargets("torch", (89,), (), 70), ds.Device(0, "NVIDIA H100", 90))
+        self.assertIn("This build runs on discrete GPUs sm_8x from sm_89.", text)
         self.assertNotIn("and newer", text)
 
     def test_build_command_per_platform(self):
