@@ -13,18 +13,55 @@ specific GPU. The release wheel matrix itself is owned by
 | Maxwell (GTX 900, Tesla M) | 5.0-5.3 | no | no | no |
 | Pascal (GTX 10, Tesla P) | 6.0-6.2 | no | no | no |
 | Volta (Tesla V100, TITAN V) | 7.0 | yes | yes | yes |
-| Xavier | 7.2 | no x86-64 wheel | no x86-64 wheel | yes, untested |
-| Turing through Blackwell | 7.5-12.x | yes | yes | yes |
+| Jetson Xavier | 7.2 | no wheel (x86-64 only) | no wheel (x86-64 only) | yes, untested |
+| Turing through Blackwell, discrete | 7.5-12.x | yes | yes | yes |
+| Jetson Orin | 8.7 | no wheel (x86-64 only) | no wheel (x86-64 only) | yes, untested |
+| Jetson Thor | 11.0 | no wheel (x86-64 only) | no wheel (x86-64 only) | untested; CUDA 12.8 cannot target `sm_110` |
 | Newer than Blackwell | > 12.x | through `compute_120` PTX | through `compute_120` PTX | yes, with a toolkit that targets it |
+
+"Yes" means the build contains code for that GPU family. It does not mean RayD
+has run on that GPU; the [verification record](#verification-record-2026-11-01)
+says what has.
 
 **The minimum supported compute capability is 7.0 (Volta), for prebuilt wheels
 and source builds alike.** RayD's own device code requires it (next section),
-so a source build cannot extend support below `sm_70`. Prebuilt Volta support
-has been verified by compilation and PTX inspection, not on Volta hardware.
+so a source build cannot extend support below `sm_70`.
 
 One feature needs a newer driver than the rest of RayD: Dr.Jit
 `accumulate_reflections` needs R575 or newer. See
 [Driver requirements](#driver-requirements).
+
+## Verification record, 2026-11-01
+
+This is what one acceptance run measured on one machine. It is evidence, not a
+promise for any particular card.
+
+Machine: RTX 4090 Laptop GPU (`sm_89`), driver 572.16, Windows 11, Torch
+2.10.0+cu128, CUDA 12.8. The build was a temporary merge of this work at 48d222a
+with the crash-hardening work at 6ab8ac4, without the later Jetson device-check
+changes. Without the crash-hardening commits, some Torch OptiX pipelines fail on
+this driver.
+
+The per-architecture runs used the Torch backend only, with 70 jobs per target:
+
+| Target | What ran on the RTX 4090 | Result |
+| --- | --- | --- |
+| `sm_89` | Native code, plus the full 280-job set | All pass; baseline for the rows below |
+| `sm_80`, `sm_86` | The `sm_80` or `sm_86` cubin itself | All 70 pass; 65 byte-identical to `sm_89` |
+| `sm_70`, `sm_75` | PTX translated for the RTX 4090, not real old-GPU machine code | All 70 pass; 65 byte-identical to `sm_89` |
+| `sm_87`, `sm_90`, `sm_100`, `sm_101`, `sm_120` | Nothing: compile-checked only | `cuobjdump` finds the image in `_stable_ops`, `_legacy_ops`, and Dr.Jit `_C` |
+
+The 5 jobs that were not byte-identical are diffraction jobs, and those also
+differ between two runs of one build.
+
+A one-kernel program with no RayD code, built for `sm_87`, fails on the RTX 4090
+with "no kernel image", while `sm_80` and `sm_86` builds run.
+
+Dr.Jit ran on `sm_89` only, and did not cover diffraction, EPC, or accumulated
+reflections.
+
+Not run at all: a real A6000 or any other physical GPU, any other driver, and
+Linux.
 
 ## Why sm_70 is the floor
 
@@ -51,7 +88,7 @@ Each layer has its own compatibility rule:
 
 | Layer | Rule | Below sm_70 | Volta (sm_70) |
 | --- | --- | --- | --- |
-| RayD CUDA kernels | A cubin for `sm_X.y` runs on `sm_X.z` with `z >= y`, except that Jetson (`sm_72`, `sm_87`) and discrete GPU cubins never cross; PTX JIT-compiles forward to newer GPUs only ([CUDA application compatibility](https://docs.nvidia.com/cuda/archive/12.8.1/cuda-c-programming-guide/index.html#application-compatibility)). Release wheels carry `sm_70`..`sm_120` cubins and `compute_120` PTX. | No kernel image; launches fail with "no kernel image is available for execution on the device". | Runs (`sm_70` cubin). |
+| RayD CUDA kernels | A cubin for `sm_X.y` runs on `sm_X.z` with `z >= y`, except that [Jetson and embedded](#jetson-and-embedded-architectures) cubins never cross; PTX JIT-compiles forward to newer GPUs only ([CUDA application compatibility](https://docs.nvidia.com/cuda/archive/12.8.1/cuda-c-programming-guide/index.html#application-compatibility)). Release wheels carry `sm_70`..`sm_120` cubins and `compute_120` PTX. | No kernel image; launches fail with "no kernel image is available for execution on the device". | Runs (`sm_70` cubin). |
 | RayD OptiX programs | OptiX rejects a module whose PTX target is newer than the device, so PTX must be built for the oldest GPU to support ([NVIDIA OptiX forum guidance](https://forums.developer.nvidia.com/t/problem-with-running-optix-6-5-program-invalid-value-for-gpu-architecture/157284/2)). Dr.Jit ships committed `compute_70` PTX and Torch compiles `compute_70` PTX ([ADR-0044](../adr/0044-torch-optix-ptx-at-the-volta-floor.md)). | Module creation fails. | Both backends target it. |
 | Dr.Jit 1.3.1 | Generates its own PTX for the device at run time; requires compute capability 5.0 or newer ([drjit-core](https://github.com/mitsuba-renderer/drjit-core)). | Dr.Jit itself works; RayD kernels do not. | Runs. |
 | PyTorch 2.10 | `cu128` wheels contain `sm_70`..`sm_120`; Maxwell and Pascal need the `cu126` wheels ([PyTorch announcement](https://dev-discuss.pytorch.org/t/cuda-toolkit-version-and-architecture-support-update-maxwell-and-pascal-architecture-support-removed-in-cuda-12-8-and-12-9-builds/3128)). | PyTorch `cu128` itself cannot run. | Runs. |
@@ -61,6 +98,40 @@ Each layer has its own compatibility rule:
 Before this change an unsupported GPU therefore surfaced as a CUDA launch
 error or an OptiX module or pipeline creation error from deep inside the first
 native call. The runtime check below replaces that with one early error.
+
+### Jetson and embedded architectures
+
+NVIDIA's rule for cubins has an exception, in the Binary Compatibility section of
+the [CUDA 12.8 programming guide](https://docs.nvidia.com/cuda/archive/12.8.1/cuda-c-programming-guide/index.html):
+"It is not supported for Tegra." The same note rules out compatibility between
+desktop and Tegra. The device check therefore lets these architectures run only
+their own cubin:
+
+| Architecture | Why it is on the list | Confidence |
+| --- | --- | --- |
+| `sm_87` | NVIDIA lists Jetson Orin at 8.7 ([compute capabilities](https://developer.nvidia.com/cuda-gpus)) | Failure on `sm_89` seen on hardware; the reverse direction was not |
+| `sm_72` | NVIDIA lists Jetson Xavier at 7.2 ([legacy list](https://developer.nvidia.com/cuda/gpus/legacy)) | From NVIDIA's rule; not run |
+| `sm_110` | NVIDIA lists Jetson T4000 and T5000 at 11.0 ([compute capabilities](https://developer.nvidia.com/cuda-gpus)) | From NVIDIA's rule; not run. CUDA 12.8 `nvcc` cannot target it |
+| `sm_101` | A PyTorch warning, [quoted in an NVIDIA forum post](https://forums.developer.nvidia.com/t/jetson-agx-thor-official-pytorch-25-08-container-works-for-conv2d-and-resnet18-but-pip-installed-pytorch-2-12-0-dev-cu128-fails-with-no-kernel-im/364270), excludes 10.1 from `sm_100` hardware | **Unconfirmed.** The [CUDA 12.8 release notes](https://docs.nvidia.com/cuda/archive/12.8.1/cuda-toolkit-release-notes/index.html) call `SM_101` Blackwell and name no product, and NVIDIA's table has no 10.1 row |
+
+If a discrete GPU does report 10.1, the cost is a request to rebuild for `sm_101`,
+which release wheels already include. `RAYD_SKIP_DEVICE_CHECK=1` overrides it.
+
+Other architectures:
+
+- CUDA 12.8 `nvcc` accepts no other Jetson-class target. It lists `sm_70`, `sm_72`,
+  `sm_75`, `sm_80`, `sm_86`, `sm_87`, `sm_89`, `sm_90`, `sm_100`, `sm_101`, and
+  `sm_120`, plus the suffixed forms below and the pre-Volta targets.
+- CUDA 12.9 adds targets this list was not checked against, because only the 12.8
+  compiler was available here.
+- NVIDIA lists GB10 (DGX Spark) at 12.1 without saying whether it counts as Tegra.
+  It stays outside the list, so an `sm_120` cubin is assumed to run on it; that is
+  unconfirmed.
+- Suffixed targets such as `sm_90a` run only on their exact architecture, per the
+  same guide. `RAYD_CUDA_ARCHS` does not accept them.
+
+Whether OptiX is available on Jetson at all is also unconfirmed, and no RayD build
+has run on Jetson.
 
 ## Driver requirements
 
@@ -110,16 +181,15 @@ compares the record with the device's compute capability:
 
 - CUDA kernels run when a cubin has the device's major version and an equal or
   lower minor version, or when a PTX target is at or below the device. Jetson
-  architectures (`sm_72`, `sm_87`) run only their own cubin, and discrete GPUs
-  never run a Jetson cubin.
+  and embedded architectures (`sm_72`, `sm_87`, `sm_101`, `sm_110`) run only
+  their own cubin, and other GPUs never run those cubins.
 - OptiX programs run when their PTX target is at or below the device; this part
   is skipped when `RAYD_DISABLE_OPTIX=1` turns OptiX off.
 - Anything below `sm_70` is rejected outright, without a build suggestion.
 
 When a device fails, `UnsupportedDeviceError` (a `RuntimeError`) names the
 distribution, the device index and name, its compute capability, each failing
-layer, the lowest compute capability the installed build supports, and the
-exact command that builds RayD from source for that GPU.
+layer, the GPUs the installed build runs on, and the exact command that builds RayD from source for that GPU.
 
 The check runs where each backend first needs a device:
 
@@ -139,7 +209,7 @@ Example on a Volta GPU with a Torch build made only for `sm_89`:
 ```text
 rayd-torch cannot run on CUDA device 0 'Tesla V100-SXM2-16GB' (compute capability 7.0, sm_70).
   - no CUDA kernel image runs on sm_70 (cubins: sm_89; PTX: none)
-This build supports sm_89 and newer.
+This build runs on discrete GPUs sm_8x from sm_89.
 Build RayD from source for this GPU (CUDA Toolkit 12.x and OptiX SDK 8.1+ headers):
     git clone https://github.com/Asixa/RayD
     cd RayD

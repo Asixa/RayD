@@ -504,16 +504,31 @@ See
 
 ### Building from Source / older GPUs
 
-The prebuilt wheels run on NVIDIA compute capability 7.0 (Volta) and newer:
+The prebuilt wheels contain code for NVIDIA compute capability 7.0 (Volta) and
+newer discrete GPUs:
 
 | GPU | Prebuilt wheels | From source |
 | --- | --- | --- |
 | Maxwell, Pascal, and older (`sm_6x` and below) | no | no: not supported, because RayD's device code uses Volta-only warp intrinsics |
 | Volta (`sm_70`, Tesla V100) | yes | yes |
 | Turing through Blackwell (`sm_75`-`sm_12x`) | yes | yes |
+| Jetson (`sm_72`, `sm_87`, `sm_110`) | no: wheels are x86-64 only | untested |
 
-Volta support is verified by compilation and PTX inspection, not yet on Volta
-hardware.
+"Yes" means the build contains code for that family, not that RayD has run on
+every card in it.
+
+**What has actually run (2026-11-01):** one RTX 4090 Laptop GPU on driver 572.16
+and Windows.
+
+| Target | Verified by |
+| --- | --- |
+| `sm_89` | Native run, Torch and Dr.Jit |
+| `sm_80`, `sm_86` | Cubin ran on the RTX 4090, Torch only |
+| `sm_70`, `sm_75` | PTX translated for the RTX 4090, Torch only; not real old-GPU machine code |
+| `sm_87`, `sm_90`, `sm_100`, `sm_101`, `sm_120` | Compile-checked only |
+
+No other physical GPU, driver, or Linux has run it. Details are in the
+[verification record](docs/dev/gpu_support.md#verification-record-2026-11-01).
 
 **Driver minimum for one feature:** Dr.Jit `accumulate_reflections` needs an R575
 or newer driver. On an older driver it fails with `OptiX error in
