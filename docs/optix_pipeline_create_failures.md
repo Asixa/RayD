@@ -62,11 +62,19 @@ the Torch multipath operations in fresh processes.
 A second, order-dependent failure has the same message. On driver 572.16 (RTX 4090 Laptop GPU) one Torch OptiX
 context could not hold the diffraction-accumulation pipeline (about 2.3 MB of PTX) and the diffraction-path pipeline
 (about 0.9 MB) at once: whichever was created second failed with `COMPILE ERROR: failed to create pipeline`, in the
-released 0.8.0 wheel as well, with or without the OptiX disk cache. Each pipeline created fine alone, and the second
-one created fine once the first was destroyed. `shared_optix_launch_pipeline()` therefore releases the cached
-pipelines of that context that no caller still holds when a build fails, then builds once more; the destructor waits
-for the pipeline's launches before destroying it. Alternating such operations rebuilds pipelines (a disk-cache hit
-when the cache is enabled) but no longer aborts. `test_large_multipath_pipelines_alternate_in_one_process` covers it.
+released 0.8.0 wheel as well. Each pipeline created fine alone, and the second one created fine once the first was
+destroyed.
+
+A third failure with the same message comes from the OptiX disk cache. The released wheel's `accumulate_reflections`
+failed cold on one machine with the default cache and passed with `OPTIX_CACHE_MAXSIZE=0` or a fresh
+`OPTIX_CACHE_PATH`; a copy of the cache database reproduced the failure, so it is not lock contention. Exception
+flags, optimization level and register count only changed the outcome by changing the cache key, which is why such
+changes can look like fixes. Treat a change in this message after a one-line kernel edit as this cache effect first.
+
+`shared_optix_launch_pipeline()` therefore answers a failed build by releasing the cached pipelines of that context
+that no caller still holds and building once more with the disk cache off; the destructor waits for the pipeline's
+launches before destroying it. Alternating such operations rebuilds pipelines but no longer aborts.
+`test_large_multipath_pipelines_alternate_in_one_process` covers it.
 
 Two experimental fixes were rejected because they were not causal:
 

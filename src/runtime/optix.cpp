@@ -268,23 +268,32 @@ std::shared_ptr<OptixLaunchPipeline> shared_optix_launch_pipeline(OptixDeviceCon
     try {
         pipeline->build(context, device_index, hitgroup_capacity, config);
     } catch (const std::exception&) {
-        // Some drivers cannot hold several large multipath pipelines in one context at once: optixPipelineCreate()
-        // then fails with a generic COMPILE ERROR although the same pipeline creates fine on its own. Release the
-        // cached pipelines of this context that no caller still holds, then build once more. The rebuilt pipeline
-        // is the same module and configuration, so results are unchanged; a second failure is reported as is.
-        bool evicted = false;
+        // optixPipelineCreate() can fail with a bare COMPILE ERROR for a pipeline that is valid: on some drivers one
+        // context cannot hold several large multipath pipelines at once, and entries in the shared OptiX disk cache
+        // can fail to link. Release the cached pipelines of this context that no caller still holds and build once
+        // more without the disk cache. The rebuilt pipeline is the same module and configuration, so results are
+        // unchanged; a second failure is reported as is.
         for (auto entry = cache.begin(); entry != cache.end();) {
             if (std::get<0>(entry->first) == context && entry->second.use_count() == 1) {
                 entry = cache.erase(entry);
-                evicted = true;
             } else {
                 ++entry;
             }
         }
-        if (!evicted)
-            throw;
+        int cache_enabled = 0;
+        const bool cache_known = optixDeviceContextGetCacheEnabled(context, &cache_enabled) == OPTIX_SUCCESS;
+        if (cache_known && cache_enabled != 0)
+            optixDeviceContextSetCacheEnabled(context, 0);
         pipeline = std::make_shared<OptixLaunchPipeline>();
-        pipeline->build(context, device_index, hitgroup_capacity, config);
+        try {
+            pipeline->build(context, device_index, hitgroup_capacity, config);
+        } catch (...) {
+            if (cache_known && cache_enabled != 0)
+                optixDeviceContextSetCacheEnabled(context, 1);
+            throw;
+        }
+        if (cache_known && cache_enabled != 0)
+            optixDeviceContextSetCacheEnabled(context, 1);
     }
     cache[key] = pipeline;
     return pipeline;
