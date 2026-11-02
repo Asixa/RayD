@@ -43,6 +43,7 @@ def _require_native_dispatcher() -> None:
             "RayD Torch native dispatcher is unavailable: the _legacy_ops "
             "library did not load, so torch.ops.rayd_torch has no operators."
         ) from _legacy.LOAD_ERROR
+    _legacy.require_supported_device()
 
 
 def _native_tensor(value: torch.Tensor | None) -> torch.Tensor | None:

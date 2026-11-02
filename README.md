@@ -502,36 +502,87 @@ and unvalidated global CMake package searches are intentionally unsupported.
 See
 [`ADR-0034`](docs/adr/0034-validated-package-source-discovery.md).
 
-RayD requires Python 3.10-3.14, CMake 3.22+, a C++17 compiler, CUDA, and the OptiX
-SDK. On Windows, use Visual Studio 2022 with Desktop C++ tools.
+### Building from Source / older GPUs
 
-Create an environment and install common build tools:
+The prebuilt wheels contain code for NVIDIA compute capability 7.0 (Volta) and
+newer discrete GPUs:
 
-```powershell
-conda create -n rayd python=3.11 -y
-conda activate rayd
-python -m pip install -U pip setuptools wheel
+| GPU | Prebuilt wheels | From source |
+| --- | --- | --- |
+| Maxwell, Pascal, and older (`sm_6x` and below) | no | no: not supported, because RayD's device code uses Volta-only warp intrinsics |
+| Volta (`sm_70`, Tesla V100) | yes | yes |
+| Turing through Blackwell (`sm_75`-`sm_12x`) | yes | yes |
+| Jetson (`sm_72`, `sm_87`, `sm_110`) | no: wheels are x86-64 only | untested |
+
+"Yes" means the build contains code for that family, not that RayD has run on
+every card in it.
+
+**What has actually run (2026-11-01):** one RTX 4090 Laptop GPU on driver 572.16
+and Windows.
+
+| Target | Verified by |
+| --- | --- |
+| `sm_89` | Native run, Torch and Dr.Jit |
+| `sm_80`, `sm_86` | Cubin ran on the RTX 4090, Torch only |
+| `sm_70`, `sm_75` | PTX translated for the RTX 4090, Torch only; not real old-GPU machine code |
+| `sm_87`, `sm_90`, `sm_100`, `sm_101`, `sm_120` | Compile-checked only |
+
+No other physical GPU, driver, or Linux has run it. Details are in the
+[verification record](docs/dev/gpu_support.md#verification-record-2026-11-01).
+
+**Driver minimum for one feature:** Dr.Jit `accumulate_reflections` needs an R575
+or newer driver. On an older driver it fails with `OptiX error in
+optixModuleCreate(multipath)`, and the OptiX log names the missing intrinsic
+`optix.ptx.copysign.f32`. Torch builds made with CUDA 12.9 or newer hit the same
+failure on those drivers. Everything else needs R555 or newer.
+
+On a GPU the installed build cannot run, RayD fails at first use with an
+`UnsupportedDeviceError` that names the GPU, its compute capability, the
+supported range, and the command below. To run on such a GPU, to build for
+only the GPU you have, or to install on a platform without wheels, build from
+a Git checkout. The backend distributions publish no sdist; see
+[`docs/dev/gpu_support.md`](docs/dev/gpu_support.md) for the reasons, the
+detailed compatibility findings, and verification steps.
+
+Requirements: Python 3.10-3.14, CMake 3.22+, a C++17 compiler (Visual Studio
+2022 Desktop C++ on Windows), CUDA Toolkit 12.x (Volta cannot be targeted by
+CUDA 13), and for `rayd-torch` the OptiX SDK 8.1+ headers via
+`OPTIX_INCLUDE_DIR` or `OPTIX_PATH`. Install the backend's framework and build
+tools into the target environment first:
+
+```bash
 python -m pip install cmake ninja scikit-build-core
-```
-
-Build the Dr.Jit backend:
-
-```powershell
 python -m pip install "drjit==1.3.1" "nanobind==2.11.0"
-.\scripts\build_local.cmd -Backend drjit
+python -m pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128
 ```
 
-Build the Torch backend:
+Then build each backend you need. Linux:
+
+```bash
+git clone https://github.com/Asixa/RayD
+cd RayD
+RAYD_CUDA_ARCHS=native python -m pip install --no-build-isolation ./drjit
+RAYD_CUDA_ARCHS=native python -m pip install --no-build-isolation ./torch
+```
+
+Windows:
 
 ```powershell
-python -m pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128
-.\scripts\build_local.cmd -Backend torch
+git clone https://github.com/Asixa/RayD
+cd RayD
+.\scripts\build_local.cmd -Backend drjit -CudaArch native
+.\scripts\build_local.cmd -Backend torch -CudaArch native
 ```
 
-The helper detects the current GPU, compiles only its CUDA architecture, uses a
-persistent per-architecture build directory, and enables parallel Ninja builds.
-The multi-architecture CUDA matrix is reserved for release CI. Pass
-`-PythonExe <path>` when `python` does not resolve to the intended environment.
+`RAYD_CUDA_ARCHS` (and `-CudaArch`) accepts `native` (every GPU on this
+machine), one compute capability such as `70` or `7.0`, a list such as
+`70,86,89`, and a `+PTX` suffix such as `8.9+PTX` for forward-compatible PTX.
+It drives every CUDA target of both backends; the OptiX PTX is `compute_70` in
+every build.
+`build_local` initializes MSVC, installs editable into the current `python`
+(pass `-PythonExe <path>` otherwise), and keeps one build directory per target
+list. Without `-CudaArch` it targets the first local GPU. The multi-architecture
+release matrix is reserved for release CI.
 
 Native downstream projects can add the Torch backend with CMake and link
 against `rayd_torch_native_core`. The source-level integration declarations

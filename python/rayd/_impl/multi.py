@@ -209,6 +209,7 @@ from typing import Any, Callable, Mapping, NamedTuple, Sequence
 
 import torch
 
+from . import runtime as _runtime
 from .geometry import (
     AccumOptions,
     AccumResult,
@@ -997,6 +998,7 @@ def _normalize_devices(devices: Sequence[object]) -> list[int]:
             raise ValueError(
                 f"Scene(devices=...) got device index {index}, but only {count} CUDA device(s) are visible."
             )
+        _runtime.require_supported_device(index)
     return indices
 
 

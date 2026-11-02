@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, overload
 
 import torch
 
+from . import runtime as _runtime
 from .multipath import _dfr_input_tensors, _reject_forward_only_ad, _require_native_dispatcher
 from .multipath import accumulate_reflections_native as _accumulate_reflections
 from .multipath import accum_dfr_chain_native as _accum_dfr_chain
@@ -288,6 +289,8 @@ class Scene:
             self._pending_updates = False
             return
         _require_native_dispatcher()
+        for mesh, _dynamic in self._meshes:
+            _runtime.require_supported_device(mesh.vertices.device)
         specs = [self._mesh_spec(mesh_id, mesh, dynamic) for mesh_id, (mesh, dynamic) in enumerate(self._meshes)]
         mesh_flags = []
         for mesh, dynamic in self._meshes:
