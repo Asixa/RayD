@@ -103,7 +103,8 @@ RAYD_DEVICE ::rayd::shared::rt::TriangleHit trace_scene(const Traverser& primary
 }
 
 template <bool SplitScene, typename Traverser>
-RAYD_DEVICE bool visible_segment(const Traverser& primary, const Traverser& secondary, Vec3f start, Vec3f end) {
+RAYD_DEVICE bool visible_segment(const Traverser& primary, const Traverser& secondary, Vec3f start, Vec3f end,
+                                 float start_bias, float end_bias) {
     const Vec3f delta = math::subtract(end, start);
     const float dist = math::length_f32(delta);
     if (dist <= 1e-5f) {
@@ -111,8 +112,8 @@ RAYD_DEVICE bool visible_segment(const Traverser& primary, const Traverser& seco
     }
     const Vec3f dir = math::scale(delta, 1.f / dist);
     const ::rayd::shared::rt::TriangleHit hit =
-        trace_scene<SplitScene>(primary, secondary, math::add(start, math::scale(dir, kRayBias)), dir,
-                                fmaxf(dist - 2.f * kRayBias, 0.f));
+        trace_scene<SplitScene>(primary, secondary, math::add(start, math::scale(dir, start_bias)), dir,
+                                fmaxf(dist - start_bias - end_bias, 0.f));
     return hit.hit == 0u;
 }
 
@@ -202,6 +203,18 @@ RAYD_HOST_DEVICE bool paths_order1_lane(const Params& params, unsigned int lane,
     rx_idx = pair_idx % rx_count;
     tx_idx = pair_idx / rx_count;
     return tx_idx < params.tx_count && state_idx < params.state_count && state_active(params, state_idx);
+}
+
+/// The edge point as a visibility segment should see it.
+template <typename Params>
+RAYD_HOST_DEVICE ::rayd::shared::rt::WedgeVisibilityEnd paths_visibility_end(const Params& params, int state_idx,
+                                                                             Vec3f edge_point) {
+    return ::rayd::shared::rt::wedge_visibility_end(edge_point,
+                                                    state_vec(params.state_n0_x, params.state_n0_y, params.state_n0_z,
+                                                              state_idx),
+                                                    state_vec(params.state_n1_x, params.state_n1_y, params.state_n1_z,
+                                                              state_idx),
+                                                    kRayBias);
 }
 
 template <typename Params> RAYD_HOST_DEVICE Vec3f paths_edge_point(const Params& params, int state_idx, int rx_idx) {
@@ -294,8 +307,10 @@ RAYD_DEVICE void trace_paths_order1_algo(const Params& params, std::uint32_t lan
     }
     const float clamped_parameter = fminf(fmaxf(parameter, 0.f), edge_length);
     const Vec3f edge_point = math::add(edge_origin, math::scale(edge_dir, clamped_parameter));
-    if (!visible_segment<SplitScene>(primary, secondary, source, edge_point) ||
-        !visible_segment<SplitScene>(primary, secondary, edge_point, receiver)) {
+    const ::rayd::shared::rt::WedgeVisibilityEnd visibility_end = paths_visibility_end(params, state_idx, edge_point);
+    if (!visible_segment<SplitScene>(primary, secondary, source, visibility_end.point, kRayBias, visibility_end.bias) ||
+        !visible_segment<SplitScene>(primary, secondary, visibility_end.point, receiver, visibility_end.bias,
+                                     kRayBias)) {
         return;
     }
 
@@ -363,7 +378,10 @@ RAYD_DEVICE void trace_paths_source_visibility_algo(const Params& params, std::u
         return;
     }
 
-    params.temp_visibility[lane] = visible_segment<false>(primary, secondary, source, edge_point) ? 1u : 0u;
+    const ::rayd::shared::rt::WedgeVisibilityEnd visibility_end = paths_visibility_end(params, state_idx, edge_point);
+    params.temp_visibility[lane] =
+        visible_segment<false>(primary, secondary, source, visibility_end.point, kRayBias, visibility_end.bias) ? 1u
+                                                                                                                : 0u;
 }
 
 /// Two-phase target-export pass for one lane (former
@@ -394,7 +412,8 @@ RAYD_DEVICE void trace_paths_target_export_algo(const Params& params, std::uint3
     if (!finite_paths_points(source, edge_point, receiver)) {
         return;
     }
-    if (!visible_segment<false>(primary, secondary, edge_point, receiver)) {
+    const ::rayd::shared::rt::WedgeVisibilityEnd visibility_end = paths_visibility_end(params, state_idx, edge_point);
+    if (!visible_segment<false>(primary, secondary, visibility_end.point, receiver, visibility_end.bias, kRayBias)) {
         return;
     }
 

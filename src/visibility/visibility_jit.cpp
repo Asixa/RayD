@@ -26,15 +26,58 @@ using namespace multipath_detail;
 
 namespace {
 
+/// rt::trace_segment_off_surfaces for the HitObject path: a blocker whose plane passes through an end of the segment
+/// cannot lie between its ends, so that end moves off the plane and the segment is cast again. Three casts cover a
+/// surface plus an edge; the masks keep later casts empty for every lane that has settled.
+OptixSegmentHit segment_hit_off_surfaces(const OptixScene& optix_scene, const TriangleInfo& triangles,
+                                         const Vector3f& start, const Vector3f& end, const Mask& active) {
+    constexpr int kCasts = 3;
+    const auto magnitude = [](const Vector3f& value) {
+        return maximum(abs(value.x()), maximum(abs(value.y()), abs(value.z())));
+    };
+    const int ray_count = static_cast<int>(slices(start));
+    Vector3f near_end = start;
+    Vector3f far_end = end;
+    Mask pending = active;
+    OptixSegmentHit result;
+    result.visible = active;
+    result.hit = full<Mask>(false, ray_count);
+    result.global_prim_id = full<Int>(-1, ray_count);
+    for (int cast = 0; cast < kCasts; ++cast) {
+        const OptixSegmentHit hit = optix_scene.segment_hit<true>(near_end, far_end, pending);
+        const Mask blocked = pending && !hit.visible;
+        const Vector3f point = gather<Vector3f>(triangles.p0, hit.global_prim_id, blocked);
+        const Vector3f normal = gather<Vector3f>(triangles.face_normal, hit.global_prim_id, blocked);
+        const Float scale = maximum(triangle_coordinate_magnitude_jit(triangles, hit.global_prim_id, blocked),
+                                    maximum(magnitude(start), magnitude(end)));
+        const Float tolerance = shared::rt::kSurfaceToleranceRelative * scale;
+        const Mask start_on_plane = abs(dot(start - point, normal)) <= tolerance;
+        const Mask end_on_plane = abs(dot(end - point, normal)) <= tolerance;
+        const Mask retry = blocked && (start_on_plane || end_on_plane) && (cast + 1 < kCasts);
+        const Mask settled = blocked && !retry;
+        result.visible &= !settled;
+        result.hit |= settled;
+        result.global_prim_id = select(settled, hit.global_prim_id, result.global_prim_id);
+
+        const Float side = select(dot(far_end - near_end, normal) >= 0.f, Float(1.f), Float(-1.f));
+        const Vector3f shift = normal * (side * 2.f * tolerance);
+        near_end = select(retry && start_on_plane, near_end + shift, near_end);
+        far_end = select(retry && end_on_plane, select(start_on_plane, far_end + shift, far_end - shift), far_end);
+        pending = retry;
+    }
+    return result;
+}
+
 template <bool Detached>
 SegmentVisibilityT<Detached> trace_segment_visibility_jit_no_ignore(const OptixScene& optix_scene,
+                                                                    const TriangleInfo& triangles,
                                                                     const Vector3f& start, const Vector3f& end,
                                                                     const Mask& active_detached) {
     const int ray_count = static_cast<int>(slices(start));
     SegmentVisibilityT<Detached> result;
     result.ray_count = ray_count;
 
-    const OptixSegmentHit hit = optix_scene.segment_hit<true>(start, end, active_detached);
+    const OptixSegmentHit hit = segment_hit_off_surfaces(optix_scene, triangles, start, end, active_detached);
     if constexpr (!Detached) {
         result.visible = MaskAD(hit.visible);
     } else {
@@ -44,17 +87,15 @@ SegmentVisibilityT<Detached> trace_segment_visibility_jit_no_ignore(const OptixS
 }
 
 template <bool Detached>
-SegmentPairVisibilityT<Detached> trace_segment_pair_visibility_jit_no_ignore(const OptixScene& optix_scene,
-                                                                             const Vector3f& start,
-                                                                             const Vector3f& end_a,
-                                                                             const Vector3f& end_b,
-                                                                             const Mask& active_detached) {
+SegmentPairVisibilityT<Detached> trace_segment_pair_visibility_jit_no_ignore(
+    const OptixScene& optix_scene, const TriangleInfo& triangles, const Vector3f& start, const Vector3f& end_a,
+    const Vector3f& end_b, const Mask& active_detached) {
     const int ray_count = static_cast<int>(slices(start));
     SegmentPairVisibilityT<Detached> result;
     result.ray_count = ray_count;
 
-    const OptixSegmentHit hit_a = optix_scene.segment_hit<true>(start, end_a, active_detached);
-    const OptixSegmentHit hit_b = optix_scene.segment_hit<true>(start, end_b, active_detached);
+    const OptixSegmentHit hit_a = segment_hit_off_surfaces(optix_scene, triangles, start, end_a, active_detached);
+    const OptixSegmentHit hit_b = segment_hit_off_surfaces(optix_scene, triangles, start, end_b, active_detached);
     if constexpr (!Detached) {
         result.visible_a = MaskAD(hit_a.visible);
         result.visible_b = MaskAD(hit_b.visible);
@@ -66,12 +107,10 @@ SegmentPairVisibilityT<Detached> trace_segment_pair_visibility_jit_no_ignore(con
 }
 
 template <bool Detached>
-SegmentPairVisibilityT<Detached> trace_segment_pair_visibility_native(const OptixScene& optix_scene,
-                                                                      const OptixLaunchPipeline& pipeline,
-                                                                      const Int& face_offsets, int mesh_count,
-                                                                      const Vector3f& start, const Vector3f& end_a,
-                                                                      const Vector3f& end_b, const Int& ignore_prim_ids,
-                                                                      int ignore_k, const Mask& active_detached) {
+SegmentPairVisibilityT<Detached> trace_segment_pair_visibility_native(
+    const OptixScene& optix_scene, const OptixLaunchPipeline& pipeline, const Int& face_offsets, int mesh_count,
+    const TriangleInfo& triangles, const Vector3f& start, const Vector3f& end_a, const Vector3f& end_b,
+    const Int& ignore_prim_ids, int ignore_k, const Mask& active_detached) {
     const int ray_count = static_cast<int>(slices(start));
     SegmentPairVisibilityT<Detached> result;
     result.ray_count = ray_count;
@@ -82,8 +121,8 @@ SegmentPairVisibilityT<Detached> trace_segment_pair_visibility_native(const Opti
     drjit::eval(end_a, end_b);
 
     SegmentVisibilityParams params =
-        make_segment_visibility_params(optix_scene, face_offsets, mesh_count, start, ignore_prim_ids, ignore_k,
-                                       active_detached, ray_count);
+        make_segment_visibility_params(optix_scene, face_offsets, mesh_count, triangles, start, ignore_prim_ids,
+                                       ignore_k, active_detached, ray_count);
     params.end_x = end_a.x().data();
     params.end_y = end_a.y().data();
     params.end_z = end_a.z().data();
@@ -105,7 +144,8 @@ SegmentPairVisibilityT<Detached> trace_segment_pair_visibility_native(const Opti
 }
 
 template <bool Detached>
-AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_jit(const OptixScene& optix_scene, const Vector3f& src,
+AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_jit(const OptixScene& optix_scene,
+                                                               const TriangleInfo& triangles, const Vector3f& src,
                                                                const Vector3f& edge_pos, const Vector3f& edge_dir,
                                                                const Float& edge_t_min, const Float& edge_t_max,
                                                                const std::vector<float>& sample_fractions,
@@ -119,7 +159,7 @@ AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_jit(const OptixScene&
     for (float fraction : sample_fractions) {
         const Float sample_t = edge_t_min + fraction * span;
         const Vector3f sample_pos = edge_pos + sample_t * edge_dir;
-        const OptixSegmentHit hit = optix_scene.segment_hit<true>(src, sample_pos, active_detached);
+        const OptixSegmentHit hit = segment_hit_off_surfaces(optix_scene, triangles, src, sample_pos, active_detached);
         any_visible = any_visible || hit.visible;
     }
 
@@ -134,8 +174,9 @@ AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_jit(const OptixScene&
 template <bool Detached>
 AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_native(
     const OptixScene& optix_scene, const OptixLaunchPipeline& pipeline, const Int& face_offsets, int mesh_count,
-    const Vector3f& src, const Vector3f& edge_pos, const Vector3f& edge_dir, const Float& edge_t_min,
-    const Float& edge_t_max, const std::vector<float>& sample_fractions, const Mask& active_detached) {
+    const TriangleInfo& triangles, const Vector3f& src, const Vector3f& edge_pos, const Vector3f& edge_dir,
+    const Float& edge_t_min, const Float& edge_t_max, const std::vector<float>& sample_fractions,
+    const Mask& active_detached) {
     const int state_count = static_cast<int>(slices(src));
     AxialEdgeVisibilityT<Detached> result;
     result.state_count = state_count;
@@ -143,8 +184,8 @@ AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_native(
     Mask any_visible = empty<Mask>(state_count);
     drjit::eval(src, edge_pos, edge_dir, edge_t_min, edge_t_max, face_offsets, active_detached);
 
-    SegmentVisibilityParams params = make_segment_visibility_params(optix_scene, face_offsets, mesh_count, src, Int(),
-                                                                    0, active_detached, state_count);
+    SegmentVisibilityParams params = make_segment_visibility_params(optix_scene, face_offsets, mesh_count, triangles,
+                                                                    src, Int(), 0, active_detached, state_count);
     params.end_x = edge_pos.x().data();
     params.end_y = edge_pos.y().data();
     params.end_z = edge_pos.z().data();
@@ -169,11 +210,9 @@ AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_native(
 }
 
 template <bool Detached>
-SegmentChainVisibilityT<Detached> trace_segment_chain_visibility_jit_no_ignore(const OptixScene& optix_scene,
-                                                                               const Vector3f& points,
-                                                                               const Int& chain_length, int chain_count,
-                                                                               int max_points, int max_segments,
-                                                                               const Mask& active_detached) {
+SegmentChainVisibilityT<Detached> trace_segment_chain_visibility_jit_no_ignore(
+    const OptixScene& optix_scene, const TriangleInfo& triangles, const Vector3f& points, const Int& chain_length,
+    int chain_count, int max_points, int max_segments, const Mask& active_detached) {
     SegmentChainVisibilityT<Detached> result;
     result.chain_count = chain_count;
     result.max_segments = max_segments;
@@ -189,7 +228,8 @@ SegmentChainVisibilityT<Detached> trace_segment_chain_visibility_jit_no_ignore(c
         const Int start_index = chain_base + segment;
         const Vector3f start_point = gather<Vector3f>(points, start_index, segment_active);
         const Vector3f end_point = gather<Vector3f>(points, start_index + 1, segment_active);
-        const OptixSegmentHit hit = optix_scene.segment_hit<true>(start_point, end_point, segment_active);
+        const OptixSegmentHit hit =
+            segment_hit_off_surfaces(optix_scene, triangles, start_point, end_point, segment_active);
         const Mask blocked = segment_active && !hit.visible;
         all_visible &= !blocked;
         first_blocked_segment = select(blocked, Int(segment), first_blocked_segment);
@@ -211,8 +251,8 @@ SegmentChainVisibilityT<Detached> trace_segment_chain_visibility_jit_no_ignore(c
 template <bool Detached>
 SegmentChainVisibilityT<Detached> trace_segment_chain_visibility_native(
     const OptixScene& optix_scene, const OptixLaunchPipeline& pipeline, const Int& face_offsets, int mesh_count,
-    const Vector3f& points, const Int& chain_length, const Int& ignore_prim_per_segment, int ignore_k, int chain_count,
-    int max_points, int max_segments, const Mask& active_detached) {
+    const TriangleInfo& triangles, const Vector3f& points, const Int& chain_length, const Int& ignore_prim_per_segment,
+    int ignore_k, int chain_count, int max_points, int max_segments, const Mask& active_detached) {
     SegmentChainVisibilityT<Detached> result;
     result.chain_count = chain_count;
     result.max_segments = max_segments;
@@ -224,6 +264,7 @@ SegmentChainVisibilityT<Detached> trace_segment_chain_visibility_native(
     drjit::eval(chain_length);
 
     SegmentVisibilityParams params = {};
+    set_segment_surface_triangles(params, triangles);
     params.handle = optix_scene.ias_handle();
     params.face_offsets = face_offsets.data();
     params.n_meshes = mesh_count;
@@ -262,9 +303,11 @@ SegmentChainVisibilityT<Detached> trace_segment_chain_visibility_native(
 // takes when trace_backend='cuda'; the jit-symbolic variants stay OptiX-only.
 
 SegmentVisibilityParams make_segment_visibility_params_cuda(const Int& face_offsets, int mesh_count,
-                                                            const Vector3f& start, const Int& ignore_prim_ids,
-                                                            int ignore_k, const Mask& active_detached, int ray_count) {
+                                                            const TriangleInfo& triangles, const Vector3f& start,
+                                                            const Int& ignore_prim_ids, int ignore_k,
+                                                            const Mask& active_detached, int ray_count) {
     SegmentVisibilityParams params = {};
+    set_segment_surface_triangles(params, triangles);
     params.face_offsets = face_offsets.data();
     params.n_meshes = mesh_count;
     params.start_x = start.x().data();
@@ -279,7 +322,8 @@ SegmentVisibilityParams make_segment_visibility_params_cuda(const Int& face_offs
 
 template <bool Detached>
 SegmentVisibilityT<Detached> trace_segment_visibility_cuda(const CudaTraceBackend& cuda, const Int& face_offsets,
-                                                           int mesh_count, const Vector3f& start, const Vector3f& end,
+                                                           int mesh_count, const TriangleInfo& triangles,
+                                                           const Vector3f& start, const Vector3f& end,
                                                            const Int& ignore_prim_ids, int ignore_k,
                                                            const Mask& active_detached) {
     const int ray_count = static_cast<int>(slices(start));
@@ -291,8 +335,8 @@ SegmentVisibilityT<Detached> trace_segment_visibility_cuda(const CudaTraceBacken
     drjit::eval(end);
 
     SegmentVisibilityParams params =
-        make_segment_visibility_params_cuda(face_offsets, mesh_count, start, ignore_prim_ids, ignore_k, active_detached,
-                                            ray_count);
+        make_segment_visibility_params_cuda(face_offsets, mesh_count, triangles, start, ignore_prim_ids, ignore_k,
+                                            active_detached, ray_count);
     params.end_x = end.x().data();
     params.end_y = end.y().data();
     params.end_z = end.z().data();
@@ -310,6 +354,7 @@ SegmentVisibilityT<Detached> trace_segment_visibility_cuda(const CudaTraceBacken
 template <bool Detached>
 SegmentPairVisibilityT<Detached> trace_segment_pair_visibility_cuda(const CudaTraceBackend& cuda,
                                                                     const Int& face_offsets, int mesh_count,
+                                                                    const TriangleInfo& triangles,
                                                                     const Vector3f& start, const Vector3f& end_a,
                                                                     const Vector3f& end_b, const Int& ignore_prim_ids,
                                                                     int ignore_k, const Mask& active_detached) {
@@ -323,8 +368,8 @@ SegmentPairVisibilityT<Detached> trace_segment_pair_visibility_cuda(const CudaTr
     drjit::eval(end_a, end_b);
 
     SegmentVisibilityParams params =
-        make_segment_visibility_params_cuda(face_offsets, mesh_count, start, ignore_prim_ids, ignore_k, active_detached,
-                                            ray_count);
+        make_segment_visibility_params_cuda(face_offsets, mesh_count, triangles, start, ignore_prim_ids, ignore_k,
+                                            active_detached, ray_count);
     params.end_x = end_a.x().data();
     params.end_y = end_a.y().data();
     params.end_z = end_a.z().data();
@@ -346,12 +391,10 @@ SegmentPairVisibilityT<Detached> trace_segment_pair_visibility_cuda(const CudaTr
 }
 
 template <bool Detached>
-AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_cuda(const CudaTraceBackend& cuda, const Int& face_offsets,
-                                                                int mesh_count, const Vector3f& src,
-                                                                const Vector3f& edge_pos, const Vector3f& edge_dir,
-                                                                const Float& edge_t_min, const Float& edge_t_max,
-                                                                const std::vector<float>& sample_fractions,
-                                                                const Mask& active_detached) {
+AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_cuda(
+    const CudaTraceBackend& cuda, const Int& face_offsets, int mesh_count, const TriangleInfo& triangles,
+    const Vector3f& src, const Vector3f& edge_pos, const Vector3f& edge_dir, const Float& edge_t_min,
+    const Float& edge_t_max, const std::vector<float>& sample_fractions, const Mask& active_detached) {
     const int state_count = static_cast<int>(slices(src));
     AxialEdgeVisibilityT<Detached> result;
     result.state_count = state_count;
@@ -359,8 +402,8 @@ AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_cuda(const CudaTraceB
     Mask any_visible = empty<Mask>(state_count);
     drjit::eval(src, edge_pos, edge_dir, edge_t_min, edge_t_max, face_offsets, active_detached);
 
-    SegmentVisibilityParams params =
-        make_segment_visibility_params_cuda(face_offsets, mesh_count, src, Int(), 0, active_detached, state_count);
+    SegmentVisibilityParams params = make_segment_visibility_params_cuda(face_offsets, mesh_count, triangles, src,
+                                                                         Int(), 0, active_detached, state_count);
     params.end_x = edge_pos.x().data();
     params.end_y = edge_pos.y().data();
     params.end_z = edge_pos.z().data();
@@ -385,12 +428,10 @@ AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_cuda(const CudaTraceB
 }
 
 template <bool Detached>
-SegmentChainVisibilityT<Detached> trace_segment_chain_visibility_cuda(const CudaTraceBackend& cuda,
-                                                                      const Int& face_offsets, int mesh_count,
-                                                                      const Vector3f& points, const Int& chain_length,
-                                                                      const Int& ignore_prim_per_segment, int ignore_k,
-                                                                      int chain_count, int max_points, int max_segments,
-                                                                      const Mask& active_detached) {
+SegmentChainVisibilityT<Detached> trace_segment_chain_visibility_cuda(
+    const CudaTraceBackend& cuda, const Int& face_offsets, int mesh_count, const TriangleInfo& triangles,
+    const Vector3f& points, const Int& chain_length, const Int& ignore_prim_per_segment, int ignore_k, int chain_count,
+    int max_points, int max_segments, const Mask& active_detached) {
     SegmentChainVisibilityT<Detached> result;
     result.chain_count = chain_count;
     result.max_segments = max_segments;
@@ -402,6 +443,7 @@ SegmentChainVisibilityT<Detached> trace_segment_chain_visibility_cuda(const Cuda
     drjit::eval(chain_length);
 
     SegmentVisibilityParams params = {};
+    set_segment_surface_triangles(params, triangles);
     params.face_offsets = face_offsets.data();
     params.n_meshes = mesh_count;
     params.chain_point_x = points.x().data();
@@ -491,21 +533,22 @@ SegmentVisibilityT<Detached> Scene::visible(const Vector3fT<Detached>& start, co
     }
 
     if (triangle_kind_ == TraceBackendKind::Cuda) {
-        return trace_segment_visibility_cuda<Detached>(cuda_backend(), face_offsets_, mesh_count_, start_detached,
-                                                       end_detached, ignore_prim_ids, ignore_k, active_detached);
+        return trace_segment_visibility_cuda<Detached>(cuda_backend(), face_offsets_, mesh_count_,
+                                                       triangle_info_detached_, start_detached, end_detached,
+                                                       ignore_prim_ids, ignore_k, active_detached);
     }
 
     if (use_jit_trace_visibility_path(ignore_k)) {
-        return trace_segment_visibility_jit_no_ignore<Detached>(optix_scene(), start_detached, end_detached,
-                                                                active_detached);
+        return trace_segment_visibility_jit_no_ignore<Detached>(optix_scene(), triangle_info_detached_, start_detached,
+                                                                end_detached, active_detached);
     }
 
     ensure_pipeline(segment_visibility_pipeline_, optix_scene().context(), mesh_count_,
                     segment_visibility_pipeline_config());
 
     return trace_segment_visibility_native<Detached>(optix_scene(), *segment_visibility_pipeline_, face_offsets_,
-                                                     mesh_count_, start_detached, end_detached, ignore_prim_ids,
-                                                     ignore_k, active_detached);
+                                                     mesh_count_, triangle_info_detached_, start_detached, end_detached,
+                                                     ignore_prim_ids, ignore_k, active_detached);
 }
 
 template <bool Detached>
@@ -551,22 +594,24 @@ SegmentPairVisibilityT<Detached> Scene::visible_pair(const Vector3fT<Detached>& 
     }
 
     if (triangle_kind_ == TraceBackendKind::Cuda) {
-        return trace_segment_pair_visibility_cuda<Detached>(cuda_backend(), face_offsets_, mesh_count_, start_detached,
-                                                            end_a_detached, end_b_detached, ignore_prim_ids, ignore_k,
-                                                            active_detached);
+        return trace_segment_pair_visibility_cuda<Detached>(cuda_backend(), face_offsets_, mesh_count_,
+                                                            triangle_info_detached_, start_detached, end_a_detached,
+                                                            end_b_detached, ignore_prim_ids, ignore_k, active_detached);
     }
 
     if (use_jit_trace_visibility_path(ignore_k)) {
-        return trace_segment_pair_visibility_jit_no_ignore<Detached>(optix_scene(), start_detached, end_a_detached,
-                                                                     end_b_detached, active_detached);
+        return trace_segment_pair_visibility_jit_no_ignore<Detached>(optix_scene(), triangle_info_detached_,
+                                                                     start_detached, end_a_detached, end_b_detached,
+                                                                     active_detached);
     }
 
     ensure_pipeline(segment_pair_visibility_pipeline_, optix_scene().context(), mesh_count_,
                     segment_pair_visibility_pipeline_config());
 
     return trace_segment_pair_visibility_native<Detached>(optix_scene(), *segment_pair_visibility_pipeline_,
-                                                          face_offsets_, mesh_count_, start_detached, end_a_detached,
-                                                          end_b_detached, ignore_prim_ids, ignore_k, active_detached);
+                                                          face_offsets_, mesh_count_, triangle_info_detached_,
+                                                          start_detached, end_a_detached, end_b_detached,
+                                                          ignore_prim_ids, ignore_k, active_detached);
 }
 
 template <bool Detached>
@@ -625,23 +670,24 @@ AxialEdgeVisibilityT<Detached> Scene::visible_edge(const Vector3fT<Detached>& sr
                        drjit::isfinite(edge_t_max_detached);
 
     if (triangle_kind_ == TraceBackendKind::Cuda) {
-        return trace_axial_edge_visibility_cuda<Detached>(cuda_backend(), face_offsets_, mesh_count_, source_detached,
-                                                          edge_pos_detached, edge_dir_detached, edge_t_min_detached,
-                                                          edge_t_max_detached, sample_fractions, active_detached);
+        return trace_axial_edge_visibility_cuda<Detached>(cuda_backend(), face_offsets_, mesh_count_,
+                                                          triangle_info_detached_, source_detached, edge_pos_detached,
+                                                          edge_dir_detached, edge_t_min_detached, edge_t_max_detached,
+                                                          sample_fractions, active_detached);
     }
 
     if (active_trace_visibility_backend() != TraceVisibilityBackend::Native) {
-        return trace_axial_edge_visibility_jit<Detached>(optix_scene(), source_detached, edge_pos_detached,
-                                                         edge_dir_detached, edge_t_min_detached, edge_t_max_detached,
-                                                         sample_fractions, active_detached);
+        return trace_axial_edge_visibility_jit<Detached>(optix_scene(), triangle_info_detached_, source_detached,
+                                                         edge_pos_detached, edge_dir_detached, edge_t_min_detached,
+                                                         edge_t_max_detached, sample_fractions, active_detached);
     }
 
     ensure_pipeline(axial_edge_visibility_pipeline_, optix_scene().context(), mesh_count_,
                     axial_edge_visibility_pipeline_config());
     return trace_axial_edge_visibility_native<Detached>(optix_scene(), *axial_edge_visibility_pipeline_, face_offsets_,
-                                                        mesh_count_, source_detached, edge_pos_detached,
-                                                        edge_dir_detached, edge_t_min_detached, edge_t_max_detached,
-                                                        sample_fractions, active_detached);
+                                                        mesh_count_, triangle_info_detached_, source_detached,
+                                                        edge_pos_detached, edge_dir_detached, edge_t_min_detached,
+                                                        edge_t_max_detached, sample_fractions, active_detached);
 }
 
 template <bool Detached>
@@ -694,26 +740,27 @@ SegmentChainVisibilityT<Detached> Scene::visible_chain(const Vector3fT<Detached>
 
     if (triangle_kind_ == TraceBackendKind::Cuda) {
         return trace_segment_chain_visibility_cuda<Detached>(cuda_backend(), face_offsets_, mesh_count_,
-                                                             points_detached, chain_length, ignore_prim_per_segment,
-                                                             ignore_k, chain_count, max_points, max_segments,
-                                                             active_detached);
+                                                             triangle_info_detached_, points_detached, chain_length,
+                                                             ignore_prim_per_segment, ignore_k, chain_count, max_points,
+                                                             max_segments, active_detached);
     }
 
     const bool use_jit_visibility = use_jit_trace_visibility_path(ignore_k);
 
     if (use_jit_visibility) {
-        return trace_segment_chain_visibility_jit_no_ignore<Detached>(optix_scene(), points_detached, chain_length,
-                                                                      chain_count, max_points, max_segments,
-                                                                      active_detached);
+        return trace_segment_chain_visibility_jit_no_ignore<Detached>(optix_scene(), triangle_info_detached_,
+                                                                      points_detached, chain_length, chain_count,
+                                                                      max_points, max_segments, active_detached);
     }
 
     ensure_pipeline(segment_chain_visibility_pipeline_, optix_scene().context(), mesh_count_,
                     segment_chain_visibility_pipeline_config());
 
     return trace_segment_chain_visibility_native<Detached>(optix_scene(), *segment_chain_visibility_pipeline_,
-                                                           face_offsets_, mesh_count_, points_detached, chain_length,
-                                                           ignore_prim_per_segment, ignore_k, chain_count, max_points,
-                                                           max_segments, active_detached);
+                                                           face_offsets_, mesh_count_, triangle_info_detached_,
+                                                           points_detached, chain_length, ignore_prim_per_segment,
+                                                           ignore_k, chain_count, max_points, max_segments,
+                                                           active_detached);
 }
 
 template Mask Scene::shadow_test<true>(const Ray& ray, Mask active) const;

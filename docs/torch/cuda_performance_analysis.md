@@ -50,8 +50,8 @@ Implemented earlier (2026-06-08 worktree):
 - Single-config native builds default to `Release` when the caller did not set
   `CMAKE_BUILD_TYPE`.
 - OptiX PTX builds use fast math behind `RAYDN_OPTIX_FAST_MATH` and now
-  compile explicit `compute_75` PTX instead of relying on nvcc's old default
-  virtual architecture.
+  compile explicit `compute_75` PTX (`compute_70` since ADR-0044) instead of
+  relying on nvcc's old default virtual architecture.
 - `Scene.intersect(ray, flags=...)` now exposes the RayD-compatible
   `RayFlags.None/Geometric/ShadingN/UV/All` contract. The t-only/minimal
   path is reached through `flags=getattr(rt.RayFlags, "None")`.
@@ -628,7 +628,7 @@ Highest leverage, smallest change. Do these first; they may shift the whole rank
   items 28, 19) at full precision. OptiX re-optimizes the PTX, but fast-math semantics must be
   set at the source compile.
 - Implemented: PTX custom commands use `RAYDN_OPTIX_NVCC_FLAGS`, which includes
-  `--gpu-architecture=compute_75` and, by default, `--use_fast_math`. The explicit PTX
+  `--gpu-architecture=compute_75` (`compute_70` since ADR-0044) and, by default, `--use_fast_math`. The explicit PTX
   architecture was required for warp intrinsics such as `__match_any_sync`.
 
 ---

@@ -1,6 +1,6 @@
 # ADR-0035: Per-translation-unit CUDA numeric compile-flag policy
 
-- Status: Accepted
+- Status: Accepted; divergence `D2` and open item `A3` resolved by ADR-0044
 - Date: 2026-07-24
 - Decision ID: `cuda-numeric-compile-flag-policy`
 - Scope: nvcc numeric flags for every RayD CUDA translation unit and ray-tracing
@@ -78,8 +78,9 @@ change that family's arithmetic.
   (`rf/diffraction_wedge.cu`), nine are `no_fmad` (the ADR-0026 scattering
   lockstep and AD units), one is `precise_no_ftz`
   (`penetration/segment_penetration.cu`), and the remaining 35 are
-  `nvcc_default`. Ten of the 11 PTX modules are `fast_math` at `compute_75`; the
-  eleventh, the ADR-0033 penetration module, is `precise_no_ftz`.
+  `nvcc_default`. Ten of the 11 PTX modules are `fast_math` at `compute_70`
+  (`compute_75` until ADR-0044); the eleventh, the ADR-0033 penetration module,
+  is `precise_no_ftz`.
 
 All numeric policy is written at one of three places: the `EXTRA_FLAGS` argument
 of a `rayd_cuda_object()` call, the shared PTX command shape inside
@@ -89,7 +90,7 @@ numeric flag, and the enforcement test fails if one appears.
 
 ### Frozen divergences
 
-The contract's `frozen_divergences` array records ten divergences with their
+The contract's `frozen_divergences` array records nine divergences with their
 evidence. Each names the units on both sides, and the test asserts each is still
 divergent, so silently "fixing" one fails instead of passing.
 
@@ -97,7 +98,12 @@ divergent, so silently "fixing" one fails instead of passing.
   (`src/trace/cuda_multipath.cu`) and `nvcc_default` in Torch
   (`src/torch_ext/scene/multipath_cuda.cu`), over the same six shared multipath
   algorithm headers plus the shared UTD math and triangle intersection.
-- `D2` Ray-tracing PTX targets `compute_70` in Dr.Jit and `compute_75` in Torch.
+- `D2` Retired on 2026-11-01. Ray-tracing PTX targeted `compute_70` in Dr.Jit and
+  `compute_75` in Torch, which kept the prebuilt `rayd-torch` OptiX programs off
+  Volta. The user decided to align both at `compute_70`, for Xingyu Chen to
+  review; [ADR-0044](0044-torch-optix-ptx-at-the-volta-floor.md) carries the
+  reason and the evidence, and the contract entry is removed as the stop
+  condition below requires. The id is not reused.
 - `D3` `shared/utd/utd_math.h` is compiled under three profiles inside the Torch
   backend alone: `fast_math`, `nvcc_default`, and `no_fmad`.
 - `D4` `src/bvh_query_device.cuh` is `fast_math` through the Dr.Jit fused
@@ -122,7 +128,7 @@ divergent, so silently "fixing" one fails instead of passing.
   (`tests/cpp/segment_penetration_oracle.cu`) is `nvcc_default` while the family
   it validates is `precise_no_ftz`.
 
-`D1`, `D2`, `D3`, and `D10` are recorded in `uncontracted` as divergences that no
+`D1`, `D3`, and `D10` are recorded in `uncontracted` as divergences that no
 decision record explains. Recording them is not approval of them.
 
 ### Shared header exposure
@@ -163,9 +169,9 @@ record with before-and-after generated-code and numerical evidence.
   Likely a throughput win, changes every Torch fused-CUDA multipath result, and
   must stay per-source: applying it target-wide would violate ADR-0033, which
   forbids the penetration family from inheriting a global fast-math option.
-- `A3` Aligning the PTX architectures. Changes PTX text and SASS for all 19
-  ray-tracing modules, and `compute_75` PTX cannot load on `sm_70` hardware.
-  High compatibility risk, no numerical benefit.
+- `A3` Decided by ADR-0044: the architectures are aligned at `compute_70`, which
+  changes only the 11 Torch modules. Aligning at `compute_75` was never an
+  option, because that PTX cannot load on `sm_70` hardware.
 - `A4` Regenerating the eight committed Dr.Jit `*_ptx.h` headers. Changes shipped
   device code even with identical flags, because the generating toolkit version
   differs from the original. This is why nothing in this change touches a

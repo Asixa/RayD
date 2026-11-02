@@ -43,6 +43,12 @@ if ($env:OS -eq "Windows_NT") {
     $env:NVCC_CCBIN = Split-Path -Parent $ClCommand.Source
 }
 
+# -CudaArch takes the RAYD_CUDA_ARCHS syntax shared by both backends: "native",
+# or compute capabilities such as 61, "61,89", or "6.1;8.9+PTX". CMake parses
+# and validates it.
+if (-not $CudaArch) {
+    $CudaArch = $env:RAYD_CUDA_ARCHS
+}
 if (-not $CudaArch) {
     $ComputeCapability = & nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>$null |
         Select-Object -First 1
@@ -51,9 +57,10 @@ if (-not $CudaArch) {
     }
     $CudaArch = $ComputeCapability.Trim().Replace(".", "")
 }
-if ($CudaArch -notmatch "^[0-9]+$") {
-    throw "Invalid CUDA architecture '$CudaArch'. Use digits such as 120."
+if ($CudaArch -notmatch "^[0-9A-Za-z.,;+ ]+$") {
+    throw "Invalid CUDA architecture list '$CudaArch'. Use native or values such as 61, 61,89, or 8.9+PTX."
 }
+$BuildTag = ($CudaArch.ToLowerInvariant() -replace "[^0-9a-z]+", "-").Trim("-")
 
 $Parallelism = [Math]::Max(1, [Environment]::ProcessorCount)
 $env:CMAKE_BUILD_PARALLEL_LEVEL = "$Parallelism"
@@ -61,7 +68,7 @@ $env:CMAKE_GENERATOR = "Ninja"
 
 function Build-Backend([string]$Name) {
     $BackendRoot = Join-Path $RepoRoot "$Name"
-    $BuildDir = "build/local-$CudaArch"
+    $BuildDir = "build/local-$BuildTag"
     $BuildPath = Join-Path $BackendRoot $BuildDir
 
     if ($Clean -and (Test-Path $BuildPath)) {
@@ -73,17 +80,15 @@ function Build-Backend([string]$Name) {
         Remove-Item -LiteralPath $ResolvedBuild -Recurse -Force
     }
 
-    if ($Name -eq "drjit") {
-        $env:RAYD_CUDA_GENCODE_ARCHES = $CudaArch
-        Remove-Item Env:RAYD_CUDA_PTX_ARCH -ErrorAction SilentlyContinue
-    } else {
-        $env:CMAKE_CUDA_ARCHITECTURES = $CudaArch
-        $Major = [int]($CudaArch.Substring(0, $CudaArch.Length - 1))
-        $Minor = $CudaArch.Substring($CudaArch.Length - 1)
-        $env:TORCH_CUDA_ARCH_LIST = "$Major.$Minor"
+    # RAYD_CUDA_ARCHS drives both backends; the release-only variables would
+    # conflict with it.
+    $env:RAYD_CUDA_ARCHS = $CudaArch
+    foreach ($Variable in "RAYD_CUDA_GENCODE_ARCHES", "RAYD_CUDA_PTX_ARCH", "CMAKE_CUDA_ARCHITECTURES",
+                         "TORCH_CUDA_ARCH_LIST", "RAYD_TORCH_CUDA_GENCODE_FLAGS") {
+        Remove-Item "Env:$Variable" -ErrorAction SilentlyContinue
     }
 
-    Write-Host "Building RayD $Name for sm_$CudaArch with $Parallelism parallel jobs"
+    Write-Host "Building RayD $Name for RAYD_CUDA_ARCHS=$CudaArch with $Parallelism parallel jobs"
     & $PythonExe -m pip install --no-user --no-build-isolation -ve $BackendRoot "-Cbuild-dir=$BuildDir"
     if ($LASTEXITCODE -ne 0) {
         throw "RayD $Name build failed with exit code $LASTEXITCODE."

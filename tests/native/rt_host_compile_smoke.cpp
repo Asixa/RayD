@@ -486,6 +486,8 @@ struct HostDiffractionPolicy {
     }
     static int sample_state_index_for_lane(unsigned int) { return 0; }
     static int state_edge_index_at(int) { return 0; }
+    static Vec3f state_n0_at(int) { return {0.f, 0.f, 1.f}; }
+    static Vec3f state_n1_at(int) { return {0.f, 1.f, 0.f}; }
     static Vec3f state_edge_pos_at(int) { return Vec3f{}; }
     static Vec3f state_edge_dir_at(int) { return Vec3f{0.f, 0.f, 1.f}; }
     static float state_edge_t_min_at(int) { return 0.f; }

@@ -2,7 +2,7 @@
 
 Every accepted RayD decision record lives in this directory as
 `NNNN-<slug>.md`. The sequence is not contiguous: it runs `0001`, `0002`, then
-`0025`, `0026`, then `0028`-`0043`. The gaps are deliberate. This file records
+`0025`, `0026`, then `0028`-`0045`. The gaps are deliberate. This file records
 why, so the sequence is not "tidied" by a later reader.
 
 ## Index
@@ -29,6 +29,8 @@ why, so the sequence is not "tidied" by a later reader.
 | [0041](0041-flat-default-and-jit-header-layout.md) | Flat default and JIT header layout | `flat-default-and-jit-header-layout` | 2026-07-28 | Accepted |
 | [0042](0042-cross-backend-implicit-geometry.md) | Cross-backend implicit and surfel geometry | `cross-backend-implicit-geometry` | 2026-07-29 | Accepted; standalone-only composition clauses superseded by ADR-0043 |
 | [0043](0043-unified-mixed-geometry-scene.md) | Unified mixed-geometry scene | `unified-mixed-geometry-scene` | 2026-07-29 | Accepted |
+| [0044](0044-torch-optix-ptx-at-the-volta-floor.md) | Torch OptiX PTX at the Volta floor | `torch-optix-ptx-at-the-volta-floor` | 2026-11-01 | Accepted by the user; pending review by Xingyu Chen |
+| [0045](0045-surface-leaving-rays.md) | Rays leaving a surface, independent of coordinate size | `surface-leaving-rays` | 2026-11-01 | Accepted |
 
 Every row is copied from the target file's own five-line header block. Status,
 date, and decision ID are owned by the ADR, not by this index.

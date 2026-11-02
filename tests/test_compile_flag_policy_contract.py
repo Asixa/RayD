@@ -673,6 +673,15 @@ class CompileFlagPolicyContractTests(unittest.TestCase):
                 for header in divergence["shared_headers"]:
                     self.assertTrue((ROOT / header).is_file(), header)
 
+    def test_ray_tracing_ptx_targets_the_support_floor(self):
+        # ADR-0044: OptiX rejects PTX newer than the device, so one higher arch
+        # silently drops a supported GPU from that module.
+        arches = {key: unit["arch"] for key, unit in DECLARED.items() if unit["kind"] == "ptx"}
+        self.assertEqual(len(arches), 19)
+        self.assertEqual(set(arches.values()), {"compute_70"}, arches)
+        ids = {divergence["id"] for divergence in CONTRACT["frozen_divergences"]}
+        self.assertNotIn("D2", ids)
+
     def test_structural_divergences_still_describe_the_build(self):
         torch_text = (TORCH / "CMakeLists.txt").read_text(encoding="utf-8")
         drjit_text = (DRJIT / "CMakeLists.txt").read_text(encoding="utf-8")

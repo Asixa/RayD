@@ -107,7 +107,10 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertIn("${RAYD_CUDA_GENCODE_FLAGS}", cuda_helper)
         self.assertIn("${RAYD_CUDA_GENCODE_FLAGS_LIST}", cuda_helper)
         self.assertIn("-gencode=arch=compute_${RAYD_CUDA_ARCH},code=sm_${RAYD_CUDA_ARCH}", cmake)
-        self.assertIn("-gencode=arch=compute_${RAYD_CUDA_PTX_ARCH},code=compute_${RAYD_CUDA_PTX_ARCH}", cmake)
+        # Each RAYD_CUDA_PTX_ARCH (or RAYD_CUDA_ARCHS "+PTX" entry) gets one PTX gencode.
+        self.assertIn('set(RAYD_CUDA_PTX_ARCH_LIST "${RAYD_CUDA_PTX_ARCH}")', cmake)
+        self.assertIn("foreach(RAYD_CUDA_ARCH IN LISTS RAYD_CUDA_PTX_ARCH_LIST)", cmake)
+        self.assertIn("-gencode=arch=compute_${RAYD_CUDA_ARCH},code=compute_${RAYD_CUDA_ARCH}", cmake)
         self.assertIn("--query-gpu=compute_cap", cmake)
         self.assertIn("RayD local CUDA architecture: sm_", cmake)
         self.assertIn("RAYD_NVCC_LAUNCHER", cmake)

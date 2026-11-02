@@ -6,6 +6,7 @@
 
 #include <rayd/math.h>
 #include <src/diffraction/paths_params.h>
+#include <src/runtime/rt_device.cuh>
 #include <rayd/utd.h>
 
 namespace rayd::torch_backend {
@@ -91,15 +92,16 @@ static __forceinline__ __device__ bool occlusion_blocked_handle(OptixTraversable
     return blocked != 0u;
 }
 
-template <bool SplitScene> static __forceinline__ __device__ bool visible_segment(float3 start, float3 end) {
+template <bool SplitScene>
+static __forceinline__ __device__ bool visible_segment(float3 start, float3 end, float start_bias, float end_bias) {
     const float3 delta = end - start;
     const float dist = norm3(delta);
     if (dist <= 1e-5f) {
         return true;
     }
     const float3 dir = (1.f / dist) * delta;
-    const float3 origin = start + kDfrRayBias * dir;
-    const float tmax = fmaxf(dist - 2.f * kDfrRayBias, 0.f);
+    const float3 origin = start + start_bias * dir;
+    const float tmax = fmaxf(dist - start_bias - end_bias, 0.f);
     if (occlusion_blocked_handle(params.primary_handle, origin, dir, tmax)) {
         return false;
     }
@@ -275,16 +277,17 @@ static __forceinline__ __device__ utd::PairInputs direct_pair_inputs(int state_i
 
 // Diffraction visibility rays start/end at the on-edge point Q, where they
 // graze the wedge's own faces and hit/miss chaotically in the watertight
-// intersector. Nudge the Q endpoint off both face planes along the exterior
+// intersector. Move the Q endpoint off both face planes along the exterior
 // wedge bisector before the visibility trace; the physics still uses the true
-// Q. normalize3's eps guard shrinks the offset toward zero for near-coplanar
-// faces (thin screens), where the along-ray bias already covers the trace.
-static __forceinline__ __device__ float3 edge_visibility_offset(int state_idx) {
+// Q. See rt::wedge_visibility_end.
+static __forceinline__ __device__ shared::rt::WedgeVisibilityEnd edge_visibility_end(int state_idx, float3 edge_point) {
     const float3 n0 = vec_from_storage(params.state_n0_aos, params.state_n0_stride0, params.state_n0_stride1,
                                        params.state_n0_x, params.state_n0_y, params.state_n0_z, state_idx);
     const float3 n1 = vec_from_storage(params.state_n1_aos, params.state_n1_stride0, params.state_n1_stride1,
                                        params.state_n1_x, params.state_n1_y, params.state_n1_z, state_idx);
-    return kDfrRayBias * normalize3(n0 + n1);
+    return shared::rt::wedge_visibility_end(shared::math::make_vec3(edge_point.x, edge_point.y, edge_point.z),
+                                            shared::math::make_vec3(n0.x, n0.y, n0.z),
+                                            shared::math::make_vec3(n1.x, n1.y, n1.z), kDfrRayBias);
 }
 
 static __forceinline__ __device__ utd::MaterialParams paths_material_params(int tx_idx) {
@@ -349,8 +352,10 @@ template <bool SplitScene> static __forceinline__ __device__ void trace_paths_or
     }
     const float clamped_parameter = fminf(fmaxf(parameter, 0.f), edge_length);
     const float3 edge_point = edge_origin + clamped_parameter * edge_dir;
-    const float3 vis_point = edge_point + edge_visibility_offset(state_idx);
-    if (!visible_segment<SplitScene>(source, vis_point) || !visible_segment<SplitScene>(vis_point, receiver)) {
+    const shared::rt::WedgeVisibilityEnd vis_end = edge_visibility_end(state_idx, edge_point);
+    const float3 vis_point = make_float3(vis_end.point.x, vis_end.point.y, vis_end.point.z);
+    if (!visible_segment<SplitScene>(source, vis_point, kDfrRayBias, vis_end.bias) ||
+        !visible_segment<SplitScene>(vis_point, receiver, vis_end.bias, kDfrRayBias)) {
         return;
     }
 
@@ -444,8 +449,9 @@ static __forceinline__ __device__ void trace_paths_order1_source_visibility_prim
         return;
     }
 
-    params.temp_visibility[lane] =
-        visible_segment<false>(source, edge_point + edge_visibility_offset(state_idx)) ? 1u : 0u;
+    const shared::rt::WedgeVisibilityEnd vis_end = edge_visibility_end(state_idx, edge_point);
+    const float3 vis_point = make_float3(vis_end.point.x, vis_end.point.y, vis_end.point.z);
+    params.temp_visibility[lane] = visible_segment<false>(source, vis_point, kDfrRayBias, vis_end.bias) ? 1u : 0u;
 }
 
 static __forceinline__ __device__ void trace_paths_order1_target_export_primary_impl() {
@@ -473,7 +479,9 @@ static __forceinline__ __device__ void trace_paths_order1_target_export_primary_
     if (!finite_paths_points(source, edge_point, receiver)) {
         return;
     }
-    if (!visible_segment<false>(edge_point + edge_visibility_offset(state_idx), receiver)) {
+    const shared::rt::WedgeVisibilityEnd vis_end = edge_visibility_end(state_idx, edge_point);
+    const float3 vis_point = make_float3(vis_end.point.x, vis_end.point.y, vis_end.point.z);
+    if (!visible_segment<false>(vis_point, receiver, vis_end.bias, kDfrRayBias)) {
         return;
     }
 

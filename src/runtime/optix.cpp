@@ -29,6 +29,13 @@ static_assert(shared::optix::SbtRecordAlignment == OPTIX_SBT_RECORD_ALIGNMENT);
 static_assert(shared::optix::SbtRecordHeaderSize == OPTIX_SBT_RECORD_HEADER_SIZE);
 using EmptySbtRecord = shared::optix::EmptySbtRecord;
 
+// Multipath launch pipelines keep their own exception flags, separate from the scene and edge pipelines. With no
+// exception flags, cold optixPipelineCreate() rejects the larger multipath modules (for example the six-raygen
+// diffraction-path module) on some driver and OptiX-header combinations; see docs/optix_pipeline_create_failures.md.
+// Only the flags that every supported OptiX ABI defines are used, so the value is valid with 8.x and 9.x headers.
+constexpr unsigned int kMultipathExceptionFlags =
+    OPTIX_EXCEPTION_FLAG_STACK_OVERFLOW | OPTIX_EXCEPTION_FLAG_TRACE_DEPTH;
+
 using PipelineCacheKey = std::tuple<OptixDeviceContext, const char*, size_t, std::string, std::string, std::string,
                                     std::string, int, int, size_t>;
 
@@ -93,8 +100,11 @@ int hitgroup_record_capacity(int hitgroup_record_count) {
 } // namespace
 
 OptixLaunchPipeline::~OptixLaunchPipeline() {
+    // Each event is recorded after this pipeline's optixLaunch, so waiting on all of them guarantees no launch
+    // still uses the pipeline when it is destroyed below (the cache evicts pipelines while the process runs).
     for (cudaEvent_t& event : params_staging_events_) {
         if (event != nullptr) {
+            cudaEventSynchronize(event);
             cudaEventDestroy(event);
             event = nullptr;
         }
@@ -135,7 +145,7 @@ void OptixLaunchPipeline::build(OptixDeviceContext context, int device_index, in
     pipeline_options.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
     pipeline_options.numPayloadValues = config.num_payload_values;
     pipeline_options.numAttributeValues = shared::optix::TriangleAttributeCount;
-    pipeline_options.exceptionFlags = OPTIX_EXCEPTION_FLAG_NONE;
+    pipeline_options.exceptionFlags = kMultipathExceptionFlags;
     pipeline_options.pipelineLaunchParamsVariableName = "params";
     pipeline_options.usesPrimitiveTypeFlags = static_cast<unsigned int>(OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE);
     pipeline_options.allowOpacityMicromaps = false;
@@ -255,7 +265,40 @@ std::shared_ptr<OptixLaunchPipeline> shared_optix_launch_pipeline(OptixDeviceCon
         return it->second;
 
     auto pipeline = std::make_shared<OptixLaunchPipeline>();
-    pipeline->build(context, device_index, hitgroup_capacity, config);
+    try {
+        pipeline->build(context, device_index, hitgroup_capacity, config);
+    } catch (const std::exception&) {
+        // optixPipelineCreate() can fail with a bare COMPILE ERROR for a pipeline that is valid: on some drivers one
+        // context cannot hold several large multipath pipelines at once, and the shared OptiX disk cache can get into a
+        // state where large modules fail. Release the cached pipelines of this context that no caller still holds and
+        // build again, which stays a quick cache hit when pipelines take turns; if that fails too, build once more
+        // without the disk cache, a full compile. Each is the same module and configuration, so results are unchanged,
+        // and a last failure is reported as is.
+        for (auto entry = cache.begin(); entry != cache.end();) {
+            if (std::get<0>(entry->first) == context && entry->second.use_count() == 1) {
+                entry = cache.erase(entry);
+            } else {
+                ++entry;
+            }
+        }
+        pipeline = std::make_shared<OptixLaunchPipeline>();
+        try {
+            pipeline->build(context, device_index, hitgroup_capacity, config);
+        } catch (const std::exception&) {
+            int cache_enabled = 0;
+            if (optixDeviceContextGetCacheEnabled(context, &cache_enabled) != OPTIX_SUCCESS || cache_enabled == 0)
+                throw;
+            optixDeviceContextSetCacheEnabled(context, 0);
+            pipeline = std::make_shared<OptixLaunchPipeline>();
+            try {
+                pipeline->build(context, device_index, hitgroup_capacity, config);
+            } catch (...) {
+                optixDeviceContextSetCacheEnabled(context, 1);
+                throw;
+            }
+            optixDeviceContextSetCacheEnabled(context, 1);
+        }
+    }
     cache[key] = pipeline;
     return pipeline;
 }

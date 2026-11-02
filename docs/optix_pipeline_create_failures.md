@@ -50,6 +50,35 @@ The fix that generalized across all failing APIs was to separate multipath OptiX
 - keep multipath module optimization at the production level by default
 - use `RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS=11` for multipath pipeline compile/link
 
+The Torch backend has the same split. Its scene, intersect, and edge pipelines keep exception flags `0`, while
+`OptixLaunchPipeline::build()` in `src/runtime/optix.cpp` uses `kMultipathExceptionFlags`
+(`OPTIX_EXCEPTION_FLAG_STACK_OVERFLOW | OPTIX_EXCEPTION_FLAG_TRACE_DEPTH`). The Torch value omits the legacy
+`OPTIX_EXCEPTION_FLAG_DEBUG` bit because OptiX 9 headers no longer define it. Before 2026-10-31 the Torch multipath
+pipelines also used `0`: a Torch build compiled against the OptiX SDK 9.0 headers then failed cold
+`optixPipelineCreate(multipath)` (code 7251) for `trace_dfr_paths()` on an RTX 4090 Laptop GPU, while the release
+wheel, which is built against OptiX 8.1 headers, passed. `tests/native/test_optix_pipeline_cold_create.py` covers
+the Torch multipath operations in fresh processes.
+
+A second, order-dependent failure has the same message. On driver 572.16 (RTX 4090 Laptop GPU) one Torch OptiX
+context could not hold the diffraction-accumulation pipeline (about 2.3 MB of PTX) and the diffraction-path pipeline
+(about 0.9 MB) at once: whichever was created second failed with `COMPILE ERROR: failed to create pipeline`, in the
+released 0.8.0 wheel as well. Each pipeline created fine alone, and the second one created fine once the first was
+destroyed.
+
+A third failure with the same message comes from the OptiX disk cache. The released wheel's `accumulate_reflections`
+failed cold on one machine with the default cache and passed with `OPTIX_CACHE_MAXSIZE=0` or a fresh
+`OPTIX_CACHE_PATH`; a copy of the cache database reproduced the failure, so it is not lock contention. Exception
+flags, optimization level and register count only changed the outcome by changing the cache key, which is why such
+changes can look like fixes. Treat a change in this message after a one-line kernel edit as this cache effect first.
+
+`shared_optix_launch_pipeline()` therefore answers a failed build by releasing the cached pipelines of that context
+that no caller still holds and building again, then, if that fails too, building without the disk cache; the
+destructor waits for the pipeline's launches before destroying it. Alternating such operations rebuilds pipelines
+(a cache hit of a few seconds) but no longer aborts. An unhealthy cache makes every process pay the full compile, 19 s
+for the diffraction-accumulation module on an RTX 4090 Laptop GPU: if that module is slow to start in every process,
+try a fresh `OPTIX_CACHE_PATH` before looking elsewhere.
+`test_large_multipath_pipelines_alternate_in_one_process` covers it.
+
 Two experimental fixes were rejected because they were not causal:
 
 - splitting `trace_reflections()` into primary/one-bounce raygen variants did not fix production cold creation

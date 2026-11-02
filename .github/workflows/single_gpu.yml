@@ -60,6 +60,9 @@ jobs:
 
       - name: Build both backends from the checked-out source
         shell: bash
+        # The documented source-build route: target exactly the runner's GPUs.
+        env:
+          RAYD_CUDA_ARCHS: native
         run: |
           mkdir -p "$OPTIX_CACHE_PATH"
           mkdir -p "$RAYD_CI_BUILD_ROOT"

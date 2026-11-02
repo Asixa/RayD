@@ -182,6 +182,12 @@ struct TorchCudaDiffractionAccumulationPolicy {
     static __forceinline__ __device__ int state_edge_index_at(int i) {
         return read_i32(params().state_edge_index, params().state_edge_index_stride, i);
     }
+    static __forceinline__ __device__ shared::math::Vec3f state_n0_at(int i) {
+        return vec(params().state_n0_x, params().state_n0_y, params().state_n0_z, params().state_n0_stride, i);
+    }
+    static __forceinline__ __device__ shared::math::Vec3f state_n1_at(int i) {
+        return vec(params().state_n1_x, params().state_n1_y, params().state_n1_z, params().state_n1_stride, i);
+    }
     static __forceinline__ __device__ shared::math::Vec3f state_edge_pos_at(int i) {
         return vec(params().state_edge_pos_x, params().state_edge_pos_y, params().state_edge_pos_z,
                    params().state_edge_pos_stride, i);
