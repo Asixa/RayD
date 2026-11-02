@@ -1905,8 +1905,8 @@ DfrCoherentUtdStatesT<Detached> Scene::build_dfr_coherent_tx_states(const DfrCoh
                         segment_visibility_pipeline_config());
         const SegmentVisibility visibility_result =
             trace_segment_visibility_native<true>(optix_scene(), *segment_visibility_pipeline_, face_offsets_,
-                                                  mesh_count_, source_pos, edges.edge_pos, edges.ignore_prim_ids,
-                                                  ignore_k, active_detached);
+                                                  mesh_count_, triangle_info_detached_, source_pos, edges.edge_pos,
+                                                  edges.ignore_prim_ids, ignore_k, active_detached);
         const Mask visibility = visibility_result.visible;
         const Mask source_exterior =
             wedge_exterior_mask_jit(source_pos - edges.edge_pos, edge_dir, edges.n0, edges.n_face_n);
@@ -2116,7 +2116,8 @@ DfrCoherentCandidatePairsT<Detached> Scene::build_dfr_coherent_higher_candidates
                             segment_visibility_pipeline_config());
             const SegmentVisibility visibility_result =
                 trace_segment_visibility_native<true>(optix_scene(), *segment_visibility_pipeline_, face_offsets_,
-                                                      mesh_count_, edge_pos, next_edge_pos, ignore_prim_ids, 4, valid);
+                                                      mesh_count_, triangle_info_detached_, edge_pos, next_edge_pos,
+                                                      ignore_prim_ids, 4, valid);
             valid &= visibility_result.visible;
             result.visibility_filtered = 1;
         }

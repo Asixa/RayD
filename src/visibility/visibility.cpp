@@ -465,6 +465,22 @@ std::shared_ptr<OptixLaunchPipeline> optix_pipeline_for_scene(const SceneCache& 
     return shared_optix_launch_pipeline(optix_entry.optix_context, static_cast<int>(scene.device_index), 1, config);
 }
 
+void set_segment_surface_triangles(SegmentVisibilityParams& params, const SceneCache& scene) {
+    params.tri_p0_x = scene.tri_p0_x.data_ptr<float>();
+    params.tri_p0_y = scene.tri_p0_y.data_ptr<float>();
+    params.tri_p0_z = scene.tri_p0_z.data_ptr<float>();
+    params.tri_e1_x = scene.tri_e1_x.data_ptr<float>();
+    params.tri_e1_y = scene.tri_e1_y.data_ptr<float>();
+    params.tri_e1_z = scene.tri_e1_z.data_ptr<float>();
+    params.tri_e2_x = scene.tri_e2_x.data_ptr<float>();
+    params.tri_e2_y = scene.tri_e2_y.data_ptr<float>();
+    params.tri_e2_z = scene.tri_e2_z.data_ptr<float>();
+    params.tri_fn_x = scene.tri_fn_x.data_ptr<float>();
+    params.tri_fn_y = scene.tri_fn_y.data_ptr<float>();
+    params.tri_fn_z = scene.tri_fn_z.data_ptr<float>();
+    params.n_triangles = static_cast<int>(scene.global_faces.size(0));
+}
+
 void launch_segment_visibility_backend(SceneCache& scene, const SegmentVisibilityParams& params, int variant,
                                        unsigned int lane_count, cudaStream_t stream) {
     if (scene.trace_backend == TraceBackend::Cuda) {
@@ -512,6 +528,7 @@ SegmentVisibilityNativeOutputs visibility_forward_native_impl(SceneCache& scene,
     params.handle = scene.triangle_ias.traversable;
     params.face_offsets = scene.face_offsets.data_ptr<int>();
     params.n_meshes = checked_i32(scene.meshes.size(), "n_meshes");
+    set_segment_surface_triangles(params, scene);
     params.start_aos = start.data_ptr<float>();
     params.end_aos = end.data_ptr<float>();
     params.active_mask = optional_mask_ptr(active);
@@ -573,6 +590,7 @@ std::vector<at::Tensor> visible_pair_forward_impl(int64_t scene_handle, at::Tens
     params.handle = scene.triangle_ias.traversable;
     params.face_offsets = scene.face_offsets.data_ptr<int>();
     params.n_meshes = checked_i32(scene.meshes.size(), "n_meshes");
+    set_segment_surface_triangles(params, scene);
     params.start_aos = start.data_ptr<float>();
     params.end_aos = end_a.data_ptr<float>();
     params.end_b_aos = end_b.data_ptr<float>();
@@ -632,6 +650,7 @@ std::vector<at::Tensor> visible_edge_forward_impl(int64_t scene_handle, at::Tens
     params.handle = scene.triangle_ias.traversable;
     params.face_offsets = scene.face_offsets.data_ptr<int>();
     params.n_meshes = checked_i32(scene.meshes.size(), "n_meshes");
+    set_segment_surface_triangles(params, scene);
     params.start_aos = source.data_ptr<float>();
     params.end_aos = edge_position.data_ptr<float>();
     params.edge_dir_x = edge_direction_soa.x.data_ptr<float>();
@@ -693,6 +712,7 @@ std::vector<at::Tensor> visible_chain_forward_impl(int64_t scene_handle, at::Ten
     params.handle = scene.triangle_ias.traversable;
     params.face_offsets = scene.face_offsets.data_ptr<int>();
     params.n_meshes = checked_i32(scene.meshes.size(), "n_meshes");
+    set_segment_surface_triangles(params, scene);
     params.chain_point_x = point_soa.x.data_ptr<float>();
     params.chain_point_y = point_soa.y.data_ptr<float>();
     params.chain_point_z = point_soa.z.data_ptr<float>();

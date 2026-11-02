@@ -46,6 +46,21 @@ struct SegmentVisibilityParams {
     int max_points = 0;
     int max_segments = 0;
 
+    // Scene triangles, used to recognize a blocker whose plane passes through a segment end. Optional.
+    const float* tri_p0_x = nullptr;
+    const float* tri_p0_y = nullptr;
+    const float* tri_p0_z = nullptr;
+    const float* tri_e1_x = nullptr;
+    const float* tri_e1_y = nullptr;
+    const float* tri_e1_z = nullptr;
+    const float* tri_e2_x = nullptr;
+    const float* tri_e2_y = nullptr;
+    const float* tri_e2_z = nullptr;
+    const float* tri_fn_x = nullptr;
+    const float* tri_fn_y = nullptr;
+    const float* tri_fn_z = nullptr;
+    int n_triangles = 0;
+
     const int* ignore_prim_ids = nullptr;
     int ignore_k = 0;
     const std::uint8_t* active_mask = nullptr;
@@ -163,27 +178,33 @@ RAYD_DEVICE std::uint32_t trace_segment(const SegmentVisibilityParams& params, V
         return 0u;
     }
 
-    Vec3f direction = math::subtract(end, start);
-    const float length = sqrtf(math::dot(direction, direction));
-    if (length <= kMinSegmentLength) {
-        if (blocker_prim != nullptr)
-            *blocker_prim = 0xFFFFFFFFu;
-        return 1u;
-    }
-
-    direction = math::scale(direction, 1.0f / length);
-    const Vec3f origin = math::add(start, math::scale(direction, kRayBias));
-    const float tmax = fmaxf(length - 2.0f * kRayBias, 0.0f);
-
     const int ignore_count = params.ignore_prim_ids != nullptr ? params.ignore_k : 0;
     const std::int32_t* ignore_ptr = params.ignore_prim_ids != nullptr ? params.ignore_prim_ids + ignore_base : nullptr;
 
+    const ::rayd::shared::rt::TriangleHit hit = ::rayd::shared::rt::trace_segment_off_surfaces(
+        start, end, kMinSegmentLength, kRayBias,
+        [&](Vec3f origin, Vec3f direction, float tmax) {
+            return traverser.trace_first_blocker(origin, direction, kTraceTMin, tmax, ignore_ptr, ignore_count);
+        },
+        [&](const ::rayd::shared::rt::TriangleHit& blocker, ::rayd::shared::rt::SurfacePlane& plane) {
+            const int prim = global_primitive_id(blocker.instance, blocker.prim, params.face_offsets, params.n_meshes);
+            if (params.tri_p0_x == nullptr || prim < 0 || prim >= params.n_triangles) {
+                return false;
+            }
+            plane.point = load_soa_vec3(params.tri_p0_x, params.tri_p0_y, params.tri_p0_z, prim);
+            const Vec3f normal = load_soa_vec3(params.tri_fn_x, params.tri_fn_y, params.tri_fn_z, prim);
+            plane.unit_normal = math::scale(normal, 1.0f / sqrtf(fmaxf(math::dot(normal, normal), 1e-30f)));
+            plane.coordinate_scale =
+                ::rayd::shared::rt::triangle_coordinate_magnitude(plane.point,
+                                                                  load_soa_vec3(params.tri_e1_x, params.tri_e1_y,
+                                                                                params.tri_e1_z, prim),
+                                                                  load_soa_vec3(params.tri_e2_x, params.tri_e2_y,
+                                                                                params.tri_e2_z, prim));
+            return true;
+        });
     if (blocker_prim == nullptr) {
-        return traverser.trace_occluded_ignore(origin, direction, kTraceTMin, tmax, ignore_ptr, ignore_count) ? 0u : 1u;
+        return hit.hit != 0u ? 0u : 1u;
     }
-
-    const ::rayd::shared::rt::TriangleHit hit =
-        traverser.trace_first_blocker(origin, direction, kTraceTMin, tmax, ignore_ptr, ignore_count);
     *blocker_prim = hit.hit != 0u
                         ? static_cast<std::uint32_t>(
                               global_primitive_id(hit.instance, hit.prim, params.face_offsets, params.n_meshes))

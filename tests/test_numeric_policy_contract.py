@@ -78,6 +78,12 @@ class NumericPolicyContractTests(unittest.TestCase):
         for header_name, json_key in mapping.items():
             self.assertEqual(self.family_constant(header_name), shared[json_key])
 
+    def test_surface_tolerance_matches_operations_json(self):
+        text = (ROOT / "src" / "runtime" / "rt_device.cuh").read_text(encoding="utf-8")
+        match = re.search(r"kSurfaceToleranceRelative\s*=\s*([0-9.]+)f\s*/\s*([0-9.]+)f\s*;", text)
+        relative = float(match.group(1)) / float(match.group(2))
+        self.assertEqual(relative, self.policy["shared_multipath"]["surface_tolerance_relative"])
+
     def test_surfel_endpoint_offset_is_shadow_epsilon(self):
         match = re.search(r"kSurfelEndpointOffset\s*=\s*(\w+)\s*;", self.header)
         self.assertEqual(match.group(1), "ShadowEpsilon")

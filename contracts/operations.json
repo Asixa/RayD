@@ -362,6 +362,7 @@
       "trace_tmin": 1e-5,
       "trace_tmax_finite": 1e8,
       "ray_bias": 1e-5,
+      "surface_tolerance_relative": 1.1920928955078125e-7,
       "min_segment_length": 2e-5,
       "epc_barycentric_slack": 1e-4,
       "normalize_floor": 1e-12,
@@ -389,6 +390,7 @@
       "drjit scene intersect and shadow_test use ray_tmin = RayEpsilon (1e-3); torch intersect uses ray_tmin = SmallEpsilon (1e-6). Frozen legacy divergence.",
       "torch has no scene-level shadow_test; its shadow_tmin (1e-5) comes from the shared segment-visibility TraceTMin used by visibility queries.",
       "endpoint_offset is the shared segment-visibility RayBias (1e-5) on both backends.",
+      "surface_tolerance_relative (2^-23) scales with coordinate magnitude: rays leaving a surface start twice this times the magnitude along the normal, and a segment blocker whose plane passes this close to an end does not block it (ADR-0045).",
       "surfel_endpoint_offset (1e-3, ShadowEpsilon) is a cross-backend exception: surfel visibility offsets both segment endpoints by ShadowEpsilon rather than the 1e-5 RayBias.",
       "watertight_triangles is false everywhere: OptiX builtin triangles with flags 0, no watertight intersection exists in any backend."
     ]

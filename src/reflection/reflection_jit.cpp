@@ -261,6 +261,22 @@ Int reflection_trace_ray_major_indices(int ray_count, int max_bounces) {
     return bounce_index * Int(ray_count) + ray_index;
 }
 
+/// Detached step from a hit to the origin of the ray leaving that surface on the side of `outgoing_normal`.
+template <bool Detached>
+Vector3f surface_spawn_step(const Scene& scene, const IntT<Detached>& global_prim,
+                            const Vector3fT<Detached>& outgoing_normal) {
+    Int prim;
+    Vector3f normal;
+    if constexpr (Detached) {
+        prim = global_prim;
+        normal = outgoing_normal;
+    } else {
+        prim = detach<false>(global_prim);
+        normal = detach<false>(outgoing_normal);
+    }
+    return surface_spawn_step_jit(scene.triangle_info_detached(), prim, normal, prim >= 0);
+}
+
 template <bool Detached>
 ReflectionTraceT<Detached> trace_bounces_impl(const Scene& scene, const RayT<Detached>& ray, int max_bounces,
                                               const ReflectionTraceOptions& options, MaskT<Detached> active) {
@@ -320,7 +336,8 @@ ReflectionTraceT<Detached> trace_bounces_impl(const Scene& scene, const RayT<Det
 
         const FloatT<Detached> ray_dot_normal = dot(current_ray.d, geo_normal);
         const Vector3fT<Detached> reflected_direction = current_ray.d - 2.f * ray_dot_normal * geo_normal;
-        current_ray.o = select(bounce_hit, its.p + Epsilon * reflected_direction, current_ray.o);
+        current_ray.o = select(bounce_hit, its.p + surface_spawn_step<Detached>(scene, its.global_prim_id, geo_normal),
+                               current_ray.o);
         current_ray.d = select(bounce_hit, reflected_direction, current_ray.d);
         current_ray.tmax = select(bounce_hit, full<FloatT<Detached>>(Infinity, ray_count), current_ray.tmax);
         current_image_source = select(bounce_hit, reflected_image_source, current_image_source);
@@ -411,7 +428,8 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached>& ray, i
                 const MaskT<Detached> trailing_active = trace.bounce_count > 0;
                 const Vector3fT<Detached> reflected_direction =
                     ray.d - 2.f * dot(ray.d, bounce.geo_normals) * bounce.geo_normals;
-                const Vector3fT<Detached> trailing_origin = bounce.hit_points + Epsilon * reflected_direction;
+                const Vector3fT<Detached> trailing_origin =
+                    bounce.hit_points + surface_spawn_step<Detached>(*this, bounce.global_prim_ids, bounce.geo_normals);
                 RayT<Detached> trailing_ray(trailing_origin, reflected_direction,
                                             full<FloatT<Detached>>(Infinity, ray_count));
                 const IntersectionT<Detached> trailing =
@@ -737,7 +755,8 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached>& ray, i
 
             const FloatAD ray_dot_normal = dot(current_ray.d, geo_normal);
             const Vector3fAD reflected_direction = current_ray.d - 2.f * ray_dot_normal * geo_normal;
-            current_ray.o = select(bounce_hit, hit_point + Epsilon * reflected_direction, current_ray.o);
+            current_ray.o = select(bounce_hit, hit_point + surface_spawn_step<false>(*this, global_prim, geo_normal),
+                                   current_ray.o);
             current_ray.d = select(bounce_hit, reflected_direction, current_ray.d);
             current_ray.tmax = select(bounce_hit, full<FloatAD>(Infinity, trace_ray_count), current_ray.tmax);
             current_image_source = select(bounce_hit, reflected_image_source, current_image_source);
@@ -967,7 +986,8 @@ AccumResultT<Detached> Scene::accumulate_reflections(const RayT<Detached>& ray, 
                 const MaskAD trailing_active = trace.bounce_count > 0;
                 const Vector3fAD reflected_direction =
                     ray.d - 2.f * dot(ray.d, bounce.geo_normals) * bounce.geo_normals;
-                const Vector3fAD trailing_origin = bounce.hit_points + Epsilon * reflected_direction;
+                const Vector3fAD trailing_origin =
+                    bounce.hit_points + surface_spawn_step<false>(*this, bounce.global_prim_ids, bounce.geo_normals);
                 const RayAD trailing_ray(trailing_origin, reflected_direction, full<FloatAD>(Infinity, ray_count));
                 const IntersectionAD trailing =
                     this->template intersect<false>(trailing_ray, trailing_active, RayFlags::Geometric);
@@ -1225,7 +1245,7 @@ AccumResultT<Detached> Scene::accumulate_reflections(const RayT<Detached>& ray, 
             image_source = select(material_active, image_source - FloatAD(2.f) * image_distance * normal, image_source);
             const auto reflected = reflect_field_vector(field, direction, normal, prim, material_active);
             direction = select(material_active, reflected.second, direction);
-            origin = select(material_active, hit_point + FloatAD(Epsilon) * direction, origin);
+            origin = select(material_active, hit_point + surface_spawn_step<false>(*this, prim, normal), origin);
             field = {
                 select(material_active, reflected.first.re, zeros<Vector3fAD>(ray_count)),
                 select(material_active, reflected.first.im, zeros<Vector3fAD>(ray_count)),

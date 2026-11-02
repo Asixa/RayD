@@ -24,6 +24,42 @@ namespace rayd {
 
 namespace multipath_detail {
 
+/// Largest coordinate magnitude of the gathered triangles, the scale of their ray-test rounding.
+inline Float triangle_coordinate_magnitude_jit(const TriangleInfo& triangles, const Int& prim, const Mask& active) {
+    const auto magnitude = [](const Vector3f& value) {
+        return maximum(abs(value.x()), maximum(abs(value.y()), abs(value.z())));
+    };
+    const Vector3f p0 = gather<Vector3f>(triangles.p0, prim, active);
+    return maximum(magnitude(p0), maximum(magnitude(p0 + gather<Vector3f>(triangles.e1, prim, active)),
+                                          magnitude(p0 + gather<Vector3f>(triangles.e2, prim, active))));
+}
+
+/// Detached step from a surface hit to the origin of the ray leaving it (rt::spawn_from_surface for JIT arrays).
+/// It only keeps the ray off the surface, so it carries no derivatives.
+inline Vector3f surface_spawn_step_jit(const TriangleInfo& triangles, const Int& prim, const Vector3f& outgoing_normal,
+                                       const Mask& active) {
+    return outgoing_normal *
+           (2.f * shared::rt::kSurfaceToleranceRelative * triangle_coordinate_magnitude_jit(triangles, prim, active));
+}
+
+/// Hands the scene's triangles to a native segment-visibility launch.
+inline void set_segment_surface_triangles(SegmentVisibilityParams& params, const TriangleInfo& triangles) {
+    drjit::eval(triangles.p0, triangles.e1, triangles.e2, triangles.face_normal);
+    params.tri_p0_x = triangles.p0.x().data();
+    params.tri_p0_y = triangles.p0.y().data();
+    params.tri_p0_z = triangles.p0.z().data();
+    params.tri_e1_x = triangles.e1.x().data();
+    params.tri_e1_y = triangles.e1.y().data();
+    params.tri_e1_z = triangles.e1.z().data();
+    params.tri_e2_x = triangles.e2.x().data();
+    params.tri_e2_y = triangles.e2.y().data();
+    params.tri_e2_z = triangles.e2.z().data();
+    params.tri_fn_x = triangles.face_normal.x().data();
+    params.tri_fn_y = triangles.face_normal.y().data();
+    params.tri_fn_z = triangles.face_normal.z().data();
+    params.n_triangles = static_cast<int>(slices(triangles.p0));
+}
+
 /// Backend for segment-visibility traces (env RAYD_TRACE_VISIBILITY_BACKEND): Dr.Jit HitObject vs. native optixLaunch.
 enum class TraceVisibilityBackend { Auto, Jit, Native };
 
@@ -134,10 +170,12 @@ inline void eval_segment_visibility_common(const Vector3f& start, const Int& fac
 }
 
 inline SegmentVisibilityParams make_segment_visibility_params(const OptixScene& optix_scene, const Int& face_offsets,
-                                                              int mesh_count, const Vector3f& start,
-                                                              const Int& ignore_prim_ids, int ignore_k,
-                                                              const Mask& active_detached, int ray_count) {
+                                                              int mesh_count, const TriangleInfo& triangles,
+                                                              const Vector3f& start, const Int& ignore_prim_ids,
+                                                              int ignore_k, const Mask& active_detached,
+                                                              int ray_count) {
     SegmentVisibilityParams params = {};
+    set_segment_surface_triangles(params, triangles);
     params.handle = optix_scene.ias_handle();
     params.face_offsets = face_offsets.data();
     params.n_meshes = mesh_count;
@@ -158,8 +196,8 @@ struct SegmentVisibilityLaunchResult {
 
 inline SegmentVisibilityLaunchResult launch_segment_visibility_detached(
     const OptixScene& optix_scene, const OptixLaunchPipeline& pipeline, const Int& face_offsets, int mesh_count,
-    const Vector3f& start, const Vector3f& end, const Int& ignore_prim_ids, int ignore_k, const Mask& active_detached,
-    bool collect_blocker_prim = false) {
+    const TriangleInfo& triangles, const Vector3f& start, const Vector3f& end, const Int& ignore_prim_ids, int ignore_k,
+    const Mask& active_detached, bool collect_blocker_prim = false) {
     const int ray_count = static_cast<int>(slices(start));
     if (ray_count == 0) {
         return {Mask(), Int()};
@@ -171,8 +209,8 @@ inline SegmentVisibilityLaunchResult launch_segment_visibility_detached(
     drjit::eval(end);
 
     SegmentVisibilityParams params =
-        make_segment_visibility_params(optix_scene, face_offsets, mesh_count, start, ignore_prim_ids, ignore_k,
-                                       active_detached, ray_count);
+        make_segment_visibility_params(optix_scene, face_offsets, mesh_count, triangles, start, ignore_prim_ids,
+                                       ignore_k, active_detached, ray_count);
     params.end_x = end.x().data();
     params.end_y = end.y().data();
     params.end_z = end.z().data();
@@ -183,16 +221,19 @@ inline SegmentVisibilityLaunchResult launch_segment_visibility_detached(
 }
 
 template <bool Detached>
-SegmentVisibilityT<Detached> trace_segment_visibility_native(
-    const OptixScene& optix_scene, const OptixLaunchPipeline& pipeline, const Int& face_offsets, int mesh_count,
-    const Vector3f& start, const Vector3f& end, const Int& ignore_prim_ids, int ignore_k, const Mask& active_detached) {
+SegmentVisibilityT<Detached> trace_segment_visibility_native(const OptixScene& optix_scene,
+                                                             const OptixLaunchPipeline& pipeline,
+                                                             const Int& face_offsets, int mesh_count,
+                                                             const TriangleInfo& triangles, const Vector3f& start,
+                                                             const Vector3f& end, const Int& ignore_prim_ids,
+                                                             int ignore_k, const Mask& active_detached) {
     const int ray_count = static_cast<int>(slices(start));
     SegmentVisibilityT<Detached> result;
     result.ray_count = ray_count;
 
     const SegmentVisibilityLaunchResult launched =
-        launch_segment_visibility_detached(optix_scene, pipeline, face_offsets, mesh_count, start, end, ignore_prim_ids,
-                                           ignore_k, active_detached);
+        launch_segment_visibility_detached(optix_scene, pipeline, face_offsets, mesh_count, triangles, start, end,
+                                           ignore_prim_ids, ignore_k, active_detached);
     if constexpr (!Detached) {
         result.visible = MaskAD(launched.visible);
     } else {
