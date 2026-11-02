@@ -530,11 +530,10 @@ and Windows.
 No other physical GPU, driver, or Linux has run it. Details are in the
 [verification record](docs/dev/gpu_support.md#verification-record-2026-11-01).
 
-**Driver minimum for one feature:** Dr.Jit `accumulate_reflections` needs an R575
-or newer driver. On an older driver it fails with `OptiX error in
+**Driver minimum:** everything needs R555 or newer. Torch builds made with CUDA 12.9
+or newer need R575 or newer; on an older driver they fail with `OptiX error in
 optixModuleCreate(multipath)`, and the OptiX log names the missing intrinsic
-`optix.ptx.copysign.f32`. Torch builds made with CUDA 12.9 or newer hit the same
-failure on those drivers. Everything else needs R555 or newer.
+`optix.ptx.copysign.f32`.
 
 On a GPU the installed build cannot run, RayD fails at first use with an
 `UnsupportedDeviceError` that names the GPU, its compute capability, the

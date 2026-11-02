@@ -206,7 +206,7 @@ GitHub-hosted runners do not provide the full physical GPU matrix. CI therefore 
 
 - CUDA SASS is architecture-specific; PTX provides forward JIT compatibility on later architectures supported by the installed driver.
 - CUDA 12.8 is required to compile native Blackwell targets including `sm_100`, `sm_101`, and `sm_120`.
-- End users need an NVIDIA driver new enough for the CUDA 12.x runtime and OptiX version used by Dr.Jit/RayD. Dr.Jit `accumulate_reflections` needs R575 or newer; see [`gpu_support.md`](gpu_support.md#driver-requirements).
+- End users need an NVIDIA driver new enough for the CUDA 12.x runtime and OptiX version used by Dr.Jit/RayD. Torch builds made with CUDA 12.9 or newer need R575 or newer; see [`gpu_support.md`](gpu_support.md#driver-requirements).
 - The CUDA toolkit is a build dependency. A toolkit is not required merely to install a prebuilt wheel.
 
 References:
