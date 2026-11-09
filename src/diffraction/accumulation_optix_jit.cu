@@ -39,6 +39,14 @@ struct DiffractionAccumulationPolicy {
 
     static __forceinline__ __device__ int state_edge_index_at(int i) { return params().state_edge_index[i]; }
 
+    static __forceinline__ __device__ ::rayd::shared::math::Vec3f state_n0_at(int i) {
+        return ::rayd::shared::math::make_vec3(params().state_n0_x[i], params().state_n0_y[i], params().state_n0_z[i]);
+    }
+
+    static __forceinline__ __device__ ::rayd::shared::math::Vec3f state_n1_at(int i) {
+        return ::rayd::shared::math::make_vec3(params().state_n1_x[i], params().state_n1_y[i], params().state_n1_z[i]);
+    }
+
     static __forceinline__ __device__ ::rayd::shared::math::Vec3f state_edge_pos_at(int i) {
         return ::rayd::shared::math::make_vec3(params().state_edge_pos_x[i], params().state_edge_pos_y[i],
                                                params().state_edge_pos_z[i]);

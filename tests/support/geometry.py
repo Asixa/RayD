@@ -22,6 +22,18 @@ def grid_mesh(device: torch.device, cells: int = 8, span: float = 2.0):
     return vertices.contiguous().to(device), faces.contiguous().to(device)
 
 
+def box_mesh(device: torch.device, half: float = 1.0):
+    """Closed axis-aligned cube centred at the origin, every face wound outward."""
+    corners = [[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1], [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]]
+    vertices = torch.tensor(corners, dtype=torch.float32) * half
+    faces = torch.tensor(
+        [[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], [0, 1, 5], [0, 5, 4]]
+        + [[1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7]],
+        dtype=torch.int32,
+    )
+    return vertices.to(device), faces.to(device)
+
+
 def tensor_bits(tensor: torch.Tensor) -> torch.Tensor:
     host = tensor.detach().contiguous().cpu()
     if host.dtype == torch.float32:

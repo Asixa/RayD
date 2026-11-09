@@ -245,6 +245,14 @@ int32_t checked_i32(int64_t value, const char* name) {
     return static_cast<int32_t>(value);
 }
 
+// Device kernels address per-bounce outputs as (ray * max_bounces + bounce) * row_width in 32-bit ints, so the
+// largest such index must fit in int32 or the launch writes outside its buffers.
+void require_bounce_slots_fit_i32(int64_t ray_count, int64_t max_bounces, int64_t row_width, const char* name) {
+    const int64_t limit = static_cast<int64_t>(std::numeric_limits<int32_t>::max()) / row_width;
+    if (max_bounces > limit || (ray_count > 0 && max_bounces > limit / ray_count))
+        throw std::runtime_error(std::string(name) + ": ray count * max_bounces exceeds the int32 output index range.");
+}
+
 const at::Tensor* optional_tensor(py::object obj, at::Tensor& storage) {
     if (obj.is_none())
         return nullptr;
@@ -458,6 +466,8 @@ std::vector<at::Tensor> trace_reflections_forward_native_impl(SceneCache& scene,
     at::Tensor active_ctx = active.defined() ? active : at::empty({0}, ray_o.options().dtype(at::kBool));
     if (max_bounces < 1)
         throw std::runtime_error("max_bounces must be at least 1.");
+    require_bounce_slots_fit_i32(ray_o.size(0), max_bounces, export_tape || export_image_sources ? 3 : 1,
+                                 "trace_reflections");
 
     require_scene_device(scene, ray_o, "ray_o");
     require_scene_device(scene, ray_d, "ray_d");
@@ -753,6 +763,10 @@ std::vector<at::Tensor> trace_refl_epc_field_forward_native_impl(int64_t scene_h
     at::Tensor active_ctx = active.defined() ? active : at::empty({0}, source.options().dtype(at::kBool));
     if (max_bounces < 1)
         throw std::runtime_error("max_bounces must be at least 1.");
+    // The discovery raygen keeps the chain in fixed ReflEpcMaxBounces-sized per-lane arrays.
+    if (max_bounces > ReflEpcMaxBounces)
+        throw std::runtime_error("max_bounces exceeds the native EPC limit (ReflEpcMaxBounces).");
+    require_bounce_slots_fit_i32(source.size(0), max_bounces, 3, "trace_refl_epc_field");
 
     SceneCache& scene = get_scene(scene_handle);
     require_scene_device(scene, source, "source");
@@ -970,6 +984,9 @@ std::vector<at::Tensor> reflection_epc_paths_forward_native_impl(
     require_flat_i32(surface_group_members, "surface_group_members");
     if (max_bounces < 1)
         throw std::runtime_error("max_bounces must be at least 1.");
+    if (max_bounces > ReflEpcMaxBounces)
+        throw std::runtime_error("max_bounces exceeds the native EPC limit (ReflEpcMaxBounces).");
+    require_bounce_slots_fit_i32(source.size(0), max_bounces, 3, "trace_refl_epc");
     if (!(plane_tolerance >= 0.0) || !std::isfinite(plane_tolerance))
         throw std::runtime_error("plane_tolerance must be finite and non-negative.");
     if (expected_prim_ids.size(0) != source.size(0) || expected_prim_ids.size(1) != max_bounces)

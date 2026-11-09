@@ -162,7 +162,8 @@ __global__ void reflection_chain_state_kernel(const float* __restrict__ ray_o, c
         const float3 hit = read_ray_bounce_vec3(tape_hit_points, ray_idx, bounce, max_bounces);
         const float dir_dot_n = dot3(direction, normal);
         const float3 next_direction = sub3(direction, mul3(2.f * dir_dot_n, normal));
-        origin = add3(hit, mul3(static_cast<float>(kRayBias), next_direction));
+        // The forward spawn offset only keeps the ray off the surface it leaves; derivatives follow the surface.
+        origin = hit;
         direction = next_direction;
         image_state = read_ray_bounce_vec3(image_sources, ray_idx, bounce, max_bounces);
     }
@@ -219,7 +220,7 @@ __global__ void reflection_chain_backward_kernel(
         float3 grad_signed_n = mul3(-2.f, add3(mul3(image_gdotn, image_delta), mul3(image_dist, grad_image_out)));
 
         grad_p = add3(grad_p, grad_origin_next);
-        const float3 grad_reflected = add3(grad_direction_next, mul3(static_cast<float>(kRayBias), grad_origin_next));
+        const float3 grad_reflected = grad_direction_next;
         const float dir_dot_n = dot3(direction, normal);
         const float refl_gdotn = dot3(grad_reflected, normal);
         const float3 grad_direction_current = sub3(grad_reflected, mul3(2.f * refl_gdotn, normal));
@@ -355,8 +356,8 @@ __global__ void reflection_chain_jvp_kernel(
         const float3 next_direction = sub3(direction, mul3(2.f * dir_dot_n, normal));
         float3 next_tangent_direction =
             sub3(tangent_direction, mul3(2.f, add3(mul3(tangent_dir_dot_n, normal), mul3(dir_dot_n, tangent_normal))));
-        const float3 next_origin = add3(hit, mul3(static_cast<float>(kRayBias), next_direction));
-        float3 next_tangent_origin = add3(tangent_hit, mul3(static_cast<float>(kRayBias), next_tangent_direction));
+        const float3 next_origin = hit;
+        float3 next_tangent_origin = tangent_hit;
         if (!active_b) {
             next_tangent_origin = make_float3(0.f, 0.f, 0.f);
             next_tangent_direction = make_float3(0.f, 0.f, 0.f);

@@ -106,6 +106,117 @@ template <typename LayoutPolicy, typename TraverserType> struct TraceConfig {
     using Traverser = TraverserType;
 };
 
+// Rays that leave a surface. A ray-triangle test computes plane distances from float32 coordinates, so its rounding
+// grows with the magnitude of the numbers involved, including the triangle's own vertices: a ray starting on a
+// triangle can re-hit it at any angle, and no fixed minimum distance covers every scene size. The tolerance below
+// bounds that rounding. A ray leaving a known surface starts on the outgoing side of its plane by
+// surface_spawn_offset(), and a segment whose blocker's plane passes through one of its ends is not blocked by it.
+// Both are scale-relative only, so they vanish with the coordinates and small scenes keep their close geometry.
+inline constexpr float kSurfaceToleranceRelative = 1.0f / 8388608.0f; // 2^-23 of the magnitude.
+inline constexpr int kSegmentSurfaceRetries = 4;
+
+RAYD_HOST_DEVICE float coordinate_magnitude(math::Vec3f value) {
+    return fmaxf(fabsf(value.x), fmaxf(fabsf(value.y), fabsf(value.z)));
+}
+
+RAYD_HOST_DEVICE float triangle_coordinate_magnitude(math::Vec3f p0, math::Vec3f e1, math::Vec3f e2) {
+    return fmaxf(coordinate_magnitude(p0),
+                 fmaxf(coordinate_magnitude(math::add(p0, e1)), coordinate_magnitude(math::add(p0, e2))));
+}
+
+RAYD_HOST_DEVICE float surface_tolerance(float coordinate_scale) {
+    return kSurfaceToleranceRelative * coordinate_scale;
+}
+
+RAYD_HOST_DEVICE float surface_spawn_offset(float coordinate_scale) {
+    return 2.0f * surface_tolerance(coordinate_scale);
+}
+
+/// Origin for a ray leaving `point` on the side of `outgoing_normal` (unit, on the ray's side of the surface).
+RAYD_HOST_DEVICE math::Vec3f spawn_from_surface(math::Vec3f point, math::Vec3f outgoing_normal,
+                                                float coordinate_scale) {
+    return math::add(point, math::scale(outgoing_normal, surface_spawn_offset(coordinate_scale)));
+}
+
+/// Where a visibility segment should end for a point on a wedge's edge: just off both faces, along the exterior
+/// bisector. A segment ending exactly on the edge grazes the wedge's own faces, and one running into the solid crosses
+/// no face at all before it stops. That end takes no along-segment bias, which could step across a face it has to
+/// cross. Opposite normals (a thin screen) have no bisector, so the point stays and keeps the bias instead.
+struct WedgeVisibilityEnd {
+    math::Vec3f point;
+    float bias;
+};
+
+RAYD_HOST_DEVICE WedgeVisibilityEnd wedge_visibility_end(math::Vec3f edge_point, math::Vec3f n0, math::Vec3f n1,
+                                                         float bias) {
+    const math::Vec3f bisector = math::add(n0, n1);
+    const float squared = math::dot(bisector, bisector);
+    if (!(squared > 1.0e-12f)) {
+        return {edge_point, bias};
+    }
+    const float offset = fmaxf(bias, surface_spawn_offset(coordinate_magnitude(edge_point)));
+    return {math::add(edge_point, math::scale(bisector, offset / sqrtf(squared))), 0.0f};
+}
+
+/// The plane of a candidate blocker, as stored for the scene's triangles.
+struct SurfacePlane {
+    math::Vec3f point;
+    math::Vec3f unit_normal;
+    float coordinate_scale;
+};
+
+/// Closest-or-first true blocker of the segment start-end. `trace(origin, direction, tmax)` casts one occlusion ray
+/// and `load_plane(hit, plane)` returns false when the blocker has no known plane. A blocker whose plane passes
+/// through an end of the segment (within rounding) cannot lie between the ends, because a line crosses a plane once:
+/// that end is moved off the plane, away from the other end, and the segment is cast again. Corners take one retry
+/// per plane. A blocker still reported after the last retry stands, so the answer errs towards blocked.
+template <typename Trace, typename LoadPlane>
+RAYD_DEVICE TriangleHit trace_segment_off_surfaces(math::Vec3f start, math::Vec3f end, float min_length, float bias,
+                                                   const Trace& trace, const LoadPlane& load_plane) {
+    TriangleHit hit;
+    hit.t = 0.0f;
+    hit.bary_u = 0.0f;
+    hit.bary_v = 0.0f;
+    hit.prim = -1;
+    hit.instance = -1;
+    hit.hit = 0u;
+    math::Vec3f near_end = start;
+    math::Vec3f far_end = end;
+    for (int attempt = 0; attempt <= kSegmentSurfaceRetries; ++attempt) {
+        math::Vec3f direction = math::subtract(far_end, near_end);
+        const float length = sqrtf(math::dot(direction, direction));
+        if (length <= min_length) {
+            hit.hit = 0u;
+            return hit;
+        }
+        direction = math::scale(direction, 1.0f / length);
+        hit = trace(math::add(near_end, math::scale(direction, bias)), direction, fmaxf(length - 2.0f * bias, 0.0f));
+        SurfacePlane plane;
+        if (hit.hit == 0u || attempt == kSegmentSurfaceRetries || !load_plane(hit, plane)) {
+            return hit;
+        }
+        const float scale =
+            fmaxf(plane.coordinate_scale, fmaxf(coordinate_magnitude(start), coordinate_magnitude(end)));
+        const float tolerance = surface_tolerance(scale);
+        const bool start_on_plane =
+            fabsf(math::dot(math::subtract(start, plane.point), plane.unit_normal)) <= tolerance;
+        const bool end_on_plane = fabsf(math::dot(math::subtract(end, plane.point), plane.unit_normal)) <= tolerance;
+        if (!start_on_plane && !end_on_plane) {
+            return hit;
+        }
+        const float side = math::dot(direction, plane.unit_normal) >= 0.0f ? 1.0f : -1.0f;
+        const math::Vec3f shift = math::scale(plane.unit_normal, side * surface_spawn_offset(scale));
+        // An end moves away from the other end, except that a segment lying in the plane keeps both ends on one side.
+        if (start_on_plane) {
+            near_end = math::add(near_end, shift);
+        }
+        if (end_on_plane) {
+            far_end = start_on_plane ? math::add(far_end, shift) : math::subtract(far_end, shift);
+        }
+    }
+    return hit;
+}
+
 } // namespace rayd::shared::rt
 
 #ifdef __CUDACC__

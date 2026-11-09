@@ -16,6 +16,20 @@ if not _TYPE_CHECKING:
 from rayd.drjit._C import *  # noqa: F401,F403
 from rayd._impl.capabilities_jit import api_manifest, backend_capabilities
 
+try:
+    # The rayd-drjit wheel installs the shared module under this suffixed name.
+    from rayd._impl import device_support_jit as _device_support
+except ImportError:
+    # A source tree on PYTHONPATH holds it only under its canonical name.
+    from rayd._impl import device_support as _device_support
+
+# Dr.Jit picks its CUDA device after import, so every visible GPU is checked
+# here through the driver API: an import with no usable GPU fails with
+# build-from-source guidance, and an unusable GPU beside a usable one warns.
+_device_support.check_visible(
+    _device_support.load_build_targets("drjit", "rayd.drjit._C"), _device_support.driver_devices()
+)
+
 # Explicit public surface. `from ._C import *` above is the import mechanism;
 # this list is the contract. It equals every name bound by NB_MODULE(_C, m) in
 # src/bindings/module_jit.cpp plus the two `_capabilities` helpers, and is

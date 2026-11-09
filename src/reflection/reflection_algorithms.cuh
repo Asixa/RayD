@@ -741,10 +741,12 @@ RAYD_DEVICE void reflection_trace_algo(const ::rayd::shared::optix::ReflectionTr
 
         Vec3f hit_point = math::add(origin, math::scale(direction, t));
         Vec3f geo_normal = math::make_vec3(0.0f, 0.0f, 1.0f);
+        float surface_scale = ::rayd::shared::rt::coordinate_magnitude(hit_point);
         if (global_prim >= 0 && global_prim < params.n_triangles) {
             const TriangleData tri = load_triangle<Policy>(params, global_prim);
             hit_point = math::add(math::add(tri.p0, math::scale(tri.e1, bary_u)), math::scale(tri.e2, bary_v));
             geo_normal = normalize(tri.fn);
+            surface_scale = ::rayd::shared::rt::triangle_coordinate_magnitude(tri.p0, tri.e1, tri.e2);
         }
         geo_normal = reflection::orient_normal_against(direction, geo_normal);
 
@@ -824,7 +826,7 @@ RAYD_DEVICE void reflection_trace_algo(const ::rayd::shared::optix::ReflectionTr
         }
 
         direction = reflection::reflect_direction(direction, geo_normal);
-        origin = math::add(hit_point, math::scale(direction, kRayBias));
+        origin = ::rayd::shared::rt::spawn_from_surface(hit_point, geo_normal, surface_scale);
         bounce_count = bounce + 1;
     }
 
@@ -963,16 +965,6 @@ RAYD_HOST_DEVICE Vec3f stable_perpendicular(Vec3f direction, Vec3f preferred) {
     const Vec3f axis = fallback_axis(normalized_direction);
     projected = math::subtract(axis, math::scale(normalized_direction, math::dot(axis, normalized_direction)));
     return math::normalize_f32(projected);
-}
-
-RAYD_HOST_DEVICE float max_abs_component(Vec3f value) {
-    return fmaxf(fabsf(value.x), fmaxf(fabsf(value.y), fabsf(value.z)));
-}
-
-RAYD_HOST_DEVICE Vec3f offset_surface_point(Vec3f point, Vec3f direction, Vec3f normal) {
-    const float offset = RayBias * (1.0f + max_abs_component(point));
-    const float signed_offset = math::dot(direction, normal) >= 0.0f ? offset : -offset;
-    return math::add(point, math::scale(normal, signed_offset));
 }
 
 RAYD_HOST_DEVICE ::rayd::shared::rt::TriangleHit choose_hit(::rayd::shared::rt::TriangleHit primary,
@@ -1229,6 +1221,7 @@ RAYD_DEVICE void reflection_accumulation_algo(const Params& params, std::uint32_
 
         Vec3f hit_point = math::add(origin, math::scale(direction, blocker_t));
         Vec3f geometric_normal = math::make_vec3(0.0f, 0.0f, 1.0f);
+        float surface_scale = ::rayd::shared::rt::coordinate_magnitude(hit_point);
         if (global_primitive >= 0 && global_primitive < params.n_triangles) {
             hit_point = math::make_vec3(params.tri_p0_x[global_primitive] + bary_u * params.tri_e1_x[global_primitive] +
                                             bary_v * params.tri_e2_x[global_primitive],
@@ -1239,6 +1232,16 @@ RAYD_DEVICE void reflection_accumulation_algo(const Params& params, std::uint32_
             geometric_normal = math::normalize_f32(math::make_vec3(params.tri_fn_x[global_primitive],
                                                                    params.tri_fn_y[global_primitive],
                                                                    params.tri_fn_z[global_primitive]));
+            surface_scale =
+                ::rayd::shared::rt::triangle_coordinate_magnitude(math::make_vec3(params.tri_p0_x[global_primitive],
+                                                                                  params.tri_p0_y[global_primitive],
+                                                                                  params.tri_p0_z[global_primitive]),
+                                                                  math::make_vec3(params.tri_e1_x[global_primitive],
+                                                                                  params.tri_e1_y[global_primitive],
+                                                                                  params.tri_e1_z[global_primitive]),
+                                                                  math::make_vec3(params.tri_e2_x[global_primitive],
+                                                                                  params.tri_e2_y[global_primitive],
+                                                                                  params.tri_e2_z[global_primitive]));
         }
         if (math::dot(direction, geometric_normal) > 0.0f)
             geometric_normal = math::scale(geometric_normal, -1.0f);
@@ -1258,7 +1261,7 @@ RAYD_DEVICE void reflection_accumulation_algo(const Params& params, std::uint32_
         path_length += blocker_t;
         field_value = reflected_field;
         direction = reflected_direction;
-        origin = offset_surface_point(hit_point, direction, geometric_normal);
+        origin = ::rayd::shared::rt::spawn_from_surface(hit_point, geometric_normal, surface_scale);
 
         const int next_depth = depth + 1;
         if (params.rr_depth > 0 && params.rr_prob < 1.0f && next_depth >= params.rr_depth) {
@@ -1537,23 +1540,31 @@ RAYD_DEVICE VisibilityResult trace_visibility_segment(const ReflEpcParams& param
                                                       const typename Config::Traverser& primary,
                                                       const typename Config::Traverser& secondary, Vec3f start,
                                                       Vec3f end, int ignore0, int ignore1, int ignore2) {
-    Vec3f direction = math::subtract(end, start);
-    const float length = math::length_f32(direction);
-    if (length <= kMinSegmentLength) {
-        return {1u, -1};
-    }
-    direction = math::scale(direction, 1.0f / length);
-    const Vec3f origin = math::add(start, math::scale(direction, kRayBias));
-    const float tmax = fmaxf(length - 2.0f * kRayBias, 0.0f);
     const std::int32_t ignore[3] = {ignore0, ignore1, ignore2};
-
-    ::rayd::shared::rt::TriangleHit result =
-        primary.trace_first_blocker(origin, direction, kTraceTMin, tmax, ignore, 3);
-    if constexpr (!PrimaryOnly) {
-        if (result.hit == 0u && params.split_mode != 0) {
-            result = secondary.trace_first_blocker(origin, direction, kTraceTMin, tmax, ignore, 3);
-        }
-    }
+    const ::rayd::shared::rt::TriangleHit result = ::rayd::shared::rt::trace_segment_off_surfaces(
+        start, end, kMinSegmentLength, kRayBias,
+        [&](Vec3f origin, Vec3f direction, float tmax) {
+            ::rayd::shared::rt::TriangleHit blocker =
+                primary.trace_first_blocker(origin, direction, kTraceTMin, tmax, ignore, 3);
+            if constexpr (!PrimaryOnly) {
+                if (blocker.hit == 0u && params.split_mode != 0) {
+                    blocker = secondary.trace_first_blocker(origin, direction, kTraceTMin, tmax, ignore, 3);
+                }
+            }
+            return blocker;
+        },
+        [&](const ::rayd::shared::rt::TriangleHit& blocker, ::rayd::shared::rt::SurfacePlane& plane) {
+            const int prim = global_primitive_id(blocker.instance, blocker.prim, params.face_offsets, params.n_meshes);
+            if (prim < 0 || prim >= params.n_triangles) {
+                return false;
+            }
+            plane.point = load_triangle_p0(params, prim);
+            plane.unit_normal = load_triangle_normal(params, prim);
+            plane.coordinate_scale =
+                ::rayd::shared::rt::triangle_coordinate_magnitude(plane.point, load_triangle_e1(params, prim),
+                                                                  load_triangle_e2(params, prim));
+            return true;
+        });
 
     VisibilityResult out;
     out.visible = result.hit == 0u ? 1u : 0u;
@@ -1690,12 +1701,14 @@ RAYD_DEVICE void run_reflection_epc_algo(const ::rayd::shared::optix::ReflEpcPar
 
                 Vec3f hit_point = math::add(trace_origin, math::scale(trace_direction, t));
                 Vec3f geo_normal = math::make_vec3(0.0f, 0.0f, 1.0f);
+                float surface_scale = ::rayd::shared::rt::coordinate_magnitude(hit_point);
                 if (global_prim >= 0 && global_prim < params.n_triangles) {
                     const Vec3f p0 = load_triangle_p0(params, global_prim);
                     const Vec3f e1 = load_triangle_e1(params, global_prim);
                     const Vec3f e2 = load_triangle_e2(params, global_prim);
                     hit_point = math::add(math::add(p0, math::scale(e1, bary_u)), math::scale(e2, bary_v));
                     geo_normal = load_triangle_normal(params, global_prim);
+                    surface_scale = ::rayd::shared::rt::triangle_coordinate_magnitude(p0, e1, e2);
                 }
                 if (math::dot(trace_direction, geo_normal) > 0.0f) {
                     geo_normal = math::scale(geo_normal, -1.0f);
@@ -1714,7 +1727,7 @@ RAYD_DEVICE void run_reflection_epc_algo(const ::rayd::shared::optix::ReflEpcPar
                 const float ray_dot_normal = math::dot(trace_direction, geo_normal);
                 trace_direction = reflection::epc_normalize(
                     math::subtract(trace_direction, math::scale(geo_normal, 2.0f * ray_dot_normal)));
-                trace_origin = math::add(hit_point, math::scale(trace_direction, kRayBias));
+                trace_origin = ::rayd::shared::rt::spawn_from_surface(hit_point, geo_normal, surface_scale);
             }
         }
     }

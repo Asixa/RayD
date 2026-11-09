@@ -267,6 +267,86 @@ class DfrAccumulationTests(unittest.TestCase):
         self.assertGreater(data["field0_abs"], 0.0)
         self.assertLess(data["basis_k_z0"], 0.0)
 
+    def test_coherent_accumulation_of_utd_states_prefilters_visibility_by_default(self):
+        # The visibility prefilter ends its segments off the wedge faces, so it must read the UTD states' normals.
+        data = run_json(
+            """
+            import json
+            import drjit as dr
+            import drjit.cuda as cuda
+            import rayd.drjit as pj
+
+            vertices = cuda.Array3f([-1.0, 1.0, -1.0],
+                                    [-1.0, -1.0, 1.0],
+                                    [10.0, 10.0, 10.0])
+            scene = pj.Scene()
+            scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
+            scene.build()
+
+            edges = pj.DfrCoherentEdge()
+            edges.count = 2
+            edges.edge_index = cuda.Int([5, 6])
+            edges.edge_pos = cuda.Array3f([0.0, 0.0], [0.0, 2.0], [0.0, 0.0])
+            edges.edge_dir = cuda.Array3f([1.0, 1.0], [0.0, 0.0], [0.0, 0.0])
+            edges.n0 = cuda.Array3f([0.0, 0.0], [1.0, 1.0], [0.0, 0.0])
+            edges.n_face_n = cuda.Array3f([0.0, 0.0], [-1.0, -1.0], [0.0, 0.0])
+            edges.wedge_n = cuda.Float([1.5, 1.5])
+            edges.edge_line_min = cuda.Float([-0.5, -0.5])
+            edges.edge_line_max = cuda.Float([0.5, 0.5])
+            edges.adjacent_face0 = cuda.Int([-1, -1])
+            edges.adjacent_face1 = cuda.Int([-1, -1])
+
+            material = pj.DfrMaterial()
+            material.eta_r = cuda.Float([4.0])
+            material.sigma = cuda.Float([0.0])
+            material.mu_r = cuda.Float([1.0])
+            material.gain = cuda.Float([1.0])
+            material.valid = cuda.Bool([True])
+
+            options = pj.DfrCoherentOptions()
+            options.wavelength = 0.125
+            options.k = 50.26548245743669
+            options.omega = 2.0 * 3.141592653589793 * 299792458.0 / options.wavelength
+            options.tx_pol_x = 1.0
+            options.tx_pol_y = 0.0
+            options.tx_pol_z = 0.0
+            options.max_order = 1
+            options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+            options.collect_debug_counts = True
+
+            states = scene.build_dfr_coherent_tx_states(
+                edges, cuda.Array3f([0.0], [0.0], [1.0]), material, options, True
+            )
+
+            grid = pj.DfrGrid()
+            grid.axis = 2
+            grid.position = -1.0
+            grid.coord0_min = -1.0
+            grid.coord0_max = 1.0
+            grid.coord1_min = -1.0
+            grid.coord1_max = 1.0
+            grid.resolution0 = 2
+            grid.resolution1 = 2
+            grid.cell_area = 1.0
+
+            counts = {}
+            for prefilter in (True, False):
+                options.prefilter_visibility = prefilter
+                result = scene.accum_dfr_coherent_direct(states, grid, material, options, True)
+                dr.eval(result.direct_count, result.visibility_reject_count)
+                counts[str(prefilter)] = {
+                    "direct": [int(v) for v in result.direct_count],
+                    "rejected": [int(v) for v in result.visibility_reject_count],
+                }
+            print(json.dumps({"default_prefilter": pj.DfrCoherentOptions().prefilter_visibility, "counts": counts}))
+            """
+        )
+
+        self.assertTrue(data["default_prefilter"])
+        # The receivers below the open edges see both of them, so the prefilter rejects nothing.
+        self.assertEqual(data["counts"]["True"], data["counts"]["False"])
+        self.assertEqual(data["counts"]["True"]["direct"], [2, 2, 2, 2])
+
     def test_coherent_higher_candidate_builder_accepts_empty_inputs(self):
         data = run_json(
             """
