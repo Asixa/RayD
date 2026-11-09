@@ -4,17 +4,17 @@ include_guard(GLOBAL)
 
 # RAYD_CUDA_ARCHS selects the GPUs a source build targets in both backends. It
 # is either `native` (every distinct GPU nvidia-smi reports) or a list such as
-# `61,89` or `6.1;8.9+PTX`, separated by commas, semicolons, or spaces. Every
+# `75,89` or `7.5;8.9+PTX`, separated by commas, semicolons, or spaces. Every
 # entry receives native SASS; a `+PTX` suffix also embeds forward-compatible
 # PTX for that entry. The environment variable wins over the cache entry.
 #
 # sm_70 is the oldest architecture RayD's device code compiles for.
 set(RAYD_MIN_CUDA_ARCH 70)
 set(RAYD_CUDA_ARCHS "" CACHE STRING
-    "Source-build CUDA targets: 'native' or a list such as 61,89 or 6.1;8.9+PTX.")
+    "Source-build CUDA targets: 'native' or a list such as 75,89 or 7.5;8.9+PTX.")
 if(DEFINED ENV{RAYD_CUDA_ARCHS} AND NOT "$ENV{RAYD_CUDA_ARCHS}" STREQUAL "")
     set(RAYD_CUDA_ARCHS "$ENV{RAYD_CUDA_ARCHS}" CACHE STRING
-        "Source-build CUDA targets: 'native' or a list such as 61,89 or 6.1;8.9+PTX." FORCE)
+        "Source-build CUDA targets: 'native' or a list such as 75,89 or 7.5;8.9+PTX." FORCE)
 endif()
 
 # Distinct compute capabilities of the local GPUs, as integers such as 89.
@@ -22,7 +22,7 @@ function(rayd_native_cuda_archs OUT_VAR)
     find_program(RAYD_NVIDIA_SMI_EXECUTABLE NAMES nvidia-smi)
     if(NOT RAYD_NVIDIA_SMI_EXECUTABLE)
         message(FATAL_ERROR "RAYD_CUDA_ARCHS=native needs nvidia-smi to detect the local GPU. "
-            "Pass an explicit list instead, for example RAYD_CUDA_ARCHS=61.")
+            "Pass an explicit list instead, for example RAYD_CUDA_ARCHS=89.")
     endif()
     execute_process(
         COMMAND "${RAYD_NVIDIA_SMI_EXECUTABLE}" --query-gpu=compute_cap --format=csv,noheader
@@ -32,7 +32,7 @@ function(rayd_native_cuda_archs OUT_VAR)
     string(REGEX MATCHALL "[0-9]+\\.[0-9]+" _capabilities "${_output}")
     if(NOT _result EQUAL 0 OR NOT _capabilities)
         message(FATAL_ERROR "RAYD_CUDA_ARCHS=native could not read a compute capability from nvidia-smi. "
-            "Pass an explicit list instead, for example RAYD_CUDA_ARCHS=61.")
+            "Pass an explicit list instead, for example RAYD_CUDA_ARCHS=89.")
     endif()
     set(_archs "")
     foreach(_capability IN LISTS _capabilities)
@@ -63,12 +63,20 @@ function(rayd_parse_cuda_archs OUT_SET OUT_SASS OUT_PTX)
         string(TOLOWER "${_entry}" _entry)
         if(_entry STREQUAL "native")
             rayd_native_cuda_archs(_native)
+            foreach(_arch IN LISTS _native)
+                if(_arch LESS RAYD_MIN_CUDA_ARCH)
+                    message(FATAL_ERROR "RAYD_CUDA_ARCHS=native found a local GPU with sm_${_arch}, below "
+                        "sm_${RAYD_MIN_CUDA_ARCH}. RayD device code uses Volta-only warp matching "
+                        "(__match_any_sync) and __grid_constant__ kernel parameters, so it cannot be built for that "
+                        "GPU. Pass an explicit list of the supported GPUs instead, for example RAYD_CUDA_ARCHS=89.")
+                endif()
+            endforeach()
             list(APPEND _sass ${_native})
             continue()
         endif()
         if(NOT _entry MATCHES "^([0-9]+)(\\.([0-9]))?(\\+ptx)?$")
             message(FATAL_ERROR "Invalid RAYD_CUDA_ARCHS entry '${_entry}'. "
-                "Use 'native' or compute capabilities such as 61, 6.1, or 8.9+PTX.")
+                "Use 'native' or compute capabilities such as 75, 7.5, or 8.9+PTX.")
         endif()
         if(CMAKE_MATCH_2)
             set(_arch "${CMAKE_MATCH_1}${CMAKE_MATCH_3}")

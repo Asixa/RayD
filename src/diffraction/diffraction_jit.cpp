@@ -2314,6 +2314,13 @@ DfrCoherentAccumT<Detached> Scene::accum_dfr_coherent_direct(const DfrCoherentUt
         params.utd_nnx = states.n_face_n.x().data();
         params.utd_nny = states.n_face_n.y().data();
         params.utd_nnz = states.n_face_n.z().data();
+        // The edge visibility end reads the wedge face normals through the state normal slots.
+        params.state_n0_x = states.n0.x().data();
+        params.state_n0_y = states.n0.y().data();
+        params.state_n0_z = states.n0.z().data();
+        params.state_n1_x = states.n_face_n.x().data();
+        params.state_n1_y = states.n_face_n.y().data();
+        params.state_n1_z = states.n_face_n.z().data();
         params.utd_wn = states.wedge_n.data();
         params.utd_elm = states.edge_line_min.data();
         params.utd_elx = states.edge_line_max.data();

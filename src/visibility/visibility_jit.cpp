@@ -45,7 +45,10 @@ OptixSegmentHit segment_hit_off_surfaces(const OptixScene& optix_scene, const Tr
     result.global_prim_id = full<Int>(-1, ray_count);
     for (int cast = 0; cast < kCasts; ++cast) {
         const OptixSegmentHit hit = optix_scene.segment_hit<true>(near_end, far_end, pending);
-        const Mask blocked = pending && !hit.visible;
+        // Only a real hit can be a blocker. A lane the trace rejected (for example a non-finite end) has no hit and
+        // keeps the visibility the trace reported for it.
+        const Mask blocked = pending && hit.hit;
+        result.visible = select(pending && !hit.hit, hit.visible, result.visible);
         const Vector3f point = gather<Vector3f>(triangles.p0, hit.global_prim_id, blocked);
         const Vector3f normal = gather<Vector3f>(triangles.face_normal, hit.global_prim_id, blocked);
         const Float scale = maximum(triangle_coordinate_magnitude_jit(triangles, hit.global_prim_id, blocked),

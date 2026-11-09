@@ -133,7 +133,7 @@ dispatcher, host count read, partial result, or fallback. See
 ## OptiX Pipeline Guardrail
 
 - If a native multipath call fails with `OptiX error in optixPipelineCreate(multipath)`, treat it first as a multipath OptiX pipeline configuration issue, not as an input/API issue.
-- The verified 2026-05-26 fix keeps scene/edge OptiX production flags separate from multipath flags: multipath uses production module optimization plus `RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS=11`.
+- The verified 2026-05-26 fix keeps scene/edge OptiX production flags separate from multipath flags: multipath uses production module optimization plus `RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS=11`. The Torch backend's `kMultipathExceptionFlags` in `src/runtime/optix.cpp` is `3` (stack overflow plus trace depth): it drops the `DEBUG` bit, which OptiX 9 headers no longer define.
 - Trace-call count and instruction count are useful diagnostics, but they are not proof of root cause; do not split reflection tracing or add fallback launches unless tests prove the pipeline shape itself is the failing variable.
 - Always verify in a fresh subprocess with the actually loaded conda `.pyd`, and run `tests.native.test_optix_pipeline_cold_create_jit` for public API cold-create coverage.
 - See `docs/optix_pipeline_create_failures.md` for the root-cause writeup and regression checklist.
