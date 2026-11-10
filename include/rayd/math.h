@@ -1058,8 +1058,16 @@ __forceinline__ __device__ int warp_sum_masked(unsigned int mask, int value) {
     return sum;
 }
 
+// Hardware lane of the calling thread. OptiX programs have no meaningful threadIdx, so the lane must not be derived
+// from it: a wrong lane makes no thread of a peer group its leader and the group's warp-aggregated sum is lost.
+__forceinline__ __device__ unsigned int warp_lane_id() {
+    unsigned int lane;
+    asm volatile("mov.u32 %0, %%laneid;" : "=r"(lane));
+    return lane;
+}
+
 __forceinline__ __device__ bool warp_mask_leader(unsigned int mask) {
-    return static_cast<int>(threadIdx.x & 31u) == (__ffs(mask) - 1);
+    return static_cast<int>(warp_lane_id()) == (__ffs(mask) - 1);
 }
 
 struct WarpCellGroup {

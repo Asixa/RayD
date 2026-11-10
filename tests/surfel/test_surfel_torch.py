@@ -50,6 +50,24 @@ class TorchSurfelTests(unittest.TestCase):
         self.assertEqual(chain.prim_ids.tolist(), [[0]])
         self.assertAlmostEqual(chain.t[0, 0].item(), 1.0, places=5)
 
+    def test_surfel_close_behind_a_rejected_one_is_found(self) -> None:
+        # Surfel 0 is crossed at 2 sigma with opacity 0.01, so its candidate is rejected (alpha < alpha_min); surfel 1
+        # lies 5e-4 behind it at its centre. The proxy march must resume closer than that, also far from the origin.
+        tangent_u = torch.tensor(((1.0, 0.0, 0.0),) * 2, dtype=torch.float32, device="cuda")
+        tangent_v = torch.tensor(((0.0, 1.0, 0.0),) * 2, dtype=torch.float32, device="cuda")
+        opacity = torch.tensor((0.01, 0.9), dtype=torch.float32, device="cuda")
+        value = torch.tensor((1.0, 2.0), dtype=torch.float32, device="cuda")
+        for offset in (0.0, 30.0):
+            with self.subTest(offset=offset):
+                center = torch.tensor(((-2.0, 0.0, offset), (0.0, 0.0, offset + 5.0e-4)), device="cuda")
+                scene = rt.SurfelScene(rt.SurfelCloud(center, tangent_u, tangent_v, opacity, value))
+                scene.build()
+                origin = torch.tensor(((0.0, 0.0, offset - 1.0),), dtype=torch.float32, device="cuda")
+                direction = torch.tensor(((0.0, 0.0, 1.0),), dtype=torch.float32, device="cuda")
+                hit = scene.intersect(rt.Ray(origin, direction))
+                self.assertEqual(hit.surfel_id.tolist(), [1])
+                self.assertAlmostEqual(hit.t.item(), 1.0005, places=4)
+
     def test_alpha_transmission_keeps_coplanar_surfels(self) -> None:
         center = self.center.detach().repeat(2, 1).contiguous()
         tangent_u = self.tangent_u.repeat(2, 1).contiguous()

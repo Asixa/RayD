@@ -837,7 +837,9 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(const DfrStatesT<Detached>& states, 
         const IntAD strategy_samples =
             select(is_direct, IntAD(std::max(direct_samples, 1)),
                    select(is_keller, IntAD(std::max(keller_samples, 1)), IntAD(std::max(suffix_samples, 1))));
-        const FloatAD contribution = src_power * material_gain * edge_length * FloatAD(grid.cell_area) * wedge_scale /
+        // Lane l draws state l % S, so each lane weighs edge_length * S / samples and the states' terms add up.
+        const FloatAD contribution = src_power * material_gain * edge_length *
+                                     FloatAD(static_cast<float>(state_count)) * FloatAD(grid.cell_area) * wedge_scale /
                                      FloatAD(strategy_samples) /
                                      (source_distance * source_distance * target_distance * target_distance);
         const MaskAD contribution_active = visible && (contribution > FloatAD(0.f)) && drjit::isfinite(contribution);
@@ -2624,6 +2626,7 @@ DfrCoherentAccumT<Detached> Scene::accum_dfr_coherent_direct(const DfrStatesT<De
         params.select_diffraction_point = options.select_diffraction_point ? 1 : 0;
         params.prefilter_visibility = options.prefilter_visibility ? 1 : 0;
         params.collect_debug_counts = options.collect_debug_counts ? 1 : 0;
+        params.one_lane_per_state = 1;
         params.out_direct_count = raw.direct_count.data();
         params.out_direct_field_x_re = raw.direct_field_x_re.data();
         params.out_direct_field_x_im = raw.direct_field_x_im.data();

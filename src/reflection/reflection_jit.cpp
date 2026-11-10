@@ -1223,11 +1223,26 @@ AccumResultT<Detached> Scene::accumulate_reflections(const RayT<Detached>& ray, 
             const ComplexADValue e_p = complex_dot_real(field, p_in_hat);
             const ComplexADValue out_s = complex_mul(r_te, e_s);
             const ComplexADValue out_p = complex_mul(r_tm, e_p);
-            return {{
-                        s_hat * out_s.re + p_out_hat * out_p.re,
-                        s_hat * out_s.im + p_out_hat * out_p.im,
-                    },
-                    reflected_dir};
+            // At exact normal incidence the plane of incidence is undefined. The fallback s/p basis gives the right
+            // value there (r_tm = -r_te), but its derivative is not tangent to the incidence plane of a perturbed
+            // ray, which flips the sign of the field derivative. There the basis-free form
+            // r_te P E + 2 r_tm n (n . P E), with P = I - i i^T the transverse projector, is used instead: the
+            // term it omits, (r_te + r_tm) p (p . E), is second order in the tilt, so value and first derivative
+            // both agree with the s/p form of any nearby tilted ray.
+            const MaskAD normal_incidence = !(squared_norm(cross(normal_hat, incident_hat)) > FloatAD(1e-12f));
+            const Vector3fAD transverse_re = field.re - dot(field.re, incident_hat) * incident_hat;
+            const Vector3fAD transverse_im = field.im - dot(field.im, incident_hat) * incident_hat;
+            const ComplexADValue normal_part = complex_mul(r_tm, {FloatAD(2.f) * dot(normal_hat, transverse_re),
+                                                                  FloatAD(2.f) * dot(normal_hat, transverse_im)});
+            const Vector3fAD reflected_re =
+                select(normal_incidence,
+                       transverse_re * r_te.re - transverse_im * r_te.im + normal_hat * normal_part.re,
+                       s_hat * out_s.re + p_out_hat * out_p.re);
+            const Vector3fAD reflected_im =
+                select(normal_incidence,
+                       transverse_re * r_te.im + transverse_im * r_te.re + normal_hat * normal_part.im,
+                       s_hat * out_s.im + p_out_hat * out_p.im);
+            return {{reflected_re, reflected_im}, reflected_dir};
         };
 
         const UIntAD ray_index = arange<UIntAD>(ray_count);
@@ -2269,10 +2284,26 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(const Vector3fT<Detached>& t
             const ComplexADValue e_p = complex_dot_real(field, p_in_hat);
             const ComplexADValue out_s = complex_mul(r_te, e_s);
             const ComplexADValue out_p = complex_mul(r_tm, e_p);
-            return {
-                s_hat * out_s.re + p_out_hat * out_p.re,
-                s_hat * out_s.im + p_out_hat * out_p.im,
-            };
+            // At exact normal incidence the plane of incidence is undefined. The fallback s/p basis gives the right
+            // value there (r_tm = -r_te), but its derivative is not tangent to the incidence plane of a perturbed
+            // ray, which flips the sign of the field derivative. There the basis-free form
+            // r_te P E + 2 r_tm n (n . P E), with P = I - i i^T the transverse projector, is used instead: the
+            // term it omits, (r_te + r_tm) p (p . E), is second order in the tilt, so value and first derivative
+            // both agree with the s/p form of any nearby tilted ray.
+            const MaskAD normal_incidence = !(squared_norm(cross(normal_hat, incident_hat)) > FloatAD(1e-12f));
+            const Vector3fAD transverse_re = field.re - dot(field.re, incident_hat) * incident_hat;
+            const Vector3fAD transverse_im = field.im - dot(field.im, incident_hat) * incident_hat;
+            const ComplexADValue normal_part = complex_mul(r_tm, {FloatAD(2.f) * dot(normal_hat, transverse_re),
+                                                                  FloatAD(2.f) * dot(normal_hat, transverse_im)});
+            const Vector3fAD reflected_re =
+                select(normal_incidence,
+                       transverse_re * r_te.re - transverse_im * r_te.im + normal_hat * normal_part.re,
+                       s_hat * out_s.re + p_out_hat * out_p.re);
+            const Vector3fAD reflected_im =
+                select(normal_incidence,
+                       transverse_re * r_te.im + transverse_im * r_te.re + normal_hat * normal_part.im,
+                       s_hat * out_s.im + p_out_hat * out_p.im);
+            return {reflected_re, reflected_im};
         };
 
         std::vector<Vector3fAD> images;

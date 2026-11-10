@@ -642,6 +642,7 @@
       "derivative_variants": ["trace_dfr_paths", "accum_dfr_direct", "accum_dfr_coherent_direct"],
       "inputs": ["diffraction_states", "material", "grid", "frequency"],
       "result": "diffraction_accumulation",
+      "state_weighting": "accum_dfr_direct sums over states: Monte-Carlo lane l draws state l % S and weighs edge_length * S / samples on both backends. accum_dfr_coherent_direct owns one lane per (state, cell) pair, and that lane weighs its whole edge length.",
       "ad": "Variant-specific fixed-path derivatives; path export and coherent accumulation are forward-only."
     },
     "diffraction_chain": {
@@ -650,6 +651,7 @@
       "derivative_variants": ["accum_dfr"],
       "inputs": ["diffraction_states", "material", "grid", "frequency", "max_depth"],
       "result": "diffraction_paths_or_accumulation",
+      "state_weighting": "accum_dfr sums over its S initial states on both backends: Monte-Carlo lane l draws initial state l % S and its contribution is weighted by S / samples, in the primal and the fixed-path VJP/JVP. Each further event draws one recursive state per lane uniformly with weight 1.",
       "ad": "fixed-path forward/VJP/JVP"
     },
     "sdf_intersect": {

@@ -213,6 +213,16 @@ def _active_ctx_tensor(active: torch.Tensor | None, like: torch.Tensor) -> torch
     return torch.empty((0,), device=like.device, dtype=torch.bool)
 
 
+def _returnable_mask(value: torch.Tensor) -> torch.Tensor:
+    """Return a native op's echoed `active` mask as a fresh view.
+
+    The native forward hands the caller's `active` tensor back unchanged. A custom
+    autograd Function with `setup_context` may not save an input it returns as-is
+    (forward-mode AD refuses it), so the Function returns and saves a view instead.
+    """
+    return value.view_as(value)
+
+
 def _save_optional_tensor(value: torch.Tensor | None, like: torch.Tensor) -> torch.Tensor:
     if value is not None:
         return value
@@ -258,7 +268,7 @@ def _make_intersect_function(fused: bool):
             outputs = torch.ops.rayd_torch.intersect_forward_ad_flags(
                 args[0], args[ray_o_at], args[ray_d_at], args[ray_tmax_at], args[active_at], int(args[flags_at])
             )
-            return tuple(outputs[:12]) + (outputs[13],)
+            return tuple(outputs[:12]) + (_returnable_mask(outputs[13]),)
 
         @staticmethod
         def setup_context(ctx, inputs, output):
@@ -985,16 +995,10 @@ def _make_trace_reflections_function(fused: bool):
         @staticmethod
         def forward(*args):
             _require_native_dispatcher()
-            return tuple(
-                torch.ops.rayd_torch.trace_reflections_forward(
-                    args[0],
-                    args[ray_o_at],
-                    args[ray_d_at],
-                    args[ray_tmax_at],
-                    args[active_at],
-                    int(args[max_bounces_at]),
-                )
+            outputs = torch.ops.rayd_torch.trace_reflections_forward(
+                args[0], args[ray_o_at], args[ray_d_at], args[ray_tmax_at], args[active_at], int(args[max_bounces_at])
             )
+            return tuple(outputs[:-1]) + (_returnable_mask(outputs[-1]),)
 
         @staticmethod
         def setup_context(ctx, inputs, output):
@@ -1181,11 +1185,10 @@ def _make_trace_refl_epc_field_function(fused: bool):
         @staticmethod
         def forward(*args):
             _require_native_dispatcher()
-            return tuple(
-                torch.ops.rayd_torch.trace_refl_epc_field_forward(
-                    args[0], args[source_at], args[receiver_at], args[active_at], int(args[max_bounces_at])
-                )
+            outputs = torch.ops.rayd_torch.trace_refl_epc_field_forward(
+                args[0], args[source_at], args[receiver_at], args[active_at], int(args[max_bounces_at])
             )
+            return tuple(outputs[:-1]) + (_returnable_mask(outputs[-1]),)
 
         @staticmethod
         def setup_context(ctx, inputs, output):

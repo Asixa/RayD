@@ -211,6 +211,10 @@ struct DfrAccumParams {
     int prefilter_visibility;
     int collect_edge_use;
     int collect_debug_counts;
+    /// Non-zero when every (state, cell) pair owns exactly one lane, as in coherent accumulation: a lane then weighs
+    /// its whole edge length. Zero (the default) is the Monte-Carlo layout, where lane `l` draws state `l % S` and
+    /// weighs `edge_length * S / samples`, so the states' contributions add up.
+    int one_lane_per_state;
     float omega;
     float tx_pol_x;
     float tx_pol_y;

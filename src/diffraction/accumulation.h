@@ -1558,7 +1558,10 @@ template <typename Policy, typename Traverser> struct DiffractionAccumulationAlg
         const float wave_gain =
             Policy::params().max_order == 3 ? wave_gain_per_event * wave_gain_per_event : wave_gain_per_event;
         const int strategy_sample_count = is_direct ? direct_limit : (is_keller ? keller_limit : suffix_limit);
-        const float sample_norm = 1.f / fmaxf(static_cast<float>(strategy_sample_count), 1.f);
+        // Lane l draws initial state l % S, so the S / samples weight makes the result a sum over initial states, as
+        // in the order-1 accumulation. Each recursive event draws one recursive state per lane with weight 1.
+        const float sample_norm =
+            static_cast<float>(Policy::params().state_count) / fmaxf(static_cast<float>(strategy_sample_count), 1.f);
         float contribution = chain_weight * wave_gain * Policy::params().grid_cell_area * sample_norm;
         if (is_keller)
             contribution *= keller_measure_scale;

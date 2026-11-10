@@ -2568,6 +2568,7 @@ CoherentDiffractionOutputs diffraction_coherent_accumulation_forward_impl(
     params.select_diffraction_point = select_diffraction_point ? 1 : 0;
     params.prefilter_visibility = prefilter_visibility ? 1 : 0;
     params.collect_debug_counts = 1;
+    params.one_lane_per_state = 1;
     params.out_direct_count = direct_count.data_ptr<int>();
     params.out_direct_field_x_re = direct_x_re.data_ptr<float>();
     params.out_direct_field_x_im = direct_x_im.data_ptr<float>();

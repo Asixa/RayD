@@ -206,8 +206,10 @@ struct TorchCudaDiffractionAccumulationPolicy {
     static __forceinline__ __device__ float sample_edge_weight_for_lane(int i, unsigned int lane, int n) {
         if (params().sample_edge_weight)
             return fmaxf(read_f32(params().sample_edge_weight, params().sample_edge_weight_stride, int(lane)), 0.f);
-        return fmaxf(state_edge_t_max_at(i) - state_edge_t_min_at(i), 0.f) * float(params().state_count) /
-               fmaxf(float(n), 1.f);
+        const float edge_length = fmaxf(state_edge_t_max_at(i) - state_edge_t_min_at(i), 0.f);
+        if (params().one_lane_per_state != 0)
+            return edge_length / fmaxf(float(n), 1.f);
+        return edge_length * float(params().state_count) / fmaxf(float(n), 1.f);
     }
     static __forceinline__ __device__ int state_prim0_at(int i) {
         return read_i32(params().state_prim0, params().state_prim0_stride, i);

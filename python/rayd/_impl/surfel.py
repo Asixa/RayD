@@ -16,6 +16,10 @@ from .scene import Mesh, Scene
 
 _RAY_EPSILON = float(_CONTRACT_VALUES["ray_epsilon"])
 _SHADOW_EPSILON = float(_CONTRACT_VALUES["shadow_epsilon"])
+# The proxy march restarts this many float32 ulps of the coordinate magnitude past a proxy hit, and never more than
+# RayEpsilon: beyond the rounding of the moved origin, so the same quad is not found again, yet far below any surfel
+# spacing, so a surfel right behind a rejected one is still examined.
+_PROXY_STEP_ULPS = 16.0
 
 
 def _require_float_cuda(value: torch.Tensor, name: str, rank: int, last_dim: int | None = None) -> None:
@@ -299,7 +303,13 @@ class SurfelScene:
                 for old, new in zip(result[:8], analytic[:8])
             ) + (torch.where(take, surfel_id, result[8]), torch.where(take, triangle_id, result[9]))
 
-            advance = proxy_hit.t.detach() + _RAY_EPSILON
+            hit_t = torch.where(proxy_valid, proxy_hit.t.detach(), torch.zeros_like(remaining))
+            hit_point = search_origin + hit_t[:, None] * search_direction
+            magnitude = torch.maximum(search_origin.abs().amax(dim=1), hit_point.abs().amax(dim=1))
+            speed = torch.clamp_min(search_direction.abs().amax(dim=1), torch.finfo(remaining.dtype).tiny)
+            step = _PROXY_STEP_ULPS * torch.finfo(remaining.dtype).eps * torch.clamp_min(magnitude, 1.0) / speed
+            step = torch.clamp_max(step, _RAY_EPSILON)
+            advance = hit_t + step
             search_origin = torch.where(
                 proxy_valid[:, None], search_origin + advance[:, None] * search_direction, search_origin
             )

@@ -226,10 +226,19 @@ static std::pair<TriangleInfoT<Detached>, Vector3fT<Detached>> process_mesh(cons
 
     const FloatT<Detached> safe_vertex_weights = select(vertex_weights > Epsilon, vertex_weights, 1.f);
     vertex_normals /= safe_vertex_weights;
-    vertex_normals = select(vertex_weights > Epsilon, normalize(vertex_normals), Vector3fT<Detached>(0.f, 0.f, 1.f));
-    triangles.n0 = gather<Vector3fT<Detached>>(vertex_normals, face_indices[0]);
-    triangles.n1 = gather<Vector3fT<Detached>>(vertex_normals, face_indices[1]);
-    triangles.n2 = gather<Vector3fT<Detached>>(vertex_normals, face_indices[2]);
+    // The area-weighted mean of unit face normals has length in [0, 1]. Where the incident normals cancel (a
+    // non-manifold fan or a fold onto itself) the mean is shorter than 1e-4, has no meaningful direction and would
+    // normalize to NaN or to rounding noise. Such a vertex reports +Z like an isolated vertex, and the corners that
+    // reference it shade with their own face's geometric normal. Normalizing only the selected value keeps the
+    // derivative of the unselected branch finite.
+    const MaskT<Detached> shading_vertex = (vertex_weights > Epsilon) & (squared_norm(vertex_normals) > 1e-8f);
+    vertex_normals = normalize(select(shading_vertex, vertex_normals, Vector3fT<Detached>(0.f, 0.f, 1.f)));
+    triangles.n0 = select(gather<MaskT<Detached>>(shading_vertex, face_indices[0]),
+                          gather<Vector3fT<Detached>>(vertex_normals, face_indices[0]), face_normals);
+    triangles.n1 = select(gather<MaskT<Detached>>(shading_vertex, face_indices[1]),
+                          gather<Vector3fT<Detached>>(vertex_normals, face_indices[1]), face_normals);
+    triangles.n2 = select(gather<MaskT<Detached>>(shading_vertex, face_indices[2]),
+                          gather<Vector3fT<Detached>>(vertex_normals, face_indices[2]), face_normals);
 
     face_areas *= 0.5f;
 

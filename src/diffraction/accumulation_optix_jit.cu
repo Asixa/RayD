@@ -63,7 +63,9 @@ struct DiffractionAccumulationPolicy {
 
     static __forceinline__ __device__ float sample_edge_weight_for_lane(int state_idx, unsigned int, int sample_count) {
         const float edge_length = fmaxf(state_edge_t_max_at(state_idx) - state_edge_t_min_at(state_idx), 0.f);
-        return edge_length / fmaxf(static_cast<float>(sample_count), 1.f);
+        if (params().one_lane_per_state != 0)
+            return edge_length / fmaxf(static_cast<float>(sample_count), 1.f);
+        return edge_length * static_cast<float>(params().state_count) / fmaxf(static_cast<float>(sample_count), 1.f);
     }
 
     static __forceinline__ __device__ int state_prim0_at(int i) { return params().state_prim0[i]; }

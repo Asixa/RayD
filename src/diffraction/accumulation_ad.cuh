@@ -402,6 +402,10 @@ struct DirectPrimal {
     float keller_ray_t;
     float keller_sin;
     float keller_cos;
+    float3 keller_incident;
+    float keller_incident_norm;
+    float keller_jacobian;
+    float keller_measure_scale;
     float source_dist2;
     float target_dist2;
     float contribution;
@@ -476,6 +480,8 @@ struct ChainPrimal {
     float keller_sin;
     float keller_cos;
     float keller_incident_norm;
+    float keller_jacobian;
+    float keller_measure_scale;
     float suffix_normal_norm;
     bool suffix_material_active;
     float3 keller_incident;
@@ -511,15 +517,27 @@ struct ChainTangent {
     float3 suffix_normal_raw;
 };
 
-static __forceinline__ __device__ bool keller_target_from_state(const DfrDirectAccumADParams& params, int lane,
-                                                                float3 edge_point, float3 edge_dir, float3 wi,
-                                                                float3& target, float3& ko, float& ray_t,
-                                                                float& sin_theta, float& cos_theta) {
-    const float axial = fminf(fmaxf(dot3(wi, edge_dir), -1.f), 1.f);
+// Forward Keller measure scale for a cone jacobian.
+template <typename Params>
+static __forceinline__ __device__ float keller_measure_scale(const Params& params, float jacobian) {
+    return 2.f * kDfrAdPi * jacobian / fmaxf(params.grid_cell_area, kDfrAdEps);
+}
+
+// Keller cone sample shared by the order-1 and chain bodies. It reproduces the forward
+// keller_grid_hit_from_incident (src/diffraction/accumulation.h) term by term: the cone is built around the
+// incident direction of the diffracting edge point, and `jacobian` is the |d target / d(t, phi)| factor of the
+// forward measure scale 2 pi jacobian / cell_area that weights every Keller contribution.
+template <typename Params>
+static __forceinline__ __device__ bool keller_cone_target(const Params& params, int lane, unsigned int stream,
+                                                          float3 incident_vec, float3 edge_point, float3 edge_dir,
+                                                          float3& target, float3& ko, float& ray_t, float& sin_theta,
+                                                          float& cos_theta, float& jacobian) {
+    const float3 incident = normalize3(incident_vec);
+    const float axial = fminf(fmaxf(dot3(incident, edge_dir), -1.f), 1.f);
     const float radial = sqrtf(fmaxf(1.f - axial * axial, 0.f));
-    const float3 basis0 = stable_perpendicular(edge_dir, wi);
+    const float3 basis0 = stable_perpendicular(edge_dir, incident);
     const float3 basis1 = normalize3(cross3(edge_dir, basis0));
-    sincosf(2.f * kDfrAdPi * uniform01(static_cast<unsigned int>(lane), 1u, static_cast<unsigned int>(params.seed)),
+    sincosf(2.f * kDfrAdPi * uniform01(static_cast<unsigned int>(lane), stream, static_cast<unsigned int>(params.seed)),
             &sin_theta, &cos_theta);
     ko = normalize3(axial * edge_dir + radial * (cos_theta * basis0 + sin_theta * basis1));
     const float denom = component(ko, params.grid_axis);
@@ -531,7 +549,12 @@ static __forceinline__ __device__ bool keller_target_from_state(const DfrDirectA
         return false;
     }
     target = edge_point + ray_t * ko;
-    return true;
+    const float3 dko_dphi = radial * (-sin_theta * basis0 + cos_theta * basis1);
+    const float inv_denom = 1.f / denom;
+    const float3 u_t = edge_dir - (component(edge_dir, params.grid_axis) * inv_denom) * ko;
+    const float3 u_phi = ray_t * (dko_dphi - (component(dko_dphi, params.grid_axis) * inv_denom) * ko);
+    jacobian = norm3(cross3(u_t, u_phi));
+    return isfinite(keller_measure_scale(params, jacobian));
 }
 
 static __forceinline__ __device__ float3 stable_perpendicular_jvp(float3 axis, float3 dot_axis, float3 preferred,
@@ -555,43 +578,68 @@ static __forceinline__ __device__ float3 stable_perpendicular_jvp(float3 axis, f
     return normalize_jvp(basis, projected_norm, dot_projected);
 }
 
-static __forceinline__ __device__ float3 keller_target_jvp(const DfrDirectAccumADParams& params, const DirectPrimal& p,
-                                                           float3 dot_edge_point, float3 dot_edge_dir,
-                                                           float3 dot_wi_raw) {
-    if (!p.is_keller) {
-        return dfr_make3(0.f, 0.f, 0.f);
-    }
-
-    const float3 dot_wi = normalize_jvp(p.wi, p.wi_norm, dot_wi_raw);
-    const float unclamped_axial = dot3(p.wi, p.edge_dir);
+// Tangent of the Keller cone sample: returns the target tangent and sets `dot_log_jacobian` to the relative
+// tangent of the measure-scale jacobian. The primal intermediates are recomputed from the taped cone inputs.
+template <typename Params>
+static __forceinline__ __device__ float3 keller_cone_jvp(const Params& params, float3 incident_vec, float incident_norm,
+                                                         float3 edge_point, float3 edge_dir, float sin_theta,
+                                                         float cos_theta, float3 ko, float ray_t, float jacobian,
+                                                         float3 dot_incident_vec, float3 dot_edge_point,
+                                                         float3 dot_edge_dir, float& dot_log_jacobian) {
+    const float3 incident = normalize3(incident_vec);
+    const float3 dot_incident = normalize_jvp(incident, incident_norm, dot_incident_vec);
+    const float unclamped_axial = dot3(incident, edge_dir);
     const bool axial_active = unclamped_axial > -1.f && unclamped_axial < 1.f;
     const float axial = fminf(fmaxf(unclamped_axial, -1.f), 1.f);
-    const float dot_axial = axial_active ? dot3(dot_wi, p.edge_dir) + dot3(p.wi, dot_edge_dir) : 0.f;
+    const float dot_axial = axial_active ? dot3(dot_incident, edge_dir) + dot3(incident, dot_edge_dir) : 0.f;
     const float radial = sqrtf(fmaxf(1.f - axial * axial, 0.f));
     const float dot_radial = radial > kDfrAdEps ? (-(axial / radial) * dot_axial) : 0.f;
 
-    const float3 basis0 = stable_perpendicular(p.edge_dir, p.wi);
-    const float3 dot_basis0 = stable_perpendicular_jvp(p.edge_dir, dot_edge_dir, p.wi, dot_wi, basis0);
-    const float3 basis1_raw = cross3(p.edge_dir, basis0);
+    const float3 basis0 = stable_perpendicular(edge_dir, incident);
+    const float3 dot_basis0 = stable_perpendicular_jvp(edge_dir, dot_edge_dir, incident, dot_incident, basis0);
+    const float3 basis1_raw = cross3(edge_dir, basis0);
     const float3 basis1 = normalize3(basis1_raw);
     const float basis1_norm = norm3(basis1_raw);
-    const float3 dot_basis1_raw = cross3(dot_edge_dir, basis0) + cross3(p.edge_dir, dot_basis0);
+    const float3 dot_basis1_raw = cross3(dot_edge_dir, basis0) + cross3(edge_dir, dot_basis0);
     const float3 dot_basis1 = normalize_jvp(basis1, basis1_norm, dot_basis1_raw);
 
-    const float3 radial_basis = p.keller_cos * basis0 + p.keller_sin * basis1;
-    const float3 dot_radial_basis = p.keller_cos * dot_basis0 + p.keller_sin * dot_basis1;
-    const float3 ko_raw = axial * p.edge_dir + radial * radial_basis;
+    const float3 radial_basis = cos_theta * basis0 + sin_theta * basis1;
+    const float3 dot_radial_basis = cos_theta * dot_basis0 + sin_theta * dot_basis1;
+    const float3 ko_raw = axial * edge_dir + radial * radial_basis;
     const float3 dot_ko_raw =
-        dot_axial * p.edge_dir + axial * dot_edge_dir + dot_radial * radial_basis + radial * dot_radial_basis;
+        dot_axial * edge_dir + axial * dot_edge_dir + dot_radial * radial_basis + radial * dot_radial_basis;
     const float ko_norm = norm3(ko_raw);
-    const float3 dot_ko = normalize_jvp(p.keller_ko, ko_norm, dot_ko_raw);
+    const float3 dot_ko = normalize_jvp(ko, ko_norm, dot_ko_raw);
 
-    const float denom = component(p.keller_ko, params.grid_axis);
-    const float dot_denom = component(dot_ko, params.grid_axis);
-    const float numerator = params.grid_position - component(p.edge_point, params.grid_axis);
-    const float dot_numerator = -component(dot_edge_point, params.grid_axis);
+    const int axis = params.grid_axis;
+    const float denom = component(ko, axis);
+    const float dot_denom = component(dot_ko, axis);
+    const float numerator = params.grid_position - component(edge_point, axis);
+    const float dot_numerator = -component(dot_edge_point, axis);
     const float dot_t = (dot_numerator * denom - numerator * dot_denom) / fmaxf(denom * denom, kDfrAdEps);
-    return dot_edge_point + dot_t * p.keller_ko + p.keller_ray_t * dot_ko;
+
+    dot_log_jacobian = 0.f;
+    if (jacobian > 0.f) {
+        const float3 phi_basis = cos_theta * basis1 - sin_theta * basis0;
+        const float3 dko_dphi = radial * phi_basis;
+        const float3 dot_dko_dphi = dot_radial * phi_basis + radial * (cos_theta * dot_basis1 - sin_theta * dot_basis0);
+        const float inv_denom = 1.f / denom;
+        const float dot_inv_denom = -dot_denom * inv_denom * inv_denom;
+        const float a = component(edge_dir, axis) * inv_denom;
+        const float dot_a = component(dot_edge_dir, axis) * inv_denom + component(edge_dir, axis) * dot_inv_denom;
+        const float3 u_t = edge_dir - a * ko;
+        const float3 dot_u_t = dot_edge_dir - dot_a * ko - a * dot_ko;
+        const float b = component(dko_dphi, axis) * inv_denom;
+        const float dot_b = component(dot_dko_dphi, axis) * inv_denom + component(dko_dphi, axis) * dot_inv_denom;
+        const float3 w = dko_dphi - b * ko;
+        const float3 dot_w = dot_dko_dphi - dot_b * ko - b * dot_ko;
+        const float3 u_phi = ray_t * w;
+        const float3 dot_u_phi = dot_t * w + ray_t * dot_w;
+        const float3 normal = cross3(u_t, u_phi);
+        const float3 dot_normal = cross3(dot_u_t, u_phi) + cross3(u_t, dot_u_phi);
+        dot_log_jacobian = dot3(normal, dot_normal) / (jacobian * jacobian);
+    }
+    return dot_edge_point + dot_t * ko + ray_t * dot_ko;
 }
 
 static __forceinline__ __device__ bool material_valid_for_prim(const DfrDirectAccumADParams& params, int prim) {
@@ -859,11 +907,17 @@ static __forceinline__ __device__ bool load_primal(const DfrDirectAccumADParams&
     p.keller_ray_t = 0.f;
     p.keller_sin = 0.f;
     p.keller_cos = 1.f;
+    // The forward builds the Keller cone around the source-to-edge-point direction (not the state's wi).
+    p.keller_incident = p.edge_point - p.source;
+    p.keller_incident_norm = norm3(p.keller_incident);
+    p.keller_jacobian = 0.f;
+    p.keller_measure_scale = 1.f;
     if (p.is_keller) {
-        if (!keller_target_from_state(params, lane, p.edge_point, p.edge_dir, p.wi, p.target, p.keller_ko,
-                                      p.keller_ray_t, p.keller_sin, p.keller_cos)) {
+        if (!keller_cone_target(params, lane, 1u, p.keller_incident, p.edge_point, p.edge_dir, p.target, p.keller_ko,
+                                p.keller_ray_t, p.keller_sin, p.keller_cos, p.keller_jacobian)) {
             return false;
         }
+        p.keller_measure_scale = keller_measure_scale(params, p.keller_jacobian);
     } else {
         p.target = grid_cell_center(params, p.cell);
     }
@@ -892,6 +946,8 @@ static __forceinline__ __device__ bool load_primal(const DfrDirectAccumADParams&
         (params.wavelength * (1.f / (4.f * kDfrAdPi))) * (params.wavelength * (1.f / (4.f * kDfrAdPi)));
     p.common_no_src = p.material_gain * wave_gain * p.edge_length * params.grid_cell_area * p.wedge_scale *
                       sample_norm * suffix_scale / (p.source_dist2 * p.target_dist2);
+    if (p.is_keller)
+        p.common_no_src *= p.keller_measure_scale;
     p.contribution = p.src_power * p.common_no_src;
     return p.contribution > 0.f && isfinite(p.contribution);
 }
@@ -914,64 +970,6 @@ static __forceinline__ __device__ void atomic_add_vec(float* x, float* y, float*
     if (z != nullptr) {
         atomicAdd(z + index, value.z);
     }
-}
-
-static __forceinline__ __device__ bool chain_keller_target(const DfrChainAccumADParams& params, int lane,
-                                                           unsigned int stream, float3 incident_vec, float3 edge_point,
-                                                           float3 edge_dir, float3& target, float3& ko, float& ray_t,
-                                                           float& sin_theta, float& cos_theta) {
-    const float3 incident = normalize3(incident_vec);
-    const float axial = fminf(fmaxf(dot3(incident, edge_dir), -1.f), 1.f);
-    const float radial = sqrtf(fmaxf(1.f - axial * axial, 0.f));
-    const float3 basis0 = stable_perpendicular(edge_dir, incident);
-    const float3 basis1 = normalize3(cross3(edge_dir, basis0));
-    sincosf(2.f * kDfrAdPi * uniform01(static_cast<unsigned int>(lane), stream, static_cast<unsigned int>(params.seed)),
-            &sin_theta, &cos_theta);
-    ko = normalize3(axial * edge_dir + radial * (cos_theta * basis0 + sin_theta * basis1));
-    const float denom = component(ko, params.grid_axis);
-    if (fabsf(denom) <= kDfrAdEps) {
-        return false;
-    }
-    ray_t = (params.grid_position - component(edge_point, params.grid_axis)) / denom;
-    if (!(ray_t > kDfrAdRayBias) || !isfinite(ray_t)) {
-        return false;
-    }
-    target = edge_point + ray_t * ko;
-    return true;
-}
-
-static __forceinline__ __device__ float3 chain_keller_target_jvp(const DfrChainAccumADParams& params,
-                                                                 const ChainPrimal& p, float3 dot_incident_raw,
-                                                                 float3 dot_edge_point, float3 dot_edge_dir) {
-    const float3 incident = normalize3(p.keller_incident);
-    const float3 dot_incident = normalize_jvp(incident, p.keller_incident_norm, dot_incident_raw);
-    const ChainEventPrimal& terminal = p.has_third ? p.third : p.second;
-    const float unclamped_axial = dot3(incident, terminal.edge_dir);
-    const bool axial_active = unclamped_axial > -1.f && unclamped_axial < 1.f;
-    const float axial = fminf(fmaxf(unclamped_axial, -1.f), 1.f);
-    const float dot_axial = axial_active ? dot3(dot_incident, terminal.edge_dir) + dot3(incident, dot_edge_dir) : 0.f;
-    const float radial = sqrtf(fmaxf(1.f - axial * axial, 0.f));
-    const float dot_radial = radial > kDfrAdEps ? (-(axial / radial) * dot_axial) : 0.f;
-    const float3 basis0 = stable_perpendicular(terminal.edge_dir, incident);
-    const float3 dot_basis0 = stable_perpendicular_jvp(terminal.edge_dir, dot_edge_dir, incident, dot_incident, basis0);
-    const float3 basis1_raw = cross3(terminal.edge_dir, basis0);
-    const float3 basis1 = normalize3(basis1_raw);
-    const float basis1_norm = norm3(basis1_raw);
-    const float3 dot_basis1_raw = cross3(dot_edge_dir, basis0) + cross3(terminal.edge_dir, dot_basis0);
-    const float3 dot_basis1 = normalize_jvp(basis1, basis1_norm, dot_basis1_raw);
-    const float3 radial_basis = p.keller_cos * basis0 + p.keller_sin * basis1;
-    const float3 dot_radial_basis = p.keller_cos * dot_basis0 + p.keller_sin * dot_basis1;
-    const float3 ko_raw = axial * terminal.edge_dir + radial * radial_basis;
-    const float3 dot_ko_raw =
-        dot_axial * terminal.edge_dir + axial * dot_edge_dir + dot_radial * radial_basis + radial * dot_radial_basis;
-    const float ko_norm = norm3(ko_raw);
-    const float3 dot_ko = normalize_jvp(p.keller_ko, ko_norm, dot_ko_raw);
-    const float denom = component(p.keller_ko, params.grid_axis);
-    const float dot_denom = component(dot_ko, params.grid_axis);
-    const float numerator = params.grid_position - component(terminal.edge_point, params.grid_axis);
-    const float dot_numerator = -component(dot_edge_point, params.grid_axis);
-    const float dot_t = (dot_numerator * denom - numerator * dot_denom) / fmaxf(denom * denom, kDfrAdEps);
-    return dot_edge_point + dot_t * p.keller_ko + p.keller_ray_t * dot_ko;
 }
 
 static __forceinline__ __device__ float3 chain_suffix_target_jvp(const ChainPrimal& p, const ChainTangent& tangent,
@@ -1145,13 +1143,16 @@ static __forceinline__ __device__ bool load_chain_primal(const DfrChainAccumADPa
     p.keller_incident =
         p.has_third ? (p.third.edge_point - p.second.edge_point) : (p.second.edge_point - p.first.edge_point);
     p.keller_incident_norm = norm3(p.keller_incident);
+    p.keller_jacobian = 0.f;
+    p.keller_measure_scale = 1.f;
     if (p.is_keller) {
         const ChainEventPrimal& terminal = p.has_third ? p.third : p.second;
-        if (!chain_keller_target(params, lane, 7u + static_cast<unsigned int>(params.max_order), p.keller_incident,
-                                 terminal.edge_point, terminal.edge_dir, p.final_target, p.keller_ko, p.keller_ray_t,
-                                 p.keller_sin, p.keller_cos)) {
+        if (!keller_cone_target(params, lane, 7u + static_cast<unsigned int>(params.max_order), p.keller_incident,
+                                terminal.edge_point, terminal.edge_dir, p.final_target, p.keller_ko, p.keller_ray_t,
+                                p.keller_sin, p.keller_cos, p.keller_jacobian)) {
             return false;
         }
+        p.keller_measure_scale = keller_measure_scale(params, p.keller_jacobian);
     }
     if (p.is_suffix) {
         const ChainEventPrimal& terminal = p.has_third ? p.third : p.second;
@@ -1202,10 +1203,12 @@ static __forceinline__ __device__ bool load_chain_primal(const DfrChainAccumADPa
     const float wave_gain_per_event =
         (params.wavelength * (1.f / (4.f * kDfrAdPi))) * (params.wavelength * (1.f / (4.f * kDfrAdPi)));
     p.wave_gain = p.has_third ? wave_gain_per_event * wave_gain_per_event : wave_gain_per_event;
-    p.sample_norm = 1.f / fmaxf(static_cast<float>(p.sample_count), 1.f);
+    // Same initial-state weight S / samples as the primal chain lane (a sum over initial states).
+    p.sample_norm = static_cast<float>(params.state_count) / fmaxf(static_cast<float>(p.sample_count), 1.f);
     const float suffix_scale =
         p.is_suffix ? p.suffix_reflection_gain * p.suffix_fspl * fmaxf(p.suffix_candidate_count, 1.f) : 1.f;
-    p.contribution = chain_weight * p.wave_gain * params.grid_cell_area * p.sample_norm * suffix_scale;
+    p.contribution =
+        chain_weight * p.wave_gain * params.grid_cell_area * p.sample_norm * suffix_scale * p.keller_measure_scale;
     return p.contribution > 0.f && isfinite(p.contribution);
 }
 
@@ -1249,6 +1252,7 @@ static __forceinline__ __device__ float chain_contribution_jvp(const DfrChainAcc
         p.has_third ? chain_event_point_jvp(p.third, tangent.third) : dfr_make3(0.f, 0.f, 0.f);
     float3 dot_final_target = dfr_make3(0.f, 0.f, 0.f);
     float dot_suffix_fspl = 0.f;
+    float dot_log_keller_jacobian = 0.f;
     if (p.is_keller) {
         const ChainEventPrimal& terminal = p.has_third ? p.third : p.second;
         const ChainEventTangent& terminal_tangent = p.has_third ? tangent.third : tangent.second;
@@ -1256,8 +1260,10 @@ static __forceinline__ __device__ float chain_contribution_jvp(const DfrChainAcc
         const float3 dot_previous_point = p.has_third ? dot_second_point : dot_first_point;
         const float3 dot_terminal_dir =
             normalize_jvp(terminal.edge_dir, terminal.edge_dir_norm, terminal_tangent.edge_dir_raw);
-        dot_final_target = chain_keller_target_jvp(params, p, dot_terminal_point - dot_previous_point,
-                                                   dot_terminal_point, dot_terminal_dir);
+        dot_final_target = keller_cone_jvp(params, p.keller_incident, p.keller_incident_norm, terminal.edge_point,
+                                           terminal.edge_dir, p.keller_sin, p.keller_cos, p.keller_ko, p.keller_ray_t,
+                                           p.keller_jacobian, dot_terminal_point - dot_previous_point,
+                                           dot_terminal_point, dot_terminal_dir, dot_log_keller_jacobian);
     } else if (p.is_suffix) {
         const ChainEventPrimal& terminal = p.has_third ? p.third : p.second;
         const float3 dot_terminal_point = p.has_third ? dot_third_point : dot_second_point;
@@ -1279,7 +1285,10 @@ static __forceinline__ __device__ float chain_contribution_jvp(const DfrChainAcc
     }
     const float suffix_scale =
         p.is_suffix ? p.suffix_reflection_gain * p.suffix_fspl * fmaxf(p.suffix_candidate_count, 1.f) : 1.f;
-    float dot_contribution = dot_chain_weight * p.wave_gain * params.grid_cell_area * p.sample_norm * suffix_scale;
+    float dot_contribution =
+        dot_chain_weight * p.wave_gain * params.grid_cell_area * p.sample_norm * suffix_scale * p.keller_measure_scale;
+    if (p.is_keller)
+        dot_contribution += p.contribution * dot_log_keller_jacobian;
     if (p.is_suffix && p.suffix_reflection_gain != 0.f) {
         const float dot_reflection_gain =
             p.suffix_material_active ? 2.f * p.suffix_material_gain * tangent.suffix_material_gain : 0.f;
@@ -1370,8 +1379,16 @@ static __forceinline__ __device__ float contribution_jvp(const DfrDirectAccumADP
     const float3 dot_edge_dir = normalize_jvp(p.edge_dir, p.edge_dir_norm, tangent.edge_dir_raw);
     const float3 dot_edge_point = tangent.edge_pos + dot_edge_t * p.edge_dir + p.edge_t * dot_edge_dir;
     float dot_suffix_fspl = 0.f;
-    const float3 dot_target = p.is_suffix ? suffix_target_jvp(p, tangent, dot_edge_point, dot_suffix_fspl)
-                                          : keller_target_jvp(params, p, dot_edge_point, dot_edge_dir, tangent.wi_raw);
+    float dot_log_keller_jacobian = 0.f;
+    float3 dot_target = dfr_make3(0.f, 0.f, 0.f);
+    if (p.is_suffix) {
+        dot_target = suffix_target_jvp(p, tangent, dot_edge_point, dot_suffix_fspl);
+    } else if (p.is_keller) {
+        dot_target =
+            keller_cone_jvp(params, p.keller_incident, p.keller_incident_norm, p.edge_point, p.edge_dir, p.keller_sin,
+                            p.keller_cos, p.keller_ko, p.keller_ray_t, p.keller_jacobian,
+                            dot_edge_point - tangent.source, dot_edge_point, dot_edge_dir, dot_log_keller_jacobian);
+    }
 
     float dot_contribution = p.common_no_src * tangent.src_power;
     if (p.material_gain != 0.f) {
@@ -1390,6 +1407,9 @@ static __forceinline__ __device__ float contribution_jvp(const DfrDirectAccumADP
     }
     if (p.wedge_scale != 0.f) {
         dot_contribution += p.contribution * (dot_wedge / p.wedge_scale);
+    }
+    if (p.is_keller) {
+        dot_contribution += p.contribution * dot_log_keller_jacobian;
     }
 
     const float3 source_delta = p.edge_point - p.source;
