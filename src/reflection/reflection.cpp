@@ -378,18 +378,6 @@ uint8_t* mutable_mask_ptr(const at::Tensor& mask) {
     return reinterpret_cast<uint8_t*>(mask.data_ptr<bool>());
 }
 
-at::Tensor optional_active_from_py(py::object active_obj, int64_t count, const char* name) {
-    if (active_obj.is_none())
-        return at::Tensor();
-    at::Tensor active = active_obj.cast<at::Tensor>();
-    require_mask(active, name);
-    if (active.numel() == 0)
-        return active.contiguous();
-    if (active.size(0) != count)
-        throw std::runtime_error(std::string(name) + " must match the batch size.");
-    return active.contiguous();
-}
-
 at::Tensor optional_active_from_tensor(const at::Tensor* active_ptr, int64_t count, const char* name) {
     if (active_ptr == nullptr || !active_ptr->defined())
         return at::Tensor();
@@ -575,28 +563,29 @@ std::vector<at::Tensor> trace_reflections_forward_native_impl(SceneCache& scene,
     return {valid, t, image_sources, prim_ids, prim_ids, tape_barycentric, tape_hit_points, tape_normals, active_ctx};
 }
 
-py::tuple trace_reflections_forward_op(int64_t scene_handle, at::Tensor ray_o, at::Tensor ray_d, at::Tensor ray_tmax,
-                                       py::object active, int64_t max_bounces) {
-    at::Tensor active_storage;
-    const at::Tensor* active_ptr = optional_tensor(active, active_storage);
-    return tensor_vector_to_tuple(trace_reflections_forward_native_impl(get_scene(scene_handle), ray_o, ray_d, ray_tmax,
-                                                                        active_ptr, max_bounces, true, true));
+std::vector<at::Tensor> trace_reflections_forward_op(int64_t scene_handle, at::Tensor ray_o, at::Tensor ray_d,
+                                                     at::Tensor ray_tmax, const c10::optional<at::Tensor>& active,
+                                                     int64_t max_bounces) {
+    const at::Tensor* active_ptr = active.has_value() && active->defined() && active->numel() != 0 ? &*active : nullptr;
+    ScenePin scene = get_scene(scene_handle);
+    return trace_reflections_forward_native_impl(*scene, ray_o, ray_d, ray_tmax, active_ptr, max_bounces, true, true);
 }
 
-py::tuple trace_reflections_forward_noad_op(int64_t scene_handle, at::Tensor ray_o, at::Tensor ray_d,
-                                            at::Tensor ray_tmax, py::object active, int64_t max_bounces) {
-    at::Tensor active_storage;
-    const at::Tensor* active_ptr = optional_tensor(active, active_storage);
-    return tensor_vector_to_tuple(trace_reflections_forward_native_impl(get_scene(scene_handle), ray_o, ray_d, ray_tmax,
-                                                                        active_ptr, max_bounces, false, true));
+std::vector<at::Tensor> trace_reflections_forward_noad_op(int64_t scene_handle, at::Tensor ray_o, at::Tensor ray_d,
+                                                          at::Tensor ray_tmax, const c10::optional<at::Tensor>& active,
+                                                          int64_t max_bounces) {
+    const at::Tensor* active_ptr = active.has_value() && active->defined() && active->numel() != 0 ? &*active : nullptr;
+    ScenePin scene = get_scene(scene_handle);
+    return trace_reflections_forward_native_impl(*scene, ray_o, ray_d, ray_tmax, active_ptr, max_bounces, false, true);
 }
 
-py::tuple trace_reflections_forward_reduced_op(int64_t scene_handle, at::Tensor ray_o, at::Tensor ray_d,
-                                               at::Tensor ray_tmax, py::object active, int64_t max_bounces) {
-    at::Tensor active_storage;
-    const at::Tensor* active_ptr = optional_tensor(active, active_storage);
-    return tensor_vector_to_tuple(trace_reflections_forward_native_impl(get_scene(scene_handle), ray_o, ray_d, ray_tmax,
-                                                                        active_ptr, max_bounces, false, false));
+std::vector<at::Tensor> trace_reflections_forward_reduced_op(int64_t scene_handle, at::Tensor ray_o, at::Tensor ray_d,
+                                                             at::Tensor ray_tmax,
+                                                             const c10::optional<at::Tensor>& active,
+                                                             int64_t max_bounces) {
+    const at::Tensor* active_ptr = active.has_value() && active->defined() && active->numel() != 0 ? &*active : nullptr;
+    ScenePin scene = get_scene(scene_handle);
+    return trace_reflections_forward_native_impl(*scene, ray_o, ray_d, ray_tmax, active_ptr, max_bounces, false, false);
 }
 
 ReflectionBackwardOutputs integration_trace_reflections_backward_impl(
@@ -690,7 +679,8 @@ py::tuple trace_reflections_backward_op(int64_t scene_handle, at::Tensor ray_o, 
                                         at::Tensor active, at::Tensor tape_prim_id, at::Tensor tape_barycentric,
                                         at::Tensor tape_hit_points, at::Tensor tape_normals, at::Tensor image_sources,
                                         at::Tensor grad_t, at::Tensor grad_image_sources) {
-    SceneCache& scene = get_scene(scene_handle);
+    ScenePin scene_pin = get_scene(scene_handle);
+    SceneCache& scene = *scene_pin;
     c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     ReflectionBackwardOutputs out =
         reflection_chain_backward_cuda(scene.global_vertices, scene.global_faces, ray_o, ray_d, ray_tmax, active,
@@ -705,12 +695,24 @@ py::tuple trace_reflections_backward_optional_op(int64_t scene_handle, at::Tenso
                                                  at::Tensor tape_barycentric, at::Tensor tape_hit_points,
                                                  at::Tensor tape_normals, at::Tensor image_sources,
                                                  py::object grad_t_obj, py::object grad_image_sources_obj) {
-    SceneCache& scene = get_scene(scene_handle);
+    ScenePin scene_pin = get_scene(scene_handle);
+    SceneCache& scene = *scene_pin;
     c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     at::Tensor grad_t_storage;
     at::Tensor grad_image_sources_storage;
     const at::Tensor* grad_t = optional_tensor(grad_t_obj, grad_t_storage);
     const at::Tensor* grad_image_sources = optional_tensor(grad_image_sources_obj, grad_image_sources_storage);
+    require_scene_device(scene, ray_o, "ray_o");
+    require_scene_device(scene, ray_d, "ray_d");
+    require_scene_device(scene, active, "active");
+    require_scene_device(scene, tape_prim_id, "tape_prim_id");
+    require_scene_device(scene, tape_barycentric, "tape_barycentric");
+    require_scene_device(scene, tape_hit_points, "tape_hit_points");
+    require_scene_device(scene, tape_normals, "tape_normals");
+    require_scene_device(scene, image_sources, "image_sources");
+    require_scene_device(scene, ray_tmax, "ray_tmax");
+    require_scene_device(scene, grad_t, "grad_t");
+    require_scene_device(scene, grad_image_sources, "grad_image_sources");
     ReflectionBackwardOutputs out =
         reflection_chain_backward_cuda(scene.global_vertices, scene.global_faces, ray_o, ray_d, ray_tmax, active,
                                        tape_prim_id, tape_barycentric, tape_hit_points, tape_normals, image_sources,
@@ -722,7 +724,8 @@ py::tuple trace_reflections_jvp_op(int64_t scene_handle, at::Tensor ray_o, at::T
                                    at::Tensor tape_prim_id, at::Tensor tape_barycentric, at::Tensor tape_hit_points,
                                    at::Tensor tape_normals, at::Tensor tangent_vertices, at::Tensor tangent_ray_o,
                                    at::Tensor tangent_ray_d, at::Tensor image_sources) {
-    SceneCache& scene = get_scene(scene_handle);
+    ScenePin scene_pin = get_scene(scene_handle);
+    SceneCache& scene = *scene_pin;
     c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     ReflectionJvpOutputs out =
         reflection_chain_jvp_cuda(scene.global_vertices, scene.global_faces, ray_o, ray_d, active, tape_prim_id,
@@ -738,7 +741,8 @@ py::tuple trace_reflections_jvp_optional_op(int64_t scene_handle, at::Tensor ray
                                             at::Tensor tape_hit_points, at::Tensor tape_normals,
                                             py::object tangent_vertices_obj, py::object tangent_ray_o_obj,
                                             py::object tangent_ray_d_obj, at::Tensor image_sources) {
-    SceneCache& scene = get_scene(scene_handle);
+    ScenePin scene_pin = get_scene(scene_handle);
+    SceneCache& scene = *scene_pin;
     c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     at::Tensor tangent_vertices_storage;
     at::Tensor tangent_ray_o_storage;
@@ -746,6 +750,17 @@ py::tuple trace_reflections_jvp_optional_op(int64_t scene_handle, at::Tensor ray
     const at::Tensor* tangent_vertices = optional_tensor(tangent_vertices_obj, tangent_vertices_storage);
     const at::Tensor* tangent_ray_o = optional_tensor(tangent_ray_o_obj, tangent_ray_o_storage);
     const at::Tensor* tangent_ray_d = optional_tensor(tangent_ray_d_obj, tangent_ray_d_storage);
+    require_scene_device(scene, ray_o, "ray_o");
+    require_scene_device(scene, ray_d, "ray_d");
+    require_scene_device(scene, active, "active");
+    require_scene_device(scene, tape_prim_id, "tape_prim_id");
+    require_scene_device(scene, tape_barycentric, "tape_barycentric");
+    require_scene_device(scene, tape_hit_points, "tape_hit_points");
+    require_scene_device(scene, tape_normals, "tape_normals");
+    require_scene_device(scene, image_sources, "image_sources");
+    require_scene_device(scene, tangent_vertices, "tangent_vertices");
+    require_scene_device(scene, tangent_ray_o, "tangent_ray_o");
+    require_scene_device(scene, tangent_ray_d, "tangent_ray_d");
     ReflectionJvpOutputs out =
         reflection_chain_jvp_cuda(scene.global_vertices, scene.global_faces, ray_o, ray_d, active, tape_prim_id,
                                   tape_barycentric, tape_hit_points, tape_normals, tangent_vertices, tangent_ray_o,
@@ -768,7 +783,8 @@ std::vector<at::Tensor> trace_refl_epc_field_forward_native_impl(int64_t scene_h
         throw std::runtime_error("max_bounces exceeds the native EPC limit (ReflEpcMaxBounces).");
     require_bounce_slots_fit_i32(source.size(0), max_bounces, 3, "trace_refl_epc_field");
 
-    SceneCache& scene = get_scene(scene_handle);
+    ScenePin scene_pin = get_scene(scene_handle);
+    SceneCache& scene = *scene_pin;
     require_scene_device(scene, source, "source");
     require_scene_device(scene, receiver, "receiver");
     require_scene_device(scene, active_ptr, "active");
@@ -1186,7 +1202,7 @@ py::tuple reflection_epc_paths_forward_op(int64_t scene_handle, at::Tensor sourc
     at::Tensor active_storage;
     const at::Tensor* active = optional_tensor(active_obj, active_storage);
     return tensor_vector_to_tuple(
-        reflection_epc_paths_forward_native_impl(get_scene(scene_handle), source, receiver, active, expected_prim_ids,
+        reflection_epc_paths_forward_native_impl(*get_scene(scene_handle), source, receiver, active, expected_prim_ids,
                                                  direct_plane_points, direct_plane_normals, surface_group_id,
                                                  surface_group_size, surface_group_members, max_bounces,
                                                  visibility_ignore_mode, plane_tolerance));
@@ -1197,7 +1213,8 @@ py::tuple trace_refl_epc_field_backward_op(int64_t scene_handle, at::Tensor sour
                                            at::Tensor tape_t, py::object grad_field_real_obj,
                                            py::object grad_field_imag_obj, py::object grad_path_length_obj,
                                            bool need_grad_vertices, bool need_grad_source, bool need_grad_receiver) {
-    SceneCache& scene = get_scene(scene_handle);
+    ScenePin scene_pin = get_scene(scene_handle);
+    SceneCache& scene = *scene_pin;
     at::Tensor grad_field_real_storage;
     at::Tensor grad_field_imag_storage;
     at::Tensor grad_path_length_storage;
@@ -1221,6 +1238,15 @@ py::tuple trace_refl_epc_field_backward_op(int64_t scene_handle, at::Tensor sour
             throw std::runtime_error("grad_path_length must match the EPC batch size.");
     }
     c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
+    require_scene_device(scene, source, "source");
+    require_scene_device(scene, receiver, "receiver");
+    require_scene_device(scene, active, "active");
+    require_scene_device(scene, tape_prim_id, "tape_prim_id");
+    require_scene_device(scene, tape_barycentric, "tape_barycentric");
+    require_scene_device(scene, tape_t, "tape_t");
+    require_scene_device(scene, grad_field_real, "grad_field_real");
+    require_scene_device(scene, grad_field_imag, "grad_field_imag");
+    require_scene_device(scene, grad_path_length, "grad_path_length");
     ReflEpcBackwardOutputs out =
         refl_epc_backward_cuda(scene.global_vertices, scene.global_faces, source, receiver, active, tape_prim_id,
                                tape_barycentric, tape_t, grad_field_real, grad_field_imag, grad_path_length,
@@ -1232,7 +1258,8 @@ py::tuple trace_refl_epc_field_jvp_op(int64_t scene_handle, at::Tensor source, a
                                       at::Tensor tape_prim_id, at::Tensor tape_barycentric, at::Tensor tape_t,
                                       py::object tangent_vertices_obj, py::object tangent_source_obj,
                                       py::object tangent_receiver_obj) {
-    SceneCache& scene = get_scene(scene_handle);
+    ScenePin scene_pin = get_scene(scene_handle);
+    SceneCache& scene = *scene_pin;
     at::Tensor tangent_vertices_storage;
     at::Tensor tangent_source_storage;
     at::Tensor tangent_receiver_storage;
@@ -1255,6 +1282,15 @@ py::tuple trace_refl_epc_field_jvp_op(int64_t scene_handle, at::Tensor source, a
             throw std::runtime_error("tangent_receiver must match the EPC batch size.");
     }
     c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
+    require_scene_device(scene, source, "source");
+    require_scene_device(scene, receiver, "receiver");
+    require_scene_device(scene, active, "active");
+    require_scene_device(scene, tape_prim_id, "tape_prim_id");
+    require_scene_device(scene, tape_barycentric, "tape_barycentric");
+    require_scene_device(scene, tape_t, "tape_t");
+    require_scene_device(scene, tangent_vertices, "tangent_vertices");
+    require_scene_device(scene, tangent_source, "tangent_source");
+    require_scene_device(scene, tangent_receiver, "tangent_receiver");
     ReflEpcJvpOutputs out =
         refl_epc_jvp_cuda(scene.global_vertices, scene.global_faces, source, receiver, active, tape_prim_id,
                           tape_barycentric, tape_t, tangent_vertices, tangent_source, tangent_receiver);
@@ -1636,7 +1672,7 @@ py::tuple reflection_accumulation_forward_op(
     int64_t accumulation_strategy, int64_t compact_min_samples, int64_t staged_min_samples_per_cell,
     int64_t procedural_sample_count, bool include_los) {
     ReflectionAccumulationNativeOutputs out =
-        reflection_accumulation_forward_native_impl(get_scene(scene_handle), std::move(ray_o), std::move(ray_d),
+        reflection_accumulation_forward_native_impl(*get_scene(scene_handle), std::move(ray_o), std::move(ray_d),
                                                     std::move(ray_tmax), &active, std::move(tx), std::move(tx_pol),
                                                     std::move(material_eta_r), std::move(material_sigma),
                                                     std::move(material_mu_r), std::move(material_gain),

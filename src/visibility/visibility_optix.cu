@@ -12,7 +12,10 @@ extern "C" {
 __constant__ SegmentVisibilityParams params;
 }
 
-using SegmentVisibilityPolicy = shared::optix::SegmentVisibilityDevicePolicy<true, true>;
+// A lane with a NaN or infinite input reports not visible, tested inside the raygen instead of by a host-side pass.
+struct SegmentVisibilityPolicy : shared::optix::SegmentVisibilityDevicePolicy<true, true> {
+    static constexpr bool reject_nonfinite_inputs = true;
+};
 
 extern "C" __global__ void __anyhit__segment_visibility() {
     shared::optix::segment_visibility::anyhit(params);

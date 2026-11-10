@@ -65,6 +65,7 @@ struct TorchCudaReflectionPolicy {
 struct TorchCudaVisibilityPolicy {
     static constexpr bool disable_anyhit_without_ignore = true;
     static constexpr bool write_output_t = true;
+    static constexpr bool reject_nonfinite_inputs = true;
 };
 
 struct TorchCudaReflectionAccumulationPolicy {

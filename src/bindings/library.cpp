@@ -36,6 +36,10 @@ OptionalTensorList tuple_to_optional_tensor_list(const py::tuple& tuple, size_t 
     return out;
 }
 
+OptionalTensorList tensor_list(std::vector<at::Tensor> values) {
+    return OptionalTensorList(std::make_move_iterator(values.begin()), std::make_move_iterator(values.end()));
+}
+
 OptionalTensorList tensors(std::initializer_list<at::Tensor> values) {
     OptionalTensorList out;
     out.reserve(values.size());
@@ -52,12 +56,14 @@ int64_t handle(const ScenePtr& scene) {
 
 // GIL/native-lock order for every wrapper below.
 //
-// Torch releases the GIL before it enters a boxed op, and the `*_op` entry
-// points are pybind functions: they take `py::object` arguments and build
-// their result with `py::make_tuple`, so each wrapper re-acquires the GIL for
-// the whole call. That makes the GIL the outermost lock in this process: a
-// wrapper holds it and then takes RayD's own mutexes (the scene registry, the
-// OptiX context and pipeline caches) inside the op.
+// Torch releases the GIL before it enters a boxed op. Most `*_op` entry points
+// are pybind functions: they take `py::object` arguments and build their result
+// with `py::make_tuple`, so their wrappers re-acquire the GIL for the whole
+// call. The hot forward queries (intersect, nearest edge, visibility,
+// reflection tracing) take and return plain tensors and run without it. The GIL
+// is the outermost lock in this process: a wrapper that holds it then takes
+// RayD's own mutexes (the scene registry, the OptiX context and pipeline caches)
+// inside the op.
 //
 // The invariant that keeps that safe: **no RayD native lock may be held across
 // anything that can acquire the GIL.** Releasing an `at::Tensor` that carries
@@ -68,16 +74,21 @@ int64_t handle(const ScenePtr& scene) {
 // concurrent-driving hang; see `destroy_scene` in `scene/scene_cache.cpp` and
 // `docs/dev/multi_gpu_operations.md`.
 //
-// Holding the GIL across the native body is also what keeps a scene alive for
-// the duration of an op: `get_scene()` hands out a bare reference, and scene
-// destruction runs from Python teardown under the GIL. Releasing the GIL
-// around the native body would need refcounted scene ownership first.
+// Scene lifetime and mutation do not rely on the GIL: several ops run without
+// it (the GIL-free AD intersect entries, and every backward on an autograd
+// thread), and the Scene class methods `sync`/`update_*` run with it released.
+// `get_scene()` returns a ScenePin that shares ownership of the scene and holds
+// its reader lock for the op; mutations take the writer lock. A thread that
+// holds the GIL gives it up while it waits for a scene lock, so the lock holder
+// may re-enter Python without inverting the order above.
 
 // Python-facing wrappers translate optional values and tuple results around the native operators.
-py::tuple intersect_forward_op(int64_t, at::Tensor, at::Tensor, at::Tensor, py::object);
-py::tuple intersect_forward_flags_op(int64_t, at::Tensor, at::Tensor, at::Tensor, py::object, int64_t);
-at::Tensor intersect_forward_t_op(int64_t, at::Tensor, at::Tensor, at::Tensor, py::object);
-py::tuple intersect_forward_ad_flags_op(int64_t, at::Tensor, at::Tensor, at::Tensor, py::object, int64_t);
+std::vector<at::Tensor> intersect_forward_op(int64_t, at::Tensor, at::Tensor, at::Tensor, const OptionalTensor&);
+std::vector<at::Tensor> intersect_forward_flags_op(int64_t, at::Tensor, at::Tensor, at::Tensor, const OptionalTensor&,
+                                                   int64_t);
+at::Tensor intersect_forward_t_op(int64_t, at::Tensor, at::Tensor, at::Tensor, const OptionalTensor&);
+std::vector<at::Tensor> intersect_forward_ad_flags_op(int64_t, at::Tensor, at::Tensor, at::Tensor,
+                                                      const OptionalTensor&, int64_t);
 at::Tensor intersect_ad_t_op(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor, py::object);
 py::tuple intersect_ad_flags_op(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor, py::object, int64_t);
 
@@ -89,9 +100,19 @@ std::vector<c10::optional<at::Tensor>> intersect_ad_flags_impl(int64_t, at::Tens
                                                                c10::optional<at::Tensor>, int64_t);
 std::vector<c10::optional<at::Tensor>> intersect_ad_flags_nograd_impl(int64_t, at::Tensor, at::Tensor, at::Tensor,
                                                                       at::Tensor, c10::optional<at::Tensor>, int64_t);
-std::tuple<at::Tensor, at::Tensor> intersect_forward_tape_h_impl(int64_t, at::Tensor, at::Tensor, at::Tensor,
-                                                                 at::Tensor);
-at::Tensor intersect_backward_t_h_impl(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor);
+std::vector<at::Tensor> intersect_ad_t_staged_impl(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor,
+                                                   c10::optional<at::Tensor>);
+std::vector<at::Tensor> intersect_ad_t_staged_nograd_impl(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor,
+                                                          c10::optional<at::Tensor>);
+std::vector<c10::optional<at::Tensor>> intersect_ad_complete_impl(int64_t, at::Tensor, at::Tensor, at::Tensor,
+                                                                  at::Tensor, c10::optional<at::Tensor>, int64_t,
+                                                                  int64_t, at::Tensor, at::Tensor, at::Tensor);
+std::vector<c10::optional<at::Tensor>> intersect_ad_complete_nograd_impl(int64_t, at::Tensor, at::Tensor, at::Tensor,
+                                                                         at::Tensor, c10::optional<at::Tensor>, int64_t,
+                                                                         int64_t, at::Tensor, at::Tensor, at::Tensor);
+std::tuple<at::Tensor, at::Tensor, at::Tensor> intersect_forward_tape_h_impl(int64_t, at::Tensor, at::Tensor,
+                                                                             at::Tensor, at::Tensor);
+at::Tensor intersect_backward_t_h_impl(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor);
 py::tuple intersection_empty_fields_op(int64_t, at::Tensor);
 py::tuple intersect_backward_optional_op(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor,
                                          at::Tensor, py::object, py::object, py::object, py::object, py::object,
@@ -118,22 +139,25 @@ std::vector<at::Tensor> sdf_intersect_jvp_impl(at::Tensor, at::Tensor, at::Tenso
                                                c10::optional<at::Tensor>, c10::optional<at::Tensor>,
                                                c10::optional<at::Tensor>);
 
-py::tuple nearest_edge_forward_op(int64_t, at::Tensor);
-py::tuple nearest_edge_forward_noad_op(int64_t, at::Tensor);
-py::tuple nearest_edge_ray_forward_op(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor);
+std::vector<at::Tensor> nearest_edge_forward_op(int64_t, at::Tensor);
+std::vector<at::Tensor> nearest_edge_forward_noad_op(int64_t, at::Tensor);
+std::vector<at::Tensor> nearest_edge_ray_forward_op(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor);
 py::tuple nearest_edge_ray_backward_optional_op(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor,
                                                 at::Tensor, py::object, py::object, py::object, py::object, py::object);
 py::tuple nearest_edge_ray_jvp_optional_op(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor,
                                            at::Tensor, py::object, py::object, py::object);
-py::tuple nearest_edges_topk_forward_op(int64_t, at::Tensor, int64_t, at::Tensor);
+std::vector<at::Tensor> nearest_edges_topk_forward_op(int64_t, at::Tensor, int64_t, at::Tensor);
 py::tuple nearest_edge_backward_optional_op(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor, py::object,
                                             py::object, py::object, py::object);
 py::tuple nearest_edge_jvp_optional_op(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor, py::object, py::object);
 
-py::tuple visibility_forward_op(int64_t, at::Tensor, at::Tensor, py::object);
-py::tuple trace_reflections_forward_op(int64_t, at::Tensor, at::Tensor, at::Tensor, py::object, int64_t);
-py::tuple trace_reflections_forward_noad_op(int64_t, at::Tensor, at::Tensor, at::Tensor, py::object, int64_t);
-py::tuple trace_reflections_forward_reduced_op(int64_t, at::Tensor, at::Tensor, at::Tensor, py::object, int64_t);
+std::vector<at::Tensor> visibility_forward_op(int64_t, at::Tensor, at::Tensor, const OptionalTensor&);
+std::vector<at::Tensor> trace_reflections_forward_op(int64_t, at::Tensor, at::Tensor, at::Tensor, const OptionalTensor&,
+                                                     int64_t);
+std::vector<at::Tensor> trace_reflections_forward_noad_op(int64_t, at::Tensor, at::Tensor, at::Tensor,
+                                                          const OptionalTensor&, int64_t);
+std::vector<at::Tensor> trace_reflections_forward_reduced_op(int64_t, at::Tensor, at::Tensor, at::Tensor,
+                                                             const OptionalTensor&, int64_t);
 py::tuple trace_reflections_backward_optional_op(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor,
                                                  at::Tensor, at::Tensor, at::Tensor, at::Tensor, py::object,
                                                  py::object);
@@ -219,31 +243,26 @@ at::Tensor camera_world_to_sample_backward_op(at::Tensor, at::Tensor, double, do
 py::tuple camera_sample_ray_op(at::Tensor, double, double);
 at::Tensor camera_sample_ray_backward_op(at::Tensor, OptionalTensor, double, double);
 
+// The hot forward queries below touch no Python object, so they run without the GIL: threads that drive different
+// devices or streams launch concurrently instead of serializing their host work.
 OptionalTensorList intersect_forward_dispatch(ScenePtr scene, at::Tensor ray_o, at::Tensor ray_d, at::Tensor ray_tmax,
                                               OptionalTensor active) {
-    py::gil_scoped_acquire gil;
-    return tuple_to_optional_tensor_list(
-        intersect_forward_op(handle(scene), ray_o, ray_d, ray_tmax, to_py_optional(active)));
+    return tensor_list(intersect_forward_op(handle(scene), ray_o, ray_d, ray_tmax, active));
 }
 
 OptionalTensorList intersect_forward_flags_dispatch(ScenePtr scene, at::Tensor ray_o, at::Tensor ray_d,
                                                     at::Tensor ray_tmax, OptionalTensor active, int64_t flags) {
-    py::gil_scoped_acquire gil;
-    return tuple_to_optional_tensor_list(
-        intersect_forward_flags_op(handle(scene), ray_o, ray_d, ray_tmax, to_py_optional(active), flags));
+    return tensor_list(intersect_forward_flags_op(handle(scene), ray_o, ray_d, ray_tmax, active, flags));
 }
 
 at::Tensor intersect_forward_t_dispatch(ScenePtr scene, at::Tensor ray_o, at::Tensor ray_d, at::Tensor ray_tmax,
                                         OptionalTensor active) {
-    py::gil_scoped_acquire gil;
-    return intersect_forward_t_op(handle(scene), ray_o, ray_d, ray_tmax, to_py_optional(active));
+    return intersect_forward_t_op(handle(scene), ray_o, ray_d, ray_tmax, active);
 }
 
 OptionalTensorList intersect_forward_ad_flags_dispatch(ScenePtr scene, at::Tensor ray_o, at::Tensor ray_d,
                                                        at::Tensor ray_tmax, OptionalTensor active, int64_t flags) {
-    py::gil_scoped_acquire gil;
-    return tuple_to_optional_tensor_list(
-        intersect_forward_ad_flags_op(handle(scene), ray_o, ray_d, ray_tmax, to_py_optional(active), flags));
+    return tensor_list(intersect_forward_ad_flags_op(handle(scene), ray_o, ray_d, ray_tmax, active, flags));
 }
 
 at::Tensor intersect_ad_t_dispatch(ScenePtr scene, at::Tensor vertices, at::Tensor ray_o, at::Tensor ray_d,
@@ -256,6 +275,37 @@ at::Tensor intersect_ad_t_nograd_dispatch(ScenePtr scene, at::Tensor vertices, a
                                           at::Tensor ray_tmax, OptionalTensor active) {
     return intersect_ad_t_nograd_impl(handle(scene), std::move(vertices), std::move(ray_o), std::move(ray_d),
                                       std::move(ray_tmax), std::move(active));
+}
+
+std::vector<at::Tensor> intersect_ad_t_staged_dispatch(ScenePtr scene, at::Tensor vertices, at::Tensor ray_o,
+                                                       at::Tensor ray_d, at::Tensor ray_tmax, OptionalTensor active) {
+    return intersect_ad_t_staged_impl(handle(scene), std::move(vertices), std::move(ray_o), std::move(ray_d),
+                                      std::move(ray_tmax), std::move(active));
+}
+
+std::vector<at::Tensor> intersect_ad_t_staged_nograd_dispatch(ScenePtr scene, at::Tensor vertices, at::Tensor ray_o,
+                                                              at::Tensor ray_d, at::Tensor ray_tmax,
+                                                              OptionalTensor active) {
+    return intersect_ad_t_staged_nograd_impl(handle(scene), std::move(vertices), std::move(ray_o), std::move(ray_d),
+                                             std::move(ray_tmax), std::move(active));
+}
+
+OptionalTensorList intersect_ad_complete_dispatch(ScenePtr scene, at::Tensor vertices, at::Tensor ray_o,
+                                                  at::Tensor ray_d, at::Tensor ray_tmax, OptionalTensor active,
+                                                  int64_t flags, int64_t geometry_version, at::Tensor t,
+                                                  at::Tensor global_prim_id, at::Tensor bary_uv) {
+    return intersect_ad_complete_impl(handle(scene), std::move(vertices), std::move(ray_o), std::move(ray_d),
+                                      std::move(ray_tmax), std::move(active), flags, geometry_version, std::move(t),
+                                      std::move(global_prim_id), std::move(bary_uv));
+}
+
+OptionalTensorList intersect_ad_complete_nograd_dispatch(ScenePtr scene, at::Tensor vertices, at::Tensor ray_o,
+                                                         at::Tensor ray_d, at::Tensor ray_tmax, OptionalTensor active,
+                                                         int64_t flags, int64_t geometry_version, at::Tensor t,
+                                                         at::Tensor global_prim_id, at::Tensor bary_uv) {
+    return intersect_ad_complete_nograd_impl(handle(scene), std::move(vertices), std::move(ray_o), std::move(ray_d),
+                                             std::move(ray_tmax), std::move(active), flags, geometry_version,
+                                             std::move(t), std::move(global_prim_id), std::move(bary_uv));
 }
 
 OptionalTensorList intersect_ad_flags_dispatch(ScenePtr scene, at::Tensor vertices, at::Tensor ray_o, at::Tensor ray_d,
@@ -271,17 +321,19 @@ OptionalTensorList intersect_ad_flags_nograd_dispatch(ScenePtr scene, at::Tensor
                                           std::move(ray_tmax), std::move(active), flags);
 }
 
-std::tuple<at::Tensor, at::Tensor> intersect_forward_tape_h_dispatch(int64_t scene_handle, at::Tensor vertices,
-                                                                     at::Tensor ray_o, at::Tensor ray_d,
-                                                                     at::Tensor ray_tmax) {
+std::tuple<at::Tensor, at::Tensor, at::Tensor> intersect_forward_tape_h_dispatch(int64_t scene_handle,
+                                                                                 at::Tensor vertices, at::Tensor ray_o,
+                                                                                 at::Tensor ray_d,
+                                                                                 at::Tensor ray_tmax) {
     return intersect_forward_tape_h_impl(scene_handle, std::move(vertices), std::move(ray_o), std::move(ray_d),
                                          std::move(ray_tmax));
 }
 
 at::Tensor intersect_backward_t_h_dispatch(int64_t scene_handle, at::Tensor vertices, at::Tensor ray_o,
-                                           at::Tensor ray_d, at::Tensor tape_prim_id, at::Tensor grad_t) {
+                                           at::Tensor ray_d, at::Tensor tape_prim_id, at::Tensor geometry_version,
+                                           at::Tensor grad_t) {
     return intersect_backward_t_h_impl(scene_handle, std::move(vertices), std::move(ray_o), std::move(ray_d),
-                                       std::move(tape_prim_id), std::move(grad_t));
+                                       std::move(tape_prim_id), std::move(geometry_version), std::move(grad_t));
 }
 
 OptionalTensorList intersection_empty_fields_dispatch(ScenePtr scene, at::Tensor like) {
@@ -326,19 +378,16 @@ OptionalTensorList intersect_jvp_optional_dispatch(ScenePtr scene, at::Tensor ra
 }
 
 OptionalTensorList nearest_edge_forward_dispatch(ScenePtr scene, at::Tensor point) {
-    py::gil_scoped_acquire gil;
-    return tuple_to_optional_tensor_list(nearest_edge_forward_op(handle(scene), point));
+    return tensor_list(nearest_edge_forward_op(handle(scene), point));
 }
 
 OptionalTensorList nearest_edge_forward_noad_dispatch(ScenePtr scene, at::Tensor point) {
-    py::gil_scoped_acquire gil;
-    return tuple_to_optional_tensor_list(nearest_edge_forward_noad_op(handle(scene), point));
+    return tensor_list(nearest_edge_forward_noad_op(handle(scene), point));
 }
 
 OptionalTensorList nearest_edge_ray_forward_dispatch(ScenePtr scene, at::Tensor ray_o, at::Tensor ray_d,
                                                      at::Tensor ray_tmax, at::Tensor active) {
-    py::gil_scoped_acquire gil;
-    return tuple_to_optional_tensor_list(nearest_edge_ray_forward_op(handle(scene), ray_o, ray_d, ray_tmax, active));
+    return tensor_list(nearest_edge_ray_forward_op(handle(scene), ray_o, ray_d, ray_tmax, active));
 }
 
 OptionalTensorList nearest_edge_backward_optional_dispatch(ScenePtr scene, at::Tensor point, at::Tensor tape_edge_id,
@@ -389,15 +438,12 @@ OptionalTensorList nearest_edge_ray_jvp_optional_dispatch(ScenePtr scene, at::Te
 }
 
 OptionalTensorList nearest_edges_topk_forward_dispatch(ScenePtr scene, at::Tensor point, int64_t k, at::Tensor active) {
-    py::gil_scoped_acquire gil;
-    return tuple_to_optional_tensor_list(
-        nearest_edges_topk_forward_op(handle(scene), std::move(point), k, std::move(active)));
+    return tensor_list(nearest_edges_topk_forward_op(handle(scene), std::move(point), k, std::move(active)));
 }
 
 OptionalTensorList visibility_forward_dispatch(ScenePtr scene, at::Tensor start, at::Tensor end,
                                                OptionalTensor active) {
-    py::gil_scoped_acquire gil;
-    return tuple_to_optional_tensor_list(visibility_forward_op(handle(scene), start, end, to_py_optional(active)));
+    return tensor_list(visibility_forward_op(handle(scene), start, end, active));
 }
 
 std::vector<at::Tensor> visible_pair_forward_dispatch(ScenePtr scene, at::Tensor start, at::Tensor end_a,
@@ -424,25 +470,20 @@ std::vector<at::Tensor> visible_chain_forward_dispatch(ScenePtr scene, at::Tenso
 
 OptionalTensorList trace_reflections_forward_dispatch(ScenePtr scene, at::Tensor ray_o, at::Tensor ray_d,
                                                       at::Tensor ray_tmax, OptionalTensor active, int64_t max_bounces) {
-    py::gil_scoped_acquire gil;
-    return tuple_to_optional_tensor_list(
-        trace_reflections_forward_op(handle(scene), ray_o, ray_d, ray_tmax, to_py_optional(active), max_bounces));
+    return tensor_list(trace_reflections_forward_op(handle(scene), ray_o, ray_d, ray_tmax, active, max_bounces));
 }
 
 OptionalTensorList trace_reflections_forward_noad_dispatch(ScenePtr scene, at::Tensor ray_o, at::Tensor ray_d,
                                                            at::Tensor ray_tmax, OptionalTensor active,
                                                            int64_t max_bounces) {
-    py::gil_scoped_acquire gil;
-    return tuple_to_optional_tensor_list(
-        trace_reflections_forward_noad_op(handle(scene), ray_o, ray_d, ray_tmax, to_py_optional(active), max_bounces));
+    return tensor_list(trace_reflections_forward_noad_op(handle(scene), ray_o, ray_d, ray_tmax, active, max_bounces));
 }
 
 OptionalTensorList trace_reflections_forward_reduced_dispatch(ScenePtr scene, at::Tensor ray_o, at::Tensor ray_d,
                                                               at::Tensor ray_tmax, OptionalTensor active,
                                                               int64_t max_bounces) {
-    py::gil_scoped_acquire gil;
-    return tuple_to_optional_tensor_list(trace_reflections_forward_reduced_op(handle(scene), ray_o, ray_d, ray_tmax,
-                                                                              to_py_optional(active), max_bounces));
+    return tensor_list(
+        trace_reflections_forward_reduced_op(handle(scene), ray_o, ray_d, ray_tmax, active, max_bounces));
 }
 
 OptionalTensorList trace_reflections_backward_optional_dispatch(ScenePtr scene, at::Tensor ray_o, at::Tensor ray_d,
@@ -769,6 +810,7 @@ TORCH_LIBRARY(rayd_torch, m) {
              })
         .def("sync", [](const ScenePtr& scene) { sync_scene(scene); })
         .def("version", [](const ScenePtr& scene) { return scene_version(scene); })
+        .def("geometry_version", [](const ScenePtr& scene) { return scene_geometry_version(scene->handle); })
         .def("num_meshes", [](const ScenePtr& scene) { return scene_num_meshes(scene); })
         .def("num_geometries", [](const ScenePtr& scene) { return scene_num_geometries(scene); })
         .def("last_sync_gas_updates", [](const ScenePtr& scene) { return scene_last_sync_gas_updates(scene); })
@@ -799,10 +841,15 @@ TORCH_LIBRARY_FRAGMENT(rayd_torch, m) {
           " scene, Tensor vertices, Tensor ray_o, Tensor ray_d, Tensor ray_tmax, Tensor? active) -> Tensor");
     m.def("intersect_ad_flags(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor vertices, Tensor ray_o, Tensor ray_d, Tensor "
           "ray_tmax, Tensor? active, int flags) -> Tensor?[]");
+    m.def("intersect_ad_t_staged(" RAYD_TORCH_SCHEMA_SCENE
+          " scene, Tensor vertices, Tensor ray_o, Tensor ray_d, Tensor ray_tmax, Tensor? active) -> Tensor[]");
+    m.def("intersect_ad_complete(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor vertices, Tensor ray_o, Tensor ray_d, "
+          "Tensor ray_tmax, Tensor? active, int flags, int geometry_version, Tensor t, Tensor global_prim_id, Tensor "
+          "bary_uv) -> Tensor?[]");
     m.def("intersect_forward_tape_h(int scene_handle, Tensor vertices, Tensor ray_o, Tensor ray_d, Tensor ray_tmax) -> "
-          "(Tensor, Tensor)");
+          "(Tensor, Tensor, Tensor)");
     m.def("intersect_backward_t_h(int scene_handle, Tensor vertices, Tensor ray_o, Tensor ray_d, Tensor tape_prim_id, "
-          "Tensor grad_t) -> Tensor");
+          "Tensor geometry_version, Tensor grad_t) -> Tensor");
     m.def("intersection_empty_fields(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor like) -> Tensor?[]");
     m.def("intersect_backward_optional(" RAYD_TORCH_SCHEMA_SCENE
           " scene, Tensor ray_o, Tensor ray_d, Tensor ray_tmax, Tensor active, Tensor tape_prim_id, Tensor "
@@ -998,6 +1045,8 @@ TORCH_LIBRARY_IMPL(rayd_torch, CUDA, m) {
     m.impl("intersect_forward_ad_flags", TORCH_FN(intersect_forward_ad_flags_dispatch));
     m.impl("intersect_ad_t", TORCH_FN(intersect_ad_t_nograd_dispatch));
     m.impl("intersect_ad_flags", TORCH_FN(intersect_ad_flags_nograd_dispatch));
+    m.impl("intersect_ad_t_staged", TORCH_FN(intersect_ad_t_staged_nograd_dispatch));
+    m.impl("intersect_ad_complete", TORCH_FN(intersect_ad_complete_nograd_dispatch));
     m.impl("intersect_forward_tape_h", TORCH_FN(intersect_forward_tape_h_dispatch));
     m.impl("intersect_backward_t_h", TORCH_FN(intersect_backward_t_h_dispatch));
     m.impl("intersection_empty_fields", TORCH_FN(intersection_empty_fields_dispatch));
@@ -1057,6 +1106,8 @@ TORCH_LIBRARY_IMPL(rayd_torch, CUDA, m) {
 TORCH_LIBRARY_IMPL(rayd_torch, Autograd, m) {
     m.impl("intersect_ad_t", TORCH_FN(intersect_ad_t_dispatch));
     m.impl("intersect_ad_flags", TORCH_FN(intersect_ad_flags_dispatch));
+    m.impl("intersect_ad_t_staged", TORCH_FN(intersect_ad_t_staged_dispatch));
+    m.impl("intersect_ad_complete", TORCH_FN(intersect_ad_complete_dispatch));
 }
 
 } // namespace rayd::torch_backend

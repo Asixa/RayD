@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, overload
 import torch
 
 from . import runtime as _runtime
-from .multipath import _dfr_input_tensors, _reject_forward_only_ad, _require_native_dispatcher
+from .multipath import _dfr_input_tensors, _lazy_geometry_guard, _reject_forward_only_ad, _require_native_dispatcher
 from .multipath import accumulate_reflections_native as _accumulate_reflections
 from .multipath import accum_dfr_chain_native as _accum_dfr_chain
 from .multipath import accum_dfr_coherent_direct_native as _accum_dfr_coherent_direct
@@ -255,6 +255,12 @@ class Scene:
         return len(self._meshes) - 1
 
     def _mesh_spec(self, mesh_id: int, mesh: Mesh, dynamic: bool) -> dict[str, object]:
+        if _has_reverse_or_forward_ad(mesh.uv):
+            raise RuntimeError(
+                f"Scene.build(): mesh {mesh_id} uv requires grad, but texture coordinates are not a differentiable "
+                "input of the Torch backend; Intersection.uv is differentiable with respect to the ray and the "
+                "vertices only. Pass uv.detach() explicitly."
+            )
         return {
             "vertices": _native_scene_tensor(mesh.vertices),
             "faces": _native_scene_tensor(mesh.faces),
@@ -328,6 +334,21 @@ class Scene:
         if not self._ready or self._native_scene is None:
             raise RuntimeError("Scene is not ready. Call build() before querying.")
         return self._native_scene
+
+    def _require_synced(self, operation: str) -> None:
+        """Refuse a geometry query while vertex or transform updates wait for `sync()`.
+
+        Until `sync()` commits them the acceleration structures still describe
+        the old geometry, so a query would silently answer for stale geometry.
+        A failed `sync()` leaves the updates pending, so this also refuses to
+        query a scene whose rebuild did not complete. A scene that must be
+        built again (a multi-device scene whose failed update left its replicas
+        unusable) is reported as such, so the error names the call that
+        recovers it rather than a `sync()` that would refuse.
+        """
+        if getattr(self, "_pending_updates", False):
+            self._require_native_scene()
+            raise RuntimeError(f"Scene.{operation}(): scene has pending updates. Call Scene.sync() first.")
 
     def calibrate_devices(
         self,
@@ -420,10 +441,26 @@ class Scene:
 
     @staticmethod
     def _lazy_intersection(scene, vertices, ray: Ray, active, flags: int) -> Intersection:
+        require_geometry = _lazy_geometry_guard(scene)
+        geometry_version = int(scene.geometry_version())
+        # The t-only trace keeps its raw hit record, so a later request for any other field completes the result
+        # with the post-pass alone instead of tracing a second time.
+        staged: list[torch.Tensor] = []
+
         def load_t():
-            return torch.ops.rayd_torch.intersect_ad_t(scene, vertices, ray.o, ray.d, ray.tmax, active)
+            require_geometry()
+            staged[:] = torch.ops.rayd_torch.intersect_ad_t_staged(scene, vertices, ray.o, ray.d, ray.tmax, active)
+            return staged[0]
 
         def load_full():
+            require_geometry()
+            if staged:
+                t = staged[0]
+                fields = torch.ops.rayd_torch.intersect_ad_complete(
+                    scene, vertices, ray.o, ray.d, ray.tmax, active, flags, geometry_version, *staged
+                )
+                staged.clear()
+                return Intersection(t, *fields)
             values = torch.ops.rayd_torch.intersect_ad_flags(scene, vertices, ray.o, ray.d, ray.tmax, active, flags)
             return Intersection(*values)
 
@@ -458,6 +495,7 @@ class Scene:
         return int(scene.version())
 
     def intersect(self, ray: Ray, active: torch.Tensor | None = None, flags: RayFlags = RayFlags.All) -> Intersection:
+        self._require_synced("intersect")
         if self._multi is not None:
             return self._multi.intersect(ray, active, int(flags))
         scene = self._require_native_scene()
@@ -473,7 +511,7 @@ class Scene:
                 and vertices.requires_grad
                 and not (ray.o.requires_grad or ray.d.requires_grad or ray.tmax.requires_grad)
             ):
-                t, _tape_prim = torch.ops.rayd_torch.intersect_forward_tape_h(
+                t, _tape_prim, _geometry_version = torch.ops.rayd_torch.intersect_forward_tape_h(
                     self._native_handle, vertices, ray.o, ray.d, ray.tmax
                 )
                 return _ReducedIntersection(scene, t)  # type: ignore[return-value]
@@ -503,6 +541,7 @@ class Scene:
     def nearest_edge(self, point: Ray) -> NearestRayEdge: ...
 
     def nearest_edge(self, point: torch.Tensor | Ray) -> NearestPointEdge | NearestRayEdge:
+        self._require_synced("nearest_edge")
         if self._multi is not None:
             return self._multi.nearest_edge(point)
         scene = self._require_native_scene()
@@ -514,12 +553,17 @@ class Scene:
         return _nearest_edge(scene, mesh_vertices[0], point, mesh_vertices=mesh_vertices)
 
     def visible(self, start: torch.Tensor, end: torch.Tensor, active: torch.Tensor | None = None) -> torch.Tensor:
+        self._require_synced("visible")
         if self._multi is not None:
             return self._multi.visible(start, end, active)
         scene = self._require_native_scene()
         return _visible(scene, start, end, active)
 
     def trace_reflections(self, ray: Ray, max_bounces: int, active: torch.Tensor | None = None) -> ReflectionChain:
+        self._require_synced("trace_reflections")
+        if isinstance(max_bounces, bool) or int(max_bounces) < 1:
+            # The chain is computed lazily, so reject the count here instead of on first field access.
+            raise ValueError(f"Scene.trace_reflections(): max_bounces must be at least 1, got {max_bounces}.")
         if self._multi is not None:
             return self._multi.trace_reflections(ray, int(max_bounces), active)
         scene = self._require_native_scene()
@@ -531,6 +575,7 @@ class Scene:
     def trace_refl_epc_field(
         self, source: torch.Tensor, receiver: torch.Tensor, max_bounces: int, active: torch.Tensor | None = None
     ) -> ReflEpcField:
+        self._require_synced("trace_refl_epc_field")
         mesh_vertices = self._mesh_vertex_tensors()
         if _has_reverse_or_forward_ad(*mesh_vertices, source, receiver):
             raise RuntimeError(
@@ -551,6 +596,7 @@ class Scene:
         options: ReflEpcOptions,
         active: torch.Tensor | None = None,
     ) -> ReflEpc:
+        self._require_synced("trace_refl_epc")
         if self._multi is not None:
             self._multi.unsupported("trace_refl_epc")
         if not isinstance(options, ReflEpcOptions):
@@ -572,6 +618,7 @@ class Scene:
         active: torch.Tensor | None = None,
         tx_polarization: torch.Tensor | None = None,
     ) -> AccumResult:
+        self._require_synced("accumulate_reflections")
         if not isinstance(grid, AccumGrid):
             raise TypeError("Scene.accumulate_reflections() expects rayd.torch.AccumGrid.")
         if not isinstance(material, ReflMaterial):
@@ -639,6 +686,7 @@ class Scene:
         wavelength: float = 1.0,
         layout: DfrPathLayout | None = None,
     ) -> DfrPaths:
+        self._require_synced("trace_dfr_paths")
         if material is None:
             material = self._default_dfr_material(like=states.edge_pos)
         if max_paths is None:
@@ -702,6 +750,7 @@ class Scene:
         lane_offset: int = 0,
         lane_count: int = -1,
     ) -> DfrAccum:
+        self._require_synced("accum_dfr_direct")
         scene = self._require_native_scene()
         if states is None:
             raise TypeError("Scene.accum_dfr_direct() requires RayD-style DfrStates and DfrGrid.")
@@ -758,6 +807,7 @@ class Scene:
         lane_count: int = -1,
         **kwargs: object,
     ) -> DfrAccum:
+        self._require_synced("accum_dfr")
         if initial_states is None and recursive_states is None:
             return self.accum_dfr_direct(
                 lane_offset=int(lane_offset),
@@ -817,6 +867,7 @@ class Scene:
         lane_offset: int = 0,
         lane_count: int = -1,
     ) -> DfrCoherentAccum:
+        self._require_synced("accum_dfr_coherent_direct")
         if material is None:
             material = self._default_dfr_material(like=states.edge_pos)
         _reject_forward_only_ad(
@@ -850,6 +901,12 @@ class Scene:
 
     def update_mesh_vertices(self, mesh_id: int, positions: torch.Tensor) -> None:
         scene = self._require_native_scene()
+        if isinstance(mesh_id, bool) or not isinstance(mesh_id, int):
+            raise TypeError("Scene.update_mesh_vertices() expects an integer mesh_id.")
+        if mesh_id < 0 or mesh_id >= len(self._meshes):
+            raise ValueError(
+                f"Scene.update_mesh_vertices(): invalid mesh_id {mesh_id}; the scene has {len(self._meshes)} meshes."
+            )
         mesh, dynamic = self._meshes[mesh_id]
         if not dynamic:
             raise RuntimeError("Scene.update_mesh_vertices(): target mesh is not dynamic.")
@@ -923,6 +980,7 @@ class Scene:
         return bool(self._pending_updates or (self._multi is not None and self._multi.is_poisoned))
 
     def nearest_edges(self, point: torch.Tensor, k: int, active: torch.Tensor | None = None) -> NearestEdgesTopK:
+        self._require_synced("nearest_edges")
         if self._multi is not None:
             return self._multi.nearest_edges(point, int(k), active)
         from .multipath import nearest_edges as _nearest_edges
@@ -948,6 +1006,7 @@ class Scene:
         scene.set_edge_mask(mask)
 
     def global_geometry(self) -> SceneGlobalGeometry:
+        self._require_synced("global_geometry")
         from .geometry import SceneGlobalGeometry
 
         scene = self._require_native_scene()
@@ -961,6 +1020,7 @@ class Scene:
         ignore_prim_ids: torch.Tensor | None = None,
         active: torch.Tensor | None = None,
     ) -> SegmentPairVisibility:
+        self._require_synced("visible_pair")
         if self._multi is not None:
             return self._multi.visible_pair(start, end_a, end_b, ignore_prim_ids, active)
         from .geometry import SegmentPairVisibility
@@ -979,6 +1039,7 @@ class Scene:
         sample_fractions: Iterable[float] = (0.0, 0.25, 0.5, 0.75, 1.0),
         active: torch.Tensor | None = None,
     ) -> AxialEdgeVisibility:
+        self._require_synced("visible_edge")
         if self._multi is not None:
             return self._multi.visible_edge(
                 source, edge_position, edge_direction, edge_t_min, edge_t_max, sample_fractions, active
@@ -1005,6 +1066,7 @@ class Scene:
         ignore_prim_per_segment: torch.Tensor | None = None,
         active: torch.Tensor | None = None,
     ) -> SegmentChainVisibility:
+        self._require_synced("visible_chain")
         if self._multi is not None:
             return self._multi.visible_chain(points, chain_length, ignore_prim_per_segment, active)
         from .geometry import SegmentChainVisibility

@@ -766,7 +766,7 @@ py::tuple diffraction_paths_order1_forward_op(
     at::Tensor material_valid, int64_t state_limit, int64_t capacity, double wavelength, double isb_taper_width_scale,
     int64_t output_layout) {
     return diffraction_path_outputs_to_tuple(diffraction_paths_order1_forward_impl(
-        get_scene(scene_handle), std::move(tx_pos), std::move(tx_pol), std::move(rx_pos), std::move(active),
+        *get_scene(scene_handle), std::move(tx_pos), std::move(tx_pol), std::move(rx_pos), std::move(active),
         std::move(state_edge_index), std::move(state_edge_pos), std::move(state_edge_dir), std::move(state_edge_t_min),
         std::move(state_edge_t_max), std::move(state_n0), std::move(state_n1), std::move(state_prim0),
         std::move(state_prim1), std::move(state_exterior_angle), std::move(state_src), std::move(state_src_power),
@@ -1370,7 +1370,7 @@ py::tuple diffraction_accumulation_forward_op(
     int64_t export_tape, c10::optional<at::Tensor> sample_state_index, c10::optional<at::Tensor> sample_edge_weight,
     int64_t lane_offset, int64_t lane_count) {
     return diffraction_accumulation_outputs_to_tuple(diffraction_accumulation_forward_impl(
-        get_scene(scene_handle), active, state_edge_index, state_edge_pos, state_edge_dir, state_edge_t_min,
+        *get_scene(scene_handle), active, state_edge_index, state_edge_pos, state_edge_dir, state_edge_t_min,
         state_edge_t_max, state_n0, state_n1, state_prim0, state_prim1, state_exterior_angle, state_src,
         state_src_power, state_wi, state_d0, material_eta_r, material_sigma, material_mu_r, material_gain,
         material_valid, state_limit, grid_axis, grid_position, grid_coord0_min, grid_coord0_max, grid_coord1_min,
@@ -1432,7 +1432,8 @@ py::tuple diffraction_accumulation_direct_backward_op(
     if (material_valid.size(0) != material_count)
         throw std::runtime_error("material_valid must match material_gain width.");
 
-    SceneCache& scene = get_scene(scene_handle);
+    ScenePin scene_pin = get_scene(scene_handle);
+    SceneCache& scene = *scene_pin;
     c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     TriangleSoA tri = make_scene_triangle_soa(scene);
     Vec3Input state_edge_pos_view = vec3_input(state_edge_pos, "state_edge_pos");
@@ -1624,7 +1625,8 @@ py::tuple diffraction_accumulation_direct_jvp_op(
     require_optional_scalar_f_strided(dot_state_src_power, "dot_state_src_power");
     require_optional_vec3f_strided(dot_state_wi, "dot_state_wi");
     require_optional_scalar_f_strided(dot_material_gain, "dot_material_gain");
-    SceneCache& scene = get_scene(scene_handle);
+    ScenePin scene_pin = get_scene(scene_handle);
+    SceneCache& scene = *scene_pin;
     c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     TriangleSoA tri = make_scene_triangle_soa(scene);
     Vec3Input state_edge_pos_view = vec3_input(state_edge_pos, "state_edge_pos");
@@ -1852,7 +1854,8 @@ py::tuple diffraction_accumulation_chain_backward_op(
     if (material_valid.size(0) != material_count)
         throw std::runtime_error("material_valid must match material_gain width.");
 
-    SceneCache& scene = get_scene(scene_handle);
+    ScenePin scene_pin = get_scene(scene_handle);
+    SceneCache& scene = *scene_pin;
     c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     TriangleSoA tri = make_scene_triangle_soa(scene);
     Vec3Input state_edge_pos_view = vec3_input(state_edge_pos, "state_edge_pos");
@@ -2087,7 +2090,8 @@ py::tuple diffraction_accumulation_chain_jvp_op(
     require_flat_f32_strided(recursive_state_exterior_angle, "recursive_state_exterior_angle");
     require_flat_f32_strided(material_gain, "material_gain");
     require_mask_strided(material_valid, "material_valid");
-    SceneCache& scene = get_scene(scene_handle);
+    ScenePin scene_pin = get_scene(scene_handle);
+    SceneCache& scene = *scene_pin;
     c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     TriangleSoA tri = make_scene_triangle_soa(scene);
     Vec3Input state_edge_pos_view = vec3_input(state_edge_pos, "state_edge_pos");
@@ -2639,7 +2643,7 @@ py::tuple diffraction_coherent_accumulation_forward_op(
     int64_t grid_resolution0, int64_t grid_resolution1, double grid_cell_area, double wavelength,
     bool select_diffraction_point, bool prefilter_visibility, int64_t lane_offset, int64_t lane_count) {
     return coherent_diffraction_outputs_to_tuple(diffraction_coherent_accumulation_forward_impl(
-        get_scene(scene_handle), active, state_edge_index, state_edge_pos, state_edge_dir, state_edge_t_min,
+        *get_scene(scene_handle), active, state_edge_index, state_edge_pos, state_edge_dir, state_edge_t_min,
         state_edge_t_max, state_n0, state_n1, state_prim0, state_prim1, state_exterior_angle, state_src,
         state_src_power, state_wi, state_d0, material_eta_r, material_sigma, material_mu_r, material_gain,
         material_valid, state_limit, grid_axis, grid_position, grid_coord0_min, grid_coord0_max, grid_coord1_min,

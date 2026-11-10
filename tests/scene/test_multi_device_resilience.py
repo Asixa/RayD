@@ -149,6 +149,14 @@ class GpuFailureInjectionTests(unittest.TestCase):
             _ = scene.version
         with self.assertRaisesRegex(RuntimeError, "Call Scene.build"):
             scene.sync()
+        # Queries name the same recovery as sync() instead of sending the caller to a sync() that refuses.
+        ray = rt.Ray(
+            torch.tensor([[0.0, 0.0, 1.0]], device="cuda:0"), torch.tensor([[0.0, 0.0, -1.0]], device="cuda:0")
+        )
+        with self.assertRaisesRegex(RuntimeError, "Call Scene.build"):
+            scene.intersect(ray)
+        with self.assertRaisesRegex(RuntimeError, "Call Scene.build"):
+            scene.nearest_edge(torch.zeros(1, 3, device="cuda:0"))
 
         scene.build()
         self.assertTrue(scene.is_ready())

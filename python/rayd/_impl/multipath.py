@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import functools
+
 import torch
 
 from .runtime import NATIVE_AVAILABLE as _NATIVE_AVAILABLE
@@ -50,6 +52,86 @@ def _native_tensor(value: torch.Tensor | None) -> torch.Tensor | None:
     if torch._C._functorch.is_functorch_wrapped_tensor(value) or torch._C._functorch.is_gradtrackingtensor(value):
         value = torch._C._functorch.get_unwrapped(value)
     return value
+
+
+def _record_scene_geometry(ctx) -> None:
+    """Remember which scene geometry a tape was recorded against."""
+    ctx.scene_geometry_version = int(ctx.scene.geometry_version())
+
+
+def _require_scene_geometry(ctx) -> None:
+    """Refuse a backward/JVP whose scene geometry changed after the forward pass.
+
+    Backward and JVP re-read the scene's current vertices instead of retracing,
+    so after `update_mesh_vertices`/`set_instance_transform` plus `sync()` they
+    would silently combine the old tape with the new geometry.
+    """
+    if int(ctx.scene.geometry_version()) != ctx.scene_geometry_version:
+        raise RuntimeError(
+            "RayD: the scene geometry changed (update_mesh_vertices/set_instance_transform followed by sync()) "
+            "after the forward pass recorded this result, so its backward/JVP would combine the old tape with the "
+            "new geometry. Recompute the forward pass after sync(), or run backward before updating the scene."
+        )
+
+
+def _first_order_backward(backward):
+    """Make a native backward refuse to be differentiated again.
+
+    The native backward kernels consume a frozen tape and are not themselves
+    differentiable. Under `create_graph=True` the returned gradients are routed
+    through an error node (as `torch.autograd.function.once_differentiable`
+    does), so a second differentiation raises instead of silently treating them
+    as constants.
+    """
+
+    @functools.wraps(backward)
+    def wrapper(ctx, *grad_outputs):
+        with torch.no_grad():
+            outputs = backward(ctx, *grad_outputs)
+        if not torch.is_grad_enabled():
+            return outputs
+        values = outputs if isinstance(outputs, tuple) else (outputs,)
+        if not any(isinstance(value, torch.Tensor) for value in values):
+            return outputs
+        error = torch._C._functions.DelayedError(
+            b"RayD backward is not differentiable: double backward (create_graph=True followed by another backward "
+            b"through the returned gradient) is not supported.",
+            len(values),
+        )
+
+        def differentiable_alias(value):
+            if not isinstance(value, torch.Tensor):
+                return value
+            value = value.detach()
+            value.requires_grad = True
+            return value
+
+        wrapped = error(*[differentiable_alias(value) for value in values])
+        if not isinstance(outputs, tuple):
+            return wrapped[0] if isinstance(wrapped, tuple) else wrapped
+        return wrapped if isinstance(wrapped, tuple) else (wrapped,)
+
+    return wrapper
+
+
+def _lazy_geometry_guard(scene):
+    """Return a check that a lazily evaluated result still reads the geometry it was requested for.
+
+    Lazy results run their query on first field access. After `sync()` committed
+    new geometry that query would answer for the new geometry while autograd
+    still attributes it to the vertex tensors captured at request time.
+    """
+    recorded = int(scene.geometry_version())
+
+    def check() -> None:
+        if int(scene.geometry_version()) != recorded:
+            raise RuntimeError(
+                "RayD: this lazily evaluated result was requested before the scene geometry changed "
+                "(update_mesh_vertices/set_instance_transform followed by sync()). Read its fields before "
+                "updating the scene, or issue the query again after sync()."
+            )
+
+    return check
 
 
 def _native_tangent_or_none(value: torch.Tensor | None) -> torch.Tensor | None:
@@ -200,6 +282,7 @@ def _make_intersect_function(fused: bool):
             ray_d = torch.autograd.forward_ad.unpack_dual(inputs[ray_d_at]).primal
             ray_tmax = torch.autograd.forward_ad.unpack_dual(inputs[ray_tmax_at]).primal
             ctx.scene = inputs[0]
+            _record_scene_geometry(ctx)
             ctx.flags = int(inputs[flags_at])
             ctx.save_for_backward(ray_o, ray_d, ray_tmax, active, tape_prim_id, tape_barycentric, t)
             if fused:
@@ -213,7 +296,9 @@ def _make_intersect_function(fused: bool):
             )
 
         @staticmethod
+        @_first_order_backward
         def backward(ctx, *grad_outputs):
+            _require_scene_geometry(ctx)
             ray_o, ray_d, ray_tmax, active, tape_prim_id, tape_barycentric, tape_t = ctx.saved_tensors
             grad_t = grad_outputs[0]
             if fused:
@@ -293,6 +378,7 @@ def _make_intersect_function(fused: bool):
 
         @staticmethod
         def jvp(ctx, *tangents):
+            _require_scene_geometry(ctx)
             if fused:
                 vertices, ray_o, ray_d, active, tape_prim_id, tape_barycentric, _tape_t = ctx.saved_tensors
             else:
@@ -408,6 +494,7 @@ class _SdfIntersectFunction(torch.autograd.Function):
         ctx.mark_non_differentiable(hit_mask, steps, tape_t, tape_base)
 
     @staticmethod
+    @_first_order_backward
     def backward(ctx, *grad_outputs):
         values, position, rotation, scale, origins, directions, tape_t, tape_hit, tape_base = ctx.saved_tensors
         grads = torch.ops.rayd_torch.sdf_intersect_backward(
@@ -468,6 +555,7 @@ def _make_nearest_edge_function(fused: bool):
             distance, edge_point, edge_t, shape_id, edge_id, global_edge_id, tape_edge_id, tape_s, tape_d = output
             point = torch.autograd.forward_ad.unpack_dual(inputs[point_at]).primal
             ctx.scene = inputs[0]
+            _record_scene_geometry(ctx)
             ctx.save_for_backward(point, tape_edge_id, tape_s, tape_d, distance)
             if fused:
                 vertices = torch.autograd.forward_ad.unpack_dual(inputs[vertex_at]).primal
@@ -478,7 +566,9 @@ def _make_nearest_edge_function(fused: bool):
             ctx.mark_non_differentiable(shape_id, edge_id, global_edge_id, tape_edge_id)
 
         @staticmethod
+        @_first_order_backward
         def backward(ctx, *grad_outputs):
+            _require_scene_geometry(ctx)
             point, tape_edge_id, tape_s, tape_d, distance = ctx.saved_tensors
             if not fused:
                 needs_mesh_grad = tuple(
@@ -508,6 +598,7 @@ def _make_nearest_edge_function(fused: bool):
 
         @staticmethod
         def jvp(ctx, *tangents):
+            _require_scene_geometry(ctx)
             if fused:
                 vertices, point, tape_edge_id, tape_s, tape_d = ctx.saved_tensors
             else:
@@ -615,6 +706,7 @@ def _make_nearest_edges_topk_function(fused: bool):
             tape_edge_id, tape_s, tape_d = output[9:12]
             point = torch.autograd.forward_ad.unpack_dual(inputs[point_at]).primal
             ctx.scene = inputs[0]
+            _record_scene_geometry(ctx)
             ctx.k = int(inputs[k_at])
             ctx.save_for_backward(point, tape_edge_id, tape_s, tape_d)
             if fused:
@@ -626,7 +718,9 @@ def _make_nearest_edges_topk_function(fused: bool):
             ctx.mark_non_differentiable(output[0], output[5], output[6], output[7], output[8], tape_edge_id)
 
         @staticmethod
+        @_first_order_backward
         def backward(ctx, *grad_outputs):
+            _require_scene_geometry(ctx)
             point, tape_edge_id, tape_s, tape_d = ctx.saved_tensors
             k = ctx.k
             if not fused:
@@ -660,6 +754,7 @@ def _make_nearest_edges_topk_function(fused: bool):
 
         @staticmethod
         def jvp(ctx, *tangents):
+            _require_scene_geometry(ctx)
             if fused:
                 vertices, point, tape_edge_id, tape_s, tape_d = ctx.saved_tensors
             else:
@@ -757,6 +852,7 @@ def _make_nearest_edge_ray_function(fused: bool):
             ray_d = torch.autograd.forward_ad.unpack_dual(inputs[ray_d_at]).primal
             ray_tmax = torch.autograd.forward_ad.unpack_dual(inputs[ray_tmax_at]).primal
             ctx.scene = inputs[0]
+            _record_scene_geometry(ctx)
             ctx.save_for_backward(ray_o, ray_d, ray_tmax, tape_edge_id, ray_t, edge_t)
             if fused:
                 vertices = torch.autograd.forward_ad.unpack_dual(inputs[vertex_at]).primal
@@ -768,7 +864,9 @@ def _make_nearest_edge_ray_function(fused: bool):
             ctx.mark_non_differentiable(shape_id, edge_id, global_edge_id, tape_edge_id)
 
         @staticmethod
+        @_first_order_backward
         def backward(ctx, *grad_outputs):
+            _require_scene_geometry(ctx)
             ray_o, ray_d, ray_tmax, tape_edge_id, ray_t, edge_t = ctx.saved_tensors
             grad_vertices, grad_ray_o, grad_ray_d = torch.ops.rayd_torch.nearest_edge_ray_backward_optional(
                 ctx.scene,
@@ -801,6 +899,7 @@ def _make_nearest_edge_ray_function(fused: bool):
 
         @staticmethod
         def jvp(ctx, *tangents):
+            _require_scene_geometry(ctx)
             if fused:
                 vertices, ray_o, ray_d, ray_tmax, tape_edge_id, ray_t, edge_t = ctx.saved_tensors
                 tangent_vertices = _native_tangent_or_none(tangents[vertex_at])
@@ -905,6 +1004,7 @@ def _make_trace_reflections_function(fused: bool):
             ray_d = torch.autograd.forward_ad.unpack_dual(inputs[ray_d_at]).primal
             ray_tmax = torch.autograd.forward_ad.unpack_dual(inputs[ray_tmax_at]).primal
             ctx.scene = inputs[0]
+            _record_scene_geometry(ctx)
             ctx.max_bounces = int(inputs[max_bounces_at])
             ctx.save_for_backward(
                 ray_o, ray_d, ray_tmax, active, tape_prim_id, tape_barycentric, tape_hits, tape_normals, image_sources
@@ -932,7 +1032,9 @@ def _make_trace_reflections_function(fused: bool):
             )
 
         @staticmethod
+        @_first_order_backward
         def backward(ctx, *grad_outputs):
+            _require_scene_geometry(ctx)
             (ray_o, ray_d, ray_tmax, active, tape_prim_id, tape_barycentric, tape_hits, tape_normals, image_sources) = (
                 ctx.saved_tensors
             )
@@ -979,6 +1081,7 @@ def _make_trace_reflections_function(fused: bool):
 
         @staticmethod
         def jvp(ctx, *tangents):
+            _require_scene_geometry(ctx)
             if fused:
                 (
                     vertices,
@@ -1037,8 +1140,10 @@ def trace_reflections(
     _require_native_dispatcher()
     tracked_vertices = (vertices,) if mesh_vertices is None else tuple(mesh_vertices)
     if not _needs_trace_reflection_ad(*tracked_vertices, ray_o, ray_d, ray_tmax):
+        require_geometry = _lazy_geometry_guard(scene_handle)
 
         def load(full: bool):
+            require_geometry()
             if full:
                 valid, t, image_sources, prim_ids = torch.ops.rayd_torch.trace_reflections_forward_noad(
                     scene_handle, ray_o, ray_d, ray_tmax, active, int(max_bounces)
@@ -1092,6 +1197,7 @@ def _make_trace_refl_epc_field_function(fused: bool):
             source = torch.autograd.forward_ad.unpack_dual(inputs[source_at]).primal
             receiver = torch.autograd.forward_ad.unpack_dual(inputs[receiver_at]).primal
             ctx.scene = inputs[0]
+            _record_scene_geometry(ctx)
             ctx.max_bounces = int(inputs[max_bounces_at])
             ctx.save_for_backward(source, receiver, active, tape_prim_id, tape_barycentric, tape_t)
             if fused:
@@ -1103,7 +1209,9 @@ def _make_trace_refl_epc_field_function(fused: bool):
             ctx.mark_non_differentiable(valid, resolved_prim_ids, tape_prim_id, tape_barycentric, active)
 
         @staticmethod
+        @_first_order_backward
         def backward(ctx, *grad_outputs):
+            _require_scene_geometry(ctx)
             source, receiver, active, tape_prim_id, tape_barycentric, tape_t = ctx.saved_tensors
             if fused:
                 need_grad_vertices = bool(ctx.needs_input_grad[vertex_at])
@@ -1154,6 +1262,7 @@ def _make_trace_refl_epc_field_function(fused: bool):
 
         @staticmethod
         def jvp(ctx, *tangents):
+            _require_scene_geometry(ctx)
             if fused:
                 _vertices, source, receiver, active, tape_prim_id, tape_barycentric, tape_t = ctx.saved_tensors
             else:
@@ -1416,6 +1525,7 @@ class _DfrDirectAccumFunction(torch.autograd.Function):
     def setup_context(ctx, inputs, output):
         ctx.set_materialize_grads(False)
         ctx.scene = inputs[0]
+        _record_scene_geometry(ctx)
         ctx.state_count = int(inputs[21])
         ctx.grid_axis = int(inputs[22])
         ctx.grid_position = float(inputs[23])
@@ -1457,7 +1567,9 @@ class _DfrDirectAccumFunction(torch.autograd.Function):
         ctx.mark_non_differentiable(*output[7:19])
 
     @staticmethod
+    @_first_order_backward
     def backward(ctx, *grad_outputs):
+        _require_scene_geometry(ctx)
         (
             state_edge_pos,
             state_edge_dir,
@@ -1542,6 +1654,7 @@ class _DfrDirectAccumFunction(torch.autograd.Function):
 
     @staticmethod
     def jvp(ctx, *grad_inputs):
+        _require_scene_geometry(ctx)
         (
             state_edge_pos,
             state_edge_dir,
@@ -1789,6 +1902,7 @@ class _DfrChainAccumFunction(torch.autograd.Function):
     def setup_context(ctx, inputs, output):
         ctx.set_materialize_grads(False)
         ctx.scene = inputs[0]
+        _record_scene_geometry(ctx)
         ctx.state_count = int(inputs[21])
         ctx.recursive_state_count = int(inputs[22])
         ctx.grid_axis = int(inputs[23])
@@ -1836,7 +1950,9 @@ class _DfrChainAccumFunction(torch.autograd.Function):
         ctx.mark_non_differentiable(*output[7:19])
 
     @staticmethod
+    @_first_order_backward
     def backward(ctx, *grad_outputs):
+        _require_scene_geometry(ctx)
         (
             state_edge_index,
             state_edge_pos,
@@ -1940,6 +2056,7 @@ class _DfrChainAccumFunction(torch.autograd.Function):
 
     @staticmethod
     def jvp(ctx, *grad_inputs):
+        _require_scene_geometry(ctx)
         (
             state_edge_index,
             state_edge_pos,

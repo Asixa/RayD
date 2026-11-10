@@ -436,6 +436,11 @@
           "t", "p", "n", "geo_n", "uv", "barycentric", "shape_id",
           "prim_id", "local_prim_id", "global_prim_id"
         ]
+      },
+      "uv": {
+        "with_mesh_uv": "uv interpolates the hit face's corner texture coordinates, uv[face_uv[f]] or uv[faces[f]] when face_uv is omitted, at the hit barycentrics; both backends",
+        "without_mesh_uv_by_backend": {"torch": "barycentric (u, v)", "drjit": "(0, 0)"},
+        "note": "Recorded backend divergence for meshes without UVs; neither value is a texture coordinate. Torch rejects face_uv without uv, face_uv indices outside the uv rows, and uv that requires grad at build; uv is differentiable with respect to the ray and the vertices."
       }
     },
     "nearest_edge_point": {
@@ -573,6 +578,7 @@
       "inputs": ["start", "end", "active_mask"],
       "result": "bool",
       "ray_domain": "finite segment with endpoint offsets",
+      "non_finite_endpoints": "a segment with a NaN or infinite endpoint is not visible (false), like an inactive lane, on both backends",
       "ad": "discrete result; no geometry derivative"
     },
     "visibility_pair": {

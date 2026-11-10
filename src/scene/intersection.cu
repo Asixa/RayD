@@ -39,10 +39,21 @@ void cuda_check(cudaError_t result, const char* expr) {
     throw std::runtime_error(std::string("CUDA error in ") + expr + ": " + cudaGetErrorString(result));
 }
 
+const float* optional_float_ptr(const at::Tensor& tensor) {
+    return tensor.defined() && tensor.numel() != 0 ? tensor.data_ptr<float>() : nullptr;
+}
+
+// Texture coordinates at barycentric (u, v) of `face`: corner 0 plus u and v times the two corner differences.
+__device__ float2 interpolate_triangle_uv(const float* __restrict__ triangle_uv, int face, float u, float v) {
+    const float* corners = triangle_uv + static_cast<int64_t>(face) * 6;
+    return make_float2(corners[0] + u * (corners[2] - corners[0]) + v * (corners[4] - corners[0]),
+                       corners[1] + u * (corners[3] - corners[1]) + v * (corners[5] - corners[1]));
+}
+
 __global__ void intersect_recompute_kernel(
-    const float* __restrict__ vertices, const int* __restrict__ faces, const float* __restrict__ ray_o,
-    const float* __restrict__ ray_d, const bool* __restrict__ active, int64_t ray_count,
-    const float* __restrict__ optix_t, const int* __restrict__ optix_shape_id,
+    const float* __restrict__ vertices, const int* __restrict__ faces, const float* __restrict__ triangle_uv,
+    const float* __restrict__ ray_o, const float* __restrict__ ray_d, const bool* __restrict__ active,
+    int64_t ray_count, const float* __restrict__ optix_t, const int* __restrict__ optix_shape_id,
     const int* __restrict__ optix_local_prim_id, const int* __restrict__ optix_global_prim_id,
     const float* __restrict__ optix_bary_uv, float* __restrict__ out_p, float* __restrict__ out_n,
     float* __restrict__ out_geo_n, float* __restrict__ out_uv, float* __restrict__ out_bary,
@@ -76,8 +87,11 @@ __global__ void intersect_recompute_kernel(
         out_bary[ray_idx * 3 + 2] = hit ? v : 0.f;
     }
     if (want_uv) {
-        out_uv[ray_idx * 2 + 0] = hit ? u : 0.f;
-        out_uv[ray_idx * 2 + 1] = hit ? v : 0.f;
+        // Without mesh UVs the texture coordinates are the barycentric (u, v) themselves.
+        const float2 tex = hit && triangle_uv != nullptr ? interpolate_triangle_uv(triangle_uv, global_prim_id, u, v)
+                                                         : make_float2(u, v);
+        out_uv[ray_idx * 2 + 0] = hit ? tex.x : 0.f;
+        out_uv[ray_idx * 2 + 1] = hit ? tex.y : 0.f;
     }
 
     if (want_geometric) {
@@ -203,12 +217,13 @@ IntersectForwardOutputs intersect_forward_cuda(const SceneCache& scene, const at
     const int threads = 128;
     const int blocks = static_cast<int>((ray_count + threads - 1) / threads);
     intersect_recompute_kernel<<<blocks, threads, 0, torch_ctx.stream>>>(
-        vertices.data_ptr<float>(), faces.data_ptr<int>(), ray_o.data_ptr<float>(), ray_d.data_ptr<float>(),
-        optional_mask_ptr(active), ray_count, out.t.data_ptr<float>(), out.shape_id.data_ptr<int>(),
-        out.local_prim_id.data_ptr<int>(), out.global_prim_id.data_ptr<int>(), optix_bary_uv.data_ptr<float>(),
-        out.p.data_ptr<float>(), out.n.data_ptr<float>(), out.geo_n.data_ptr<float>(), out.uv.data_ptr<float>(),
-        out.barycentric.data_ptr<float>(), out.shape_id.data_ptr<int>(), out.prim_id.data_ptr<int>(),
-        out.local_prim_id.data_ptr<int>(), out.global_prim_id.data_ptr<int>(), kRayFlagsAll);
+        vertices.data_ptr<float>(), faces.data_ptr<int>(), optional_float_ptr(scene.triangle_uv),
+        ray_o.data_ptr<float>(), ray_d.data_ptr<float>(), optional_mask_ptr(active), ray_count, out.t.data_ptr<float>(),
+        out.shape_id.data_ptr<int>(), out.local_prim_id.data_ptr<int>(), out.global_prim_id.data_ptr<int>(),
+        optix_bary_uv.data_ptr<float>(), out.p.data_ptr<float>(), out.n.data_ptr<float>(), out.geo_n.data_ptr<float>(),
+        out.uv.data_ptr<float>(), out.barycentric.data_ptr<float>(), out.shape_id.data_ptr<int>(),
+        out.prim_id.data_ptr<int>(), out.local_prim_id.data_ptr<int>(), out.global_prim_id.data_ptr<int>(),
+        kRayFlagsAll);
 
     return out;
 }
@@ -260,12 +275,13 @@ IntersectForwardOutputs intersect_forward_flags_cuda(const SceneCache& scene, co
         const int threads = 128;
         const int blocks = static_cast<int>((ray_count + threads - 1) / threads);
         intersect_recompute_kernel<<<blocks, threads, 0, torch_ctx.stream>>>(
-            scene.global_vertices.data_ptr<float>(), scene.global_faces.data_ptr<int>(), ray_o.data_ptr<float>(),
-            ray_d.data_ptr<float>(), optional_mask_ptr(active), ray_count, out.t.data_ptr<float>(),
-            optix_shape_id.data_ptr<int>(), optix_local_prim_id.data_ptr<int>(), optix_global_prim_id.data_ptr<int>(),
-            optix_bary_uv.data_ptr<float>(), want_geometric ? out.p.data_ptr<float>() : nullptr,
-            want_shading ? out.n.data_ptr<float>() : nullptr, want_geometric ? out.geo_n.data_ptr<float>() : nullptr,
-            want_uv ? out.uv.data_ptr<float>() : nullptr, want_geometric ? out.barycentric.data_ptr<float>() : nullptr,
+            scene.global_vertices.data_ptr<float>(), scene.global_faces.data_ptr<int>(),
+            optional_float_ptr(scene.triangle_uv), ray_o.data_ptr<float>(), ray_d.data_ptr<float>(),
+            optional_mask_ptr(active), ray_count, out.t.data_ptr<float>(), optix_shape_id.data_ptr<int>(),
+            optix_local_prim_id.data_ptr<int>(), optix_global_prim_id.data_ptr<int>(), optix_bary_uv.data_ptr<float>(),
+            want_geometric ? out.p.data_ptr<float>() : nullptr, want_shading ? out.n.data_ptr<float>() : nullptr,
+            want_geometric ? out.geo_n.data_ptr<float>() : nullptr, want_uv ? out.uv.data_ptr<float>() : nullptr,
+            want_geometric ? out.barycentric.data_ptr<float>() : nullptr,
             want_geometric ? out.shape_id.data_ptr<int>() : nullptr,
             want_geometric ? out.prim_id.data_ptr<int>() : nullptr,
             want_geometric ? out.local_prim_id.data_ptr<int>() : nullptr,
@@ -316,12 +332,13 @@ IntersectForwardOutputs intersect_forward_ad_flags_cuda(const SceneCache& scene,
         const int threads = 128;
         const int blocks = static_cast<int>((ray_count + threads - 1) / threads);
         intersect_recompute_kernel<<<blocks, threads, 0, torch_ctx.stream>>>(
-            scene.global_vertices.data_ptr<float>(), scene.global_faces.data_ptr<int>(), ray_o.data_ptr<float>(),
-            ray_d.data_ptr<float>(), optional_mask_ptr(active), ray_count, out.t.data_ptr<float>(),
-            optix_shape_id.data_ptr<int>(), optix_local_prim_id.data_ptr<int>(), optix_global_prim_id.data_ptr<int>(),
-            optix_bary_uv.data_ptr<float>(), want_geometric ? out.p.data_ptr<float>() : nullptr,
-            want_shading ? out.n.data_ptr<float>() : nullptr, want_geometric ? out.geo_n.data_ptr<float>() : nullptr,
-            want_uv ? out.uv.data_ptr<float>() : nullptr, want_geometric ? out.barycentric.data_ptr<float>() : nullptr,
+            scene.global_vertices.data_ptr<float>(), scene.global_faces.data_ptr<int>(),
+            optional_float_ptr(scene.triangle_uv), ray_o.data_ptr<float>(), ray_d.data_ptr<float>(),
+            optional_mask_ptr(active), ray_count, out.t.data_ptr<float>(), optix_shape_id.data_ptr<int>(),
+            optix_local_prim_id.data_ptr<int>(), optix_global_prim_id.data_ptr<int>(), optix_bary_uv.data_ptr<float>(),
+            want_geometric ? out.p.data_ptr<float>() : nullptr, want_shading ? out.n.data_ptr<float>() : nullptr,
+            want_geometric ? out.geo_n.data_ptr<float>() : nullptr, want_uv ? out.uv.data_ptr<float>() : nullptr,
+            want_geometric ? out.barycentric.data_ptr<float>() : nullptr,
             want_geometric ? out.shape_id.data_ptr<int>() : nullptr,
             want_geometric ? out.prim_id.data_ptr<int>() : nullptr,
             want_geometric ? out.local_prim_id.data_ptr<int>() : nullptr,
@@ -349,6 +366,81 @@ IntersectForwardOutputs intersect_forward_tape_cuda(const SceneCache& scene, con
 
     launch_intersect_backend(scene, ray_o, ray_d, ray_tmax, active, out.t, nullptr, nullptr,
                              out.tape_prim_id.data_ptr<int>(), nullptr, torch_ctx.stream);
+    return out;
+}
+
+IntersectForwardOutputs intersect_forward_staged_cuda(const SceneCache& scene, const at::Tensor& ray_o,
+                                                      const at::Tensor& ray_d, const at::Tensor& ray_tmax,
+                                                      const at::Tensor& active) {
+    const int64_t ray_count = ray_o.size(0);
+    auto fopts = scene.global_vertices.options();
+    auto iopts = scene.global_faces.options();
+
+    TorchCudaContext torch_ctx = current_torch_cuda_context();
+    IntersectForwardOutputs out;
+    out.t = at::empty({ray_count}, fopts);
+    out.tape_prim_id = at::empty({ray_count}, iopts);
+    out.tape_barycentric = at::empty({ray_count, 2}, fopts);
+    out.tape_t = out.t;
+
+    if (ray_count == 0)
+        return out;
+
+    launch_intersect_backend(scene, ray_o, ray_d, ray_tmax, active, out.t, nullptr, nullptr,
+                             out.tape_prim_id.data_ptr<int>(), out.tape_barycentric.data_ptr<float>(),
+                             torch_ctx.stream);
+    return out;
+}
+
+IntersectForwardOutputs intersect_complete_staged_cuda(const SceneCache& scene, const at::Tensor& ray_o,
+                                                       const at::Tensor& ray_d, const at::Tensor& active,
+                                                       const at::Tensor& t, const at::Tensor& global_prim_id,
+                                                       const at::Tensor& bary_uv, int64_t flags) {
+    const int64_t ray_count = ray_o.size(0);
+    auto fopts = scene.global_vertices.options();
+    auto iopts = scene.global_faces.options();
+    const bool want_geometric = (flags & kRayFlagsGeometric) != 0;
+    const bool want_shading = (flags & kRayFlagsShadingN) != 0;
+    const bool want_uv = (flags & kRayFlagsUV) != 0;
+
+    IntersectForwardOutputs out;
+    out.t = t;
+    out.p = at::empty({want_geometric ? ray_count : 0, 3}, fopts);
+    out.n = at::empty({want_shading ? ray_count : 0, 3}, fopts);
+    out.geo_n = at::empty({want_geometric ? ray_count : 0, 3}, fopts);
+    out.uv = at::empty({want_uv ? ray_count : 0, 2}, fopts);
+    out.barycentric = at::empty({want_geometric ? ray_count : 0, 3}, fopts);
+    out.shape_id = at::empty({want_geometric ? ray_count : 0}, iopts);
+    out.prim_id = at::empty({want_geometric ? ray_count : 0}, iopts);
+    out.local_prim_id = at::empty({want_geometric ? ray_count : 0}, iopts);
+    out.global_prim_id = at::empty({want_geometric ? ray_count : 0}, iopts);
+    out.tape_prim_id = global_prim_id;
+    out.tape_barycentric = bary_uv;
+    out.tape_t = t;
+
+    if (ray_count == 0 || flags == 0)
+        return out;
+
+    // The trace reports (instance id, primitive index in the instance's GAS) for a hit, which is exactly the global
+    // face's (face_shape_id, face_local_id). The post-pass reads them only for hit lanes, so a miss may gather any row.
+    const at::Tensor hit_row = global_prim_id.clamp_min(0).to(at::kLong);
+    const at::Tensor shape_id = scene.face_shape_id.index_select(0, hit_row);
+    const at::Tensor local_prim_id = scene.face_local_id.index_select(0, hit_row);
+    TorchCudaContext torch_ctx = current_torch_cuda_context();
+    const int threads = 128;
+    const int blocks = static_cast<int>((ray_count + threads - 1) / threads);
+    intersect_recompute_kernel<<<blocks, threads, 0, torch_ctx.stream>>>(
+        scene.global_vertices.data_ptr<float>(), scene.global_faces.data_ptr<int>(),
+        optional_float_ptr(scene.triangle_uv), ray_o.data_ptr<float>(), ray_d.data_ptr<float>(),
+        optional_mask_ptr(active), ray_count, t.data_ptr<float>(), shape_id.data_ptr<int>(),
+        local_prim_id.data_ptr<int>(), global_prim_id.data_ptr<int>(), bary_uv.data_ptr<float>(),
+        want_geometric ? out.p.data_ptr<float>() : nullptr, want_shading ? out.n.data_ptr<float>() : nullptr,
+        want_geometric ? out.geo_n.data_ptr<float>() : nullptr, want_uv ? out.uv.data_ptr<float>() : nullptr,
+        want_geometric ? out.barycentric.data_ptr<float>() : nullptr,
+        want_geometric ? out.shape_id.data_ptr<int>() : nullptr, want_geometric ? out.prim_id.data_ptr<int>() : nullptr,
+        want_geometric ? out.local_prim_id.data_ptr<int>() : nullptr,
+        want_geometric ? out.global_prim_id.data_ptr<int>() : nullptr, flags);
+    cuda_check(cudaGetLastError(), "intersect_complete_staged_cuda()");
     return out;
 }
 
@@ -452,15 +544,16 @@ __device__ float3 solve_transpose_columns(float3 c0, float3 c1, float3 c2, float
 }
 
 __global__ void intersect_backward_kernel(
-    const float* __restrict__ vertices, const int* __restrict__ faces, const float* __restrict__ ray_o,
-    const float* __restrict__ ray_d, const bool* __restrict__ active, const int* __restrict__ tape_prim_id,
-    const float* __restrict__ tape_bary, int tape_bary_width, const float* __restrict__ grad_t,
-    const float* __restrict__ grad_p, const float* __restrict__ grad_n, const float* __restrict__ grad_geo_n,
-    const float* __restrict__ grad_uv, const float* __restrict__ grad_bary, int64_t grad_t_stride0,
-    int64_t grad_p_stride0, int64_t grad_p_stride1, int64_t grad_n_stride0, int64_t grad_n_stride1,
-    int64_t grad_geo_n_stride0, int64_t grad_geo_n_stride1, int64_t grad_uv_stride0, int64_t grad_uv_stride1,
-    int64_t grad_bary_stride0, int64_t grad_bary_stride1, int64_t ray_count, float* __restrict__ grad_vertices,
-    float* __restrict__ grad_ray_o, float* __restrict__ grad_ray_d, float* __restrict__ grad_ray_tmax) {
+    const float* __restrict__ vertices, const int* __restrict__ faces, const float* __restrict__ triangle_uv,
+    const float* __restrict__ ray_o, const float* __restrict__ ray_d, const bool* __restrict__ active,
+    const int* __restrict__ tape_prim_id, const float* __restrict__ tape_bary, int tape_bary_width,
+    const float* __restrict__ grad_t, const float* __restrict__ grad_p, const float* __restrict__ grad_n,
+    const float* __restrict__ grad_geo_n, const float* __restrict__ grad_uv, const float* __restrict__ grad_bary,
+    int64_t grad_t_stride0, int64_t grad_p_stride0, int64_t grad_p_stride1, int64_t grad_n_stride0,
+    int64_t grad_n_stride1, int64_t grad_geo_n_stride0, int64_t grad_geo_n_stride1, int64_t grad_uv_stride0,
+    int64_t grad_uv_stride1, int64_t grad_bary_stride0, int64_t grad_bary_stride1, int64_t ray_count,
+    float* __restrict__ grad_vertices, float* __restrict__ grad_ray_o, float* __restrict__ grad_ray_d,
+    float* __restrict__ grad_ray_tmax) {
     const int ray_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (ray_idx >= ray_count)
         return;
@@ -525,6 +618,12 @@ __global__ void intersect_backward_kernel(
     const float2 guv = read_vec2_or_zero(grad_uv, ray_idx, grad_uv_stride0, grad_uv_stride1);
     float gu = guv.x;
     float gv = guv.y;
+    if (triangle_uv != nullptr) {
+        // uv = T0 + u (T1 - T0) + v (T2 - T0), so d uv / d u and d uv / d v are the two corner differences.
+        const float* corners = triangle_uv + static_cast<int64_t>(prim_id) * 6;
+        gu = guv.x * (corners[2] - corners[0]) + guv.y * (corners[3] - corners[1]);
+        gv = guv.x * (corners[4] - corners[0]) + guv.y * (corners[5] - corners[1]);
+    }
     const float3 gbary = read_vec3_or_zero(grad_bary, ray_idx, grad_bary_stride0, grad_bary_stride1);
     const float gb0 = gbary.x;
     const float gb1 = gbary.y;
@@ -750,14 +849,15 @@ bool launch_intersect_backward_t_vertices_coop(const at::Tensor& vertices, const
 }
 
 __global__ void intersect_jvp_kernel(
-    const float* __restrict__ vertices, const int* __restrict__ faces, const float* __restrict__ ray_o,
-    const float* __restrict__ ray_d, const bool* __restrict__ active, const int* __restrict__ tape_prim_id,
-    const float* __restrict__ tape_bary, int tape_bary_width, const float* __restrict__ tangent_vertices,
-    const float* __restrict__ tangent_ray_o, const float* __restrict__ tangent_ray_d, int64_t tangent_vertices_stride0,
-    int64_t tangent_vertices_stride1, int64_t tangent_ray_o_stride0, int64_t tangent_ray_o_stride1,
-    int64_t tangent_ray_d_stride0, int64_t tangent_ray_d_stride1, int64_t ray_count, float* __restrict__ tangent_t,
-    float* __restrict__ tangent_p, float* __restrict__ tangent_n, float* __restrict__ tangent_geo_n,
-    float* __restrict__ tangent_uv, float* __restrict__ tangent_barycentric, int64_t flags) {
+    const float* __restrict__ vertices, const int* __restrict__ faces, const float* __restrict__ triangle_uv,
+    const float* __restrict__ ray_o, const float* __restrict__ ray_d, const bool* __restrict__ active,
+    const int* __restrict__ tape_prim_id, const float* __restrict__ tape_bary, int tape_bary_width,
+    const float* __restrict__ tangent_vertices, const float* __restrict__ tangent_ray_o,
+    const float* __restrict__ tangent_ray_d, int64_t tangent_vertices_stride0, int64_t tangent_vertices_stride1,
+    int64_t tangent_ray_o_stride0, int64_t tangent_ray_o_stride1, int64_t tangent_ray_d_stride0,
+    int64_t tangent_ray_d_stride1, int64_t ray_count, float* __restrict__ tangent_t, float* __restrict__ tangent_p,
+    float* __restrict__ tangent_n, float* __restrict__ tangent_geo_n, float* __restrict__ tangent_uv,
+    float* __restrict__ tangent_barycentric, int64_t flags) {
     const int ray_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (ray_idx >= ray_count)
         return;
@@ -823,8 +923,14 @@ __global__ void intersect_jvp_kernel(
 
     tangent_t[ray_idx] = dt;
     if (want_uv) {
-        tangent_uv[ray_idx * 2 + 0] = du;
-        tangent_uv[ray_idx * 2 + 1] = dv;
+        if (triangle_uv != nullptr) {
+            const float* corners = triangle_uv + static_cast<int64_t>(prim_id) * 6;
+            tangent_uv[ray_idx * 2 + 0] = du * (corners[2] - corners[0]) + dv * (corners[4] - corners[0]);
+            tangent_uv[ray_idx * 2 + 1] = du * (corners[3] - corners[1]) + dv * (corners[5] - corners[1]);
+        } else {
+            tangent_uv[ray_idx * 2 + 0] = du;
+            tangent_uv[ray_idx * 2 + 1] = dv;
+        }
     }
     if (want_geometric) {
         const float3 dp = add3(dorigin, add3(mul3(dt, d), mul3(solved_t, dd)));
@@ -858,10 +964,11 @@ IntersectBackwardOutputs intersect_backward_cuda(const at::Tensor& vertices, con
                                                  const at::Tensor& tape_prim_id, const at::Tensor& tape_barycentric,
                                                  const at::Tensor& grad_t, const at::Tensor& grad_p,
                                                  const at::Tensor& grad_n, const at::Tensor& grad_geo_n,
-                                                 const at::Tensor& grad_uv, const at::Tensor& grad_barycentric) {
+                                                 const at::Tensor& grad_uv, const at::Tensor& grad_barycentric,
+                                                 const at::Tensor& triangle_uv) {
     return intersect_backward_optional_cuda(vertices, faces, ray_o, ray_d, ray_tmax, active, tape_prim_id,
                                             tape_barycentric, &grad_t, &grad_p, &grad_n, &grad_geo_n, &grad_uv,
-                                            &grad_barycentric, true, true, true, true);
+                                            &grad_barycentric, true, true, true, true, triangle_uv);
 }
 
 IntersectBackwardOutputs intersect_backward_optional_cuda(
@@ -869,7 +976,8 @@ IntersectBackwardOutputs intersect_backward_optional_cuda(
     const at::Tensor& ray_tmax, const at::Tensor& active, const at::Tensor& tape_prim_id,
     const at::Tensor& tape_barycentric, const at::Tensor* grad_t, const at::Tensor* grad_p, const at::Tensor* grad_n,
     const at::Tensor* grad_geo_n, const at::Tensor* grad_uv, const at::Tensor* grad_barycentric,
-    bool need_grad_vertices, bool need_grad_ray_o, bool need_grad_ray_d, bool need_grad_ray_tmax) {
+    bool need_grad_vertices, bool need_grad_ray_o, bool need_grad_ray_d, bool need_grad_ray_tmax,
+    const at::Tensor& triangle_uv) {
     (void)ray_tmax;
     const int64_t ray_count = ray_d.size(0);
     c10::cuda::CUDAGuard guard(static_cast<int>(vertices.get_device()));
@@ -887,8 +995,8 @@ IntersectBackwardOutputs intersect_backward_optional_cuda(
     const int threads = 128;
     const int blocks = static_cast<int>((ray_count + threads - 1) / threads);
     intersect_backward_kernel<<<blocks, threads, 0, stream>>>(
-        vertices.data_ptr<float>(), faces.data_ptr<int>(), ray_o.data_ptr<float>(), ray_d.data_ptr<float>(),
-        optional_mask_ptr(active), tape_prim_id.data_ptr<int>(),
+        vertices.data_ptr<float>(), faces.data_ptr<int>(), optional_float_ptr(triangle_uv), ray_o.data_ptr<float>(),
+        ray_d.data_ptr<float>(), optional_mask_ptr(active), tape_prim_id.data_ptr<int>(),
         (!tape_barycentric.defined() || tape_barycentric.numel() == 0) ? nullptr : tape_barycentric.data_ptr<float>(),
         (!tape_barycentric.defined() || tape_barycentric.numel() == 0) ? 0 : static_cast<int>(tape_barycentric.size(1)),
         grad_t == nullptr ? nullptr : grad_t->data_ptr<float>(),
@@ -956,9 +1064,9 @@ IntersectJvpOutputs intersect_jvp_cuda(const at::Tensor& vertices, const at::Ten
                                        const at::Tensor& ray_d, const at::Tensor& active,
                                        const at::Tensor& tape_prim_id, const at::Tensor& tape_barycentric,
                                        const at::Tensor& tangent_vertices, const at::Tensor& tangent_ray_o,
-                                       const at::Tensor& tangent_ray_d) {
+                                       const at::Tensor& tangent_ray_d, const at::Tensor& triangle_uv) {
     return intersect_jvp_optional_cuda(vertices, faces, ray_o, ray_d, active, tape_prim_id, tape_barycentric,
-                                       &tangent_vertices, &tangent_ray_o, &tangent_ray_d, kRayFlagsAll);
+                                       &tangent_vertices, &tangent_ray_o, &tangent_ray_d, kRayFlagsAll, triangle_uv);
 }
 
 IntersectJvpOutputs intersect_jvp_optional_cuda(const at::Tensor& vertices, const at::Tensor& faces,
@@ -966,7 +1074,7 @@ IntersectJvpOutputs intersect_jvp_optional_cuda(const at::Tensor& vertices, cons
                                                 const at::Tensor& active, const at::Tensor& tape_prim_id,
                                                 const at::Tensor& tape_barycentric, const at::Tensor* tangent_vertices,
                                                 const at::Tensor* tangent_ray_o, const at::Tensor* tangent_ray_d,
-                                                int64_t flags) {
+                                                int64_t flags, const at::Tensor& triangle_uv) {
     const int64_t ray_count = ray_d.size(0);
     c10::cuda::CUDAGuard guard(static_cast<int>(vertices.get_device()));
     const bool want_geometric = (flags & kRayFlagsGeometric) != 0;
@@ -986,9 +1094,9 @@ IntersectJvpOutputs intersect_jvp_optional_cuda(const at::Tensor& vertices, cons
     const int blocks = static_cast<int>((ray_count + threads - 1) / threads);
     cudaStream_t stream = at::cuda::getCurrentCUDAStream(vertices.get_device()).stream();
     intersect_jvp_kernel<<<blocks, threads, 0, stream>>>(
-        vertices.data_ptr<float>(), faces.data_ptr<int>(), ray_o.data_ptr<float>(), ray_d.data_ptr<float>(),
-        optional_mask_ptr(active), tape_prim_id.data_ptr<int>(), tape_barycentric.data_ptr<float>(),
-        static_cast<int>(tape_barycentric.size(1)),
+        vertices.data_ptr<float>(), faces.data_ptr<int>(), optional_float_ptr(triangle_uv), ray_o.data_ptr<float>(),
+        ray_d.data_ptr<float>(), optional_mask_ptr(active), tape_prim_id.data_ptr<int>(),
+        tape_barycentric.data_ptr<float>(), static_cast<int>(tape_barycentric.size(1)),
         tangent_vertices == nullptr ? nullptr : tangent_vertices->data_ptr<float>(),
         tangent_ray_o == nullptr ? nullptr : tangent_ray_o->data_ptr<float>(),
         tangent_ray_d == nullptr ? nullptr : tangent_ray_d->data_ptr<float>(), optional_stride(tangent_vertices, 0),

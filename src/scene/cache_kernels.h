@@ -32,6 +32,10 @@ struct EdgeTopology {
 
 EdgeTopology build_edge_topology_cuda(const at::Tensor& faces, int32_t vertex_offset, int32_t shape_id);
 
+// Writes 1 into int32 `flags[k]` when the contiguous float32 `vertices[k]` holds a NaN or infinite coordinate and 0
+// otherwise, asynchronously on the current stream.
+void flag_non_finite_vertices_cuda(const std::vector<at::Tensor>& vertices, at::Tensor& flags);
+
 void pack_global_geometry_cuda(const at::Tensor& mesh_vertices, const at::Tensor& mesh_faces, int32_t vertex_offset,
                                int32_t face_offset, int32_t shape_id, at::Tensor& global_vertices,
                                at::Tensor& global_faces, at::Tensor& face_shape_id, at::Tensor& face_local_id);

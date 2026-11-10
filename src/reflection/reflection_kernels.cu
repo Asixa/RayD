@@ -581,8 +581,10 @@ ReflectionJvpOutputs reflection_jvp_cuda(const at::Tensor& vertices, const at::T
                                          const at::Tensor& tangent_vertices, const at::Tensor& tangent_ray_o,
                                          const at::Tensor& tangent_ray_d, const at::Tensor& image_sources) {
     const int64_t ray_count = ray_o.size(0);
-    IntersectJvpOutputs hit_jvp = intersect_jvp_cuda(vertices, faces, ray_o, ray_d, active, tape_prim_id,
-                                                     tape_barycentric, tangent_vertices, tangent_ray_o, tangent_ray_d);
+    // Only the hit distance tangent is used, which texture coordinates do not affect.
+    IntersectJvpOutputs hit_jvp =
+        intersect_jvp_cuda(vertices, faces, ray_o, ray_d, active, tape_prim_id, tape_barycentric, tangent_vertices,
+                           tangent_ray_o, tangent_ray_d, at::Tensor());
     return {
         hit_jvp.tangent_t.reshape({ray_count, 1}),
         at::zeros_like(image_sources),
@@ -704,61 +706,31 @@ namespace rayd::torch_backend {
 
 namespace {
 
-template <typename T> class CudaBuffer {
+// Carves the dedup scratch out of one Torch caching-allocator block on the current stream, so a call costs one cached
+// allocation instead of a cudaMalloc/cudaFree (which synchronizes the device) per buffer. Every slice starts on a
+// 256-byte boundary, the alignment CUB expects of its temporary storage.
+class DedupScratch {
   public:
-    CudaBuffer() = default;
-
-    explicit CudaBuffer(size_t count) { allocate(count); }
-
-    ~CudaBuffer() {
-        if (ptr_ != nullptr) {
-            cudaFree(ptr_);
-        }
+    template <typename T> size_t reserve(size_t count) {
+        const size_t offset = bytes_;
+        bytes_ = align(offset + sizeof(T) * std::max<size_t>(count, 1));
+        return offset;
     }
 
-    CudaBuffer(const CudaBuffer&) = delete;
-    CudaBuffer& operator=(const CudaBuffer&) = delete;
-
-    CudaBuffer(CudaBuffer&& other) noexcept : ptr_(other.ptr_), count_(other.count_) {
-        other.ptr_ = nullptr;
-        other.count_ = 0;
+    void allocate(int device_index) {
+        storage_ = at::empty({static_cast<int64_t>(std::max<size_t>(bytes_, 1))},
+                             at::TensorOptions().device(at::Device(at::kCUDA, device_index)).dtype(at::kByte));
     }
 
-    CudaBuffer& operator=(CudaBuffer&& other) noexcept {
-        if (this != &other) {
-            if (ptr_ != nullptr) {
-                cudaFree(ptr_);
-            }
-            ptr_ = other.ptr_;
-            count_ = other.count_;
-            other.ptr_ = nullptr;
-            other.count_ = 0;
-        }
-        return *this;
+    template <typename T> T* at_offset(size_t offset) {
+        return reinterpret_cast<T*>(storage_.data_ptr<uint8_t>() + offset);
     }
-
-    void allocate(size_t count) {
-        if (ptr_ != nullptr) {
-            cudaFree(ptr_);
-            ptr_ = nullptr;
-        }
-
-        count_ = count;
-        if (count_ == 0) {
-            return;
-        }
-
-        const cudaError_t error = cudaMalloc(reinterpret_cast<void**>(&ptr_), sizeof(T) * count_);
-        require(error == cudaSuccess,
-                std::string("reflection_dedup_gpu(): cudaMalloc failed: ") + cudaGetErrorString(error));
-    }
-
-    T* get() { return ptr_; }
-    const T* get() const { return ptr_; }
 
   private:
-    T* ptr_ = nullptr;
-    size_t count_ = 0;
+    static size_t align(size_t value) { return (value + 255u) & ~static_cast<size_t>(255u); }
+
+    size_t bytes_ = 0;
+    at::Tensor storage_;
 };
 
 void check_cuda_call(cudaError_t error, const char* message) {
@@ -857,18 +829,33 @@ int reflection_dedup_gpu(int device_index, int n_rays, int max_bounces, const in
     constexpr int block_size = 256;
     const int block_count = (n_rays + block_size - 1) / block_size;
 
-    CudaBuffer<uint64_t> keys_in(static_cast<size_t>(n_rays));
-    CudaBuffer<uint64_t> keys_out(static_cast<size_t>(n_rays));
-    CudaBuffer<int> ray_indices_in(static_cast<size_t>(n_rays));
-    CudaBuffer<int> ray_indices_out(static_cast<size_t>(n_rays));
-    CudaBuffer<int> boundary_flags(static_cast<size_t>(n_rays));
-    CudaBuffer<int> hash_group_ids(static_cast<size_t>(n_rays));
-    CudaBuffer<uint64_t> cluster_keys_in(static_cast<size_t>(n_rays));
-    CudaBuffer<uint64_t> cluster_keys_out(static_cast<size_t>(n_rays));
-    CudaBuffer<int> cluster_ray_indices_in(static_cast<size_t>(n_rays));
-    CudaBuffer<int> cluster_ray_indices_out(static_cast<size_t>(n_rays));
-    CudaBuffer<int> unique_path_ids(static_cast<size_t>(n_rays));
-    CudaBuffer<int> unique_count_device(1);
+    const size_t ray_slots = static_cast<size_t>(n_rays);
+    DedupScratch buffers;
+    const size_t keys_in_at = buffers.reserve<uint64_t>(ray_slots);
+    const size_t keys_out_at = buffers.reserve<uint64_t>(ray_slots);
+    const size_t ray_indices_in_at = buffers.reserve<int>(ray_slots);
+    const size_t ray_indices_out_at = buffers.reserve<int>(ray_slots);
+    const size_t boundary_flags_at = buffers.reserve<int>(ray_slots);
+    const size_t hash_group_ids_at = buffers.reserve<int>(ray_slots);
+    const size_t cluster_keys_in_at = buffers.reserve<uint64_t>(ray_slots);
+    const size_t cluster_keys_out_at = buffers.reserve<uint64_t>(ray_slots);
+    const size_t cluster_ray_indices_in_at = buffers.reserve<int>(ray_slots);
+    const size_t cluster_ray_indices_out_at = buffers.reserve<int>(ray_slots);
+    const size_t unique_path_ids_at = buffers.reserve<int>(ray_slots);
+    const size_t unique_count_at = buffers.reserve<int>(1);
+    buffers.allocate(device_index);
+    uint64_t* keys_in = buffers.at_offset<uint64_t>(keys_in_at);
+    uint64_t* keys_out = buffers.at_offset<uint64_t>(keys_out_at);
+    int* ray_indices_in = buffers.at_offset<int>(ray_indices_in_at);
+    int* ray_indices_out = buffers.at_offset<int>(ray_indices_out_at);
+    int* boundary_flags = buffers.at_offset<int>(boundary_flags_at);
+    int* hash_group_ids = buffers.at_offset<int>(hash_group_ids_at);
+    uint64_t* cluster_keys_in = buffers.at_offset<uint64_t>(cluster_keys_in_at);
+    uint64_t* cluster_keys_out = buffers.at_offset<uint64_t>(cluster_keys_out_at);
+    int* cluster_ray_indices_in = buffers.at_offset<int>(cluster_ray_indices_in_at);
+    int* cluster_ray_indices_out = buffers.at_offset<int>(cluster_ray_indices_out_at);
+    int* unique_path_ids = buffers.at_offset<int>(unique_path_ids_at);
+    int* unique_count_device = buffers.at_offset<int>(unique_count_at);
 
     check_cuda_call(cudaMemsetAsync(out_discovery_count, 0, sizeof(int) * static_cast<size_t>(n_rays), stream),
                     "reflection_dedup_gpu(): failed to clear discovery counts");
@@ -877,31 +864,33 @@ int reflection_dedup_gpu(int device_index, int n_rays, int max_bounces, const in
                                     stream),
                     "reflection_dedup_gpu(): failed to clear representative indices");
     audit_cuda_memset_async();
-    check_cuda_call(cudaMemsetAsync(unique_count_device.get(), 0, sizeof(int), stream),
+    check_cuda_call(cudaMemsetAsync(unique_count_device, 0, sizeof(int), stream),
                     "reflection_dedup_gpu(): failed to clear unique counter");
     audit_cuda_memset_async();
 
     size_t sort_temp_size = 0;
     audit_cub_sort();
-    check_cuda_call(cub::DeviceRadixSort::SortPairs(nullptr, sort_temp_size, keys_in.get(), keys_out.get(),
-                                                    ray_indices_in.get(), ray_indices_out.get(), n_rays, 0, 64, stream),
+    check_cuda_call(cub::DeviceRadixSort::SortPairs(nullptr, sort_temp_size, keys_in, keys_out, ray_indices_in,
+                                                    ray_indices_out, n_rays, 0, 64, stream),
                     "reflection_dedup_gpu(): failed to size first radix sort");
-    CudaBuffer<char> sort_temp(std::max<size_t>(sort_temp_size, 1));
 
     size_t scan_temp_size = 0;
     audit_cub_scan();
-    check_cuda_call(cub::DeviceScan::InclusiveSum(nullptr, scan_temp_size, boundary_flags.get(), hash_group_ids.get(),
-                                                  n_rays, stream),
+    check_cuda_call(cub::DeviceScan::InclusiveSum(nullptr, scan_temp_size, boundary_flags, hash_group_ids, n_rays,
+                                                  stream),
                     "reflection_dedup_gpu(): failed to size first scan");
-    CudaBuffer<char> scan_temp(std::max<size_t>(scan_temp_size, 1));
 
     size_t cluster_sort_temp_size = 0;
     audit_cub_sort();
-    check_cuda_call(cub::DeviceRadixSort::SortPairs(nullptr, cluster_sort_temp_size, cluster_keys_in.get(),
-                                                    cluster_keys_out.get(), cluster_ray_indices_in.get(),
-                                                    cluster_ray_indices_out.get(), n_rays, 0, 64, stream),
+    check_cuda_call(cub::DeviceRadixSort::SortPairs(nullptr, cluster_sort_temp_size, cluster_keys_in, cluster_keys_out,
+                                                    cluster_ray_indices_in, cluster_ray_indices_out, n_rays, 0, 64,
+                                                    stream),
                     "reflection_dedup_gpu(): failed to size second radix sort");
-    CudaBuffer<char> cluster_sort_temp(std::max<size_t>(cluster_sort_temp_size, 1));
+    DedupScratch temporaries;
+    const size_t sort_temp_at = temporaries.reserve<char>(sort_temp_size);
+    const size_t scan_temp_at = temporaries.reserve<char>(scan_temp_size);
+    const size_t cluster_sort_temp_at = temporaries.reserve<char>(cluster_sort_temp_size);
+    temporaries.allocate(device_index);
 
     audit_cuda_kernel_launch("reflection_dedup_build_keys_kernel", static_cast<uint32_t>(block_count), 1, 1, block_size,
                              1, 1, static_cast<uint64_t>(n_rays));
@@ -945,24 +934,24 @@ int reflection_dedup_gpu(int device_index, int n_rays, int max_bounces, const in
     sequence.raw_image_x = img_x;
     sequence.raw_image_y = img_y;
     sequence.raw_image_z = img_z;
-    sequence.keys_in = keys_in.get();
-    sequence.keys_out = keys_out.get();
-    sequence.ray_indices_in = ray_indices_in.get();
-    sequence.ray_indices_out = ray_indices_out.get();
-    sequence.boundary_flags = boundary_flags.get();
-    sequence.hash_group_ids = hash_group_ids.get();
-    sequence.cluster_keys_in = cluster_keys_in.get();
-    sequence.cluster_keys_out = cluster_keys_out.get();
-    sequence.cluster_ray_indices_in = cluster_ray_indices_in.get();
-    sequence.cluster_ray_indices_out = cluster_ray_indices_out.get();
-    sequence.unique_path_ids = unique_path_ids.get();
-    sequence.sort_temp = sort_temp.get();
+    sequence.keys_in = keys_in;
+    sequence.keys_out = keys_out;
+    sequence.ray_indices_in = ray_indices_in;
+    sequence.ray_indices_out = ray_indices_out;
+    sequence.boundary_flags = boundary_flags;
+    sequence.hash_group_ids = hash_group_ids;
+    sequence.cluster_keys_in = cluster_keys_in;
+    sequence.cluster_keys_out = cluster_keys_out;
+    sequence.cluster_ray_indices_in = cluster_ray_indices_in;
+    sequence.cluster_ray_indices_out = cluster_ray_indices_out;
+    sequence.unique_path_ids = unique_path_ids;
+    sequence.sort_temp = temporaries.at_offset<char>(sort_temp_at);
     sequence.sort_temp_bytes = sort_temp_size;
-    sequence.scan_temp = scan_temp.get();
+    sequence.scan_temp = temporaries.at_offset<char>(scan_temp_at);
     sequence.scan_temp_bytes = scan_temp_size;
-    sequence.cluster_sort_temp = cluster_sort_temp.get();
+    sequence.cluster_sort_temp = temporaries.at_offset<char>(cluster_sort_temp_at);
     sequence.cluster_sort_temp_bytes = cluster_sort_temp_size;
-    sequence.out_unique_count = unique_count_device.get();
+    sequence.out_unique_count = unique_count_device;
     sequence.out_bounce_count = out_bounce_count;
     sequence.out_shape_ids = out_shape_ids;
     sequence.out_prim_ids = out_prim_ids;
@@ -986,8 +975,7 @@ int reflection_dedup_gpu(int device_index, int n_rays, int max_bounces, const in
 
     int unique_count = 0;
     audit_cuda_memcpy_async();
-    check_cuda_call(cudaMemcpyAsync(&unique_count, unique_count_device.get(), sizeof(int), cudaMemcpyDeviceToHost,
-                                    stream),
+    check_cuda_call(cudaMemcpyAsync(&unique_count, unique_count_device, sizeof(int), cudaMemcpyDeviceToHost, stream),
                     "reflection_dedup_gpu(): failed to copy unique count");
     audit_cuda_stream_synchronize();
     check_cuda_call(cudaStreamSynchronize(stream), "reflection_dedup_gpu(): failed to finish dedup stream");

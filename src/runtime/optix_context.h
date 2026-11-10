@@ -63,15 +63,6 @@ struct OptixDeviceContextEntry {
     at::Tensor edge_topk_miss_record;
     at::Tensor edge_hitgroup_records;
     at::Tensor edge_topk_hitgroup_record;
-    OptixModule reflection_trace_module = nullptr;
-    OptixPipeline reflection_trace_pipeline = nullptr;
-    OptixProgramGroup reflection_trace_raygen_group = nullptr;
-    OptixProgramGroup reflection_trace_miss_group = nullptr;
-    OptixProgramGroup reflection_trace_hitgroup = nullptr;
-    OptixShaderBindingTable reflection_trace_sbt = {};
-    at::Tensor reflection_trace_raygen_record;
-    at::Tensor reflection_trace_miss_record;
-    at::Tensor reflection_trace_hitgroup_record;
 };
 
 TorchCudaContext current_torch_cuda_context();
@@ -81,7 +72,6 @@ void ensure_intersect_pipeline(OptixDeviceContextEntry& entry);
 void ensure_edge_pipeline(OptixDeviceContextEntry& entry);
 OptixPipeline edge_pipeline(const OptixDeviceContextEntry& entry, EdgeOptixLaunchKind kind);
 const OptixShaderBindingTable& edge_sbt(const OptixDeviceContextEntry& entry, EdgeOptixLaunchKind kind);
-void ensure_reflection_trace_pipeline(OptixDeviceContextEntry& entry);
 void optix_check(OptixResult result, const char* expr, const char* file, int line);
 
 } // namespace rayd::torch_backend

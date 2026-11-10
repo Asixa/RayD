@@ -219,26 +219,35 @@ def require_supported_device(device: int | str | torch.device | None = None) -> 
 
 def _fake_intersect_forward_tape_h(scene_handle, vertices, ray_o, ray_d, ray_tmax):
     count = ray_o.shape[0]
-    return (ray_o.new_empty((count,)), ray_o.new_empty((count,), dtype=torch.int32))
+    return (
+        ray_o.new_empty((count,)),
+        ray_o.new_empty((count,), dtype=torch.int32),
+        torch.empty((), dtype=torch.int64, device="cpu"),
+    )
 
 
-def _fake_intersect_backward_t_h(scene_handle, vertices, ray_o, ray_d, tape_prim_id, grad_t):
+def _fake_intersect_backward_t_h(scene_handle, vertices, ray_o, ray_d, tape_prim_id, geometry_version, grad_t):
     return vertices.new_empty(vertices.shape)
 
 
 def _setup_context(ctx, inputs, output):
     scene_handle, vertices, ray_o, ray_d, _ray_tmax = inputs
-    _t, tape_prim_id = output
+    _t, tape_prim_id, geometry_version = output
     ctx.scene_handle = scene_handle
-    ctx.save_for_backward(vertices, ray_o, ray_d, tape_prim_id)
+    # The geometry version is a forward output tensor, not a Python int: under torch.compile this function is traced,
+    # and only a tensor carries the value recorded by each run of the forward into its backward.
+    ctx.save_for_backward(vertices, ray_o, ray_d, tape_prim_id, geometry_version)
 
 
-def _backward(ctx, grad_t, _grad_tape_prim_id):
-    vertices, ray_o, ray_d, tape_prim_id = ctx.saved_tensors
+def _backward(ctx, grad_t, _grad_tape_prim_id, _grad_geometry_version):
+    vertices, ray_o, ray_d, tape_prim_id, geometry_version = ctx.saved_tensors
+    # The native backward refuses a geometry that sync() changed after this forward recorded its tape.
     grad_vertices = (
         torch.zeros_like(vertices)
         if grad_t is None
-        else torch.ops.rayd_torch.intersect_backward_t_h(ctx.scene_handle, vertices, ray_o, ray_d, tape_prim_id, grad_t)
+        else torch.ops.rayd_torch.intersect_backward_t_h(
+            ctx.scene_handle, vertices, ray_o, ray_d, tape_prim_id, geometry_version, grad_t
+        )
     )
     return None, grad_vertices, None, None, None
 

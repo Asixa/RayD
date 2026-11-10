@@ -122,7 +122,8 @@ py::tuple split_scene_vertex_grad_op(int64_t handle, at::Tensor grad_vertices) {
 
 std::vector<at::Tensor> split_scene_vertex_grad(c10::intrusive_ptr<SceneHandle> scene_handle,
                                                 at::Tensor grad_vertices) {
-    SceneCache& scene = get_scene(scene_handle->handle);
+    ScenePin scene_pin = get_scene(scene_handle->handle);
+    SceneCache& scene = *scene_pin;
     require_vec3f(grad_vertices, "grad_vertices");
     if (grad_vertices.size(0) != scene.global_vertices.size(0)) {
         throw std::runtime_error("grad_vertices must match scene global vertex count.");
@@ -141,7 +142,8 @@ std::vector<at::Tensor> split_scene_vertex_grad(c10::intrusive_ptr<SceneHandle> 
 
 py::object pack_scene_vertex_tangents_op(int64_t handle, py::args tangent_args) {
     c10::intrusive_ptr<SceneHandle> scene = c10::make_intrusive<SceneHandle>(handle, false);
-    SceneCache& cache = get_scene(handle);
+    ScenePin cache_pin = get_scene(handle);
+    SceneCache& cache = *cache_pin;
     if (static_cast<size_t>(py::len(tangent_args)) != cache.meshes.size()) {
         throw std::runtime_error("pack_scene_vertex_tangents() expects one tangent per mesh.");
     }
@@ -161,7 +163,8 @@ py::object pack_scene_vertex_tangents_op(int64_t handle, py::args tangent_args) 
 
 at::Tensor pack_scene_vertex_tangents(c10::intrusive_ptr<SceneHandle> scene_handle,
                                       std::vector<c10::optional<at::Tensor>> tangents) {
-    SceneCache& scene = get_scene(scene_handle->handle);
+    ScenePin scene_pin = get_scene(scene_handle->handle);
+    SceneCache& scene = *scene_pin;
     if (tangents.size() != scene.meshes.size()) {
         throw std::runtime_error("pack_scene_vertex_tangents() expects one tangent per mesh.");
     }
@@ -272,12 +275,14 @@ SceneEdgeRecordsResult scene_edge_records(const SceneResource& scene) {
 #include <src/edge/bvh_build.h>
 
 #include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDACachingAllocator.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <cuda_runtime_api.h>
 
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
@@ -290,8 +295,23 @@ namespace rayd::torch_backend {
 
 namespace {
 std::atomic<int64_t> next_handle{1};
+void end_scene_write(SceneCache& scene) noexcept;
 std::mutex scenes_mutex;
-std::unordered_map<int64_t, std::unique_ptr<SceneCache>> scenes;
+std::unordered_map<int64_t, std::shared_ptr<SceneCache>> scenes;
+
+// Blocks in `lock` only after `try_lock` failed, and gives up the GIL while blocked when this thread holds it. No
+// thread therefore waits for a scene lock while holding the GIL, which is what lets a lock holder re-enter Python
+// (releasing a tensor that carries a Python object does) without deadlocking.
+template <typename TryLock, typename Lock> void acquire_without_holding_gil(TryLock&& try_lock, Lock&& lock) {
+    if (try_lock())
+        return;
+    if (Py_IsInitialized() && PyGILState_Check()) {
+        py::gil_scoped_release no_gil;
+        lock();
+        return;
+    }
+    lock();
+}
 
 void cuda_check(cudaError_t result, const char* expr) {
     if (result == cudaSuccess)
@@ -307,6 +327,181 @@ void require_optional_matrix4(const at::Tensor& tensor, std::string_view name) {
     require_last_dim(tensor, 4, name);
     if (tensor.size(0) != 0 && tensor.size(0) != 4)
         throw std::runtime_error(std::string(name) + " must be empty or have shape (4, 4).");
+}
+
+bool mesh_has_uv(const MeshRecord& mesh) {
+    return mesh.uv.defined() && mesh.uv.numel() != 0;
+}
+
+bool mesh_has_face_uv(const MeshRecord& mesh) {
+    return mesh.face_uv.defined() && mesh.face_uv.numel() != 0;
+}
+
+// A mesh's UVs are (U, 2) texture coordinates indexed per face corner by `face_uv`, or by the vertex indices when
+// `face_uv` is omitted (then U must equal the vertex count). Their index range is checked with the face indices.
+void require_mesh_uv(const MeshRecord& mesh, size_t mesh_index, int64_t device_index) {
+    const std::string prefix = "Scene.build(): mesh " + std::to_string(mesh_index) + " ";
+    if (mesh_has_face_uv(mesh) && !mesh_has_uv(mesh))
+        throw std::runtime_error(prefix + "has face_uv indices but no uv coordinates to index.");
+    if (!mesh_has_uv(mesh))
+        return;
+    require_cuda(mesh.uv, "mesh.uv");
+    require_contiguous(mesh.uv, "mesh.uv");
+    require_dtype(mesh.uv, at::kFloat, "mesh.uv");
+    require_rank(mesh.uv, 2, "mesh.uv");
+    require_last_dim(mesh.uv, 2, "mesh.uv");
+    if (mesh.uv.get_device() != device_index)
+        throw std::runtime_error(prefix + "uv must be on the scene device.");
+    if (!mesh_has_face_uv(mesh)) {
+        if (mesh.uv.size(0) != mesh.vertices.size(0))
+            throw std::runtime_error(prefix + "has " + std::to_string(mesh.uv.size(0)) + " uv rows for " +
+                                     std::to_string(mesh.vertices.size(0)) +
+                                     " vertices; without face_uv the uv rows are indexed by the face indices.");
+        return;
+    }
+    require_vec3i(mesh.face_uv, "mesh.face_uv");
+    if (mesh.face_uv.get_device() != device_index)
+        throw std::runtime_error(prefix + "face_uv must be on the scene device.");
+    if (mesh.face_uv.size(0) != mesh.faces.size(0))
+        throw std::runtime_error(prefix + "has " + std::to_string(mesh.face_uv.size(0)) + " face_uv rows for " +
+                                 std::to_string(mesh.faces.size(0)) + " faces.");
+}
+
+// Device-side flag that every vertex coordinate is finite: torch's min/max propagate NaN, so one fused min/max
+// reduction over the vertex buffer exposes NaN and +-Inf without materializing a per-coordinate mask.
+at::Tensor all_finite_flag(const at::Tensor& vertices) {
+    auto [lowest, highest] = at::aminmax(vertices);
+    return at::isfinite(at::stack({lowest, highest})).all();
+}
+
+// Row of the first vertex with a NaN or infinite coordinate, or -1. Only error paths call it; it reads the device.
+int64_t first_non_finite_vertex(const at::Tensor& vertices) {
+    const at::Tensor rows = at::logical_not(at::isfinite(vertices)).any(1).nonzero();
+    return rows.numel() == 0 ? -1 : rows[0][0].item<int64_t>();
+}
+
+[[noreturn]] void throw_non_finite_vertex(const std::string& operation, size_t mesh_index, const at::Tensor& vertices) {
+    const int64_t row = first_non_finite_vertex(vertices);
+    std::string where = "a vertex";
+    if (row >= 0) {
+        const at::Tensor value = vertices[row].cpu();
+        where = "vertex " + std::to_string(row) + " (" + std::to_string(value[0].item<float>()) + ", " +
+                std::to_string(value[1].item<float>()) + ", " + std::to_string(value[2].item<float>()) + ")";
+    }
+    throw std::runtime_error(operation + ": mesh " + std::to_string(mesh_index) +
+                             " has a NaN or infinite world-space coordinate at " + where +
+                             "; vertex positions must be finite.");
+}
+
+// Rejects meshes whose vertices are not all finite or whose index tensors leave their range, before anything consumes
+// them. Every kernel, the OptiX GAS build, and the vertex-gradient scatter index vertices through the faces without
+// bounds checks, so an out-of-range index is either silent garbage or a sticky illegal address; the same holds for
+// face_uv and the UV gather. A NaN or infinite vertex coordinate would make the OptiX GAS bounds non-finite, which can
+// leave every other face of the mesh unhittable. One device reduction per tensor and a single host read cover all.
+void require_mesh_inputs_valid(const std::vector<MeshRecord>& meshes) {
+    enum class Check { Finite, Faces, FaceUv };
+    struct Row {
+        size_t mesh_index;
+        Check check;
+    };
+    std::vector<at::Tensor> bounds;
+    std::vector<Row> rows;
+    bounds.reserve(meshes.size() * 2);
+    rows.reserve(meshes.size() * 2);
+    for (size_t mesh_index = 0; mesh_index < meshes.size(); ++mesh_index) {
+        const MeshRecord& mesh = meshes[mesh_index];
+        if (mesh.vertices.size(0) == 0)
+            throw std::runtime_error("Scene.build(): mesh " + std::to_string(mesh_index) +
+                                     " has no vertices; every mesh needs at least one vertex.");
+        const at::Tensor finite = all_finite_flag(mesh.vertices).to(at::kLong);
+        bounds.push_back(at::stack({finite, finite}));
+        rows.push_back({mesh_index, Check::Finite});
+        if (mesh.faces.numel() == 0)
+            continue;
+        auto [lowest, highest] = at::aminmax(mesh.faces);
+        bounds.push_back(at::stack({lowest, highest}).to(at::kLong));
+        rows.push_back({mesh_index, Check::Faces});
+        if (mesh_has_face_uv(mesh)) {
+            auto [uv_lowest, uv_highest] = at::aminmax(mesh.face_uv);
+            bounds.push_back(at::stack({uv_lowest, uv_highest}).to(at::kLong));
+            rows.push_back({mesh_index, Check::FaceUv});
+        }
+    }
+    if (bounds.empty())
+        return;
+    const at::Tensor host_bounds = at::stack(bounds).cpu();
+    const int64_t* values = host_bounds.data_ptr<int64_t>();
+    for (size_t row = 0; row < rows.size(); ++row) {
+        const MeshRecord& mesh = meshes[rows[row].mesh_index];
+        const int64_t lowest = values[2 * row];
+        const int64_t highest = values[2 * row + 1];
+        if (rows[row].check == Check::Finite) {
+            if (lowest == 0)
+                throw_non_finite_vertex("Scene.build()", rows[row].mesh_index, mesh.vertices);
+            continue;
+        }
+        const bool uv = rows[row].check == Check::FaceUv;
+        const int64_t count = uv ? mesh.uv.size(0) : mesh.vertices.size(0);
+        if (lowest < 0 || highest >= count) {
+            const int64_t offending = lowest < 0 ? lowest : highest;
+            const std::string kind = uv ? " has face_uv index " : " has face index ";
+            const std::string target = uv ? " uv rows." : " vertices.";
+            throw std::runtime_error("Scene.build(): mesh " + std::to_string(rows[row].mesh_index) + kind +
+                                     std::to_string(offending) + " outside the valid range [0, " +
+                                     std::to_string(count) + ") of its " + std::to_string(count) + target);
+        }
+    }
+}
+
+// Rejects a commit whose updated vertices (update_mesh_vertices, or an instance transform) hold a NaN or infinite
+// coordinate before sync() touches any acceleration structure, so the committed geometry stays as it was. One flag
+// kernel per updated mesh and a single read of the flags into pinned memory per sync().
+void require_finite_pending_vertices(const SceneCache& scene) {
+    std::vector<at::Tensor> vertices;
+    std::vector<size_t> mesh_ids;
+    for (size_t mesh_id = 0; mesh_id < scene.meshes.size(); ++mesh_id) {
+        const MeshRecord& mesh = scene.meshes[mesh_id];
+        if (!mesh.pending_update && !mesh.pending_transform)
+            continue;
+        vertices.push_back(mesh.vertices.contiguous());
+        mesh_ids.push_back(mesh_id);
+    }
+    if (vertices.empty())
+        return;
+    const int64_t count = static_cast<int64_t>(vertices.size());
+    at::Tensor flags = at::empty({count}, vertices.front().options().dtype(at::kInt));
+    flag_non_finite_vertices_cuda(vertices, flags);
+    at::Tensor host_flags = at::empty({count}, at::TensorOptions().dtype(at::kInt).pinned_memory(true));
+    const cudaStream_t stream = current_torch_cuda_context().stream;
+    cuda_check(cudaMemcpyAsync(host_flags.data_ptr<int>(), flags.data_ptr<int>(), sizeof(int) * count,
+                               cudaMemcpyDeviceToHost, stream),
+               "cudaMemcpyAsync(non-finite vertex flags)");
+    cuda_check(cudaStreamSynchronize(stream), "cudaStreamSynchronize(non-finite vertex flags)");
+    const int* non_finite = host_flags.data_ptr<int>();
+    for (size_t row = 0; row < mesh_ids.size(); ++row) {
+        if (non_finite[row] != 0)
+            throw_non_finite_vertex("Scene.sync()", mesh_ids[row], scene.meshes[mesh_ids[row]].vertices);
+    }
+}
+
+// Gathers every face's corner UVs once at build; vertex updates never change them. Returns an undefined tensor when
+// no mesh has UVs, which keeps `Intersection.uv` the barycentric (u, v) through the original code path.
+at::Tensor build_triangle_uv(const std::vector<MeshRecord>& meshes, const at::TensorOptions& fopts) {
+    if (std::none_of(meshes.begin(), meshes.end(), mesh_has_uv))
+        return at::Tensor();
+    std::vector<at::Tensor> parts;
+    parts.reserve(meshes.size());
+    const at::Tensor identity = at::tensor({0.f, 0.f, 1.f, 0.f, 0.f, 1.f}, at::TensorOptions().dtype(at::kFloat));
+    for (const MeshRecord& mesh : meshes) {
+        const int64_t face_count = mesh.faces.size(0);
+        if (!mesh_has_uv(mesh)) {
+            parts.push_back(identity.to(fopts.device()).expand({face_count, 6}));
+            continue;
+        }
+        const at::Tensor& corners = mesh_has_face_uv(mesh) ? mesh.face_uv : mesh.faces;
+        parts.push_back(mesh.uv.index_select(0, corners.reshape({-1}).to(at::kLong)).reshape({face_count, 6}));
+    }
+    return at::cat(parts, 0).contiguous();
 }
 
 void compact_accel_if_smaller(OptixDeviceContext optix_context, cudaStream_t stream, at::TensorOptions byte_options,
@@ -396,55 +591,63 @@ OptixTriangleAccel build_triangle_accel(const MeshRecord& mesh, OptixDeviceConte
     return accel;
 }
 
-bool write_instance(OptixInstance& instance, unsigned int instance_id, OptixTraversableHandle traversable,
-                    const at::Tensor& transform, cudaStream_t stream) {
+void write_instance(OptixInstance& instance, unsigned int instance_id, OptixTraversableHandle traversable) {
     std::memset(&instance, 0, sizeof(instance));
     instance.transform[0] = 1.0f;
     instance.transform[5] = 1.0f;
     instance.transform[10] = 1.0f;
-    bool copied_transform = false;
-    if (transform.defined() && transform.numel() != 0) {
-        cuda_check(cudaMemcpyAsync(instance.transform, transform.data_ptr<float>(), sizeof(instance.transform),
-                                   cudaMemcpyDeviceToHost, stream),
-                   "cudaMemcpyAsync(instance transform)");
-        copied_transform = true;
-    }
     instance.instanceId = instance_id;
     instance.sbtOffset = 0;
     instance.visibilityMask = 255u;
     instance.flags = OPTIX_INSTANCE_FLAG_NONE;
     instance.traversableHandle = traversable;
-    return copied_transform;
+}
+
+// Uploads the instance records: identity transforms from the host, then each instance's (4, 4) transform copied
+// device-to-device over its record's 3x4 transform (the first 12 floats of the row-major matrix). Everything is
+// ordered on `stream`, so the host never waits for the device to read a transform back.
+void upload_triangle_instances(SceneCache& scene, cudaStream_t stream) {
+    std::vector<OptixInstance> instances(scene.triangle_accels.size());
+    for (size_t mesh_index = 0; mesh_index < scene.triangle_accels.size(); ++mesh_index) {
+        write_instance(instances[mesh_index], static_cast<unsigned int>(mesh_index),
+                       scene.triangle_accels[mesh_index].traversable);
+    }
+    uint8_t* records = scene.triangle_ias.instance_buffer.data_ptr<uint8_t>();
+    // Pageable H2D copies stage the source before returning, so the host vector may go out of scope.
+    cuda_check(cudaMemcpyAsync(records, instances.data(), sizeof(OptixInstance) * instances.size(),
+                               cudaMemcpyHostToDevice, stream),
+               "cudaMemcpyAsync(triangle IAS instances)");
+    for (size_t mesh_index = 0; mesh_index < scene.meshes.size(); ++mesh_index) {
+        const at::Tensor& transform = scene.meshes[mesh_index].instance_transform;
+        if (!transform.defined() || transform.numel() == 0)
+            continue;
+        cuda_check(cudaMemcpyAsync(records + mesh_index * sizeof(OptixInstance) + offsetof(OptixInstance, transform),
+                                   transform.data_ptr<float>(), sizeof(OptixInstance::transform),
+                                   cudaMemcpyDeviceToDevice, stream),
+                   "cudaMemcpyAsync(instance transform)");
+        // The copy is queued on `stream`; keep the caller's transform block from being reused by another stream
+        // before it runs.
+        c10::cuda::CUDACachingAllocator::recordStream(transform.storage().data_ptr(),
+                                                      c10::cuda::getStreamFromExternal(stream, scene.device_index));
+    }
 }
 
 void build_triangle_ias(SceneCache& scene, OptixDeviceContext optix_context, cudaStream_t stream) {
     if (scene.triangle_accels.empty())
         throw std::runtime_error("build_triangle_ias(): missing triangle acceleration structures.");
 
-    std::vector<OptixInstance> instances(scene.triangle_accels.size());
-    bool copied_transform = false;
-    for (size_t mesh_index = 0; mesh_index < scene.triangle_accels.size(); ++mesh_index) {
-        copied_transform = write_instance(instances[mesh_index], static_cast<unsigned int>(mesh_index),
-                                          scene.triangle_accels[mesh_index].traversable,
-                                          scene.meshes[mesh_index].instance_transform, stream) ||
-                           copied_transform;
-    }
-    if (copied_transform)
-        cuda_check(cudaStreamSynchronize(stream), "cudaStreamSynchronize(instance transforms)");
-
+    const size_t instance_count = scene.triangle_accels.size();
     at::TensorOptions byte_options =
         at::TensorOptions().device(at::Device(at::kCUDA, scene.device_index)).dtype(at::kByte);
     scene.triangle_ias.instance_buffer =
-        at::empty({static_cast<int64_t>(sizeof(OptixInstance) * instances.size())}, byte_options);
-    cuda_check(cudaMemcpyAsync(scene.triangle_ias.instance_buffer.data_ptr<uint8_t>(), instances.data(),
-                               sizeof(OptixInstance) * instances.size(), cudaMemcpyHostToDevice, stream),
-               "cudaMemcpyAsync(triangle IAS instances)");
+        at::empty({static_cast<int64_t>(sizeof(OptixInstance) * instance_count)}, byte_options);
+    upload_triangle_instances(scene, stream);
 
     CUdeviceptr instance_buffer = reinterpret_cast<CUdeviceptr>(scene.triangle_ias.instance_buffer.data_ptr<uint8_t>());
     OptixBuildInput build_input = {};
     build_input.type = OPTIX_BUILD_INPUT_TYPE_INSTANCES;
     build_input.instanceArray.instances = instance_buffer;
-    build_input.instanceArray.numInstances = static_cast<unsigned int>(instances.size());
+    build_input.instanceArray.numInstances = static_cast<unsigned int>(instance_count);
     build_input.instanceArray.instanceStride = sizeof(OptixInstance);
 
     OptixAccelBuildOptions accel_options = {};
@@ -464,28 +667,30 @@ void build_triangle_ias(SceneCache& scene, OptixDeviceContext optix_context, cud
                         buffer_sizes.tempSizeInBytes,
                         reinterpret_cast<CUdeviceptr>(scene.triangle_ias.ias_buffer.data_ptr<uint8_t>()),
                         buffer_sizes.outputSizeInBytes, &scene.triangle_ias.traversable, nullptr, 0));
+    scene.triangle_ias.child_handles.clear();
+    for (const OptixTriangleAccel& accel : scene.triangle_accels)
+        scene.triangle_ias.child_handles.push_back(accel.traversable);
+}
+
+bool triangle_ias_children_unchanged(const SceneCache& scene) {
+    const std::vector<OptixTraversableHandle>& built = scene.triangle_ias.child_handles;
+    if (built.size() != scene.triangle_accels.size())
+        return false;
+    for (size_t index = 0; index < built.size(); ++index) {
+        if (built[index] != scene.triangle_accels[index].traversable)
+            return false;
+    }
+    return true;
 }
 
 void update_triangle_ias(SceneCache& scene, OptixDeviceContext optix_context, cudaStream_t stream) {
-    std::vector<OptixInstance> instances(scene.triangle_accels.size());
-    bool copied_transform = false;
-    for (size_t mesh_index = 0; mesh_index < scene.triangle_accels.size(); ++mesh_index) {
-        copied_transform = write_instance(instances[mesh_index], static_cast<unsigned int>(mesh_index),
-                                          scene.triangle_accels[mesh_index].traversable,
-                                          scene.meshes[mesh_index].instance_transform, stream) ||
-                           copied_transform;
-    }
-    if (copied_transform)
-        cuda_check(cudaStreamSynchronize(stream), "cudaStreamSynchronize(instance transforms)");
-    cuda_check(cudaMemcpyAsync(scene.triangle_ias.instance_buffer.data_ptr<uint8_t>(), instances.data(),
-                               sizeof(OptixInstance) * instances.size(), cudaMemcpyHostToDevice, stream),
-               "cudaMemcpyAsync(triangle IAS instance update)");
+    upload_triangle_instances(scene, stream);
 
     CUdeviceptr instance_buffer = reinterpret_cast<CUdeviceptr>(scene.triangle_ias.instance_buffer.data_ptr<uint8_t>());
     OptixBuildInput build_input = {};
     build_input.type = OPTIX_BUILD_INPUT_TYPE_INSTANCES;
     build_input.instanceArray.instances = instance_buffer;
-    build_input.instanceArray.numInstances = static_cast<unsigned int>(instances.size());
+    build_input.instanceArray.numInstances = static_cast<unsigned int>(scene.triangle_accels.size());
     build_input.instanceArray.instanceStride = sizeof(OptixInstance);
 
     OptixAccelBuildOptions accel_options = {};
@@ -714,17 +919,13 @@ void refresh_edge_soa(SceneCache& scene) {
     scene.edge_e1_x = at::empty({edge_count}, fopts);
     scene.edge_e1_y = at::empty({edge_count}, fopts);
     scene.edge_e1_z = at::empty({edge_count}, fopts);
-    if (!scene.edge_mask.defined() || scene.edge_mask.numel() != edge_count) {
-        scene.edge_mask = at::ones({edge_count}, at::TensorOptions().device(device).dtype(at::kByte));
-        scene.edge_mask_version += 1;
-    }
     compute_edge_soa_cuda(edge_count, scene.global_vertices, scene.edge_v0, scene.edge_v1, scene.edge_p0_x,
                           scene.edge_p0_y, scene.edge_p0_z, scene.edge_e1_x, scene.edge_e1_y, scene.edge_e1_z);
 }
 
+// Requires the edge SoA of the current geometry (ensure_edge_soa_locked).
 void build_edge_accel(SceneCache& scene, OptixDeviceContext optix_context, cudaStream_t stream) {
     const int64_t edge_count = scene.edge_v0.size(0);
-    refresh_edge_soa(scene);
     scene.edge_accels.clear();
     if (edge_count == 0) {
         scene.edge_accel = {};
@@ -806,7 +1007,6 @@ bool update_edge_accel(SceneCache& scene, OptixDeviceContext optix_context, cuda
     if (!scene_has_dynamic_edges(scene) || scene.edge_accels.empty())
         return false;
 
-    refresh_edge_soa(scene);
     const EdgeSearchStats stats =
         compute_edge_search_stats_cuda(edge_count, scene.edge_p0_x, scene.edge_p0_y, scene.edge_p0_z, scene.edge_e1_x,
                                        scene.edge_e1_y, scene.edge_e1_z);
@@ -859,7 +1059,64 @@ bool update_edge_accel(SceneCache& scene, OptixDeviceContext optix_context, cuda
     scene.edge_accel = scene.edge_accels.back();
     return true;
 }
+
+// Edge query structures are derived lazily from the committed geometry, so a sync() whose caller never queries edges
+// pays nothing for them. Each is stamped with the `edge_version` it was derived from; sync() advances that version
+// under the exclusive scene lock, and readers rebuild under `lazy_build_mutex`, which the caller must hold here.
+// Returns whether the SoA was recomputed.
+bool ensure_edge_soa_locked(SceneCache& scene) {
+    if (scene.edge_soa_version == scene.edge_version)
+        return false;
+    refresh_edge_soa(scene);
+    scene.edge_soa_version = scene.edge_version;
+    return true;
+}
+
+void require_scene_stream_device(const SceneCache& scene, const TorchCudaContext& torch_ctx, const char* operation) {
+    if (torch_ctx.device_index != scene.device_index)
+        throw std::runtime_error(std::string(operation) + ": current CUDA device does not match scene.");
+}
+
+template <typename Mutex> std::unique_lock<Mutex> lock_lazy_build(Mutex& mutex) {
+    std::unique_lock<Mutex> build_lock(mutex, std::defer_lock);
+    acquire_without_holding_gil([&] { return build_lock.try_lock(); }, [&] { build_lock.lock(); });
+    return build_lock;
+}
 } // namespace
+
+void ensure_edge_soa(SceneCache& scene) {
+    std::unique_lock<std::mutex> build_lock = lock_lazy_build(scene.lazy_build_mutex);
+    if (scene.edge_soa_version == scene.edge_version)
+        return;
+    c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
+    TorchCudaContext torch_ctx = current_torch_cuda_context();
+    require_scene_stream_device(scene, torch_ctx, "ensure_edge_soa()");
+    ensure_edge_soa_locked(scene);
+    cuda_check(cudaGetLastError(), "ensure_edge_soa() kernel launch");
+    // Another reader may consume the published SoA on a different Torch stream.
+    cuda_check(cudaStreamSynchronize(torch_ctx.stream), "cudaStreamSynchronize(edge SoA)");
+}
+
+void ensure_optix_edge_accel(SceneCache& scene) {
+    std::unique_lock<std::mutex> build_lock = lock_lazy_build(scene.lazy_build_mutex);
+    if (scene.edge_soa_version == scene.edge_version && scene.edge_accel_version == scene.edge_version)
+        return;
+    c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
+    TorchCudaContext torch_ctx = current_torch_cuda_context();
+    require_scene_stream_device(scene, torch_ctx, "ensure_optix_edge_accel()");
+    ensure_edge_soa_locked(scene);
+    if (scene.edge_accel_version != scene.edge_version) {
+        OptixDeviceContextEntry& optix_entry = get_optix_context(static_cast<int>(scene.device_index));
+        // A failed build leaves the version stale, so the next query rebuilds from scratch.
+        scene.edge_accel_version = 0;
+        if (!update_edge_accel(scene, optix_entry.optix_context, torch_ctx.stream))
+            build_edge_accel(scene, optix_entry.optix_context, torch_ctx.stream);
+        scene.edge_accel_version = scene.edge_version;
+    }
+    cuda_check(cudaGetLastError(), "ensure_optix_edge_accel() kernel launch");
+    // Another reader may launch on the published GAS from a different Torch stream.
+    cuda_check(cudaStreamSynchronize(torch_ctx.stream), "cudaStreamSynchronize(edge GAS)");
+}
 
 SceneHandle::~SceneHandle() {
     if (owns_handle && handle != 0)
@@ -910,7 +1167,9 @@ std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes, T
         } else if (mesh.instance_transform.numel() != 0) {
             throw std::runtime_error("Scene.build(): owner geometry cannot carry an instance transform.");
         }
+        require_mesh_uv(mesh, mesh_index, device_index);
     }
+    require_mesh_inputs_valid(meshes);
 
     auto scene_unique = std::make_unique<SceneCache>();
     SceneCache* scene = scene_unique.get();
@@ -930,6 +1189,7 @@ std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes, T
         optix_entry = &get_optix_context(static_cast<int>(device_index));
     scene->meshes = std::move(meshes);
     refresh_global_geometry(*scene);
+    scene->triangle_uv = build_triangle_uv(scene->meshes, scene->global_vertices.options());
     if (scene->trace_backend == TraceBackend::Optix) {
         scene->triangle_accels.resize(scene->meshes.size());
         for (size_t mesh_index = 0; mesh_index < scene->meshes.size(); ++mesh_index) {
@@ -947,10 +1207,12 @@ std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes, T
         ensure_custom_triangle_bvh(*scene);
     }
     build_edge_topology(*scene);
-    if (scene->edge_backend == EdgeBackend::Optix)
-        build_edge_accel(*scene, optix_entry->optix_context, torch_ctx.stream);
-    else
-        refresh_edge_soa(*scene);
+    // The edge topology and its mask are fixed for the scene's lifetime; the edge SoA and acceleration structures
+    // are derived on the first edge query (ensure_edge_soa and friends).
+    const at::Device device(at::kCUDA, scene->device_index);
+    scene->edge_mask = at::ones({scene->edge_v0.size(0)}, at::TensorOptions().device(device).dtype(at::kByte));
+    // Queries on other streams wait for the build.
+    end_scene_write(*scene);
     return scene_unique;
 }
 
@@ -963,23 +1225,21 @@ int64_t create_scene(std::vector<MeshRecord> meshes) {
 
 void register_scene_cache(std::unique_ptr<SceneCache> scene) {
     const int64_t handle = scene->handle;
+    std::shared_ptr<SceneCache> shared(std::move(scene));
     std::lock_guard<std::mutex> lock(scenes_mutex);
-    scenes.emplace(handle, std::move(scene));
+    scenes.emplace(handle, std::move(shared));
 }
 
 void destroy_scene(int64_t handle) {
     if (handle == 0)
         return;
-    // The GIL is the outermost lock in this process: every TORCH_LIBRARY op
-    // wrapper holds it and then takes `scenes_mutex` through get_scene(). A
-    // SceneCache owns the caller's mesh tensors, and releasing a tensor that
-    // carries a Python object re-enters Python (THPVariable_clear drops the
-    // GIL around the TensorImpl release and takes it back afterwards). Running
-    // that destructor under `scenes_mutex` therefore waits for the GIL while
-    // holding a RayD lock, which is the reverse order and deadlocks against
-    // any thread that is inside an op. Detach the entry under the lock and
-    // destroy it after the lock is gone; the map never exposes a dying scene.
-    std::unique_ptr<SceneCache> scene;
+    // The GIL is the outermost lock in this process: a TORCH_LIBRARY op wrapper can hold it and then take
+    // `scenes_mutex` through get_scene(). A SceneCache owns the caller's mesh tensors, and releasing a tensor that
+    // carries a Python object re-enters Python (THPVariable_clear drops the GIL around the TensorImpl release and
+    // takes it back afterwards). Running that destructor under `scenes_mutex` would wait for the GIL while holding a
+    // RayD lock, the reverse order, and deadlock against any thread inside an op. Detach the entry under the lock and
+    // drop the reference after the lock is gone; an op that still pins the scene keeps it alive until it finishes.
+    std::shared_ptr<SceneCache> scene;
     {
         std::lock_guard<std::mutex> lock(scenes_mutex);
         auto node = scenes.extract(handle);
@@ -989,24 +1249,398 @@ void destroy_scene(int64_t handle) {
     }
 }
 
-SceneCache& get_scene(int64_t handle) {
+namespace {
+
+std::shared_ptr<SceneCache> find_registered_scene(int64_t handle) {
     std::lock_guard<std::mutex> lock(scenes_mutex);
     auto it = scenes.find(handle);
     if (it == scenes.end())
         throw std::runtime_error("Invalid RayD Torch scene handle.");
-    return *it->second;
+    return it->second;
+}
+
+} // namespace
+
+void SceneStateLock::lock_shared() {
+    std::unique_lock<std::mutex> guard(mutex_);
+    released_.wait(guard, [this] { return !writer_; });
+    ++readers_;
+}
+
+bool SceneStateLock::try_lock_shared() {
+    std::lock_guard<std::mutex> guard(mutex_);
+    if (writer_)
+        return false;
+    ++readers_;
+    return true;
+}
+
+void SceneStateLock::unlock_shared() {
+    bool last_reader = false;
+    {
+        std::lock_guard<std::mutex> guard(mutex_);
+        last_reader = --readers_ == 0;
+    }
+    if (last_reader)
+        released_.notify_all();
+}
+
+void SceneStateLock::lock() {
+    std::unique_lock<std::mutex> guard(mutex_);
+    released_.wait(guard, [this] { return !writer_ && readers_ == 0; });
+    writer_ = true;
+}
+
+bool SceneStateLock::try_lock() {
+    std::lock_guard<std::mutex> guard(mutex_);
+    if (writer_ || readers_ != 0)
+        return false;
+    writer_ = true;
+    return true;
+}
+
+void SceneStateLock::unlock() {
+    {
+        std::lock_guard<std::mutex> guard(mutex_);
+        writer_ = false;
+    }
+    released_.notify_all();
+}
+
+namespace {
+
+void stream_order_check(cudaError_t result, const char* expr) {
+    if (result != cudaSuccess)
+        throw std::runtime_error(std::string("CUDA error in ") + expr +
+                                 " (scene stream ordering): " + cudaGetErrorString(result));
+}
+
+cudaEvent_t create_order_event(int device_index) {
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(device_index));
+    cudaEvent_t event = nullptr;
+    stream_order_check(cudaEventCreateWithFlags(&event, cudaEventDisableTiming), "cudaEventCreateWithFlags");
+    return event;
+}
+
+// Visits every tensor the scene owns, so a writer can mark the blocks it may free as used by its stream.
+template <typename Visit> void for_each_scene_tensor(SceneCache& scene, Visit&& visit) {
+    const auto each = [&](auto&... tensors) { (visit(tensors), ...); };
+    for (at::Tensor& tensor : scene.retired)
+        visit(tensor);
+    for (MeshRecord& mesh : scene.meshes) {
+        each(mesh.vertices, mesh.faces, mesh.uv, mesh.face_uv, mesh.to_world_left, mesh.to_world_right,
+             mesh.instance_transform);
+    }
+    for (OptixTriangleAccel& accel : scene.triangle_accels)
+        each(accel.vertex_buffer, accel.index_buffer, accel.gas_buffer, accel.gas_temp_buffer);
+    each(scene.edge_accel.aabb_buffer, scene.edge_accel.gas_buffer, scene.edge_accel.gas_temp_buffer);
+    for (OptixEdgeAccel& accel : scene.edge_accels)
+        each(accel.aabb_buffer, accel.gas_buffer, accel.gas_temp_buffer);
+    each(scene.triangle_ias.instance_buffer, scene.triangle_ias.ias_buffer, scene.triangle_ias.ias_temp_buffer);
+    each(scene.global_vertices, scene.global_faces, scene.triangle_uv, scene.face_offsets, scene.face_shape_id,
+         scene.face_local_id, scene.primitive_identity, scene.tri_p0_x, scene.tri_p0_y, scene.tri_p0_z, scene.tri_e1_x,
+         scene.tri_e1_y, scene.tri_e1_z, scene.tri_e2_x, scene.tri_e2_y, scene.tri_e2_z, scene.tri_fn_x, scene.tri_fn_y,
+         scene.tri_fn_z, scene.edge_v0, scene.edge_v1, scene.edge_face0, scene.edge_face1, scene.edge_shape_id,
+         scene.edge_local_id, scene.edge_p0_x, scene.edge_p0_y, scene.edge_p0_z, scene.edge_e1_x, scene.edge_e1_y,
+         scene.edge_e1_z, scene.edge_mask, scene.edge_opposite, scene.tri_p0_packed, scene.tri_e1_packed,
+         scene.tri_e2_packed, scene.tri_fn_packed);
+    const auto each_bvh = [&](auto& bvh) {
+        each(bvh.primitive_min_x, bvh.primitive_min_y, bvh.primitive_min_z, bvh.primitive_max_x, bvh.primitive_max_y,
+             bvh.primitive_max_z, bvh.node_min_x, bvh.node_min_y, bvh.node_min_z, bvh.node_max_x, bvh.node_max_y,
+             bvh.node_max_z, bvh.left_child, bvh.right_child, bvh.leaf_primitives, bvh.parent, bvh.leaf_primitive,
+             bvh.is_leaf, bvh.primitive_leaf_node, bvh.packed_bounds, bvh.reduced_bound, bvh.morton_in, bvh.morton_out,
+             bvh.primitive_ids_in, bvh.primitive_ids_out, bvh.merge_counters, bvh.scratch);
+    };
+    each_bvh(scene.custom_triangle_bvh);
+    each_bvh(scene.custom_edge_bvh);
+    each(scene.custom_edge_bvh.node_cost, scene.custom_edge_bvh.internal_cost_arrivals,
+         scene.custom_edge_bvh.treelet_nodes);
+}
+
+// A block freed after this call is not handed out again before `stream` reaches the point where it was freed, which
+// is after every reader `stream` was made to wait for.
+void mark_scene_memory_used_by(SceneCache& scene, const c10::cuda::CUDAStream& stream) {
+    for_each_scene_tensor(scene, [&](const at::Tensor& tensor) {
+        if (tensor.defined() && tensor.is_cuda() && tensor.storage().data_ptr().get() != nullptr)
+            c10::cuda::CUDACachingAllocator::recordStream(tensor.storage().data_ptr(), stream);
+    });
+}
+
+// The writer half of SceneStreamOrder for the calling thread's current stream on the scene device. Retired tensors
+// are released here, once the blocks they hold are ordered after the queries that may still read them.
+void begin_scene_write(SceneCache& scene) {
+    const c10::cuda::CUDAStream stream =
+        c10::cuda::getCurrentCUDAStream(static_cast<c10::DeviceIndex>(scene.device_index));
+    if (scene.stream_order.begin_write(static_cast<int>(scene.device_index), stream.stream()))
+        mark_scene_memory_used_by(scene, stream);
+    scene.retired.clear();
+}
+
+// The commit half: publishes the commit for later readers and writers, and marks every scene block, including the
+// caller's vertex tensors the commit reads, as used by the commit's stream, so a block freed later (by the next
+// commit, a lazy rebuild or the scene's release) is not handed out again while the commit still runs.
+void end_scene_write(SceneCache& scene) noexcept {
+    try {
+        const c10::cuda::CUDAStream stream =
+            c10::cuda::getCurrentCUDAStream(static_cast<c10::DeviceIndex>(scene.device_index));
+        scene.stream_order.end_write(static_cast<int>(scene.device_index), stream.stream());
+        mark_scene_memory_used_by(scene, stream);
+    } catch (const std::exception& error) {
+        scene.stream_order.fail(error);
+    }
+}
+
+cudaStream_t current_scene_stream(const SceneCache& scene) {
+    return c10::cuda::getCurrentCUDAStream(static_cast<c10::DeviceIndex>(scene.device_index)).stream();
+}
+
+// Brackets one commit that refits, replaces or frees scene memory: its stream first waits for the queries issued on
+// other streams, and the queries issued after it wait for the commit.
+class SceneWriteScope {
+  public:
+    explicit SceneWriteScope(SceneCache& scene) : scene_(scene) { begin_scene_write(scene_); }
+    SceneWriteScope(const SceneWriteScope&) = delete;
+    SceneWriteScope& operator=(const SceneWriteScope&) = delete;
+    ~SceneWriteScope() { end_scene_write(scene_); }
+
+  private:
+    SceneCache& scene_;
+};
+
+// Keeps a tensor an update replaces alive until the next commit when a query may still read it on the device. Past a
+// few retired tensors (repeated updates without sync() while queries run), the current stream is ordered after those
+// queries right away, which releases them without a host wait.
+void retire_if_read(SceneCache& scene, at::Tensor& tensor) {
+    constexpr size_t kMaxRetired = 16;
+    if (!tensor.defined() || !scene.stream_order.reads_pending())
+        return;
+    scene.retired.push_back(tensor);
+    if (scene.retired.size() >= kMaxRetired)
+        begin_scene_write(scene);
+}
+
+} // namespace
+
+SceneStreamOrder::~SceneStreamOrder() {
+    // Destroying an event with pending work is valid; its resources are released once the work completes.
+    for (StreamState& state : streams_) {
+        if (state.read_done != nullptr)
+            cudaEventDestroy(state.read_done);
+    }
+    if (commit_ != nullptr)
+        cudaEventDestroy(commit_);
+}
+
+SceneStreamOrder::StreamState& SceneStreamOrder::state_for(int device_index, cudaStream_t stream) {
+    for (StreamState& state : streams_) {
+        if (state.stream == stream)
+            return state;
+    }
+    if (streams_.size() >= kMaxTrackedStreams)
+        prune_finished_streams();
+    StreamState state;
+    state.stream = stream;
+    state.read_done = create_order_event(device_index);
+    streams_.push_back(state);
+    return streams_.back();
+}
+
+void SceneStreamOrder::prune_finished_streams() {
+    // An entry whose last read finished on the device carries no obligation; dropping it bounds the table when many
+    // short-lived (for example external) streams read the scene.
+    std::vector<StreamState> kept;
+    kept.reserve(streams_.size());
+    for (StreamState& state : streams_) {
+        const bool finished = !state.read_pending || cudaEventQuery(state.read_done) == cudaSuccess;
+        if (finished) {
+            cudaEventDestroy(state.read_done);
+        } else {
+            kept.push_back(state);
+        }
+    }
+    streams_ = std::move(kept);
+}
+
+void SceneStreamOrder::fail(const std::exception& error) noexcept {
+    std::lock_guard<std::mutex> guard(mutex_);
+    record_failure(error);
+}
+
+bool SceneStreamOrder::commit_running() {
+    if (!commit_pending_)
+        return false;
+    const cudaError_t state = cudaEventQuery(commit_);
+    if (state == cudaSuccess) {
+        commit_pending_ = false;
+        return false;
+    }
+    if (state != cudaErrorNotReady)
+        stream_order_check(state, "cudaEventQuery(scene commit)");
+    return true;
+}
+
+void SceneStreamOrder::require_ordered() const {
+    if (!failure_.empty())
+        throw std::runtime_error("The scene's device work could not be ordered across CUDA streams, so it cannot be "
+                                 "used safely: " +
+                                 failure_);
+}
+
+void SceneStreamOrder::record_failure(const std::exception& error) noexcept {
+    if (failure_.empty())
+        failure_ = error.what();
+}
+
+void SceneStreamOrder::begin_read(int device_index, cudaStream_t stream) {
+    std::lock_guard<std::mutex> guard(mutex_);
+    require_ordered();
+    // Once the latest commit finished on the device, no reader needs to wait for it. Until then every reader waits,
+    // whatever stream it uses: a stream handle may be reused by a new stream, so no per-stream record can prove an
+    // earlier wait.
+    if (!commit_running())
+        return;
+    // The legacy default stream handle names the current device's stream, so wait with the scene device current.
+    c10::cuda::CUDAGuard device_guard(static_cast<c10::DeviceIndex>(device_index));
+    stream_order_check(cudaStreamWaitEvent(stream, commit_, 0), "cudaStreamWaitEvent(scene commit)");
+}
+
+void SceneStreamOrder::end_read(int device_index, cudaStream_t stream) noexcept {
+    std::lock_guard<std::mutex> guard(mutex_);
+    try {
+        StreamState& state = state_for(device_index, stream);
+        // The legacy default stream is the current device's, so record with the scene device current.
+        c10::cuda::CUDAGuard device_guard(static_cast<c10::DeviceIndex>(device_index));
+        stream_order_check(cudaEventRecord(state.read_done, stream), "cudaEventRecord(scene read)");
+        state.read_pending = true;
+    } catch (const std::exception& error) {
+        record_failure(error);
+    }
+}
+
+bool SceneStreamOrder::reads_pending() {
+    std::lock_guard<std::mutex> guard(mutex_);
+    for (const StreamState& state : streams_) {
+        if (state.read_pending)
+            return true;
+    }
+    return false;
+}
+
+bool SceneStreamOrder::begin_write(int device_index, cudaStream_t stream) {
+    std::lock_guard<std::mutex> guard(mutex_);
+    require_ordered();
+    c10::cuda::CUDAGuard device_guard(static_cast<c10::DeviceIndex>(device_index));
+    // Commits on different streams refit and replace the same memory, so each one runs after the previous.
+    if (commit_running())
+        stream_order_check(cudaStreamWaitEvent(stream, commit_, 0), "cudaStreamWaitEvent(previous scene commit)");
+    bool outstanding = false;
+    for (StreamState& state : streams_) {
+        if (!state.read_pending)
+            continue;
+        outstanding = true;
+        if (state.stream != stream)
+            stream_order_check(cudaStreamWaitEvent(stream, state.read_done, 0), "cudaStreamWaitEvent(scene read)");
+        state.read_pending = false;
+    }
+    if (streams_.size() > kMaxTrackedStreams)
+        prune_finished_streams();
+    return outstanding;
+}
+
+void SceneStreamOrder::end_write(int device_index, cudaStream_t stream) noexcept {
+    std::lock_guard<std::mutex> guard(mutex_);
+    try {
+        if (commit_ == nullptr)
+            commit_ = create_order_event(device_index);
+        c10::cuda::CUDAGuard device_guard(static_cast<c10::DeviceIndex>(device_index));
+        stream_order_check(cudaEventRecord(commit_, stream), "cudaEventRecord(scene commit)");
+        commit_pending_ = true;
+    } catch (const std::exception& error) {
+        record_failure(error);
+    }
+}
+
+SceneCache::~SceneCache() {
+    // Queries on other streams may still read this memory. Make the releasing thread's stream wait for them and mark
+    // every block as used by it, so none is reused before they finish. A destructor cannot report failure; when CUDA
+    // is already torn down at process exit there is no later work to order against.
+    try {
+        c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(device_index));
+        begin_scene_write(*this);
+    } catch (...) {}
+}
+
+ScenePin::ScenePin(std::shared_ptr<SceneCache> scene, bool exclusive, bool device_read)
+    : scene_(std::move(scene)), exclusive_(exclusive), device_read_(device_read && !exclusive) {
+    SceneStateLock& state_lock = scene_->state_lock;
+    if (exclusive_)
+        acquire_without_holding_gil([&] { return state_lock.try_lock(); }, [&] { state_lock.lock(); });
+    else
+        acquire_without_holding_gil([&] { return state_lock.try_lock_shared(); }, [&] { state_lock.lock_shared(); });
+    if (!device_read_)
+        return;
+    try {
+        scene_->stream_order.begin_read(static_cast<int>(scene_->device_index), current_scene_stream(*scene_));
+    } catch (...) {
+        state_lock.unlock_shared();
+        throw;
+    }
+}
+
+ScenePin::ScenePin(ScenePin&& other) noexcept
+    : scene_(std::move(other.scene_)), exclusive_(other.exclusive_), device_read_(other.device_read_) {}
+
+ScenePin::~ScenePin() {
+    if (!scene_)
+        return;
+    if (exclusive_) {
+        scene_->state_lock.unlock();
+    } else {
+        if (device_read_)
+            scene_->stream_order.end_read(static_cast<int>(scene_->device_index), current_scene_stream(*scene_));
+        scene_->state_lock.unlock_shared();
+    }
+    // The last reference may go here, after the lock is released and with no RayD lock held.
+    scene_.reset();
+}
+
+ScenePin get_scene(int64_t handle) {
+    return ScenePin(find_registered_scene(handle), false);
+}
+
+ScenePin get_scene_metadata(int64_t handle) {
+    return ScenePin(find_registered_scene(handle), false, false);
+}
+
+ScenePin get_scene_for_update(int64_t handle) {
+    return ScenePin(find_registered_scene(handle), true);
 }
 
 int64_t scene_version(int64_t handle) {
-    return get_scene(handle).version;
+    return get_scene_metadata(handle)->version;
+}
+
+int64_t scene_geometry_version(int64_t handle) {
+    return get_scene_metadata(handle)->geometry_version;
+}
+
+void require_scene_geometry_version(const SceneCache& scene, int64_t recorded_version, const char* operation) {
+    if (scene.geometry_version == recorded_version)
+        return;
+    throw std::runtime_error(
+        std::string(operation) +
+        ": the scene geometry changed (update_mesh_vertices/set_instance_transform followed by sync()) after the "
+        "forward pass recorded this result, so its backward/JVP would combine the old tape with the new geometry. "
+        "Recompute the forward pass after sync(), or run backward before updating the scene.");
 }
 
 int64_t scene_num_meshes(int64_t handle) {
-    return static_cast<int64_t>(get_scene(handle).meshes.size());
+    return static_cast<int64_t>(get_scene_metadata(handle)->meshes.size());
 }
 
 int64_t scene_num_geometries(int64_t handle) {
-    const SceneCache& scene = get_scene(handle);
+    ScenePin scene_pin = get_scene_metadata(handle);
+    const SceneCache& scene = *scene_pin;
     int64_t count = 0;
     for (size_t mesh_index = 0; mesh_index < scene.meshes.size(); ++mesh_index) {
         if (scene.meshes[mesh_index].geometry_owner_id == static_cast<int64_t>(mesh_index))
@@ -1016,19 +1650,20 @@ int64_t scene_num_geometries(int64_t handle) {
 }
 
 int64_t scene_edge_count(int64_t handle) {
-    return get_scene(handle).edge_v0.size(0);
+    return get_scene_metadata(handle)->edge_v0.size(0);
 }
 
 std::string scene_trace_backend(int64_t handle) {
-    return get_scene(handle).trace_backend == TraceBackend::Cuda ? "cuda" : "optix";
+    return get_scene_metadata(handle)->trace_backend == TraceBackend::Cuda ? "cuda" : "optix";
 }
 
 std::string scene_edge_backend(int64_t handle) {
-    return get_scene(handle).edge_backend == EdgeBackend::Cuda ? "cuda" : "optix";
+    return get_scene_metadata(handle)->edge_backend == EdgeBackend::Cuda ? "cuda" : "optix";
 }
 
 void update_mesh_vertices(int64_t handle, int64_t mesh_id, at::Tensor vertices) {
-    SceneCache& scene = get_scene(handle);
+    ScenePin scene_pin = get_scene_for_update(handle);
+    SceneCache& scene = *scene_pin;
     if (mesh_id < 0 || mesh_id >= static_cast<int64_t>(scene.meshes.size()))
         throw std::runtime_error("update_mesh_vertices(): invalid mesh id.");
     MeshRecord& mesh = scene.meshes[mesh_id];
@@ -1041,12 +1676,14 @@ void update_mesh_vertices(int64_t handle, int64_t mesh_id, at::Tensor vertices) 
         throw std::runtime_error("update_mesh_vertices(): vertices must stay on the scene device.");
     if (vertices.size(0) != mesh.vertices.size(0))
         throw std::runtime_error("update_mesh_vertices(): vertex count must stay unchanged.");
+    retire_if_read(scene, mesh.vertices);
     mesh.vertices = vertices.contiguous();
     mesh.pending_update = true;
 }
 
 void update_instance_transform(int64_t handle, int64_t mesh_id, at::Tensor vertices, at::Tensor transform) {
-    SceneCache& scene = get_scene(handle);
+    ScenePin scene_pin = get_scene_for_update(handle);
+    SceneCache& scene = *scene_pin;
     if (mesh_id < 0 || mesh_id >= static_cast<int64_t>(scene.meshes.size()))
         throw std::runtime_error("update_instance_transform(): invalid instance id.");
     MeshRecord& mesh = scene.meshes[mesh_id];
@@ -1062,59 +1699,77 @@ void update_instance_transform(int64_t handle, int64_t mesh_id, at::Tensor verti
         throw std::runtime_error("update_instance_transform(): tensors must stay on the scene device.");
     if (vertices.sizes() != mesh.vertices.sizes())
         throw std::runtime_error("update_instance_transform(): vertex shape must stay unchanged.");
+    retire_if_read(scene, mesh.vertices);
+    retire_if_read(scene, mesh.instance_transform);
     mesh.vertices = vertices.contiguous();
     mesh.instance_transform = transform.contiguous();
     mesh.pending_transform = true;
 }
 
 void sync_scene(int64_t handle) {
-    SceneCache& scene = get_scene(handle);
+    ScenePin scene_pin = get_scene_for_update(handle);
+    SceneCache& scene = *scene_pin;
     scene.last_sync_gas_updates = 0;
     scene.last_sync_ias_updates = 0;
     c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     if (torch_ctx.device_index != scene.device_index)
         throw std::runtime_error("Scene.sync(): current CUDA device does not match scene tensors.");
-    OptixDeviceContextEntry* optix_entry = nullptr;
-    if (scene.trace_backend == TraceBackend::Optix || scene.edge_backend == EdgeBackend::Optix)
-        optix_entry = &get_optix_context(static_cast<int>(scene.device_index));
 
-    bool changed = false;
     bool geometry_changed = false;
     bool transform_changed = false;
-    for (int64_t mesh_id = 0; mesh_id < static_cast<int64_t>(scene.meshes.size()); ++mesh_id) {
-        MeshRecord& mesh = scene.meshes[mesh_id];
-        if (!mesh.pending_update && !mesh.pending_transform)
-            continue;
-        if (mesh.pending_update && scene.trace_backend == TraceBackend::Optix) {
-            update_triangle_accel(mesh, scene.triangle_accels[mesh_id], optix_entry->optix_context, torch_ctx.stream);
-            ++scene.last_sync_gas_updates;
-        }
+    for (const MeshRecord& mesh : scene.meshes) {
         geometry_changed = geometry_changed || mesh.pending_update;
         transform_changed = transform_changed || mesh.pending_transform;
-        mesh.pending_update = false;
-        mesh.pending_transform = false;
-        changed = true;
     }
-    if (changed) {
-        refresh_global_geometry(scene);
-        scene.version += 1;
-        scene.edge_version += 1;
-        if (scene.trace_backend == TraceBackend::Optix) {
-            if (geometry_changed)
-                build_triangle_ias(scene, optix_entry->optix_context, torch_ctx.stream);
-            else if (transform_changed)
-                update_triangle_ias(scene, optix_entry->optix_context, torch_ctx.stream);
-            ++scene.last_sync_ias_updates;
-        } else
-            ensure_custom_triangle_bvh(scene);
-        if (scene.edge_backend == EdgeBackend::Optix) {
-            if (!update_edge_accel(scene, optix_entry->optix_context, torch_ctx.stream))
-                build_edge_accel(scene, optix_entry->optix_context, torch_ctx.stream);
-        } else {
-            refresh_edge_soa(scene);
+    if (!geometry_changed && !transform_changed)
+        return;
+    require_finite_pending_vertices(scene);
+    // Queries issued before this commit may still run on other streams and read what it refits or frees.
+    SceneWriteScope write(scene);
+
+    OptixDeviceContextEntry* optix_entry = nullptr;
+    if (scene.trace_backend == TraceBackend::Optix)
+        optix_entry = &get_optix_context(static_cast<int>(scene.device_index));
+
+    // Every rebuild below reads the meshes' current vertices and can be repeated, so the pending flags are cleared
+    // only after all of them succeeded: a failed sync() leaves the updates pending and a retry redoes the whole
+    // commit. The versions advance before the first mutation, so cached BVHs rebuild and tapes recorded against the
+    // previous geometry are refused even if this commit fails part-way.
+    scene.version += 1;
+    scene.edge_version += 1;
+    scene.geometry_version += 1;
+    int64_t gas_updates = 0;
+    int64_t ias_updates = 0;
+    if (geometry_changed && scene.trace_backend == TraceBackend::Optix) {
+        for (size_t mesh_id = 0; mesh_id < scene.meshes.size(); ++mesh_id) {
+            const MeshRecord& mesh = scene.meshes[mesh_id];
+            if (!mesh.pending_update)
+                continue;
+            update_triangle_accel(mesh, scene.triangle_accels[mesh_id], optix_entry->optix_context, torch_ctx.stream);
+            ++gas_updates;
         }
     }
+    refresh_global_geometry(scene);
+    if (scene.trace_backend == TraceBackend::Optix) {
+        // Refitting the IAS over refit GAS children and moved instances is enough; a GAS that was rebuilt into a new
+        // buffer has a new handle, and then the IAS is built again.
+        if (triangle_ias_children_unchanged(scene))
+            update_triangle_ias(scene, optix_entry->optix_context, torch_ctx.stream);
+        else
+            build_triangle_ias(scene, optix_entry->optix_context, torch_ctx.stream);
+        ++ias_updates;
+    } else {
+        ensure_custom_triangle_bvh(scene);
+    }
+    // Edge query structures follow `edge_version` lazily on the next edge query.
+
+    for (MeshRecord& mesh : scene.meshes) {
+        mesh.pending_update = false;
+        mesh.pending_transform = false;
+    }
+    scene.last_sync_gas_updates = gas_updates;
+    scene.last_sync_ias_updates = ias_updates;
 }
 
 int64_t scene_version(c10::intrusive_ptr<SceneHandle> scene) {
@@ -1222,14 +1877,21 @@ rayd::shared::edge::CompactBvhTopologyView scene_edge_bvh_topology_view(const Sc
 }
 
 void ensure_custom_edge_bvh(SceneCache& scene) {
+    // Readers build this cache lazily under the shared scene lock; serialize the build itself.
+    std::unique_lock<std::mutex> build_lock = lock_lazy_build(scene.lazy_build_mutex);
     CompactEdgeBvh& bvh = scene.custom_edge_bvh;
-    if (bvh.valid && bvh.geometry_version == scene.edge_version)
+    if (bvh.valid && bvh.geometry_version == scene.edge_version && scene.edge_soa_version == scene.edge_version)
         return;
 
     c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     if (torch_ctx.device_index != scene.device_index)
         throw std::runtime_error("ensure_custom_edge_bvh(): current CUDA device does not match scene.");
+    // The BVH is built from the edge SoA, and the queries that use it read the SoA too.
+    if (ensure_edge_soa_locked(scene) && bvh.valid && bvh.geometry_version == scene.edge_version) {
+        cuda_check(cudaStreamSynchronize(torch_ctx.stream), "cudaStreamSynchronize(edge SoA)");
+        return;
+    }
     const int64_t primitive_count = scene.edge_v0.numel();
     const int64_t max_primitive_count = (static_cast<int64_t>(std::numeric_limits<int>::max()) + 1) / 2;
     if (primitive_count > max_primitive_count)
@@ -1458,6 +2120,9 @@ rayd::shared::bvh::CompactBvhTopologyView scene_triangle_bvh_topology_view(const
 }
 
 void ensure_custom_triangle_bvh(SceneCache& scene) {
+    // Readers build this cache lazily under the shared scene lock; serialize the build itself.
+    std::unique_lock<std::mutex> build_lock(scene.lazy_build_mutex, std::defer_lock);
+    acquire_without_holding_gil([&] { return build_lock.try_lock(); }, [&] { build_lock.lock(); });
     CompactTriangleBvh& bvh = scene.custom_triangle_bvh;
     if (bvh.valid && bvh.geometry_version == scene.version)
         return;
@@ -1596,11 +2261,12 @@ void ensure_custom_triangle_bvh(SceneCache& scene) {
 }
 
 std::vector<at::Tensor> scene_edge_records(c10::intrusive_ptr<SceneHandle> scene_handle) {
-    return scene_edge_records(get_scene(scene_handle->handle));
+    return scene_edge_records(*get_scene(scene_handle->handle));
 }
 
 std::vector<at::Tensor> scene_global_geometry(c10::intrusive_ptr<SceneHandle> scene_handle) {
-    SceneCache& scene = get_scene(scene_handle->handle);
+    ScenePin scene_pin = get_scene(scene_handle->handle);
+    SceneCache& scene = *scene_pin;
     at::Tensor face_normal = at::stack({scene.tri_fn_x, scene.tri_fn_y, scene.tri_fn_z}, 1);
     at::Tensor squared_normal = face_normal.square().sum(1, true);
     at::Tensor inverse_normal = squared_normal.clamp_min(std::numeric_limits<float>::min()).rsqrt();
@@ -1613,12 +2279,14 @@ std::vector<at::Tensor> scene_global_geometry(c10::intrusive_ptr<SceneHandle> sc
 }
 
 at::Tensor get_scene_edge_mask(c10::intrusive_ptr<SceneHandle> scene_handle) {
-    SceneCache& scene = get_scene(scene_handle->handle);
+    ScenePin scene_pin = get_scene(scene_handle->handle);
+    SceneCache& scene = *scene_pin;
     return scene.edge_mask.to(at::kBool);
 }
 
 void set_scene_edge_mask(c10::intrusive_ptr<SceneHandle> scene_handle, at::Tensor mask) {
-    SceneCache& scene = get_scene(scene_handle->handle);
+    ScenePin scene_pin = get_scene_for_update(scene_handle->handle);
+    SceneCache& scene = *scene_pin;
     require_cuda(mask, "edge_mask");
     require_contiguous(mask, "edge_mask");
     require_rank(mask, 1, "edge_mask");
@@ -1628,6 +2296,8 @@ void set_scene_edge_mask(c10::intrusive_ptr<SceneHandle> scene_handle, at::Tenso
         throw std::runtime_error("set_scene_edge_mask(): mask length must equal edge count.");
     if (mask.scalar_type() != at::kBool && mask.scalar_type() != at::kByte)
         throw std::runtime_error("set_scene_edge_mask(): mask must have bool or uint8 dtype.");
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
+    SceneWriteScope write(scene);
     scene.edge_mask = mask.to(at::kByte).contiguous().clone();
     scene.edge_mask_version += 1;
     scene.version += 1;
@@ -1642,11 +2312,11 @@ int64_t scene_num_geometries(c10::intrusive_ptr<SceneHandle> scene) {
 }
 
 int64_t scene_last_sync_gas_updates(c10::intrusive_ptr<SceneHandle> scene) {
-    return get_scene(scene->handle).last_sync_gas_updates;
+    return get_scene_metadata(scene->handle)->last_sync_gas_updates;
 }
 
 int64_t scene_last_sync_ias_updates(c10::intrusive_ptr<SceneHandle> scene) {
-    return get_scene(scene->handle).last_sync_ias_updates;
+    return get_scene_metadata(scene->handle)->last_sync_ias_updates;
 }
 
 void update_instance_transform(c10::intrusive_ptr<SceneHandle> scene, int64_t mesh_id, at::Tensor vertices,

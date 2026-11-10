@@ -55,22 +55,6 @@ __forceinline__ __device__ int candidate_opposite_vertex(const int* __restrict__
     return faces[face * 3 + opposite_corner];
 }
 
-__device__ int ordered_candidate(const int* __restrict__ candidates, int start, int count, int order) {
-    int previous = -1;
-    int selected = -1;
-    for (int step = 0; step <= order; ++step) {
-        int best = INT_MAX;
-        for (int i = 0; i < count; ++i) {
-            const int candidate = candidates[start + i];
-            if (candidate > previous && candidate < best)
-                best = candidate;
-        }
-        selected = best;
-        previous = best;
-    }
-    return selected;
-}
-
 __forceinline__ __device__ void write_edge_topology_record(
     int out, int v0, int v1, int shape_id, int vertex_offset, const int* __restrict__ faces, int candidate0,
     int candidate1, int* __restrict__ edge_v0, int* __restrict__ edge_v1, int* __restrict__ edge_face0,
@@ -85,6 +69,16 @@ __forceinline__ __device__ void write_edge_topology_record(
     edge_local_id[out] = out;
 }
 
+// A face that repeats a vertex index has no area and no well-defined edges, so it emits no edge candidates. Its
+// three candidates carry this key, which sorts after every real key and cannot be one: a real key packs two vertex
+// indices that were validated to lie in [0, vertex_count) with vertex_count <= INT32_MAX.
+constexpr uint64_t kDegenerateEdgeKey = ~static_cast<uint64_t>(0);
+
+// An edge shared by k faces emits k(k-1)/2 wedge records. Real non-manifold fans stay far below this cap; above it the
+// mesh is rejected with a clear error instead of emitting a quadratic number of records (a triangle repeated 5000
+// times would otherwise emit 37 million wedges).
+constexpr int kMaxEdgeIncidentFaces = 256;
+
 __global__ void emit_edge_candidates_kernel(int face_count, const int* __restrict__ faces, uint64_t* __restrict__ keys,
                                             int* __restrict__ candidates) {
     const int face = blockIdx.x * blockDim.x + threadIdx.x;
@@ -95,11 +89,12 @@ __global__ void emit_edge_candidates_kernel(int face_count, const int* __restric
     const int tri1 = faces[face * 3 + 1];
     const int tri2 = faces[face * 3 + 2];
     const int tri[3] = {tri0, tri1, tri2};
+    const bool degenerate = tri0 == tri1 || tri1 == tri2 || tri0 == tri2;
     for (int local_edge = 0; local_edge < 3; ++local_edge) {
         const int out = face * 3 + local_edge;
         const int start_corner = local_edge;
         const int end_corner = (local_edge + 1) % 3;
-        keys[out] = make_edge_key(tri[start_corner], tri[end_corner]);
+        keys[out] = degenerate ? kDegenerateEdgeKey : make_edge_key(tri[start_corner], tri[end_corner]);
         candidates[out] = out;
     }
 }
@@ -120,21 +115,32 @@ __global__ void fill_edge_run_starts_kernel(int candidate_count, const int* __re
     run_starts[run_ids[idx] - 1] = idx;
 }
 
+// One output record per unordered pair of incident faces (one record for a boundary edge). Counts are int64 so a
+// pathological fan cannot wrap the prefix sum; runs above the incidence cap still count, and the host rejects the
+// mesh from `max_incidence` before anything is emitted.
 __global__ void compute_edge_output_counts_kernel(int unique_edge_count, int candidate_count,
-                                                  const int* __restrict__ run_starts, int* __restrict__ output_counts) {
+                                                  const uint64_t* __restrict__ sorted_keys,
+                                                  const int* __restrict__ run_starts,
+                                                  long long* __restrict__ output_counts,
+                                                  int* __restrict__ max_incidence) {
     const int run = blockIdx.x * blockDim.x + threadIdx.x;
     if (run >= unique_edge_count)
         return;
     const int start = run_starts[run];
+    if (sorted_keys[start] == kDegenerateEdgeKey) {
+        output_counts[run] = 0;
+        return;
+    }
     const int end = (run + 1 < unique_edge_count) ? run_starts[run + 1] : candidate_count;
-    const int incident_count = end - start;
+    const long long incident_count = end - start;
     output_counts[run] = (incident_count <= 1) ? 1 : (incident_count * (incident_count - 1)) / 2;
+    atomicMax(max_incidence, static_cast<int>(incident_count));
 }
 
 __global__ void emit_edge_topology_outputs_kernel(
     int unique_edge_count, int candidate_count, int vertex_offset, int shape_id, const int* __restrict__ faces,
     const uint64_t* __restrict__ sorted_keys, const int* __restrict__ sorted_candidates,
-    const int* __restrict__ run_starts, const int* __restrict__ output_offsets, int* __restrict__ edge_v0,
+    const int* __restrict__ run_starts, const long long* __restrict__ output_offsets, int* __restrict__ edge_v0,
     int* __restrict__ edge_v1, int* __restrict__ edge_face0, int* __restrict__ edge_face1,
     int* __restrict__ edge_opposite, int* __restrict__ edge_shape_id, int* __restrict__ edge_local_id) {
     const int run = blockIdx.x * blockDim.x + threadIdx.x;
@@ -142,10 +148,13 @@ __global__ void emit_edge_topology_outputs_kernel(
         return;
 
     const int start = run_starts[run];
+    const uint64_t key = sorted_keys[start];
+    if (key == kDegenerateEdgeKey)
+        return;
     const int end = (run + 1 < unique_edge_count) ? run_starts[run + 1] : candidate_count;
     const int incident_count = end - start;
-    const int out_start = (run == 0) ? 0 : output_offsets[run - 1];
-    const uint64_t key = sorted_keys[start];
+    // The host checked that the total output fits int32, so every record index does too.
+    const int out_start = (run == 0) ? 0 : static_cast<int>(output_offsets[run - 1]);
     const int v0 = edge_key_v0(key) + vertex_offset;
     const int v1 = edge_key_v1(key) + vertex_offset;
 
@@ -156,11 +165,13 @@ __global__ void emit_edge_topology_outputs_kernel(
         return;
     }
 
+    // The radix sort is stable and candidates enter it in ascending order, so a run already lists its incident
+    // candidates in ascending (face, local edge) order; pairs are emitted lexicographically in that order.
     int write_offset = 0;
     for (int i = 0; i < incident_count; ++i) {
-        const int candidate0 = ordered_candidate(sorted_candidates, start, incident_count, i);
+        const int candidate0 = sorted_candidates[start + i];
         for (int j = i + 1; j < incident_count; ++j) {
-            const int candidate1 = ordered_candidate(sorted_candidates, start, incident_count, j);
+            const int candidate1 = sorted_candidates[start + j];
             write_edge_topology_record(out_start + write_offset, v0, v1, shape_id, vertex_offset, faces, candidate0,
                                        candidate1, edge_v0, edge_v1, edge_face0, edge_face1, edge_opposite,
                                        edge_shape_id, edge_local_id);
@@ -375,7 +386,37 @@ void launch_require_count(int64_t count, const char* name) {
     }
 }
 
+// Stores 1 in `flag` when any of the `count` floats is NaN or infinite; the flag is never cleared here.
+__global__ void flag_non_finite_kernel(const float* __restrict__ values, int64_t count,
+                                       unsigned int* __restrict__ flag) {
+    const int64_t stride = static_cast<int64_t>(gridDim.x) * blockDim.x;
+    for (int64_t index = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x; index < count; index += stride) {
+        if (!isfinite(values[index])) {
+            *flag = 1u;
+            return;
+        }
+    }
+}
+
 } // namespace
+
+void flag_non_finite_vertices_cuda(const std::vector<at::Tensor>& vertices, at::Tensor& flags) {
+    TorchCudaContext torch_ctx = current_torch_cuda_context();
+    cuda_check(cudaMemsetAsync(flags.data_ptr<int>(), 0, sizeof(int) * vertices.size(), torch_ctx.stream),
+               "cudaMemsetAsync(non-finite vertex flags)");
+    constexpr int kThreads = 256;
+    constexpr int64_t kMaxBlocks = 1024;
+    for (size_t mesh = 0; mesh < vertices.size(); ++mesh) {
+        const int64_t count = vertices[mesh].numel();
+        if (count == 0)
+            continue;
+        const int blocks = static_cast<int>(std::min(kMaxBlocks, (count + kThreads - 1) / kThreads));
+        unsigned int* flag = reinterpret_cast<unsigned int*>(flags.data_ptr<int>()) + mesh;
+        flag_non_finite_kernel<<<blocks, kThreads, 0, torch_ctx.stream>>>(vertices[mesh].data_ptr<float>(), count,
+                                                                          flag);
+    }
+    cuda_check(cudaGetLastError(), "flag_non_finite_kernel launch");
+}
 
 EdgeTopology build_edge_topology_cuda(const at::Tensor& faces, int32_t vertex_offset, int32_t shape_id) {
     at::Tensor faces_contiguous = faces.contiguous();
@@ -461,8 +502,11 @@ EdgeTopology build_edge_topology_cuda(const at::Tensor& faces, int32_t vertex_of
     launch_require_count(unique_edge_count, "build_edge_topology_cuda(unique_edge_count)");
 
     at::Tensor run_starts = at::empty({unique_edge_count}, int_options);
-    at::Tensor output_counts = at::empty({unique_edge_count}, int_options);
-    at::Tensor output_offsets = at::empty({unique_edge_count}, int_options);
+    at::Tensor output_counts = at::empty({unique_edge_count}, key_options);
+    at::Tensor output_offsets = at::empty({unique_edge_count}, key_options);
+    at::Tensor max_incidence = at::zeros({1}, int_options);
+    auto* output_counts_ptr = reinterpret_cast<long long*>(output_counts.data_ptr<int64_t>());
+    auto* output_offsets_ptr = reinterpret_cast<long long*>(output_offsets.data_ptr<int64_t>());
     const int unique_blocks = (unique_edge_count + block_size - 1) / block_size;
     fill_edge_run_starts_kernel<<<candidate_blocks, block_size, 0, stream>>>(candidate_count_i,
                                                                              run_flags.data_ptr<int>(),
@@ -470,27 +514,40 @@ EdgeTopology build_edge_topology_cuda(const at::Tensor& faces, int32_t vertex_of
                                                                              run_starts.data_ptr<int>());
     cuda_check(cudaGetLastError(), "fill_edge_run_starts_kernel");
     compute_edge_output_counts_kernel<<<unique_blocks, block_size, 0, stream>>>(unique_edge_count, candidate_count_i,
+                                                                                keys_out_ptr,
                                                                                 run_starts.data_ptr<int>(),
-                                                                                output_counts.data_ptr<int>());
+                                                                                output_counts_ptr,
+                                                                                max_incidence.data_ptr<int>());
     cuda_check(cudaGetLastError(), "compute_edge_output_counts_kernel");
 
     size_t output_scan_temp_bytes = 0;
-    cuda_check(cub::DeviceScan::InclusiveSum(nullptr, output_scan_temp_bytes, output_counts.data_ptr<int>(),
-                                             output_offsets.data_ptr<int>(), unique_edge_count, stream),
+    cuda_check(cub::DeviceScan::InclusiveSum(nullptr, output_scan_temp_bytes, output_counts_ptr, output_offsets_ptr,
+                                             unique_edge_count, stream),
                "cub::DeviceScan::InclusiveSum(edge output offsets size)");
     if (output_scan_temp_bytes > static_cast<size_t>(scan_temp.numel())) {
         scan_temp = at::empty({std::max<int64_t>(1, static_cast<int64_t>(output_scan_temp_bytes))}, byte_options);
     }
-    cuda_check(cub::DeviceScan::InclusiveSum(scan_temp.data_ptr<uint8_t>(), output_scan_temp_bytes,
-                                             output_counts.data_ptr<int>(), output_offsets.data_ptr<int>(),
-                                             unique_edge_count, stream),
+    cuda_check(cub::DeviceScan::InclusiveSum(scan_temp.data_ptr<uint8_t>(), output_scan_temp_bytes, output_counts_ptr,
+                                             output_offsets_ptr, unique_edge_count, stream),
                "cub::DeviceScan::InclusiveSum(edge output offsets)");
 
-    int edge_count = 0;
-    cuda_check(cudaMemcpyAsync(&edge_count, output_offsets.data_ptr<int>() + unique_edge_count - 1, sizeof(int),
+    int64_t edge_count = 0;
+    int highest_incidence = 0;
+    cuda_check(cudaMemcpyAsync(&edge_count, output_offsets_ptr + unique_edge_count - 1, sizeof(int64_t),
                                cudaMemcpyDeviceToHost, stream),
                "cudaMemcpyAsync(edge topology output count)");
+    cuda_check(cudaMemcpyAsync(&highest_incidence, max_incidence.data_ptr<int>(), sizeof(int), cudaMemcpyDeviceToHost,
+                               stream),
+               "cudaMemcpyAsync(edge topology incidence)");
     cuda_check(cudaStreamSynchronize(stream), "cudaStreamSynchronize(edge topology output count)");
+    if (highest_incidence > kMaxEdgeIncidentFaces) {
+        throw std::runtime_error(
+            "Scene.build(): mesh " + std::to_string(shape_id) + " has an edge shared by " +
+            std::to_string(highest_incidence) + " non-degenerate faces; edge topology supports at most " +
+            std::to_string(kMaxEdgeIncidentFaces) +
+            " faces per edge because it emits one wedge per pair of incident faces. This usually means duplicated "
+            "or coincident faces: remove them, or build this mesh with edges_enabled=False.");
+    }
     if (edge_count <= 0) {
         return make_empty();
     }
@@ -507,7 +564,7 @@ EdgeTopology build_edge_topology_cuda(const at::Tensor& faces, int32_t vertex_of
 
     emit_edge_topology_outputs_kernel<<<unique_blocks, block_size, 0, stream>>>(
         unique_edge_count, candidate_count_i, vertex_offset, shape_id, faces_contiguous.data_ptr<int>(), keys_out_ptr,
-        candidates_out.data_ptr<int>(), run_starts.data_ptr<int>(), output_offsets.data_ptr<int>(),
+        candidates_out.data_ptr<int>(), run_starts.data_ptr<int>(), output_offsets_ptr,
         topology.edge_v0.data_ptr<int>(), topology.edge_v1.data_ptr<int>(), topology.edge_face0.data_ptr<int>(),
         topology.edge_face1.data_ptr<int>(), topology.edge_opposite.data_ptr<int>(),
         topology.edge_shape_id.data_ptr<int>(), topology.edge_local_id.data_ptr<int>());

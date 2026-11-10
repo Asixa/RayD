@@ -141,6 +141,26 @@ RAYD_HOST_DEVICE bool is_active(const SegmentVisibilityParams& params, unsigned 
     return params.active_mask == nullptr || params.active_mask[ray] != 0u;
 }
 
+// A layout policy that declares `reject_nonfinite_inputs = true` makes every lane with a NaN or infinite input
+// inactive inside the trace, so its caller needs no separate masking pass; a policy without the member relies on
+// is_active() alone.
+template <typename Policy, typename = void> struct rejects_nonfinite_inputs : std::false_type {};
+template <typename Policy>
+struct rejects_nonfinite_inputs<Policy, std::void_t<decltype(Policy::reject_nonfinite_inputs)>>
+    : std::bool_constant<Policy::reject_nonfinite_inputs> {};
+
+RAYD_HOST_DEVICE bool is_finite_float(float value) {
+#if defined(__CUDA_ARCH__)
+    return isfinite(value);
+#else
+    return std::isfinite(value);
+#endif
+}
+
+RAYD_HOST_DEVICE bool is_finite_vec3(Vec3f value) {
+    return is_finite_float(value.x) && is_finite_float(value.y) && is_finite_float(value.z);
+}
+
 RAYD_HOST_DEVICE Vec3f load_start(const SegmentVisibilityParams& params, unsigned int ray) {
     return params.start_aos != nullptr ? load_aos_vec3(params.start_aos, ray)
                                        : load_soa_vec3(params.start_x, params.start_y, params.start_z, ray);
@@ -159,6 +179,21 @@ RAYD_HOST_DEVICE Vec3f load_end_b(const SegmentVisibilityParams& params, unsigne
 RAYD_HOST_DEVICE Vec3f load_chain_point(const SegmentVisibilityParams& params, unsigned int chain, int point_index) {
     const int slot = static_cast<int>(chain) * params.max_points + point_index;
     return math::make_vec3(params.chain_point_x[slot], params.chain_point_y[slot], params.chain_point_z[slot]);
+}
+
+// Under a policy that rejects non-finite inputs, a chain is usable only with a non-negative length and every stored
+// point finite, also those past its length.
+template <typename Policy>
+RAYD_HOST_DEVICE bool chain_inputs_usable(const SegmentVisibilityParams& params, unsigned int chain) {
+    if constexpr (rejects_nonfinite_inputs<Policy>::value) {
+        if (params.chain_length != nullptr && params.chain_length[chain] < 0)
+            return false;
+        for (int point = 0; point < params.max_points; ++point) {
+            if (!is_finite_vec3(load_chain_point(params, chain, point)))
+                return false;
+        }
+    }
+    return true;
 }
 
 /// One segment occlusion cast. Mirrors the old trace_segment: the active / null-
@@ -226,9 +261,13 @@ RAYD_DEVICE void segment_visibility_algo(const ::rayd::shared::optix::SegmentVis
 
     std::uint32_t blocker = 0xFFFFFFFFu;
     const bool collect_blocker = params.out_first_blocked_prim != nullptr;
+    const Vec3f start = load_start(params, ray);
+    const Vec3f end = load_end_a(params, ray);
+    bool active = is_active(params, ray);
+    if constexpr (rejects_nonfinite_inputs<Policy>::value)
+        active = active && is_finite_vec3(start) && is_finite_vec3(end);
     const std::uint32_t visible =
-        trace_segment<Config>(params, load_start(params, ray), load_end_a(params, ray), is_active(params, ray),
-                              ray * static_cast<unsigned int>(params.ignore_k), traverser,
+        trace_segment<Config>(params, start, end, active, ray * static_cast<unsigned int>(params.ignore_k), traverser,
                               collect_blocker ? &blocker : nullptr);
     params.out_visible[ray] = visible != 0u ? 1u : 0u;
     if (collect_blocker) {
@@ -245,12 +284,17 @@ template <typename Config>
 RAYD_DEVICE void segment_pair_visibility_algo(const ::rayd::shared::optix::SegmentVisibilityParams& params,
                                               std::uint32_t ray, const typename Config::Traverser& traverser) {
     using namespace segment_visibility_algo_detail;
+    using Policy = typename Config::Layout;
 
     if (ray >= static_cast<unsigned int>(params.n_rays))
         return;
 
-    const bool active = is_active(params, ray);
+    bool active = is_active(params, ray);
     const Vec3f start = load_start(params, ray);
+    if constexpr (rejects_nonfinite_inputs<Policy>::value) {
+        active = active && is_finite_vec3(start) && is_finite_vec3(load_end_a(params, ray)) &&
+                 is_finite_vec3(load_end_b(params, ray));
+    }
     const unsigned int ignore_base = ray * static_cast<unsigned int>(params.ignore_k);
     params.out_visible[ray] =
         trace_segment<Config>(params, start, load_end_a(params, ray), active, ignore_base, traverser, nullptr) != 0u;
@@ -264,16 +308,21 @@ template <typename Config>
 RAYD_DEVICE void axial_edge_visibility_algo(const ::rayd::shared::optix::SegmentVisibilityParams& params,
                                             std::uint32_t ray, const typename Config::Traverser& traverser) {
     using namespace segment_visibility_algo_detail;
+    using Policy = typename Config::Layout;
 
     if (ray >= static_cast<unsigned int>(params.n_rays))
         return;
 
-    const bool active = is_active(params, ray);
+    bool active = is_active(params, ray);
     const Vec3f source = load_start(params, ray);
     const Vec3f edge_pos = load_end_a(params, ray);
     const Vec3f edge_dir = load_soa_vec3(params.edge_dir_x, params.edge_dir_y, params.edge_dir_z, ray);
     const float line_min = params.edge_t_min[ray];
     const float span = fmaxf(params.edge_t_max[ray] - line_min, 0.0f);
+    if constexpr (rejects_nonfinite_inputs<Policy>::value) {
+        active = active && is_finite_vec3(source) && is_finite_vec3(edge_pos) && is_finite_vec3(edge_dir) &&
+                 is_finite_float(line_min) && is_finite_float(params.edge_t_max[ray]);
+    }
     std::uint32_t any_visible = 0u;
 
 #if defined(__CUDA_ARCH__)
@@ -296,11 +345,12 @@ template <typename Config>
 RAYD_DEVICE void segment_chain_visibility_algo(const ::rayd::shared::optix::SegmentVisibilityParams& params,
                                                std::uint32_t chain, const typename Config::Traverser& traverser) {
     using namespace segment_visibility_algo_detail;
+    using Policy = typename Config::Layout;
 
     if (chain >= static_cast<unsigned int>(params.n_rays))
         return;
 
-    if (!is_active(params, chain)) {
+    if (!is_active(params, chain) || !chain_inputs_usable<Policy>(params, chain)) {
         params.out_visible[chain] = 0u;
         params.out_first_blocked_segment[chain] = -1;
         params.out_first_blocked_prim[chain] = -1;

@@ -253,15 +253,6 @@ int32_t checked_i32(int64_t value, const char* name) {
     return static_cast<int32_t>(value);
 }
 
-const at::Tensor* optional_tensor(py::object obj, at::Tensor& storage) {
-    if (obj.is_none())
-        return nullptr;
-    storage = obj.cast<at::Tensor>();
-    if (!storage.defined() || storage.numel() == 0)
-        return nullptr;
-    return &storage;
-}
-
 at::Tensor active_mask_for_states(const at::Tensor& active, int64_t state_count, const char* name) {
     if (active.size(0) == state_count)
         return active.contiguous();
@@ -282,12 +273,10 @@ struct Vec3SoA {
     at::Tensor z;
 };
 
+// One transposing copy; the three components are rows of the [3, N] result.
 Vec3SoA split_vec3(const at::Tensor& value) {
-    return {
-        value.select(1, 0).contiguous(),
-        value.select(1, 1).contiguous(),
-        value.select(1, 2).contiguous(),
-    };
+    const at::Tensor soa = value.t().contiguous();
+    return {soa.select(0, 0), soa.select(0, 1), soa.select(0, 2)};
 }
 
 struct TriangleSoA {
@@ -378,18 +367,6 @@ uint8_t* mutable_mask_ptr(const at::Tensor& mask) {
     return reinterpret_cast<uint8_t*>(mask.data_ptr<bool>());
 }
 
-at::Tensor optional_active_from_py(py::object active_obj, int64_t count, const char* name) {
-    if (active_obj.is_none())
-        return at::Tensor();
-    at::Tensor active = active_obj.cast<at::Tensor>();
-    require_mask(active, name);
-    if (active.numel() == 0)
-        return active.contiguous();
-    if (active.size(0) != count)
-        throw std::runtime_error(std::string(name) + " must match the batch size.");
-    return active.contiguous();
-}
-
 at::Tensor optional_active_from_tensor(const at::Tensor* active_ptr, int64_t count, const char* name) {
     if (active_ptr == nullptr || !active_ptr->defined())
         return at::Tensor();
@@ -402,18 +379,15 @@ at::Tensor optional_active_from_tensor(const at::Tensor* active_ptr, int64_t cou
     return active.contiguous();
 }
 
-at::Tensor visibility_active_mask(const c10::optional<at::Tensor>& active, int64_t count,
-                                  const at::TensorOptions& options, const char* name) {
+// The caller's validated `active` lanes, or an undefined tensor (every lane) when it is omitted or empty. The trace
+// itself also treats a lane with a NaN or infinite input as inactive, so such a lane reports not visible.
+at::Tensor validated_active(const c10::optional<at::Tensor>& active, int64_t count, const char* name) {
     if (!active.has_value() || !active->defined() || active->numel() == 0)
-        return at::ones({count}, options.dtype(at::kBool));
+        return at::Tensor();
     require_mask(*active, name);
     if (active->size(0) != count)
         throw std::runtime_error(std::string(name) + " must match the batch size.");
-    return active->contiguous();
-}
-
-at::Tensor finite_vec3_rows(const at::Tensor& value) {
-    return at::isfinite(value).all(1);
+    return *active;
 }
 
 void require_scene_device(const SceneCache& scene, const at::Tensor& value, const char* name) {
@@ -450,13 +424,6 @@ at::Tensor prepare_visibility_ignore_ids(const c10::optional<at::Tensor>& ignore
 
 at::Tensor stack_vec3(const at::Tensor& x, const at::Tensor& y, const at::Tensor& z) {
     return at::stack({x, y, z}, 1).contiguous();
-}
-
-py::tuple tensor_vector_to_tuple(const std::vector<at::Tensor>& values) {
-    py::tuple result(values.size());
-    for (size_t i = 0; i < values.size(); ++i)
-        result[i] = values[i];
-    return result;
 }
 
 std::shared_ptr<OptixLaunchPipeline> optix_pipeline_for_scene(const SceneCache& scene,
@@ -551,11 +518,12 @@ float float_from_bits(std::uint32_t bits) {
 
 } // namespace
 
-py::tuple visibility_forward_op(int64_t scene_handle, at::Tensor start, at::Tensor end, py::object active_obj) {
-    at::Tensor active_storage;
-    const at::Tensor* active = optional_tensor(active_obj, active_storage);
-    SegmentVisibilityNativeOutputs out = visibility_forward_native_impl(get_scene(scene_handle), start, end, active);
-    return py::make_tuple(out.visible, out.blocker_prim, out.tape_t);
+std::vector<at::Tensor> visibility_forward_op(int64_t scene_handle, at::Tensor start, at::Tensor end,
+                                              const c10::optional<at::Tensor>& active_opt) {
+    const at::Tensor* active =
+        active_opt.has_value() && active_opt->defined() && active_opt->numel() != 0 ? &*active_opt : nullptr;
+    SegmentVisibilityNativeOutputs out = visibility_forward_native_impl(*get_scene(scene_handle), start, end, active);
+    return {out.visible, out.blocker_prim, out.tape_t};
 }
 
 std::vector<at::Tensor> visible_pair_forward_impl(int64_t scene_handle, at::Tensor start, at::Tensor end_a,
@@ -567,7 +535,8 @@ std::vector<at::Tensor> visible_pair_forward_impl(int64_t scene_handle, at::Tens
     require_same_batch(start, end_a, "visible_pair");
     require_same_batch(start, end_b, "visible_pair");
 
-    SceneCache& scene = get_scene(scene_handle);
+    ScenePin scene_pin = get_scene(scene_handle);
+    SceneCache& scene = *scene_pin;
     require_scene_device(scene, start, "start");
     require_scene_device(scene, end_a, "end_a");
     require_scene_device(scene, end_b, "end_b");
@@ -580,9 +549,7 @@ std::vector<at::Tensor> visible_pair_forward_impl(int64_t scene_handle, at::Tens
     if (ray_count == 0)
         return {visible_a, visible_b};
 
-    at::Tensor active_mask = visibility_active_mask(active, ray_count, start.options(), "active");
-    active_mask =
-        (active_mask & finite_vec3_rows(start) & finite_vec3_rows(end_a) & finite_vec3_rows(end_b)).contiguous();
+    const at::Tensor active_mask = validated_active(active, ray_count, "active");
     int32_t ignore_k = 0;
     at::Tensor ignore_ids = prepare_visibility_ignore_ids(ignore_prim_ids, ray_count, 2, "ignore_prim_ids", ignore_k);
 
@@ -596,7 +563,7 @@ std::vector<at::Tensor> visible_pair_forward_impl(int64_t scene_handle, at::Tens
     params.end_b_aos = end_b.data_ptr<float>();
     params.ignore_prim_ids = ignore_k > 0 ? ignore_ids.data_ptr<int>() : nullptr;
     params.ignore_k = ignore_k;
-    params.active_mask = mask_ptr(active_mask);
+    params.active_mask = optional_mask_ptr(active_mask);
     params.n_rays = checked_i32(ray_count, "ray_count");
     params.out_visible = mutable_mask_ptr(visible_a);
     params.out_visible_b = mutable_mask_ptr(visible_b);
@@ -627,7 +594,8 @@ std::vector<at::Tensor> visible_edge_forward_impl(int64_t scene_handle, at::Tens
     if (edge_t_min.size(0) != source.size(0) || edge_t_max.size(0) != source.size(0))
         throw std::runtime_error("visible_edge inputs must have the same batch size.");
 
-    SceneCache& scene = get_scene(scene_handle);
+    ScenePin scene_pin = get_scene(scene_handle);
+    SceneCache& scene = *scene_pin;
     require_scene_device(scene, source, "source");
     require_scene_device(scene, edge_position, "edge_position");
     require_scene_device(scene, edge_direction, "edge_direction");
@@ -640,10 +608,7 @@ std::vector<at::Tensor> visible_edge_forward_impl(int64_t scene_handle, at::Tens
     if (state_count == 0)
         return {any_visible};
 
-    at::Tensor active_mask = visibility_active_mask(active, state_count, source.options(), "active");
-    active_mask = (active_mask & finite_vec3_rows(source) & finite_vec3_rows(edge_position) &
-                   finite_vec3_rows(edge_direction) & at::isfinite(edge_t_min) & at::isfinite(edge_t_max))
-                      .contiguous();
+    const at::Tensor active_mask = validated_active(active, state_count, "active");
     Vec3SoA edge_direction_soa = split_vec3(edge_direction);
 
     SegmentVisibilityParams params = {};
@@ -658,7 +623,7 @@ std::vector<at::Tensor> visible_edge_forward_impl(int64_t scene_handle, at::Tens
     params.edge_dir_z = edge_direction_soa.z.data_ptr<float>();
     params.edge_t_min = edge_t_min.data_ptr<float>();
     params.edge_t_max = edge_t_max.data_ptr<float>();
-    params.active_mask = mask_ptr(active_mask);
+    params.active_mask = optional_mask_ptr(active_mask);
     params.n_rays = checked_i32(state_count, "state_count");
     params.sample_count = checked_i32(sample_fractions.size(), "sample_count");
     for (size_t i = 0; i < sample_fractions.size(); ++i)
@@ -682,7 +647,8 @@ std::vector<at::Tensor> visible_chain_forward_impl(int64_t scene_handle, at::Ten
     if (points.size(0) != chain_length.size(0))
         throw std::runtime_error("visible_chain points and chain_length must have the same batch size.");
 
-    SceneCache& scene = get_scene(scene_handle);
+    ScenePin scene_pin = get_scene(scene_handle);
+    SceneCache& scene = *scene_pin;
     require_scene_device(scene, points, "points");
     require_scene_device(scene, chain_length, "chain_length");
     require_scene_device(scene, ignore_prim_per_segment, "ignore_prim_per_segment");
@@ -699,8 +665,7 @@ std::vector<at::Tensor> visible_chain_forward_impl(int64_t scene_handle, at::Ten
     if (max_points < 2)
         throw std::runtime_error("visible_chain requires at least two points per chain.");
     const int64_t max_segments = max_points - 1;
-    at::Tensor active_mask = visibility_active_mask(active, chain_count, points.options(), "active");
-    active_mask = (active_mask & chain_length.ge(0) & at::isfinite(points).all(2).all(1)).contiguous();
+    const at::Tensor active_mask = validated_active(active, chain_count, "active");
 
     int32_t ignore_k = 0;
     at::Tensor ignore_ids = prepare_visibility_ignore_ids(ignore_prim_per_segment, chain_count * max_segments, 3,
@@ -721,7 +686,7 @@ std::vector<at::Tensor> visible_chain_forward_impl(int64_t scene_handle, at::Ten
     params.max_segments = checked_i32(max_segments, "max_segments");
     params.ignore_prim_ids = ignore_k > 0 ? ignore_ids.data_ptr<int>() : nullptr;
     params.ignore_k = ignore_k;
-    params.active_mask = mask_ptr(active_mask);
+    params.active_mask = optional_mask_ptr(active_mask);
     params.n_rays = checked_i32(chain_count, "chain_count");
     params.out_visible = mutable_mask_ptr(all_visible);
     params.out_first_blocked_segment = first_blocked_segment.data_ptr<int>();
