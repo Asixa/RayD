@@ -1,7 +1,4 @@
-cmake_minimum_required(VERSION 3.15...3.22)
-if(POLICY CMP0146)
-    cmake_policy(SET CMP0146 OLD)
-endif()
+cmake_minimum_required(VERSION 3.17...3.22)
 
 project(${SKBUILD_PROJECT_NAME} VERSION ${SKBUILD_PROJECT_VERSION})
 
@@ -102,11 +99,18 @@ if(NOT DEFINED RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS)
     set(RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS 11)
 endif()
 
-find_package(CUDA 11.0 REQUIRED)
-set(CUDA_PROPAGATE_HOST_FLAGS OFF)
-mark_as_advanced(CLEAR CUDA_64_BIT_DEVICE_CODE)
+# FindCUDAToolkit locates split toolkit layouts, such as conda's
+# targets/<arch>/{include,lib} beside bin/nvcc, that the legacy FindCUDA misses.
+# The CUDA sources are compiled by the explicit nvcc commands below and in
+# cmake/RayD*.cmake, which invoke CUDA_NVCC_EXECUTABLE; a cache entry of that
+# name still selects a different nvcc.
+find_package(CUDAToolkit 11.0 REQUIRED)
+if(NOT CUDA_NVCC_EXECUTABLE)
+    set(CUDA_NVCC_EXECUTABLE "${CUDAToolkit_NVCC_EXECUTABLE}")
+endif()
+message(STATUS "RayD nvcc: ${CUDA_NVCC_EXECUTABLE} (CUDA ${CUDAToolkit_VERSION})")
 
-# FindCUDA does not support CMAKE_CUDA_COMPILER_LAUNCHER for the explicit NVCC
+# CMAKE_CUDA_COMPILER_LAUNCHER does not apply to the explicit NVCC
 # custom commands below. CI may provide a compiler launcher through a small
 # generated wrapper; local builds keep invoking NVCC directly.
 set(RAYD_NVCC_LAUNCHER "" CACHE STRING
@@ -151,7 +155,7 @@ set(RAYD_CUDA_INCLUDE_DIRS
     "${RAYD_SOURCE_DIR}/runtime"
     "${RAYD_ROOT}"
     "${CMAKE_CURRENT_BINARY_DIR}/generated/drjit/ptx"
-    ${CUDA_INCLUDE_DIRS}
+    ${CUDAToolkit_INCLUDE_DIRS}
     ${RAYD_DRJIT_INCLUDE_DIRS}
 )
 list(REMOVE_DUPLICATES RAYD_CUDA_INCLUDE_DIRS)
@@ -277,10 +281,13 @@ install(
         ${RAYD_ROOT}/python/rayd/_impl/capabilities_jit.py
         ${RAYD_ROOT}/python/rayd/_impl/path_exchange_jit.py
     DESTINATION rayd/_impl)
-# The Torch backend owns device_support.py; this wheel ships the same source
-# under its own suffixed name so the two distributions never share a file.
+# The Torch backend owns device_support.py and diagnostics.py; this wheel ships
+# the same sources under its own suffixed names so the two distributions never
+# share a file.
 install(FILES ${RAYD_ROOT}/python/rayd/_impl/device_support.py
     DESTINATION rayd/_impl RENAME device_support_jit.py)
+install(FILES ${RAYD_ROOT}/python/rayd/_impl/diagnostics.py
+    DESTINATION rayd/_impl RENAME diagnostics_jit.py)
 
 if(WIN32)
     # nvcc drives cl.exe, so the generated .bat wrappers need an initialized MSVC
@@ -589,7 +596,7 @@ target_include_directories(rayd_core
     ${RAYD_GENERATED_PTX_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}/generated/drjit/ptx
-    ${CUDA_INCLUDE_DIRS}
+    ${CUDAToolkit_INCLUDE_DIRS}
     ${Python_INCLUDE_DIRS}
     ${NB_DIR}/include
 )
@@ -616,7 +623,8 @@ if(WIN32)
     # cfgmgr32/advapi32: driver-store lookup for nvoptix.dll in optix_available().
     list(APPEND PYRAYD_LIBRARIES version cfgmgr32 advapi32)
 endif()
-target_link_libraries(rayd_core PUBLIC ${PYRAYD_LIBRARIES} ${CUDA_LIBRARIES})
+# The static CUDA runtime, as the legacy FindCUDA linked by default.
+target_link_libraries(rayd_core PUBLIC ${PYRAYD_LIBRARIES} CUDA::cudart_static)
 set_property(TARGET rayd_core PROPERTY CXX_STANDARD 17)
 set_target_properties(rayd_core PROPERTIES
     POSITION_INDEPENDENT_CODE ON

@@ -32,8 +32,8 @@ DRJIT_NATIVE_STUB = DRJIT_PACKAGE / "_C" / "__init__.pyi"
 # The public modules of each backend package. Every one of them is typed
 # inline. The package-shaped `_C` stub is the only exception because the
 # nanobind extension has no Python source to annotate.
-DRJIT_PUBLIC_MODULES = ("__init__", "path_exchange")
-TORCH_PUBLIC_MODULES = ("__init__", "path_exchange")
+DRJIT_PUBLIC_MODULES = ("__init__", "doctor", "path_exchange")
+TORCH_PUBLIC_MODULES = ("__init__", "doctor", "path_exchange")
 
 # Dunder methods that are part of a public class's callable surface and were
 # typed by the removed stubs; every other dunder stays out of scope.

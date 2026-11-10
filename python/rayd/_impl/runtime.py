@@ -8,9 +8,16 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+import warnings
 from pathlib import Path
 
 import torch
+
+from . import diagnostics as _diagnostics
+
+# An editable install serves rayd.torch from the checkout but these modules from copies its build made; refuse to run
+# copies that no longer match the checkout.
+_diagnostics.require_current_editable_install("torch", __file__)
 
 
 def _library_name(stem: str) -> str:
@@ -22,14 +29,39 @@ def _library_name(stem: str) -> str:
 
 
 def _candidates(stem: str, environment: str) -> list[Path]:
-    candidates: list[Path] = []
+    """The library to load: the explicit override alone when set, else the one beside the `_C` extension."""
     override = os.environ.get(environment)
     if override:
-        candidates.append(Path(override).expanduser().resolve())
+        return [Path(override).expanduser().resolve()]
     spec = importlib.util.find_spec("rayd.torch._C")
     if spec is not None and spec.origin:
-        candidates.append(Path(spec.origin).resolve().with_name(_library_name(stem)))
-    return list(dict.fromkeys(candidates))
+        return [Path(spec.origin).resolve().with_name(_library_name(stem))]
+    return []
+
+
+_BUILD_RECORD = _diagnostics.read_build_record("rayd.torch._C")
+
+
+def _load_failure(stem: str, environment: str, path: Path | None, error: BaseException) -> ImportError:
+    """An ImportError that names the installed and the build-time torch and the command that fixes the mismatch.
+
+    A failure beside an installed `_C` extension, or at an explicit override, is a
+    broken installation rather than an unbuilt source tree, so it is also reported
+    at import as a warning. The import itself stays usable for the doctor,
+    `api_manifest()`, and documentation builds; the error is raised on first
+    native use.
+    """
+    library = _library_name(stem)
+    message = _diagnostics.torch_load_failure(
+        library, path, error, torch.__version__, torch.version.cuda, _BUILD_RECORD
+    )
+    if os.environ.get(environment):
+        message += f"\n{environment} selects {os.environ[environment]}."
+    if path is not None:
+        warnings.warn(message, RuntimeWarning, stacklevel=3)
+    failure = ImportError(message)
+    failure.__cause__ = error
+    return failure
 
 
 _STABLE_REQUIRED = (
@@ -47,26 +79,37 @@ def _stable_registered() -> bool:
     return all(hasattr(torch.ops.rayd_torch_stable, name) for name in _STABLE_REQUIRED)
 
 
+def _load_from(
+    paths: list[Path], stem: str, environment: str, registered, unregistered: str
+) -> tuple[bool, Exception | None, Path | None]:
+    """Load the one candidate library and confirm its registrations, or return the explained failure."""
+    if not paths:
+        missing = FileNotFoundError(f"RayD library {_library_name(stem)} was not found beside rayd.torch._C")
+        return False, _load_failure(stem, environment, None, missing), None
+    path = paths[0]
+    try:
+        if not path.is_file():
+            raise FileNotFoundError(f"{path} does not exist")
+        torch.ops.load_library(str(path))
+        if not registered():
+            raise RuntimeError(f"{unregistered} {path}")
+    except Exception as exc:
+        return False, _load_failure(stem, environment, path, exc), None
+    return True, None, path
+
+
 def _load_stable() -> tuple[bool, Exception | None]:
     if _stable_registered():
         return True, None
-    first_error: Exception | None = None
-    for path in _candidates("_stable_ops", "RAYD_TORCH_STABLE_LIBRARY"):
-        if not path.is_file():
-            continue
-        try:
-            torch.ops.load_library(str(path))
-        except Exception as exc:
-            if first_error is None:
-                first_error = exc
-            continue
-        if _stable_registered():
-            return True, None
-        if first_error is None:
-            first_error = RuntimeError(f"Stable ABI operators were not registered by {path}")
-    return False, first_error or FileNotFoundError(
-        f"RayD stable ABI library {_library_name('_stable_ops')} was not found"
+    paths = _candidates("_stable_ops", "RAYD_TORCH_STABLE_LIBRARY")
+    available, error, _path = _load_from(
+        paths,
+        "_stable_ops",
+        "RAYD_TORCH_STABLE_LIBRARY",
+        _stable_registered,
+        "Stable ABI operators were not registered by",
     )
+    return available, error
 
 
 _STABLE_AVAILABLE, _STABLE_LOAD_ERROR = _load_stable()
@@ -74,9 +117,9 @@ _STABLE_AVAILABLE, _STABLE_LOAD_ERROR = _load_stable()
 
 def _stable_ops():
     if not _STABLE_AVAILABLE:
-        raise RuntimeError(
-            f"RayD Torch stable ABI operators are unavailable: {_library_name('_stable_ops')} did not load."
-        ) from _STABLE_LOAD_ERROR
+        raise RuntimeError(f"RayD Torch stable ABI operators are unavailable: {_STABLE_LOAD_ERROR}") from (
+            _STABLE_LOAD_ERROR
+        )
     require_supported_device()
     return torch.ops.rayd_torch_stable
 
@@ -110,25 +153,13 @@ def _registered() -> bool:
 def _load_legacy() -> tuple[bool, Exception | None, Path | None]:
     if _registered():
         return True, None, None
-    first_error: Exception | None = None
-    for path in _candidates("_legacy_ops", "RAYD_TORCH_LEGACY_LIBRARY"):
-        if not path.is_file():
-            continue
-        try:
-            torch.ops.load_library(str(path))
-        except Exception as exc:
-            if first_error is None:
-                first_error = exc
-            continue
-        if _registered():
-            return True, None, path
-        if first_error is None:
-            first_error = RuntimeError(f"Legacy dispatcher registrations were not provided by {path}")
-    return (
-        False,
-        first_error
-        or FileNotFoundError(f"RayD legacy dispatcher library {_library_name('_legacy_ops')} was not found"),
-        None,
+    paths = _candidates("_legacy_ops", "RAYD_TORCH_LEGACY_LIBRARY")
+    return _load_from(
+        paths,
+        "_legacy_ops",
+        "RAYD_TORCH_LEGACY_LIBRARY",
+        _registered,
+        "Legacy dispatcher registrations were not provided by",
     )
 
 

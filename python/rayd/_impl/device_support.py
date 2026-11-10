@@ -39,6 +39,7 @@ EXACT_CUBIN_COMPUTE_CAPABILITIES = frozenset({72, 87, 101, 110})
 
 SKIP_ENVIRONMENT = "RAYD_SKIP_DEVICE_CHECK"
 DISABLE_OPTIX_ENVIRONMENT = "RAYD_DISABLE_OPTIX"
+_TORCH_DISABLE_OPTIX_ALIAS = "RAYD_TORCH_DISABLE_OPTIX"
 REPOSITORY_URL = "https://github.com/Asixa/RayD"
 
 _DISTRIBUTIONS = {"drjit": "rayd-drjit", "torch": "rayd-torch"}
@@ -105,6 +106,18 @@ class Device:
 
 def _flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def optix_disabled(backend: str) -> bool:
+    """Whether the environment turns OptiX off, read exactly as the backend's native library reads it.
+
+    Only "1" and "true", in any letter case and without surrounding spaces, disable OptiX. The Torch library also
+    honors the former name RAYD_TORCH_DISABLE_OPTIX while RAYD_DISABLE_OPTIX is unset.
+    """
+    value = os.environ.get(DISABLE_OPTIX_ENVIRONMENT)
+    if value is None and backend == "torch":
+        value = os.environ.get(_TORCH_DISABLE_OPTIX_ALIAS)
+    return value is not None and value.lower() in ("1", "true")
 
 
 def _sm(value: int) -> str:
@@ -225,7 +238,7 @@ def check(targets: BuildTargets | None, device: Device) -> None:
     """Raise UnsupportedDeviceError when `device` cannot run `targets`."""
     if targets is None or _flag(SKIP_ENVIRONMENT):
         return
-    found = problems(targets, device.compute_capability, optix=not _flag(DISABLE_OPTIX_ENVIRONMENT))
+    found = problems(targets, device.compute_capability, optix=not optix_disabled(targets.backend))
     if found:
         raise UnsupportedDeviceError(message(targets, device, found))
 
@@ -238,7 +251,7 @@ def check_visible(targets: BuildTargets | None, devices: list[Device] | None) ->
     """
     if targets is None or not devices or _flag(SKIP_ENVIRONMENT):
         return
-    optix = not _flag(DISABLE_OPTIX_ENVIRONMENT)
+    optix = not optix_disabled(targets.backend)
     rejected = [(device, problems(targets, device.compute_capability, optix=optix)) for device in devices]
     rejected = [(device, found) for device, found in rejected if found]
     if len(rejected) == len(devices):

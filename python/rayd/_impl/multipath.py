@@ -39,10 +39,7 @@ def _require_native_dispatcher() -> None:
     and `_C` says nothing about dispatcher availability.
     """
     if not _NATIVE_AVAILABLE:
-        raise RuntimeError(
-            "RayD Torch native dispatcher is unavailable: the _legacy_ops "
-            "library did not load, so torch.ops.rayd_torch has no operators."
-        ) from _legacy.LOAD_ERROR
+        raise RuntimeError(f"RayD Torch native dispatcher is unavailable: {_legacy.LOAD_ERROR}") from _legacy.LOAD_ERROR
     _legacy.require_supported_device()
 
 

@@ -135,6 +135,24 @@ for kwargs in (
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_python_device_check_reads_the_kill_switch_like_the_native_library(self) -> None:
+        body = r"""
+from rayd._impl import device_support
+scene = rt.Scene()
+scene.add_mesh(rt.Mesh(vertices, faces))
+scene.build()
+print(scene.trace_backend, device_support.optix_disabled("torch"))
+"""
+        baseline = _run_fresh(body, disable_optix=False)
+        self.assertEqual(baseline.returncode, 0, baseline.stdout + baseline.stderr)
+        if baseline.stdout.split()[0] != "optix":
+            self.skipTest("OptiX is unavailable here, so the kill switch cannot change the native selection")
+        for value, disabled in (("1", True), ("True", True), ("yes", False), ("on", False), (" 1", False)):
+            with self.subTest(value=value):
+                result = _run_fresh(body, disable_optix=value)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(result.stdout.split(), ["cuda", "True"] if disabled else ["optix", "False"])
+
     def test_explicit_cuda_does_not_initialize_optix(self) -> None:
         result = _run_fresh(
             r"""

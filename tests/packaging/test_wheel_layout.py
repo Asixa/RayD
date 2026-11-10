@@ -118,10 +118,12 @@ class WheelLayoutTests(unittest.TestCase):
             "rayd/_impl/capabilities_jit.py",
             "rayd/_impl/path_exchange_jit.py",
             "rayd/_impl/device_support_jit.py",
+            "rayd/_impl/diagnostics_jit.py",
         }
         torch_impl = {
             "rayd/_impl/runtime.py",
             "rayd/_impl/device_support.py",
+            "rayd/_impl/diagnostics.py",
             "rayd/_impl/capabilities.py",
             "rayd/_impl/path_exchange.py",
             "rayd/_impl/geometry.py",
@@ -239,9 +241,9 @@ class WheelLayoutTests(unittest.TestCase):
         self.assertIn("rayd/drjit/py.typed", drjit)
         self.assertIn("rayd/drjit/_C/__init__.pyi", drjit)
         self.assertIn("rayd/torch/py.typed", torch)
-        for name in ("__init__.py", "path_exchange.py", "py.typed"):
+        for name in ("__init__.py", "doctor.py", "path_exchange.py", "py.typed"):
             self.assertIn(f"rayd/drjit/{name}", drjit)
-        for name in ("__init__.py", "path_exchange.py", "py.typed"):
+        for name in ("__init__.py", "doctor.py", "path_exchange.py", "py.typed"):
             self.assertIn(f"rayd/torch/{name}", torch)
         # No other shipped stub may shadow an inline-annotated module: a stale
         # stub silently wins over the annotations next to it.

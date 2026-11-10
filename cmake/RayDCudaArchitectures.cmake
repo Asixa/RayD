@@ -154,7 +154,43 @@ endfunction()
 
 # Write the `_build_config.json` record read by rayd/_impl/device_support.py.
 # KNOWN is FALSE when the CUDA kernels used the compiler default architecture.
+#
+# The record also names the framework the build compiled against, the CUDA
+# toolkit, and the OptiX ABI it requests from the driver, so an installed build
+# can explain a framework or driver mismatch. Optional keywords:
+#   FRAMEWORK_VERSION  framework version; defaults to <BACKEND>_VERSION
+#   FRAMEWORK_CUDA     CUDA version of the framework build (Torch only)
+#   OPTIX_ABI_HEADER   header defining OPTIX_ABI_VERSION or RAYD_OPTIX_TARGET_ABI;
+#                      defaults to the Dr.Jit target in include/rayd/jit/optix.h
 function(rayd_write_build_config PATH BACKEND KNOWN SASS PTX OPTIX)
+    cmake_parse_arguments(_record "" "FRAMEWORK_VERSION;FRAMEWORK_CUDA;OPTIX_ABI_HEADER" "" ${ARGN})
+    if(NOT DEFINED _record_FRAMEWORK_VERSION AND DEFINED ${BACKEND}_VERSION)
+        set(_record_FRAMEWORK_VERSION "${${BACKEND}_VERSION}")
+    endif()
+    if(NOT DEFINED _record_OPTIX_ABI_HEADER AND BACKEND STREQUAL "drjit")
+        set(_record_OPTIX_ABI_HEADER "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../include/rayd/jit/optix.h")
+    endif()
+    set(_optix_abi "null")
+    if(DEFINED _record_OPTIX_ABI_HEADER AND EXISTS "${_record_OPTIX_ABI_HEADER}")
+        file(STRINGS "${_record_OPTIX_ABI_HEADER}" _abi_lines
+            REGEX "^#define[ \t]+(OPTIX_ABI_VERSION|RAYD_OPTIX_TARGET_ABI)[ \t]+[0-9]+")
+        if(_abi_lines)
+            list(GET _abi_lines 0 _abi_line)
+            string(REGEX MATCH "[0-9]+$" _optix_abi "${_abi_line}")
+        endif()
+    endif()
+    foreach(_field FRAMEWORK_VERSION FRAMEWORK_CUDA)
+        if(DEFINED _record_${_field} AND NOT _record_${_field} STREQUAL "")
+            set(_json_${_field} "\"${_record_${_field}}\"")
+        else()
+            set(_json_${_field} "null")
+        endif()
+    endforeach()
+    if(DEFINED CUDAToolkit_VERSION)
+        set(_cuda_toolkit "\"${CUDAToolkit_VERSION}\"")
+    else()
+        set(_cuda_toolkit "null")
+    endif()
     list(REMOVE_ITEM SASS "")
     list(REMOVE_ITEM PTX "")
     if(KNOWN)
@@ -168,6 +204,8 @@ function(rayd_write_build_config PATH BACKEND KNOWN SASS PTX OPTIX)
     list(SORT PTX COMPARE NATURAL)
     string(REPLACE ";" ", " _ptx "[${PTX}]")
     file(CONFIGURE OUTPUT "${PATH}" CONTENT
-"{\"backend\": \"${BACKEND}\", \"cuda_sass\": ${_sass}, \"cuda_ptx\": ${_ptx}, \"optix_ptx\": ${OPTIX}}
+"{\"backend\": \"${BACKEND}\", \"cuda_sass\": ${_sass}, \"cuda_ptx\": ${_ptx}, \"optix_ptx\": ${OPTIX}, \
+\"optix_abi\": ${_optix_abi}, \"cuda_toolkit\": ${_cuda_toolkit}, \"framework\": \"${BACKEND}\", \
+\"framework_version\": ${_json_FRAMEWORK_VERSION}, \"framework_cuda\": ${_json_FRAMEWORK_CUDA}}
 " @ONLY)
 endfunction()

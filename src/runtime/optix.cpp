@@ -14,6 +14,7 @@
 #include <rayd/contracts.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -439,6 +440,48 @@ bool env_value_is_true(const char* raw) {
                    [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return value == "1" || value == "true";
 }
+
+bool optix_disabled_by_environment() {
+    const char* disabled = std::getenv("RAYD_DISABLE_OPTIX");
+    if (disabled == nullptr)
+        disabled = std::getenv("RAYD_TORCH_DISABLE_OPTIX");
+    return env_value_is_true(disabled);
+}
+
+#ifdef _WIN32
+constexpr const char* kOptixLibraryName = "nvoptix.dll";
+#else
+constexpr const char* kOptixLibraryName = "libnvoptix.so.1";
+#endif
+
+// The two optixInit() failures that mean "this machine has no usable OptiX", explained with what fixes them.
+std::string optix_runtime_unavailable_reason(OptixResult result) {
+    if (result == OPTIX_ERROR_LIBRARY_NOT_FOUND)
+        return std::string("the driver's OptiX library (") + kOptixLibraryName +
+               ") was not found; in a container, start it with NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility "
+               "(or all), because the default compute,utility does not mount it";
+    int driver_version = 0;
+    const std::string driver = cudaDriverGetVersion(&driver_version) == cudaSuccess
+                                   ? "this driver supports CUDA " + std::to_string(driver_version / 1000) + "." +
+                                         std::to_string((driver_version % 1000) / 10)
+                                   : "the driver version is unknown";
+    // OptiX 8.1 (ABI 93), the release-wheel SDK, first shipped in driver R555.
+    const std::string minimum =
+        OPTIX_ABI_VERSION == 93 ? "R555 or newer" : "one that ships OptiX ABI " + std::to_string(OPTIX_ABI_VERSION);
+    return "the NVIDIA driver is older than the OptiX ABI " + std::to_string(OPTIX_ABI_VERSION) +
+           " this build requests (" + driver + "); update it to " + minimum;
+}
+
+// trace_backend='auto' still works without OptiX, but on the much slower CUDA traversal. Say why once per process.
+void warn_optix_fallback_once(int device_index, const char* reason) {
+    static std::atomic<bool> warned{false};
+    if (warned.exchange(true))
+        return;
+    TORCH_WARN("RayD: OptiX is unavailable on CUDA device ", device_index,
+               ", so trace_backend='auto' uses the slower CUDA trace backend: ", reason,
+               ". Pass trace_backend='cuda' to choose it explicitly, set RAYD_DISABLE_OPTIX=1 to silence this, or run "
+               "`python -m rayd.torch.doctor` for a full report.");
+}
 } // namespace
 
 TorchCudaContext current_torch_cuda_context() {
@@ -463,10 +506,7 @@ OptixDeviceContextEntry& get_optix_context(int device_index) {
     if (cu_result != CUDA_SUCCESS || cu_ctx == nullptr)
         throw std::runtime_error("Could not get current CUDA context for OptiX.");
 
-    const char* disabled = std::getenv("RAYD_DISABLE_OPTIX");
-    if (disabled == nullptr)
-        disabled = std::getenv("RAYD_TORCH_DISABLE_OPTIX");
-    if (env_value_is_true(disabled)) {
+    if (optix_disabled_by_environment()) {
         throw OptixCapabilityUnavailable("OptiX is disabled by RAYD_DISABLE_OPTIX.");
     }
 
@@ -478,8 +518,9 @@ OptixDeviceContextEntry& get_optix_context(int device_index) {
     OptixDeviceContext optix_ctx = nullptr;
     const OptixResult init_result = optixInit();
     if (init_result == OPTIX_ERROR_LIBRARY_NOT_FOUND || init_result == OPTIX_ERROR_UNSUPPORTED_ABI_VERSION) {
-        throw OptixCapabilityUnavailable(std::string("OptiX runtime is unavailable: ") +
-                                         optixGetErrorName(init_result));
+        throw OptixCapabilityUnavailable(std::string("OptiX runtime is unavailable (") +
+                                         optixGetErrorName(init_result) +
+                                         "): " + optix_runtime_unavailable_reason(init_result));
     }
     rayd_torch_OPTIX_CHECK(init_result);
     OptixDeviceContextOptions options = {};
@@ -505,7 +546,9 @@ bool optix_context_available(int device_index) {
     try {
         (void)get_optix_context(device_index);
         return true;
-    } catch (const OptixCapabilityUnavailable&) {
+    } catch (const OptixCapabilityUnavailable& error) {
+        if (!optix_disabled_by_environment())
+            warn_optix_fallback_once(device_index, error.what());
         return false;
     }
 }

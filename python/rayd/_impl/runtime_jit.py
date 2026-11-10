@@ -1,6 +1,7 @@
 # Copyright Xingyu Chen.
 # Implements shared Python support for runtime Dr.Jit.
 
+import importlib as _importlib
 import os as _os
 import pathlib as _pathlib
 import sys as _sys
@@ -12,6 +13,23 @@ if not _TYPE_CHECKING:
 
     if _sys.platform == "win32" and hasattr(_os, "add_dll_directory"):
         _drjit_dll_directory = _os.add_dll_directory(str(_pathlib.Path(_drjit.__file__).resolve().parent))
+
+try:
+    # The rayd-drjit wheel installs the shared module under this suffixed name.
+    from rayd._impl import diagnostics_jit as _diagnostics
+except ImportError:
+    # A source tree on PYTHONPATH holds it only under its canonical name.
+    from rayd._impl import diagnostics as _diagnostics
+
+# An editable install serves rayd.drjit from the checkout but these modules from copies its build made; refuse to run
+# copies that no longer match the checkout.
+_diagnostics.require_current_editable_install("drjit", __file__)
+
+try:
+    _importlib.import_module("rayd.drjit._C")
+except ImportError as _error:
+    _record = _diagnostics.read_build_record("rayd.drjit._C")
+    raise ImportError(_diagnostics.drjit_load_failure(_error, _drjit.__version__, _record)) from _error
 
 from rayd.drjit._C import *  # noqa: F401,F403
 from rayd._impl.capabilities_jit import api_manifest, backend_capabilities

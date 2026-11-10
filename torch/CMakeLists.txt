@@ -50,6 +50,18 @@ if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
 endif()
 
 set(RAYD_TORCH_DEFAULT_CUDA_ARCHITECTURES "native")
+# Remember an architecture list the caller chose before the defaults below rewrite the cache, so RAYD_CUDA_ARCHS can
+# refuse to override it. CMake's own default (52, or the CUDAARCHS environment initializer) and the values this file
+# writes itself are not a caller's choice.
+set(RAYD_TORCH_CALLER_CUDA_ARCHITECTURES "")
+if(DEFINED ENV{CMAKE_CUDA_ARCHITECTURES} AND NOT "$ENV{CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
+    set(RAYD_TORCH_CALLER_CUDA_ARCHITECTURES "$ENV{CMAKE_CUDA_ARCHITECTURES}")
+elseif(DEFINED CMAKE_CUDA_ARCHITECTURES
+       AND NOT CMAKE_CUDA_ARCHITECTURES MATCHES "^(|52|native|OFF)$"
+       AND NOT CMAKE_CUDA_ARCHITECTURES STREQUAL "$ENV{CUDAARCHS}"
+       AND NOT CMAKE_CUDA_ARCHITECTURES STREQUAL "${RAYD_TORCH_SELECTED_CUDA_ARCHITECTURES}")
+    set(RAYD_TORCH_CALLER_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
+endif()
 if(DEFINED ENV{CMAKE_CUDA_ARCHITECTURES}
    AND NOT "$ENV{CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
     set(
@@ -78,6 +90,24 @@ if(RAYD_CUDA_ARCHS_SET)
     if(NOT RAYD_TORCH_CUDA_GENCODE_FLAGS STREQUAL "")
         message(FATAL_ERROR "Set either RAYD_CUDA_ARCHS or RAYD_TORCH_CUDA_GENCODE_FLAGS, not both.")
     endif()
+    set(RAYD_TORCH_CONFLICTING_ARCHITECTURES "")
+    if(NOT RAYD_TORCH_CALLER_CUDA_ARCHITECTURES STREQUAL "")
+        list(APPEND RAYD_TORCH_CONFLICTING_ARCHITECTURES
+            "CMAKE_CUDA_ARCHITECTURES=${RAYD_TORCH_CALLER_CUDA_ARCHITECTURES}")
+    endif()
+    if(DEFINED ENV{TORCH_CUDA_ARCH_LIST} AND NOT "$ENV{TORCH_CUDA_ARCH_LIST}" STREQUAL "")
+        list(APPEND RAYD_TORCH_CONFLICTING_ARCHITECTURES "TORCH_CUDA_ARCH_LIST=$ENV{TORCH_CUDA_ARCH_LIST}")
+    elseif(DEFINED CACHE{TORCH_CUDA_ARCH_LIST} AND NOT "$CACHE{TORCH_CUDA_ARCH_LIST}" STREQUAL "")
+        list(APPEND RAYD_TORCH_CONFLICTING_ARCHITECTURES "TORCH_CUDA_ARCH_LIST=$CACHE{TORCH_CUDA_ARCH_LIST}")
+    endif()
+    if(RAYD_TORCH_CONFLICTING_ARCHITECTURES)
+        string(JOIN ", " RAYD_TORCH_CONFLICTING_ARCHITECTURES ${RAYD_TORCH_CONFLICTING_ARCHITECTURES})
+        message(FATAL_ERROR
+            "Set either RAYD_CUDA_ARCHS=${RAYD_CUDA_ARCHS} or the release-only architecture variables, not both "
+            "(also set: ${RAYD_TORCH_CONFLICTING_ARCHITECTURES}). RAYD_CUDA_ARCHS selects every CUDA target of a "
+            "source build; unset CMAKE_CUDA_ARCHITECTURES and TORCH_CUDA_ARCH_LIST in the environment and the "
+            "CMake cache, or leave RAYD_CUDA_ARCHS unset to use them.")
+    endif()
     set(RAYD_TORCH_REQUESTED_ARCHITECTURES "")
     set(TORCH_CUDA_ARCH_LIST "")
     foreach(RAYD_CUDA_ARCH IN LISTS RAYD_CUDA_ARCHS_SASS)
@@ -97,7 +127,15 @@ if(RAYD_CUDA_ARCHS_SET)
         CACHE STRING
         "CUDA architectures for RayD Torch native kernels."
         FORCE)
+    set(RAYD_TORCH_SELECTED_CUDA_ARCHITECTURES "${RAYD_TORCH_REQUESTED_ARCHITECTURES}" CACHE INTERNAL
+        "The CMAKE_CUDA_ARCHITECTURES value RAYD_CUDA_ARCHS wrote, which a reconfigure must not treat as a conflict.")
     message(STATUS "RayD RAYD_CUDA_ARCHS: SASS ${RAYD_CUDA_ARCHS_SASS}; PTX ${RAYD_CUDA_ARCHS_PTX}")
+elseif(CMAKE_CUDA_ARCHITECTURES STREQUAL "native" AND NOT CMAKE_CUDA_ARCHITECTURES_NATIVE MATCHES "^[0-9]")
+    # Without a GPU, CMake records a "No CUDA devices found." placeholder instead of an architecture.
+    message(FATAL_ERROR
+        "RayD Torch defaults to the CUDA architecture of the local GPU, but CMake detected no NVIDIA GPU on this "
+        "machine. Set RAYD_CUDA_ARCHS to the GPUs the build should run on, for example RAYD_CUDA_ARCHS=86 or "
+        "RAYD_CUDA_ARCHS=75,86,89.")
 endif()
 
 # OptiX rejects PTX newer than the device and compiles older PTX forward, so the
@@ -189,6 +227,7 @@ install(
     FILES
         ${RAYD_ROOT_DIR}/python/rayd/_impl/runtime.py
         ${RAYD_ROOT_DIR}/python/rayd/_impl/device_support.py
+        ${RAYD_ROOT_DIR}/python/rayd/_impl/diagnostics.py
         ${RAYD_ROOT_DIR}/python/rayd/_impl/capabilities.py
         ${RAYD_ROOT_DIR}/python/rayd/_impl/path_exchange.py
         ${RAYD_ROOT_DIR}/python/rayd/_impl/geometry.py
@@ -231,8 +270,21 @@ if(RAYD_TORCH_BUILD_NATIVE)
             "/opt/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64"
         PATH_SUFFIXES include
     )
+    # Opt-in only: a build never downloads anything unless asked. The headers are the ones release CI uses.
+    option(RAYD_FETCH_OPTIX_HEADERS "Download the OptiX SDK 8.1 headers (NVIDIA/optix-dev v8.1.0) if none are found." OFF)
+    if(NOT OPTIX_INCLUDE_DIR AND RAYD_FETCH_OPTIX_HEADERS)
+        include(FetchContent)
+        FetchContent_Declare(rayd_optix_headers
+            GIT_REPOSITORY https://github.com/NVIDIA/optix-dev.git GIT_TAG v8.1.0 GIT_SHALLOW TRUE
+            SOURCE_SUBDIR no-cmake-project)
+        FetchContent_MakeAvailable(rayd_optix_headers)
+        set(OPTIX_INCLUDE_DIR "${rayd_optix_headers_SOURCE_DIR}/include" CACHE PATH "OptiX SDK headers." FORCE)
+    endif()
     if(NOT OPTIX_INCLUDE_DIR)
-        message(FATAL_ERROR "Could not locate OptiX SDK include directory. Set OPTIX_INCLUDE_DIR or OPTIX_PATH.")
+        message(FATAL_ERROR
+            "Could not locate the OptiX SDK headers (optix.h). Set OPTIX_INCLUDE_DIR or OPTIX_PATH to an OptiX SDK "
+            "8.1 or newer, for example a checkout of https://github.com/NVIDIA/optix-dev at tag v8.1.0, or configure "
+            "with -DRAYD_FETCH_OPTIX_HEADERS=ON to download those headers.")
     endif()
 
     execute_process(
@@ -244,6 +296,26 @@ if(RAYD_TORCH_BUILD_NATIVE)
     if(NOT TORCH_CMAKE_PREFIX_RESULT EQUAL 0)
         message(FATAL_ERROR "Could not locate PyTorch CMake prefix. Install torch in the build environment.")
     endif()
+    # The extension links Torch's CUDA libraries, so a CPU-only Torch cannot build it; fail before Caffe2 does with a
+    # less specific error. The version and CUDA build are recorded so an installed build can name a later mismatch.
+    execute_process(
+        COMMAND "${Python_EXECUTABLE}" -c "import torch; print(torch.__version__); print(torch.version.cuda or '')"
+        RESULT_VARIABLE RAYD_TORCH_VERSION_RESULT
+        OUTPUT_VARIABLE RAYD_TORCH_VERSION_OUTPUT
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+    string(REPLACE "\n" ";" RAYD_TORCH_VERSION_OUTPUT "${RAYD_TORCH_VERSION_OUTPUT}")
+    list(APPEND RAYD_TORCH_VERSION_OUTPUT "" "")
+    list(GET RAYD_TORCH_VERSION_OUTPUT 0 RAYD_TORCH_BUILD_TORCH_VERSION)
+    list(GET RAYD_TORCH_VERSION_OUTPUT 1 RAYD_TORCH_BUILD_TORCH_CUDA)
+    if(NOT RAYD_TORCH_VERSION_RESULT EQUAL 0 OR RAYD_TORCH_BUILD_TORCH_CUDA STREQUAL "")
+        message(FATAL_ERROR
+            "RayD Torch needs a CUDA build of torch in the build environment, but ${Python_EXECUTABLE} has torch "
+            "'${RAYD_TORCH_BUILD_TORCH_VERSION}' without CUDA (torch.version.cuda is None). Install the CUDA 12.8 "
+            "build and build with --no-build-isolation so pip does not fetch a CPU-only torch:\n"
+            "    python -m pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128")
+    endif()
+    message(STATUS
+        "RayD Torch builds against torch ${RAYD_TORCH_BUILD_TORCH_VERSION} (CUDA ${RAYD_TORCH_BUILD_TORCH_CUDA})")
     list(PREPEND CMAKE_PREFIX_PATH "${TORCH_CMAKE_PREFIX}")
     if(WIN32)
         get_filename_component(PYTHON_ENV_ROOT "${Python_EXECUTABLE}" DIRECTORY)
@@ -273,7 +345,25 @@ if(RAYD_TORCH_BUILD_NATIVE)
             OUTPUT_VARIABLE TORCH_CUDA_ARCH_LIST
             OUTPUT_STRIP_TRAILING_WHITESPACE)
         if(NOT TORCH_CUDA_ARCH_RESULT EQUAL 0 OR TORCH_CUDA_ARCH_LIST STREQUAL "")
-            message(FATAL_ERROR "Could not detect the local Torch CUDA architecture. Set CMAKE_CUDA_ARCHITECTURES and TORCH_CUDA_ARCH_LIST explicitly for cross-compilation.")
+            message(FATAL_ERROR
+                "Could not detect the CUDA architecture of a local GPU through torch.cuda, which the default build "
+                "targets. On a machine without a usable GPU, set RAYD_CUDA_ARCHS to the GPUs the build should run "
+                "on, for example RAYD_CUDA_ARCHS=86 or RAYD_CUDA_ARCHS=75,86,89.")
+        endif()
+    endif()
+    # Caffe2's legacy FindCUDA looks for headers and libraries beside bin/nvcc and misses split layouts such as
+    # conda's targets/<arch>/{include,lib}. Seed it with what FindCUDAToolkit already resolved; explicit settings win.
+    if(NOT CUDA_TOOLKIT_ROOT_DIR)
+        list(GET CUDAToolkit_INCLUDE_DIRS 0 RAYD_TORCH_CUDA_INCLUDE_DIR)
+        get_filename_component(RAYD_TORCH_CUDA_TOOLKIT_ROOT "${RAYD_TORCH_CUDA_INCLUDE_DIR}" DIRECTORY)
+        set(CUDA_TOOLKIT_ROOT_DIR "${RAYD_TORCH_CUDA_TOOLKIT_ROOT}" CACHE PATH "CUDA toolkit root for FindCUDA.")
+    endif()
+    # FindCUDA drops a cached nvcc whenever the toolkit root changes, but always honors this variable.
+    if(NOT DEFINED ENV{CUDA_NVCC_EXECUTABLE})
+        if(CUDA_NVCC_EXECUTABLE)
+            set(ENV{CUDA_NVCC_EXECUTABLE} "${CUDA_NVCC_EXECUTABLE}")
+        else()
+            set(ENV{CUDA_NVCC_EXECUTABLE} "${CUDAToolkit_NVCC_EXECUTABLE}")
         endif()
     endif()
     find_package(Torch REQUIRED)
@@ -319,7 +409,9 @@ if(RAYD_TORCH_BUILD_NATIVE)
     rayd_cuda_targets_from_gencode("${CMAKE_CUDA_FLAGS}" RAYD_TORCH_CAFFE2_SASS_ARCHS RAYD_TORCH_CAFFE2_PTX_ARCHS)
     rayd_write_build_config("${CMAKE_CURRENT_BINARY_DIR}/_build_config.json" torch ${RAYD_TORCH_ARCHS_KNOWN}
         "${RAYD_TORCH_SASS_ARCHS};${RAYD_TORCH_CAFFE2_SASS_ARCHS}"
-        "${RAYD_TORCH_PTX_ARCHS};${RAYD_TORCH_CAFFE2_PTX_ARCHS}" ${RAYD_TORCH_OPTIX_PTX_ARCH})
+        "${RAYD_TORCH_PTX_ARCHS};${RAYD_TORCH_CAFFE2_PTX_ARCHS}" ${RAYD_TORCH_OPTIX_PTX_ARCH}
+        FRAMEWORK_VERSION "${RAYD_TORCH_BUILD_TORCH_VERSION}" FRAMEWORK_CUDA "${RAYD_TORCH_BUILD_TORCH_CUDA}"
+        OPTIX_ABI_HEADER "${OPTIX_INCLUDE_DIR}/optix_function_table.h")
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/_build_config.json" DESTINATION rayd/torch)
 
     # Stable ABI shims are exported by torch_cpu and torch_cuda. Link those
@@ -883,8 +975,8 @@ if(RAYD_TORCH_BUILD_NATIVE)
 
     # ADR-0035 profile: fast_math, and divergence D3: this is the only Torch
     # consumer of the shared UTD math compiled that way, while the fused
-    # multipath executor reads the same headers at nvcc defaults and the nine
-    # scattering units below read them without FMA contraction. No family record
+    # multipath executor reads the same headers at nvcc defaults and the five
+    # no_fmad scattering units below read them without FMA contraction. No family record
     # explains the choice; it is recorded as uncontracted, not as approved.
     set_source_files_properties(
         ${RAYD_ROOT_DIR}/src/diffraction/wedge.cu
@@ -904,7 +996,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             COMPILE_OPTIONS "$<$<COMPILE_LANGUAGE:CUDA>:--ftz=false;--prec-div=true;--prec-sqrt=true>")
 
     # ADR-0026 preserves the source-local arithmetic policy from Channel. The
-    # sampling/eval primal in scattering.cu deliberately keeps target defaults;
+    # sampling/eval primal in table.cu deliberately keeps target defaults;
     # the lockstep/AD translation units disable FMA contraction.
     # ADR-0035 profile: no_fmad, family-exhaustive. No other translation unit in
     # either backend may take this profile.
@@ -1015,6 +1107,9 @@ if(RAYD_TORCH_BUILD_NATIVE)
     target_compile_features(rayd_torch_python_ops PUBLIC cxx_std_17)
 
     if(BUILD_TESTING AND RAYD_TORCH_BUILD_CPP_TESTS)
+        # Each test names rayd_torch_python_ops directly before Python::Python. Linked only through the interface
+        # target, the static half lands after libpython on the command line, and a linker that drops unreferenced
+        # shared libraries (--as-needed, the conda/Linux default) then leaves its CPython references unresolved.
         add_executable(
             rayd_torch_integration_test
             ${RAYD_ROOT_DIR}/tests/native/integration_test.cpp)
@@ -1029,6 +1124,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             rayd_torch_integration_test
             PRIVATE
                 rayd_torch_native_core
+                rayd_torch_python_ops
                 Python::Python)
         target_compile_features(rayd_torch_integration_test PRIVATE cxx_std_17)
         add_test(
@@ -1049,6 +1145,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             rayd_torch_segment_penetration_test
             PRIVATE
                 rayd_torch_native_core
+                rayd_torch_python_ops
                 Python::Python)
         target_compile_features(
             rayd_torch_segment_penetration_test PRIVATE cxx_std_17)
@@ -1072,6 +1169,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             rayd_torch_diffraction_wedge_test
             PRIVATE
                 rayd_torch_native_core
+                rayd_torch_python_ops
                 Python::Python)
         target_compile_features(
             rayd_torch_diffraction_wedge_test PRIVATE cxx_std_17)
@@ -1092,6 +1190,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             rayd_torch_scattering_test
             PRIVATE
                 rayd_torch_native_core
+                rayd_torch_python_ops
                 Python::Python)
         target_compile_features(
             rayd_torch_scattering_test PRIVATE cxx_std_17)
@@ -1112,6 +1211,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             rayd_torch_scattering_chain_test
             PRIVATE
                 rayd_torch_native_core
+                rayd_torch_python_ops
                 Python::Python)
         target_compile_features(
             rayd_torch_scattering_chain_test PRIVATE cxx_std_17)
