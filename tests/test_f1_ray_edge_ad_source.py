@@ -28,13 +28,16 @@ class F1RayEdgeAdSourceTests(unittest.TestCase):
         self.assertIn("tape_edge_id[ray_idx]", source)
 
     def test_tmax_is_a_detached_domain_boundary(self):
+        # Both the fused and the per-mesh ray-edge Functions come from one factory; each returns no gradient in the
+        # ray_tmax slot and never reads a ray_tmax tangent.
         source = (ROOT / "python/rayd/_impl/multipath.py").read_text(encoding="utf-8")
-        jvp_start = source.index("class _NearestEdgeRayFunction")
+        jvp_start = source.index("def _make_nearest_edge_ray_function")
         jvp_end = source.index("\ndef nearest_edge_ray", jvp_start)
         ray_ad = source[jvp_start:jvp_end]
-        self.assertIn("grad_ray_tmax", ray_ad)
+        self.assertIn("ray_tmax_at = 4 if fused else 3", ray_ad)
         self.assertIn("return None, grad_vertices, grad_ray_o, grad_ray_d, None, None", ray_ad)
-        self.assertNotIn("_native_tangent_or_none(grad_ray_tmax)", ray_ad)
+        self.assertIn("return None, grad_ray_o, grad_ray_d, None, None, *mesh_grads", ray_ad)
+        self.assertNotIn("tangents[ray_tmax_at]", ray_ad)
 
 
 if __name__ == "__main__":

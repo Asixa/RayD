@@ -154,7 +154,6 @@ def _build_dynamic_scene(mesh_data: dict[str, list[float] | list[int]]) -> tuple
 def _benchmark_forward_queries(
     scene: Any, point_queries: cuda.Array3f, finite_rays: Any, infinite_rays: Any, repeats: int, warmup: int
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-
     point_result = scene.nearest_edge(point_queries)
     _eval_point_result(point_result)
     finite_result = scene.nearest_edge(finite_rays)

@@ -85,6 +85,43 @@ class GpuCiContractTests(unittest.TestCase):
                 self.assertIn(marker, self.single_gpu)
         self.assertIn("test_reflection_field_two_bounce_valid_path_geometry_parity", FIELD_PARITY.read_text())
 
+    def test_single_gpu_workflow_runs_validation_parity_gradient_and_runtime_suites(self) -> None:
+        for marker in (
+            "tests.scene.test_mesh_uv",
+            "tests.scene.test_scene_validation",
+            "tests.scene.test_scene_concurrency",
+            "tests.scene.test_lazy_intersection_staging",
+            "tests.scene.test_compile_handle_geometry_version",
+            "tests.scene.test_dynamic_gas_rebuild",
+            "tests.scene.test_non_finite_vertices",
+            "tests.scene.test_input_hardening_jit",
+            "tests.edge.test_edge_acceleration_lifecycle",
+            "tests.edge.test_edge_ray_backends",
+            "tests.edge.test_short_edge_distance",
+            "tests.edge.test_native_bvh_query_jit",
+            "tests.diffraction.test_coherent_multi_state",
+            "tests.diffraction.test_chain_multi_state",
+            "tests.reflection.test_torch_forward_ad_active_mask",
+            "tests.runtime.test_diagnostics",
+            "tests.runtime.test_doctor",
+            "tests.runtime.test_native_load_failure",
+            "tests.runtime.test_pipeline_create_retry",
+            "tests.runtime.test_pipeline_create_retry_jit",
+            "tests.parity.test_backend_parity",
+            "tests.parity.test_backend_parity_multipath",
+            "tests.parity.test_validation_parity",
+            "tests.gradients.test_geometry_fd_torch",
+            "tests.gradients.test_geometry_fd_jit",
+            "tests.gradients.test_multipath_fd_torch",
+            "tests.gradients.test_multipath_fd_jit",
+            "tests.packaging.test_torch_cmake_configure",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(f"            {marker}", self.single_gpu)
+                self.assertTrue((ROOT / (marker.replace(".", "/") + ".py")).is_file(), marker)
+        # The Torch cross-device rejection cases need two devices, so the multi-GPU job runs them too.
+        self.assertIn("tests.scene.test_scene_validation", self.multi_gpu)
+
     def test_single_gpu_preflight_rejects_stale_public_and_native_imports(self) -> None:
         for module in ("rayd.torch._C", "rayd.drjit._C"):
             with self.subTest(module=module):

@@ -56,7 +56,8 @@ jobs:
 
       - name: Require a working CUDA device in Torch and Dr.Jit
         shell: bash
-        run: "$PYTHON" -I tests/support/single_gpu_ci_preflight.py device
+        run: |
+          "$PYTHON" -I tests/support/single_gpu_ci_preflight.py device
 
       - name: Build both backends from the checked-out source
         shell: bash
@@ -75,7 +76,8 @@ jobs:
 
       - name: Print import paths and require both OptiX backends
         shell: bash
-        run: "$PYTHON" -I tests/support/single_gpu_ci_preflight.py optix
+        run: |
+          "$PYTHON" -I tests/support/single_gpu_ci_preflight.py optix
 
       - name: Torch CUDA and OptiX core
         shell: bash
@@ -87,7 +89,20 @@ jobs:
             tests.native.test_dispatcher_bindings \
             tests.native.test_multipath \
             tests.scene.test_mesh_instancing \
-            tests.reflection.test_torch_high_level_api
+            tests.scene.test_mesh_uv \
+            tests.scene.test_scene_validation \
+            tests.scene.test_scene_concurrency \
+            tests.scene.test_lazy_intersection_staging \
+            tests.scene.test_compile_handle_geometry_version \
+            tests.scene.test_dynamic_gas_rebuild \
+            tests.scene.test_non_finite_vertices \
+            tests.edge.test_edge_acceleration_lifecycle \
+            tests.edge.test_edge_ray_backends \
+            tests.edge.test_short_edge_distance \
+            tests.diffraction.test_coherent_multi_state \
+            tests.diffraction.test_chain_multi_state \
+            tests.reflection.test_torch_high_level_api \
+            tests.reflection.test_torch_forward_ad_active_mask
           do
             echo "::group::$module"
             "$PYTHON" -m unittest "$module" -v || status=1
@@ -101,6 +116,8 @@ jobs:
           status=0
           for module in \
             tests.scene.test_geometry_jit \
+            tests.scene.test_input_hardening_jit \
+            tests.edge.test_native_bvh_query_jit \
             tests.reflection.test_epc_jit \
             tests.reflection.test_accumulation_jit \
             tests.diffraction.test_accumulation_jit \
@@ -114,7 +131,35 @@ jobs:
 
       - name: Dr.Jit cold OptiX pipeline matrix
         shell: bash
-        run: "$PYTHON" -m unittest tests.native.test_optix_pipeline_cold_create_jit -v
+        run: |
+          "$PYTHON" -m unittest tests.native.test_optix_pipeline_cold_create_jit -v
+
+      - name: Runtime diagnostics and OptiX pipeline-create retry
+        shell: bash
+        # The retry modules compile tests/support/optix_fault_injection.c into a stand-in driver OptiX library and
+        # run each case in a child process; they need a C compiler on the runner.
+        run: |
+          status=0
+          for module in \
+            tests.runtime.test_diagnostics \
+            tests.runtime.test_doctor \
+            tests.runtime.test_native_load_failure \
+            tests.runtime.test_pipeline_create_retry \
+            tests.runtime.test_pipeline_create_retry_jit
+          do
+            echo "::group::$module"
+            "$PYTHON" -m unittest "$module" -v || status=1
+            echo "::endgroup::"
+          done
+          exit "$status"
+
+      - name: Torch CMake configure rules
+        shell: bash
+        # Real CMake configures of the Torch backend; they need the runner's CUDA torch, nvcc, CMake and Ninja,
+        # which the hosted governance job does not have.
+        run: |
+          "$PYTHON" -m unittest \
+            tests.packaging.test_torch_cmake_configure -v
 
       - name: Mixed geometry and SDF acceptance
         shell: bash
@@ -138,9 +183,35 @@ jobs:
         env:
           RAYD_TORCH_RUN_DR_JIT_PARITY: "1"
         run: |
-          "$PYTHON" -m unittest \
+          status=0
+          for module in \
             tests.parity.test_drjit \
-            tests.parity.test_share2_ad -v
+            tests.parity.test_share2_ad \
+            tests.parity.test_backend_parity \
+            tests.parity.test_backend_parity_multipath \
+            tests.parity.test_validation_parity
+          do
+            echo "::group::$module"
+            "$PYTHON" -m unittest "$module" -v || status=1
+            echo "::endgroup::"
+          done
+          exit "$status"
+
+      - name: Finite-difference gradient checks
+        shell: bash
+        run: |
+          status=0
+          for module in \
+            tests.gradients.test_geometry_fd_torch \
+            tests.gradients.test_geometry_fd_jit \
+            tests.gradients.test_multipath_fd_torch \
+            tests.gradients.test_multipath_fd_jit
+          do
+            echo "::group::$module"
+            "$PYTHON" -m unittest "$module" -v || status=1
+            echo "::endgroup::"
+          done
+          exit "$status"
 
       - name: CI and numerical contract governance
         shell: bash

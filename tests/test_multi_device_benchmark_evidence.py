@@ -27,7 +27,8 @@ def load(path: Path) -> dict:
 
 
 def sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    # Line endings are normalized like every other governed digest, so the pin does not depend on the checkout.
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
 
 
 def table_row(text: str, configuration: str, operation: str) -> list[str]:
