@@ -7,6 +7,8 @@
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/util/Exception.h>
 
+#include <cfloat>
+
 #include <rayd/scattering.h>
 
 #include "scattering_internal.cuh"
@@ -21,6 +23,7 @@ constexpr int kMaxAdDepth = 8;
 namespace field = rayd::shared::diffraction;
 namespace transport = rayd::shared::field_transport;
 namespace st = rayd::shared::scattering;
+namespace si = rayd::torch::scattering_internal;
 
 int launch_blocks(int64_t count) {
     return static_cast<int>((count + kBlockSize - 1) / kBlockSize);
@@ -34,6 +37,15 @@ __device__ __forceinline__ field::float3a load3f(const float* p, int64_t i) {
 __device__ __forceinline__ field::float3a load_chain3f(const float* p, int64_t row, int bounce) {
     const int64_t b = (row * kMaxAdDepth + bounce) * 3;
     return field::make_f3(p[b], p[b + 1], p[b + 2]);
+}
+
+// Both leg depths and the vertex table lookup of one row are in range.
+__device__ __forceinline__ bool chain_ensemble_row_in_range(
+    int64_t row, const int* __restrict__ c1_depth, const int* __restrict__ c2_depth,
+    const int* __restrict__ material_id, const int* __restrict__ material_slot,
+    const int64_t* __restrict__ table_offset, const int* __restrict__ table_dims, si::FlatTableBounds bounds) {
+    return si::chain_depth_in_range(c1_depth[row]) && si::chain_depth_in_range(c2_depth[row]) &&
+           si::flat_table_lookup_in_range(material_id[row], material_slot, table_offset, table_dims, bounds);
 }
 
 // Outgoing s/p basis at the vertex: s = normalize(n x d) with a grazing backup,
@@ -103,10 +115,18 @@ __global__ void chain_ensemble_eval_kernel(
     const float* __restrict__ ftm_flat, const int64_t* __restrict__ table_offset, const int* __restrict__ table_dims,
     const int* __restrict__ material_slot, float coef, float threshold, float frequency_hz,
     float* __restrict__ out_gain, float* __restrict__ out_amplitude, float* __restrict__ out_length,
-    bool* __restrict__ out_keep) {
+    bool* __restrict__ out_keep, si::FlatTableBounds bounds) {
     for (int64_t row = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x; row < count;
          row += static_cast<int64_t>(blockDim.x) * gridDim.x) {
         if (!valid[row]) {
+            out_gain[row] = 0.0f;
+            out_amplitude[row] = 0.0f;
+            out_length[row] = 0.0f;
+            out_keep[row] = false;
+            continue;
+        }
+        if (!chain_ensemble_row_in_range(row, c1_depth, c2_depth, material_id, material_slot, table_offset, table_dims,
+                                         bounds)) {
             out_gain[row] = 0.0f;
             out_amplitude[row] = 0.0f;
             out_length[row] = 0.0f;
@@ -235,7 +255,7 @@ rayd::torch::ScatteringChainEnsembleEvalResult scattering_chain_ensemble_eval_im
     check_flat_tensor(fte_flat, "fte_flat", at::kFloat);
     check_flat_tensor(ftm_flat, "ftm_flat", at::kFloat);
     TORCH_CHECK(table_dims.size(1) == 4, "table_dims must have shape (M, 4)");
-    TORCH_CHECK(frequency_hz > 0.0, "frequency_hz must be positive");
+    rayd::torch::detail::check_positive_finite_scalar(frequency_hz, "frequency_hz");
     for (const auto& t : {rx_pol, vertex, target, n_o, t1r, t2r, backup_axis, wi_local, d_i, d_o}) {
         check_vec3_table(t, "chain vec3");
         TORCH_CHECK(t.size(0) == count, "chain vec3 rows must match R");
@@ -278,7 +298,8 @@ rayd::torch::ScatteringChainEnsembleEvalResult scattering_chain_ensemble_eval_im
             fte_flat.data_ptr<float>(), ftm_flat.data_ptr<float>(), table_offset.data_ptr<int64_t>(),
             table_dims.data_ptr<int>(), material_slot.data_ptr<int>(), static_cast<float>(coef),
             static_cast<float>(threshold), static_cast<float>(frequency_hz), gain.data_ptr<float>(),
-            amplitude.data_ptr<float>(), length.data_ptr<float>(), keep.data_ptr<bool>());
+            amplitude.data_ptr<float>(), length.data_ptr<float>(), keep.data_ptr<bool>(),
+            si::flat_table_bounds(material_slot, table_offset, fte_flat));
         C10_CUDA_KERNEL_LAUNCH_CHECK();
     }
     return {gain, amplitude, length, keep};
@@ -469,10 +490,13 @@ __global__ void chain_ensemble_backward_kernel(
     float* __restrict__ grad_c2_sigma_e, float* __restrict__ grad_c2_gain, float* __restrict__ grad_c2_thickness,
     float* __restrict__ grad_f_te, float* __restrict__ grad_f_tm, float* __restrict__ grad_coef,
     float* __restrict__ grad_frequency, bool need_chain1, bool need_chain2, bool need_tables, bool need_coef,
-    bool need_frequency) {
+    bool need_frequency, si::FlatTableBounds bounds) {
     for (int64_t row = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x; row < count;
          row += static_cast<int64_t>(blockDim.x) * gridDim.x) {
         if (!valid[row])
+            continue;
+        if (!chain_ensemble_row_in_range(row, c1_depth, c2_depth, material_id, material_slot, table_offset, table_dims,
+                                         bounds))
             continue;
         const int d1 = c1_depth[row];
         const int d2 = c2_depth[row];
@@ -722,10 +746,17 @@ __global__ void chain_ensemble_jvp_kernel(
     const float* __restrict__ t_d_o, const float* __restrict__ t_v_normal, const float* __restrict__ t_l1,
     const float* __restrict__ t_l2, const float* __restrict__ t_cos_i, const float* __restrict__ t_cos_o,
     float tangent_coef, float tangent_frequency, float* __restrict__ tangent_gain,
-    float* __restrict__ tangent_amplitude, float* __restrict__ tangent_length) {
+    float* __restrict__ tangent_amplitude, float* __restrict__ tangent_length, si::FlatTableBounds bounds) {
     for (int64_t row = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x; row < count;
          row += static_cast<int64_t>(blockDim.x) * gridDim.x) {
         if (!valid[row]) {
+            tangent_gain[row] = 0.0f;
+            tangent_amplitude[row] = 0.0f;
+            tangent_length[row] = 0.0f;
+            continue;
+        }
+        if (!chain_ensemble_row_in_range(row, c1_depth, c2_depth, material_id, material_slot, table_offset, table_dims,
+                                         bounds)) {
             tangent_gain[row] = 0.0f;
             tangent_amplitude[row] = 0.0f;
             tangent_length[row] = 0.0f;
@@ -854,7 +885,16 @@ __global__ void chain_ensemble_jvp_kernel(
         const float d_num = tangent_coef * f_eff * ci.v * co.v * wt + coef * d_f_eff * ci.v * co.v * wt +
                             coef * f_eff * ci.d * co.v * wt + coef * f_eff * ci.v * co.d * wt;
         const float gain = num / den;
-        const float d_gain = (d_num * den - num * d_den) / (den * den);
+        // Quotient rule. den^2 = (l1*l2)^4 leaves the float32 range for long
+        // (~1e5 m) or short (~1e-6 m) legs, where it would zero or overflow the
+        // tangent. The established form is kept wherever den^2 and its
+        // numerator are normal finite floats; otherwise the algebraically
+        // identical (d_num - gain*d_den)/den, which never squares den, is used.
+        const float den_sq = den * den;
+        const float quotient_num = d_num * den - num * d_den;
+        const bool quotient_in_range = isfinite(den_sq) && den_sq >= FLT_MIN && isfinite(quotient_num) &&
+                                       (quotient_num == 0.0f || fabsf(quotient_num) >= FLT_MIN);
+        const float d_gain = quotient_in_range ? quotient_num / den_sq : (d_num - gain * d_den) / den;
 
         tangent_gain[row] = d_gain;
         tangent_amplitude[row] = gain > 0.0f ? 0.5f * d_gain / sqrtf(gain) : 0.0f;
@@ -891,7 +931,7 @@ rayd::torch::ScatteringChainEnsembleEvalBackwardResult scattering_chain_ensemble
     TORCH_CHECK(!need_grad_geometry, "scattering_chain_ensemble_eval_backward: reverse-mode chain geometry "
                                      "(need_grad_geometry) is not implemented in this wave; use the _jvp "
                                      "companion for forward-mode geometry gradients.");
-    TORCH_CHECK(frequency_hz > 0.0, "frequency_hz must be positive");
+    rayd::torch::detail::check_positive_finite_scalar(frequency_hz, "frequency_hz");
     const c10::cuda::CUDAGuard guard(static_cast<int>(tx_pol.get_device()));
     const int64_t table_size = fte_flat.size(0);
 
@@ -950,7 +990,8 @@ rayd::torch::ScatteringChainEnsembleEvalBackwardResult scattering_chain_ensemble
             need_grad_tables ? g_f_te.data_ptr<float>() : nullptr,
             need_grad_tables ? g_f_tm.data_ptr<float>() : nullptr, need_grad_coef ? g_coef.data_ptr<float>() : nullptr,
             need_grad_frequency ? g_freq.data_ptr<float>() : nullptr, need_grad_chain1, need_grad_chain2,
-            need_grad_tables, need_grad_coef, need_grad_frequency);
+            need_grad_tables, need_grad_coef, need_grad_frequency,
+            si::flat_table_bounds(material_slot, table_offset, fte_flat));
         C10_CUDA_KERNEL_LAUNCH_CHECK();
     }
 
@@ -983,7 +1024,7 @@ rayd::torch::ScatteringChainEnsembleEvalJvpResult scattering_chain_ensemble_eval
     std::optional<at::Tensor> tangent_l2, std::optional<at::Tensor> tangent_cos_i,
     std::optional<at::Tensor> tangent_cos_o, double tangent_coef, double tangent_frequency) {
     const int64_t count = check_chain_primal(tx_pol);
-    TORCH_CHECK(frequency_hz > 0.0, "frequency_hz must be positive");
+    rayd::torch::detail::check_positive_finite_scalar(frequency_hz, "frequency_hz");
     const c10::cuda::CUDAGuard guard(static_cast<int>(tx_pol.get_device()));
     const int64_t table_size = fte_flat.size(0);
 
@@ -1055,7 +1096,8 @@ rayd::torch::ScatteringChainEnsembleEvalJvpResult scattering_chain_ensemble_eval
             grad_ptr<float>(p_c2_pos), grad_ptr<float>(p_c2_nrm), grad_ptr<float>(p_di), grad_ptr<float>(p_do),
             grad_ptr<float>(p_vn), grad_ptr<float>(p_l1), grad_ptr<float>(p_l2), grad_ptr<float>(p_ci),
             grad_ptr<float>(p_co), static_cast<float>(tangent_coef), static_cast<float>(tangent_frequency),
-            t_gain.data_ptr<float>(), t_amp.data_ptr<float>(), t_len.data_ptr<float>());
+            t_gain.data_ptr<float>(), t_amp.data_ptr<float>(), t_len.data_ptr<float>(),
+            si::flat_table_bounds(material_slot, table_offset, fte_flat));
         C10_CUDA_KERNEL_LAUNCH_CHECK();
     }
     return {t_gain, t_amp, t_len};

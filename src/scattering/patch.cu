@@ -28,6 +28,12 @@ __device__ __forceinline__ V3 load3(const float* __restrict__ p, int64_t i) {
     return {p[i * 3 + 0], p[i * 3 + 1], p[i * 3 + 2]};
 }
 
+// The per-row patch index addresses patch_tris / patch_uvs; a row whose index
+// is outside [0, patch_count) is handled exactly like an invalid row.
+__device__ __forceinline__ bool patch_index_in_range(int64_t patch, int64_t patch_count) {
+    return patch >= 0 && patch < patch_count;
+}
+
 // PhaseScreenRuntime.sample_height: bilinear with half-texel edge clamp.
 __device__ __forceinline__ float sample_height(const float* __restrict__ heights, int h_rows, int w_cols, float u,
                                                float v) {
@@ -80,23 +86,28 @@ __device__ __forceinline__ void sp_basis(V3 n, V3 d, V3 backup, V3& s, V3& p) {
     p = rayd::shared::math::cross(s, d);
 }
 
-__global__ void patch_integral_rows_kernel(int64_t row_count, const bool* __restrict__ valid,
-                                           const float* __restrict__ patch_tris, const float* __restrict__ patch_uvs,
-                                           const int64_t* __restrict__ rows, const float* __restrict__ d_i,
-                                           const float* __restrict__ d_o, const float* __restrict__ n_rows,
-                                           const cfloat* __restrict__ r_te, const cfloat* __restrict__ r_tm,
-                                           const float* __restrict__ pol_t, const float* __restrict__ pol_r,
-                                           const float* __restrict__ r1_rows, const float* __restrict__ r2_rows,
-                                           const float* __restrict__ centroids, const float* __restrict__ heights,
-                                           int h_rows_dim, int w_cols_dim, const float* __restrict__ quad_a,
-                                           const float* __restrict__ quad_b, const float* __restrict__ quad_w, float k0,
-                                           cfloat* __restrict__ out_integral, cfloat* __restrict__ out_row_value) {
+__global__ void patch_integral_rows_kernel(
+    int64_t row_count, const bool* __restrict__ valid, const float* __restrict__ patch_tris,
+    const float* __restrict__ patch_uvs, const int64_t* __restrict__ rows, const float* __restrict__ d_i,
+    const float* __restrict__ d_o, const float* __restrict__ n_rows, const cfloat* __restrict__ r_te,
+    const cfloat* __restrict__ r_tm, const float* __restrict__ pol_t, const float* __restrict__ pol_r,
+    const float* __restrict__ r1_rows, const float* __restrict__ r2_rows, const float* __restrict__ centroids,
+    const float* __restrict__ heights, int h_rows_dim, int w_cols_dim, const float* __restrict__ quad_a,
+    const float* __restrict__ quad_b, const float* __restrict__ quad_w, float k0, cfloat* __restrict__ out_integral,
+    cfloat* __restrict__ out_row_value, int64_t patch_count) {
     __shared__ float sh_re[kQuadPoints];
     __shared__ float sh_im[kQuadPoints];
     const int row = blockIdx.x;
     if (row >= row_count)
         return;
     if (!valid[row]) {
+        if (threadIdx.x == 0) {
+            out_integral[row] = {0.0f, 0.0f};
+            out_row_value[row] = {0.0f, 0.0f};
+        }
+        return;
+    }
+    if (!patch_index_in_range(rows[row], patch_count)) {
         if (threadIdx.x == 0) {
             out_integral[row] = {0.0f, 0.0f};
             out_row_value[row] = {0.0f, 0.0f};
@@ -287,6 +298,8 @@ rayd::torch::ScatteringPatchIntegralEvalResult scattering_patch_integral_eval_im
                           centroids, heights, quad_a, quad_b, quad_w}) {
         TORCH_CHECK(t.get_device() == patch_tris.get_device(), "patch-integral tensors must share device");
     }
+    rayd::torch::detail::check_height_screen(heights, row_count);
+    rayd::torch::detail::check_positive_finite_scalar(k0, "k0");
     const c10::cuda::CUDAGuard guard(static_cast<int>(patch_tris.get_device()));
     auto integral = at::empty({row_count}, patch_tris.options().dtype(at::kComplexFloat));
     auto row_value = at::empty_like(integral);
@@ -300,7 +313,7 @@ rayd::torch::ScatteringPatchIntegralEvalResult scattering_patch_integral_eval_im
             r1_rows.data_ptr<float>(), r2_rows.data_ptr<float>(), centroids.data_ptr<float>(),
             heights.data_ptr<float>(), static_cast<int>(heights.size(0)), static_cast<int>(heights.size(1)),
             quad_a.data_ptr<float>(), quad_b.data_ptr<float>(), quad_w.data_ptr<float>(), static_cast<float>(k0),
-            integral.data_ptr<cfloat>(), row_value.data_ptr<cfloat>());
+            integral.data_ptr<cfloat>(), row_value.data_ptr<cfloat>(), patch_tris.size(0));
         C10_CUDA_KERNEL_LAUNCH_CHECK();
         patch_integral_total_kernel<<<1, kReduceBlock, 0, stream>>>(row_count, row_value.data_ptr<cfloat>(),
                                                                     total.data_ptr<cfloat>());
@@ -585,7 +598,7 @@ __global__ void patch_integral_backward_kernel(
     float* __restrict__ grad_heights, cfloat* __restrict__ grad_r_te, cfloat* __restrict__ grad_r_tm,
     float* __restrict__ grad_d_i, float* __restrict__ grad_d_o, float* __restrict__ grad_r1,
     float* __restrict__ grad_r2, float* __restrict__ grad_centroids, float* __restrict__ grad_k0, bool need_heights,
-    bool need_jones, bool need_geometry, bool need_k0) {
+    bool need_jones, bool need_geometry, bool need_k0, int64_t patch_count) {
     __shared__ float sh_I_re[kQuadPoints];
     __shared__ float sh_I_im[kQuadPoints];
     __shared__ float sh_Sp_re[3][kQuadPoints];
@@ -596,7 +609,8 @@ __global__ void patch_integral_backward_kernel(
     const int row = blockIdx.x;
     if (row >= row_count)
         return;
-    if (!valid[row]) {
+    // Row-local gradients of a rejected row are exactly zero.
+    auto write_zero_row_gradients = [&]() {
         if (threadIdx.x == 0) {
             if (need_jones) {
                 grad_r_te[row] = {0.0f, 0.0f};
@@ -612,6 +626,13 @@ __global__ void patch_integral_backward_kernel(
             grad_d_o[row * 3 + threadIdx.x] = 0.0f;
             grad_centroids[row * 3 + threadIdx.x] = 0.0f;
         }
+    };
+    if (!valid[row]) {
+        write_zero_row_gradients();
+        return;
+    }
+    if (!patch_index_in_range(rows[row], patch_count)) {
+        write_zero_row_gradients();
         return;
     }
     const int64_t patch = rows[row];
@@ -773,7 +794,7 @@ __global__ void patch_integral_jvp_kernel(
     const float* __restrict__ quad_b, const float* __restrict__ quad_w, float k0, const float* __restrict__ t_heights,
     const cfloat* __restrict__ t_r_te, const cfloat* __restrict__ t_r_tm, const float* __restrict__ t_d_i,
     const float* __restrict__ t_d_o, const float* __restrict__ t_r1, const float* __restrict__ t_r2,
-    const float* __restrict__ t_centroids, float t_k0, cfloat* __restrict__ out_t_row_value) {
+    const float* __restrict__ t_centroids, float t_k0, cfloat* __restrict__ out_t_row_value, int64_t patch_count) {
     __shared__ float sh_I_re[kQuadPoints];
     __shared__ float sh_I_im[kQuadPoints];
     __shared__ float sh_tI_re[kQuadPoints];
@@ -783,6 +804,11 @@ __global__ void patch_integral_jvp_kernel(
     if (row >= row_count)
         return;
     if (!valid[row]) {
+        if (threadIdx.x == 0)
+            out_t_row_value[row] = {0.0f, 0.0f};
+        return;
+    }
+    if (!patch_index_in_range(rows[row], patch_count)) {
         if (threadIdx.x == 0)
             out_t_row_value[row] = {0.0f, 0.0f};
         return;
@@ -984,6 +1010,7 @@ int64_t check_patch_inputs(const at::Tensor& valid, const at::Tensor& patch_tris
                              centroids, heights, quad_a, quad_b, quad_w}) {
         TORCH_CHECK(tref.get_device() == patch_tris.get_device(), "patch-integral tensors must share device");
     }
+    rayd::torch::detail::check_height_screen(heights, row_count);
     return row_count;
 }
 
@@ -1024,6 +1051,7 @@ rayd::torch::ScatteringPatchIntegralEvalBackwardResult scattering_patch_integral
     const int64_t row_count =
         check_patch_inputs(valid, patch_tris, patch_uvs, rows, d_i, d_o, n_rows, r_te, r_tm, pol_t, pol_r, r1_rows,
                            r2_rows, centroids, heights, quad_a, quad_b, quad_w);
+    rayd::torch::detail::check_positive_finite_scalar(k0, "k0");
     using rayd::torch::detail::check_tensor;
     check_tensor(grad_total, "grad_total", at::kComplexFloat, 0);
     TORCH_CHECK(grad_total.get_device() == patch_tris.get_device(), "grad_total must share the primal device");
@@ -1065,7 +1093,7 @@ rayd::torch::ScatteringPatchIntegralEvalBackwardResult scattering_patch_integral
             need_grad_geometry ? grad_r2.data_ptr<float>() : nullptr,
             need_grad_geometry ? grad_centroids.data_ptr<float>() : nullptr,
             need_grad_k0 ? grad_k0.data_ptr<float>() : nullptr, need_grad_heights, need_grad_jones, need_grad_geometry,
-            need_grad_k0);
+            need_grad_k0, patch_tris.size(0));
         C10_CUDA_KERNEL_LAUNCH_CHECK();
     }
 
@@ -1091,6 +1119,7 @@ rayd::torch::ScatteringPatchIntegralEvalJvpResult scattering_patch_integral_eval
     const int64_t row_count =
         check_patch_inputs(valid, patch_tris, patch_uvs, rows, d_i, d_o, n_rows, r_te, r_tm, pol_t, pol_r, r1_rows,
                            r2_rows, centroids, heights, quad_a, quad_b, quad_w);
+    rayd::torch::detail::check_positive_finite_scalar(k0, "k0");
     const c10::cuda::CUDAGuard guard(static_cast<int>(patch_tris.get_device()));
 
     at::Tensor storage[8];
@@ -1122,7 +1151,7 @@ rayd::torch::ScatteringPatchIntegralEvalJvpResult scattering_patch_integral_eval
             quad_a.data_ptr<float>(), quad_b.data_ptr<float>(), quad_w.data_ptr<float>(), static_cast<float>(k0),
             opt_ptr<float>(th), opt_ptr<cfloat>(tte), opt_ptr<cfloat>(ttm), opt_ptr<float>(tdi), opt_ptr<float>(tdo),
             opt_ptr<float>(tr1), opt_ptr<float>(tr2), opt_ptr<float>(tc), static_cast<float>(tangent_k0),
-            t_row_value.data_ptr<cfloat>());
+            t_row_value.data_ptr<cfloat>(), patch_tris.size(0));
         C10_CUDA_KERNEL_LAUNCH_CHECK();
         patch_integral_jvp_total_kernel<<<1, kReduceBlock, 0, stream>>>(row_count, t_row_value.data_ptr<cfloat>(),
                                                                         tangent_total.data_ptr<cfloat>());

@@ -136,10 +136,6 @@ int blocks(int64_t n) {
     return static_cast<int>((n + kBlockSize - 1) / kBlockSize);
 }
 
-void check_table(const at::Tensor& t, const char* name) {
-    rayd::torch::detail::check_tensor(t, name, at::kFloat, 4);
-}
-
 } // namespace
 
 rayd::torch::ScatteringTableEvalResult scattering_table_eval_impl(at::Tensor valid, at::Tensor wi, at::Tensor wo,
@@ -147,8 +143,8 @@ rayd::torch::ScatteringTableEvalResult scattering_table_eval_impl(at::Tensor val
     rayd::torch::detail::check_tensor(valid, "valid", at::kBool, 1);
     rayd::torch::detail::check_vec3_table(wi, "wi");
     rayd::torch::detail::check_vec3_table(wo, "wo");
-    check_table(fte, "f_te");
-    check_table(ftm, "f_tm");
+    rayd::torch::detail::check_dense_table(fte, "f_te", wi.size(0));
+    rayd::torch::detail::check_dense_table(ftm, "f_tm", wi.size(0));
     TORCH_CHECK(valid.size(0) == wi.size(0), "valid must match wi rows");
     TORCH_CHECK(wi.sizes() == wo.sizes(), "wi and wo shapes must match");
     TORCH_CHECK(fte.sizes() == ftm.sizes(), "f_te and f_tm shapes must match");
@@ -174,7 +170,7 @@ at::Tensor scattering_table_pdf_impl(at::Tensor valid, at::Tensor wi, at::Tensor
     rayd::torch::detail::check_tensor(valid, "valid", at::kBool, 1);
     rayd::torch::detail::check_vec3_table(wi, "wi");
     rayd::torch::detail::check_vec3_table(wo, "wo");
-    check_table(density, "sample_density");
+    rayd::torch::detail::check_dense_table(density, "sample_density", wi.size(0));
     TORCH_CHECK(valid.size(0) == wi.size(0), "valid must match wi rows");
     TORCH_CHECK(wi.sizes() == wo.sizes(), "wi and wo shapes must match");
     TORCH_CHECK(valid.get_device() == wi.get_device() && wi.get_device() == density.get_device(),
@@ -201,10 +197,14 @@ rayd::torch::ScatteringTableSampleResult scattering_table_sample_impl(at::Tensor
     rayd::torch::detail::check_vec3_table(wi, "wi");
     rayd::torch::detail::check_tensor(uniforms, "uniforms", at::kFloat, 2);
     rayd::torch::detail::check_tensor(marginal, "marginal_cdf", at::kFloat, 3);
-    check_table(conditional, "conditional_cdf");
-    check_table(density, "sample_density");
+    rayd::torch::detail::check_dense_table(conditional, "conditional_cdf", wi.size(0));
+    rayd::torch::detail::check_dense_table(density, "sample_density", wi.size(0));
     TORCH_CHECK(valid.size(0) == wi.size(0), "valid must match wi rows");
     TORCH_CHECK(uniforms.size(0) == wi.size(0) && uniforms.size(1) == 2, "uniforms must have shape (N,2)");
+    // The kernel indexes both CDFs with the density extents.
+    TORCH_CHECK(conditional.sizes() == density.sizes(), "conditional_cdf must have the sample_density shape");
+    TORCH_CHECK(marginal.sizes() == density.sizes().slice(0, 3),
+                "marginal_cdf must have the first three sample_density extents");
     TORCH_CHECK(valid.get_device() == wi.get_device() && marginal.get_device() == wi.get_device() &&
                     conditional.get_device() == wi.get_device() && density.get_device() == wi.get_device() &&
                     uniforms.get_device() == wi.get_device(),

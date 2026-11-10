@@ -186,6 +186,30 @@ struct WallFrame {
     float cos_theta;
 };
 
+// Unit wall s axis. |normal x direction| = sin(theta) is small near normal
+// incidence, where utd::safe_normalize's v / (|v| + 1e-10) leaves the axis
+// short by 1e-10 / sin(theta) and biases the Jones projection and its
+// derivative. Wherever |v| + 1e-10 rounds to |v| (sin(theta) above ~1.7e-3)
+// the established safe_normalize result is returned unchanged; below that,
+// down to the shared 1e-6 fallback threshold, the axis is divided by its exact
+// length. The dual and adjoint wall frames mirror these branches.
+__device__ __forceinline__ bool wall_axis_uses_exact_length(utd::float3a v) {
+    const float length = utd::safe_length(v);
+    return length > utd::UTD_SMALL_EPS && length + utd::UTD_EPS != length;
+}
+
+// The exact branch is kept out of line so it does not perturb the code (and
+// FMA contraction) generated for the established path.
+inline __device__ __noinline__ utd::float3a wall_exact_unit_axis(utd::float3a v) {
+    return utd::f3_div(v, utd::safe_length(v));
+}
+
+__device__ __forceinline__ utd::float3a wall_unit_axis(utd::float3a v, utd::float3a fallback) {
+    if (wall_axis_uses_exact_length(v))
+        return wall_exact_unit_axis(v);
+    return utd::safe_normalize(v, fallback);
+}
+
 __device__ __forceinline__ WallFrame wall_frame(utd::float3a direction, utd::float3a raw_normal) {
     utd::float3a normal = utd::safe_normalize(raw_normal, utd::make_f3(0.0f, 0.0f, 1.0f));
     if (utd::f3_dot(direction, normal) > 0.0f)
@@ -193,7 +217,7 @@ __device__ __forceinline__ WallFrame wall_frame(utd::float3a direction, utd::flo
     WallFrame frame;
     frame.cos_theta = fminf(fmaxf(fabsf(utd::f3_dot(direction, normal)), utd::UTD_SMALL_EPS), 1.0f);
     utd::float3a s_axis = utd::f3_cross(normal, direction);
-    frame.s_axis = utd::safe_normalize(s_axis, utd::stable_perp_basis(direction, normal));
+    frame.s_axis = wall_unit_axis(s_axis, utd::stable_perp_basis(direction, normal));
     frame.p_axis =
         utd::safe_normalize(utd::f3_cross(frame.s_axis, direction), utd::stable_perp_basis(direction, frame.s_axis));
     return frame;

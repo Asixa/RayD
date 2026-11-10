@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -639,6 +640,155 @@ void test_invalid_rows_short_circuit_poison() {
     require_exact_zero(patch_tangent.tangent_total, "invalid patch JVP must be zero");
 }
 
+// Requests rows gradients with no cotangent: the kernel does not launch, so the
+// row-gradient buffers must still come back as exact zeros, not recycled memory.
+void test_ensemble_row_gradients_without_cotangent_are_zero() {
+    const auto primal = nonempty_ensemble_request();
+    {
+        // Leave a recognisable pattern in the caching allocator's free list.
+        auto junk = at::full({64}, 12345.0F, primal.wo_rows.options());
+        junk.reset();
+    }
+    ScatteringEnsembleEvalBackwardRequest backward;
+    backward.primal = primal;
+    backward.need_grad_rows = true;
+    const auto gradients = scattering_ensemble_eval_backward(backward);
+    require(gradients.grad_wo_rows.has_value() && gradients.grad_r2_rows.has_value() &&
+                gradients.grad_cos_o_rows.has_value(),
+            "ensemble backward omitted requested row gradients");
+    require_exact_zero(*gradients.grad_wo_rows, "ensemble wo_rows gradient without cotangent must be zero");
+    require_exact_zero(*gradients.grad_r2_rows, "ensemble r2_rows gradient without cotangent must be zero");
+    require_exact_zero(*gradients.grad_cos_o_rows, "ensemble cos_o_rows gradient without cotangent must be zero");
+}
+
+void test_table_shape_contracts_fail_loudly() {
+    auto sample = nonempty_table_sample_request();
+    sample.marginal_cdf = at::ones({1, 2, 2}, sample.wi.options());
+    require_throws([&] { (void)scattering_table_sample(sample); },
+                   "table sample marginal CDF shape mismatch must fail loudly");
+    sample = nonempty_table_sample_request();
+    sample.conditional_cdf = at::ones({2, 2, 2, 1}, sample.wi.options());
+    require_throws([&] { (void)scattering_table_sample(sample); },
+                   "table sample conditional CDF shape mismatch must fail loudly");
+
+    auto table = nonempty_table_request();
+    table.f_te = at::empty({0, 2, 2, 2}, table.wi.options());
+    table.f_tm = table.f_te.clone();
+    require_throws([&] { (void)scattering_table_eval(table); }, "table eval with an empty axis must fail loudly");
+    ScatteringTableEvalJvpRequest jvp;
+    jvp.primal = table;
+    require_throws([&] { (void)scattering_table_eval_jvp(jvp); }, "table JVP with an empty axis must fail loudly");
+    auto pdf = nonempty_table_pdf_request();
+    pdf.sample_density = at::empty({2, 0, 2, 2}, pdf.wi.options());
+    require_throws([&] { (void)scattering_table_pdf(pdf); }, "table PDF with an empty axis must fail loudly");
+
+    // A request without rows never reads the table, so an empty table stays valid.
+    auto empty = empty_table_request();
+    empty.f_te = at::empty({0, 2, 2, 2}, empty.wi.options());
+    empty.f_tm = empty.f_te.clone();
+    require(scattering_table_eval(empty).f_te.numel() == 0, "empty table eval without rows must succeed");
+}
+
+// Out-of-range device IDs are handled like invalid rows in primal, backward and JVP.
+void require_inert_ensemble(const ScatteringEnsembleEvalRequest& request, const std::string& label) {
+    const auto out = scattering_ensemble_eval(request);
+    ScatteringEnsembleEvalBackwardRequest backward;
+    backward.primal = request;
+    backward.grad_gain = at::ones({1}, request.wo_rows.options());
+    backward.grad_length = at::ones({1}, request.wo_rows.options());
+    backward.need_grad_rows = true;
+    backward.need_grad_samples = true;
+    backward.need_grad_tables = true;
+    backward.need_grad_coefficient = true;
+    const auto grad = scattering_ensemble_eval_backward(backward);
+    ScatteringEnsembleEvalJvpRequest jvp;
+    jvp.primal = request;
+    jvp.tangent_coefficient = 1.0;
+    jvp.tangent_r2_rows = at::ones({1}, request.wo_rows.options());
+    const auto tangent = scattering_ensemble_eval_jvp(jvp);
+    c10::cuda::getCurrentCUDAStream(0).synchronize();
+    require_exact_zero(out.gain, label + " gain must be zero");
+    require_exact_zero(out.length, label + " length must be zero");
+    require_exact_zero(out.keep, label + " keep must be false");
+    require_exact_zero(*grad.grad_wo_rows, label + " row gradient must be zero");
+    require_exact_zero(*grad.grad_r2_rows, label + " r2 gradient must be zero");
+    require_exact_zero(*grad.grad_n_o, label + " sample gradient must be zero");
+    require_exact_zero(*grad.grad_f_te, label + " table gradient must be zero");
+    require_exact_zero(*grad.grad_coefficient, label + " coefficient gradient must be zero");
+    require_exact_zero(tangent.tangent_gain, label + " gain JVP must be zero");
+    require_exact_zero(tangent.tangent_length, label + " length JVP must be zero");
+}
+
+void test_out_of_range_device_ids_are_inert() {
+    const auto longs = cuda_options(at::kLong);
+    const auto ints = cuda_options(at::kInt);
+    auto request = nonempty_ensemble_request();
+    request.sc_idx = at::full({1}, int64_t{1} << 40, longs);
+    require_inert_ensemble(request, "ensemble sc_idx out of range");
+    request = nonempty_ensemble_request();
+    request.rc_idx = at::full({1}, -1, longs);
+    require_inert_ensemble(request, "ensemble rc_idx out of range");
+    request = nonempty_ensemble_request();
+    request.material_id = at::full({1}, 4, ints);
+    require_inert_ensemble(request, "ensemble material_id out of range");
+    request = nonempty_ensemble_request();
+    request.material_slot = at::full({1}, 3, ints);
+    require_inert_ensemble(request, "ensemble material slot out of range");
+    request = nonempty_ensemble_request();
+    request.table_dims = at::tensor({64, 64, 64, 64}, ints).reshape({1, 4});
+    require_inert_ensemble(request, "ensemble table dims past storage");
+    request = nonempty_ensemble_request();
+    request.table_offset = at::full({1}, -8, longs);
+    require_inert_ensemble(request, "ensemble negative table offset");
+
+    // A negative slot still means "no table" and keeps the row valid.
+    request = nonempty_ensemble_request();
+    request.material_slot = at::full({1}, -1, ints);
+    const auto no_table = scattering_ensemble_eval(request);
+    require(no_table.length.item<float>() == 2.0F, "ensemble without a table must stay a valid row");
+
+    auto patch = nonempty_patch_request();
+    patch.rows = at::full({1}, 7, longs);
+    const auto patch_out = scattering_patch_integral_eval(patch);
+    ScatteringPatchIntegralEvalBackwardRequest patch_backward;
+    patch_backward.primal = patch;
+    patch_backward.grad_total = at::ones({}, cuda_options(at::kComplexFloat));
+    patch_backward.need_grad_heights = true;
+    patch_backward.need_grad_jones = true;
+    patch_backward.need_grad_geometry = true;
+    patch_backward.need_grad_k0 = true;
+    const auto patch_grad = scattering_patch_integral_eval_backward(patch_backward);
+    ScatteringPatchIntegralEvalJvpRequest patch_jvp;
+    patch_jvp.primal = patch;
+    patch_jvp.tangent_k0 = 1.0;
+    const auto patch_tangent = scattering_patch_integral_eval_jvp(patch_jvp);
+    require_exact_zero(patch_out.total, "patch index out of range total must be zero");
+    require_exact_zero(patch_out.row_value, "patch index out of range row value must be zero");
+    require_exact_zero(*patch_grad.grad_d_i, "patch index out of range geometry gradient must be zero");
+    require_exact_zero(*patch_grad.grad_k0, "patch index out of range k0 gradient must be zero");
+    require_exact_zero(patch_tangent.tangent_total, "patch index out of range JVP must be zero");
+}
+
+void test_patch_scalars_fail_loudly() {
+    for (const double k0 : {0.0, -1.0, std::numeric_limits<double>::infinity(), 1.0e40}) {
+        auto patch = nonempty_patch_request();
+        patch.k0 = k0;
+        require_throws([&] { (void)scattering_patch_integral_eval(patch); }, "patch primal must reject k0");
+        ScatteringPatchIntegralEvalBackwardRequest backward;
+        backward.primal = patch;
+        backward.grad_total = at::ones({}, cuda_options(at::kComplexFloat));
+        backward.need_grad_k0 = true;
+        require_throws([&] { (void)scattering_patch_integral_eval_backward(backward); },
+                       "patch backward must reject k0");
+        ScatteringPatchIntegralEvalJvpRequest jvp;
+        jvp.primal = patch;
+        require_throws([&] { (void)scattering_patch_integral_eval_jvp(jvp); }, "patch JVP must reject k0");
+    }
+    auto patch = nonempty_patch_request();
+    patch.heights = at::empty({0, 2}, patch.d_i.options());
+    require_throws([&] { (void)scattering_patch_integral_eval(patch); }, "patch with empty heights must fail loudly");
+}
+
 void test_invalid_contracts_fail_loudly() {
     auto bad_table_valid_dtype = nonempty_table_request();
     bad_table_valid_dtype.valid = at::ones({1}, bad_table_valid_dtype.wi.options());
@@ -880,6 +1030,14 @@ int main() {
         test_invalid_contracts_fail_loudly();
         std::cout << "[RUN] test_cross_device_inputs_fail_loudly\n";
         test_cross_device_inputs_fail_loudly();
+        std::cout << "[RUN] test_ensemble_row_gradients_without_cotangent_are_zero\n";
+        test_ensemble_row_gradients_without_cotangent_are_zero();
+        std::cout << "[RUN] test_table_shape_contracts_fail_loudly\n";
+        test_table_shape_contracts_fail_loudly();
+        std::cout << "[RUN] test_out_of_range_device_ids_are_inert\n";
+        test_out_of_range_device_ids_are_inert();
+        std::cout << "[RUN] test_patch_scalars_fail_loudly\n";
+        test_patch_scalars_fail_loudly();
         std::cout << "rayd::torch scattering direct contracts passed\n";
         return 0;
     } catch (const std::exception& error) {

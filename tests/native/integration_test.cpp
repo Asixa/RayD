@@ -1852,6 +1852,212 @@ void test_transmission_path_valid_short_circuits_poison() {
                 "invalid poisoned transmission gradient must be exactly zero");
 }
 
+rayd::torch::LayerStackRequest single_layer_stack_request() {
+    const auto floats = at::TensorOptions().dtype(at::kFloat).device(at::kCUDA);
+    const auto ints = at::TensorOptions().dtype(at::kInt).device(at::kCUDA);
+    return {
+        at::tensor({0.5F}, floats),  at::tensor({0}, ints),      at::tensor({0}, ints),
+        at::tensor({1}, ints),       at::tensor({0.1F}, floats), at::tensor({4.0F}, floats),
+        at::tensor({0.05F}, floats), at::tensor({1.0F}, floats), 3.5e9,
+    };
+}
+
+void require_all_zero(const std::vector<at::Tensor>& tensors, const std::string& label) {
+    for (const auto& tensor : tensors)
+        require(at::count_nonzero(tensor).item<int64_t>() == 0, label + " must be exactly zero");
+}
+
+// Unusable CSR material data (a run outside the layer store, negative counts,
+// int32-overflowing offsets, or non-finite layer parameters) is handled like an
+// out-of-range material id: zero layer-stack rows and invalidated transmission
+// paths, consistently in primal, backward and JVP, never an illegal access.
+void test_transmission_unusable_material_data_is_inert() {
+    const auto floats = at::TensorOptions().dtype(at::kFloat).device(at::kCUDA);
+    const auto ints = at::TensorOptions().dtype(at::kInt).device(at::kCUDA);
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    struct Case {
+        const char* label;
+        int offset;
+        int count;
+        float eps_r;
+        float sigma_e;
+        float thickness;
+    };
+    const std::array<Case, 8> cases = {{
+        {"count past the layer store", 0, 4, 4.0F, 0.05F, 0.1F},
+        {"offset past the layer store", 3, 1, 4.0F, 0.05F, 0.1F},
+        {"large offset", 500000000, 1, 4.0F, 0.05F, 0.1F},
+        {"negative offset", -100000000, 1, 4.0F, 0.05F, 0.1F},
+        {"int32-overflowing run", std::numeric_limits<int>::max(), 2, 4.0F, 0.05F, 0.1F},
+        {"negative count", 0, -1, 4.0F, 0.05F, 0.1F},
+        {"NaN permittivity", 0, 1, nan, 0.05F, 0.1F},
+        {"infinite conductivity", 0, 1, 4.0F, inf, 0.1F},
+    }};
+    for (const Case& bad : cases) {
+        const std::string label = std::string("unusable material (") + bad.label + ")";
+        auto stack = single_layer_stack_request();
+        stack.layer_offset = at::tensor({bad.offset}, ints);
+        stack.layer_count = at::tensor({bad.count}, ints);
+        stack.layer_eps_r = at::tensor({bad.eps_r}, floats);
+        stack.layer_sigma_e = at::tensor({bad.sigma_e}, floats);
+        stack.layer_thickness_m = at::tensor({bad.thickness}, floats);
+        const auto values = layer_stack_values(rayd::torch::em_layer_stack_eval(stack));
+        require_all_zero(std::vector<at::Tensor>(values.begin(), values.end()), label + " layer-stack row");
+        rayd::torch::LayerStackBackwardRequest stack_backward;
+        stack_backward.primal = stack;
+        for (auto& grad : stack_backward.grad_outputs)
+            grad = at::ones({1}, floats);
+        stack_backward.need_cos_theta = true;
+        stack_backward.need_layers = true;
+        stack_backward.need_frequency = true;
+        const auto stack_grad = rayd::torch::em_layer_stack_backward(stack_backward);
+        require_all_zero({stack_grad.grad_cos_theta, stack_grad.grad_layer_thickness_m, stack_grad.grad_layer_eps_r,
+                          stack_grad.grad_layer_sigma_e, stack_grad.grad_frequency},
+                         label + " layer-stack gradient");
+        rayd::torch::LayerStackJvpRequest stack_jvp;
+        stack_jvp.primal = stack;
+        stack_jvp.tangent_cos_theta = at::ones({1}, floats);
+        stack_jvp.tangent_frequency = 1.0e6;
+        const auto stack_tangent = layer_stack_values(rayd::torch::em_layer_stack_jvp(stack_jvp));
+        require_all_zero(std::vector<at::Tensor>(stack_tangent.begin(), stack_tangent.end()),
+                         label + " layer-stack tangent");
+
+        auto sequence = transmission_request(true);
+        sequence.layer_offset = stack.layer_offset;
+        sequence.layer_count = stack.layer_count;
+        sequence.layer_eps_r = stack.layer_eps_r;
+        sequence.layer_sigma_e = stack.layer_sigma_e;
+        sequence.layer_thickness_m = stack.layer_thickness_m;
+        const auto result = rayd::torch::field_transmission_sequence(sequence);
+        require_all_zero({result.field_vector, result.coefficient, result.path_field, result.path_gain,
+                          result.path_length_m, result.delay_s, result.direction},
+                         label + " transmission output");
+        rayd::torch::TransmissionSequenceBackwardRequest backward;
+        backward.primal = sequence;
+        backward.grad_path_gain = at::ones({1}, floats);
+        backward.grad_path_length_m = at::ones({1}, floats);
+        backward.need_grad_layer_thickness_m = true;
+        backward.need_grad_frequency = true;
+        backward.need_grad_geometry = true;
+        const auto gradients = rayd::torch::field_transmission_sequence_backward(backward);
+        require_all_zero({*gradients.grad_layer_thickness_m, *gradients.grad_frequency, *gradients.grad_source,
+                          *gradients.grad_target, *gradients.grad_interaction_normals},
+                         label + " transmission gradient");
+        rayd::torch::TransmissionSequenceJvpRequest jvp;
+        jvp.primal = sequence;
+        jvp.tangent_target = at::ones({1, 3}, floats);
+        jvp.tangent_frequency = 1.0e6;
+        const auto tangent = rayd::torch::field_transmission_sequence_jvp(jvp);
+        require_all_zero({tangent.field_vector, tangent.coefficient, tangent.path_gain, tangent.path_length_m,
+                          tangent.delay_s},
+                         label + " transmission tangent");
+    }
+
+    // An out-of-range material id invalidates the whole path, including the
+    // geometric outputs, so its zero derivatives agree with the forward.
+    auto bad_material = transmission_request(true);
+    bad_material.interaction_material_id = at::full({1, 1}, 999, ints);
+    const auto invalid = rayd::torch::field_transmission_sequence(bad_material);
+    require_all_zero({invalid.path_gain, invalid.path_length_m, invalid.delay_s, invalid.direction},
+                     "out-of-range material path");
+
+    // A zero-layer material stays transparent.
+    auto transparent = single_layer_stack_request();
+    transparent.layer_count = at::tensor({0}, ints);
+    const auto identity = rayd::torch::em_layer_stack_eval(transparent);
+    require(identity.t_te_real.item<float>() == 1.0F && identity.r_te_real.item<float>() == 0.0F,
+            "zero-layer material must stay transparent");
+}
+
+void test_transmission_frequency_contracts() {
+    for (const double frequency : {std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN(),
+                                   1.0e40, 0.0, -3.5e9, 1.0e-50}) {
+        const std::string label = "frequency_hz " + std::to_string(frequency);
+        auto stack = single_layer_stack_request();
+        stack.frequency_hz = frequency;
+        require_throws([&] { (void)rayd::torch::em_layer_stack_eval(stack); }, label + " layer-stack eval");
+        rayd::torch::LayerStackBackwardRequest stack_backward;
+        stack_backward.primal = stack;
+        require_throws([&] { (void)rayd::torch::em_layer_stack_backward(stack_backward); },
+                       label + " layer-stack backward");
+        rayd::torch::LayerStackJvpRequest stack_jvp;
+        stack_jvp.primal = stack;
+        require_throws([&] { (void)rayd::torch::em_layer_stack_jvp(stack_jvp); }, label + " layer-stack JVP");
+        auto sequence = transmission_request(true);
+        sequence.frequency_hz = frequency;
+        require_throws([&] { (void)rayd::torch::field_transmission_sequence(sequence); }, label + " sequence");
+        rayd::torch::TransmissionSequenceBackwardRequest backward;
+        backward.primal = sequence;
+        require_throws([&] { (void)rayd::torch::field_transmission_sequence_backward(backward); },
+                       label + " sequence backward");
+        rayd::torch::TransmissionSequenceJvpRequest jvp;
+        jvp.primal = sequence;
+        require_throws([&] { (void)rayd::torch::field_transmission_sequence_jvp(jvp); }, label + " sequence JVP");
+    }
+}
+
+// Near-normal walls: the wall s axis must stay unit length, so neither the
+// primal power nor the wall-normal derivative carries the 1e-10/sin(theta)
+// normalization bias (a ~2e-4 relative power error and a derivative of order
+// gain * 1e-10/sin^2(theta)). The exact derivative is about -1.4 * gain *
+// sin(theta); float32 TE/TM rounding adds noise of order gain * 1e-7/sin(theta),
+// which the bound below admits.
+void test_transmission_near_normal_wall_frame() {
+    const auto floats = at::TensorOptions().dtype(at::kFloat).device(at::kCUDA);
+    auto reference = transmission_request(true);
+    const float normal_gain = rayd::torch::field_transmission_sequence(reference).path_gain.item<float>();
+    for (const float tilt : {2.0e-6F, 5.0e-6F, 1.0e-5F, 3.0e-5F, 1.0e-4F, 1.0e-3F}) {
+        const std::string label = " at tilt " + std::to_string(tilt);
+        auto sequence = reference;
+        sequence.interaction_normals =
+            at::tensor({std::sin(tilt), 0.0F, std::cos(tilt)}, floats).reshape({1, 1, 3}).contiguous();
+        const float gain = rayd::torch::field_transmission_sequence(sequence).path_gain.item<float>();
+        require(std::fabs(gain - normal_gain) <= (1.0e-6F + tilt * tilt) * normal_gain,
+                "near-normal wall path gain is biased" + label);
+        const float bound = normal_gain * (4.0e-6F / tilt + 2.0F * tilt);
+        rayd::torch::TransmissionSequenceBackwardRequest backward;
+        backward.primal = sequence;
+        backward.grad_path_gain = at::ones({1}, floats);
+        backward.need_grad_geometry = true;
+        const auto gradients = rayd::torch::field_transmission_sequence_backward(backward);
+        require(at::abs(*gradients.grad_interaction_normals).max().item<float>() <= bound,
+                "near-normal wall-normal VJP is spurious" + label);
+        rayd::torch::TransmissionSequenceJvpRequest jvp;
+        jvp.primal = sequence;
+        jvp.tangent_interaction_normals = at::tensor({1.0F, 0.0F, 0.0F}, floats).reshape({1, 1, 3});
+        const float tangent = rayd::torch::field_transmission_sequence_jvp(jvp).path_gain.item<float>();
+        require(std::fabs(tangent) <= bound, "near-normal wall-normal JVP is spurious" + label);
+    }
+}
+
+// Set to false once pending_math_h_c_sqrt_passive.patch (the stable passive
+// complex square root in include/rayd/math.h) is applied and the Dr.Jit PTX is
+// regenerated. Until then this low-loss case is an expected failure: the
+// current c_sqrt_passive loses the loss term of a low-loss layer.
+constexpr bool kStablePassiveSqrtPending = false;
+
+void test_transmission_low_loss_layer_keeps_its_loss() {
+    const auto floats = at::TensorOptions().dtype(at::kFloat).device(at::kCUDA);
+    auto stack = single_layer_stack_request();
+    // eps_r 4, loss tangent 3e-4 at 28 GHz, 0.3 m, normal incidence.
+    stack.cos_theta = at::tensor({1.0F}, floats);
+    stack.layer_thickness_m = at::tensor({0.3F}, floats);
+    stack.layer_sigma_e = at::tensor({0.0018692521F}, floats);
+    stack.frequency_hz = 28.0e9;
+    const float transmittance_db = 10.0F * std::log10(rayd::torch::em_layer_stack_eval(stack).cap_t_te.item<float>());
+    // Independent complex128 Airy/transfer-matrix reference: -0.69007 dB.
+    const bool matches = std::fabs(transmittance_db - (-0.690065F)) <= 0.01F;
+    if (kStablePassiveSqrtPending) {
+        require(!matches, "XPASS: the low-loss layer now keeps its loss; set kStablePassiveSqrtPending to false");
+        std::cout << "[XFAIL] low-loss layer |t_TE|^2 = " << transmittance_db
+                  << " dB, reference -0.690 dB (pending the stable c_sqrt_passive patch)" << std::endl;
+        return;
+    }
+    require(matches, "low-loss layer |t_TE|^2 differs from the complex128 reference: " +
+                         std::to_string(transmittance_db) + " dB");
+}
+
 } // namespace
 
 int main() {
@@ -1895,6 +2101,14 @@ int main() {
         test_transmission_sequence_nondefault_stream_dependency();
         std::cout << "[RUN] test_transmission_path_valid_short_circuits_poison" << std::endl;
         test_transmission_path_valid_short_circuits_poison();
+        std::cout << "[RUN] test_transmission_unusable_material_data_is_inert" << std::endl;
+        test_transmission_unusable_material_data_is_inert();
+        std::cout << "[RUN] test_transmission_frequency_contracts" << std::endl;
+        test_transmission_frequency_contracts();
+        std::cout << "[RUN] test_transmission_near_normal_wall_frame" << std::endl;
+        test_transmission_near_normal_wall_frame();
+        std::cout << "[RUN] test_transmission_low_loss_layer_keeps_its_loss" << std::endl;
+        test_transmission_low_loss_layer_keeps_its_loss();
         std::cout << "rayd::torch integration direct contracts passed\n";
         return 0;
     } catch (const std::exception& error) {

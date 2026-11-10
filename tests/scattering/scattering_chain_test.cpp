@@ -574,6 +574,152 @@ void test_sparse_invalid_rows_short_circuit_poison() {
                        "invalid sparse realization gain JVP must be zero");
 }
 
+// Per-row device data outside its range (leg depth, table or patch index,
+// material and its layer run) is handled like an invalid row everywhere.
+void require_inert_chain_ensemble(const ScatteringChainEnsembleEvalRequest& request, const std::string& label) {
+    const auto out = scattering_chain_ensemble_eval(request);
+    ScatteringChainEnsembleEvalBackwardRequest backward;
+    backward.primal = request;
+    backward.grad_gain = at::ones({1}, request.tx_pol.options());
+    backward.need_grad_chain1 = true;
+    backward.need_grad_chain2 = true;
+    backward.need_grad_tables = true;
+    backward.need_grad_coefficient = true;
+    backward.need_grad_frequency = true;
+    const auto grad = scattering_chain_ensemble_eval_backward(backward);
+    ScatteringChainEnsembleEvalJvpRequest jvp;
+    jvp.primal = request;
+    jvp.tangent_coefficient = 1.0;
+    jvp.tangent_l1 = at::ones({1}, request.tx_pol.options());
+    const auto tangent = scattering_chain_ensemble_eval_jvp(jvp);
+    c10::cuda::getCurrentCUDAStream(0).synchronize();
+    require_exact_zero(out.gain, label + " gain must be zero");
+    require_exact_zero(out.length, label + " length must be zero");
+    require_exact_zero(out.keep, label + " keep must be false");
+    require_exact_zero(*grad.grad_c1_eps_r, label + " chain gradient must be zero");
+    require_exact_zero(*grad.grad_f_te, label + " table gradient must be zero");
+    require_exact_zero(*grad.grad_coefficient, label + " coefficient gradient must be zero");
+    require_exact_zero(*grad.grad_frequency, label + " frequency gradient must be zero");
+    require_exact_zero(tangent.tangent_gain, label + " gain JVP must be zero");
+    require_exact_zero(tangent.tangent_length, label + " length JVP must be zero");
+}
+
+void require_inert_realization(const ScatteringChainRealizationEvalRequest& request, const std::string& label) {
+    const auto out = scattering_chain_realization_eval(request);
+    ScatteringChainRealizationEvalBackwardRequest backward;
+    backward.primal = request;
+    backward.grad_total = at::ones({}, request.patch_tris.options().dtype(at::kComplexFloat));
+    backward.need_grad_layers = true;
+    backward.need_grad_chain1 = true;
+    backward.need_grad_geometry = true;
+    backward.need_grad_k0 = true;
+    backward.need_grad_frequency = true;
+    const auto grad = scattering_chain_realization_eval_backward(backward);
+    ScatteringChainRealizationEvalJvpRequest jvp;
+    jvp.primal = request;
+    jvp.tangent_k0 = 1.0;
+    jvp.tangent_frequency = 1.0;
+    const auto tangent = scattering_chain_realization_eval_jvp(jvp);
+    c10::cuda::getCurrentCUDAStream(0).synchronize();
+    require_exact_zero(out.total, label + " total must be zero");
+    require_exact_zero(out.path_gain, label + " path gain must be zero");
+    require_exact_zero(*grad.grad_layer_thickness, label + " layer gradient must be zero");
+    require_exact_zero(*grad.grad_c1_eps_r, label + " chain gradient must be zero");
+    require_exact_zero(*grad.grad_d_i, label + " geometry gradient must be zero");
+    require_exact_zero(*grad.grad_k0, label + " k0 gradient must be zero");
+    require_exact_zero(*grad.grad_frequency, label + " frequency gradient must be zero");
+    require_exact_zero(tangent.tangent_total, label + " total JVP must be zero");
+    require_exact_zero(tangent.tangent_path_gain, label + " path gain JVP must be zero");
+}
+
+void test_out_of_range_rows_are_inert() {
+    const auto i32 = cuda_options(at::kInt);
+    const auto i64 = cuda_options(at::kLong);
+    for (const int depth : {9, 40, -1}) {
+        auto ensemble = ensemble_request();
+        ensemble.c1_depth.fill_(depth);
+        require_inert_chain_ensemble(ensemble, "chain ensemble c1 depth " + std::to_string(depth));
+        ensemble = ensemble_request();
+        ensemble.c2_depth.fill_(depth);
+        require_inert_chain_ensemble(ensemble, "chain ensemble c2 depth " + std::to_string(depth));
+        auto realization = realization_request();
+        realization.c1_depth.fill_(depth);
+        require_inert_realization(realization, "chain realization c1 depth " + std::to_string(depth));
+    }
+    auto ensemble = ensemble_request();
+    ensemble.material_id.fill_(5);
+    require_inert_chain_ensemble(ensemble, "chain ensemble material id out of range");
+    ensemble = ensemble_request();
+    ensemble.material_slot.fill_(2);
+    require_inert_chain_ensemble(ensemble, "chain ensemble slot out of range");
+    ensemble = ensemble_request();
+    ensemble.table_dims = at::tensor({64, 64, 64, 64}, i32).reshape({1, 4});
+    require_inert_chain_ensemble(ensemble, "chain ensemble table dims past storage");
+
+    auto realization = realization_request();
+    realization.rows = at::full({1}, 3, i64);
+    require_inert_realization(realization, "chain realization patch index out of range");
+    realization = realization_request();
+    realization.material_id.fill_(-2);
+    require_inert_realization(realization, "chain realization material id out of range");
+    realization = realization_request();
+    realization.layer_count = at::full({1}, 40, i32);
+    require_inert_realization(realization, "chain realization layer run past the store");
+    realization = realization_request();
+    realization.layer_offset = at::full({1}, -100000000, i32);
+    require_inert_realization(realization, "chain realization negative layer offset");
+    realization = realization_request();
+    realization.layer_eps_r = at::full({1}, std::numeric_limits<float>::quiet_NaN(), realization.d_i.options());
+    require_inert_realization(realization, "chain realization non-finite layer parameter");
+}
+
+// d(gain)/d(coefficient) = gain / coefficient must survive leg lengths whose
+// (l1*l2)^4 leaves the float32 range.
+void test_chain_ensemble_jvp_long_and_short_legs() {
+    for (const float length : {1.0e-6F, 1.0e-5F, 6.0e4F, 1.0e5F, 1.0e6F}) {
+        auto ensemble = ensemble_request();
+        ensemble.l1.fill_(length);
+        ensemble.l2.fill_(length);
+        const auto forward = scattering_chain_ensemble_eval(ensemble);
+        ScatteringChainEnsembleEvalJvpRequest jvp;
+        jvp.primal = ensemble;
+        jvp.tangent_coefficient = 1.0;
+        const auto tangent = scattering_chain_ensemble_eval_jvp(jvp);
+        const double expected = static_cast<double>(forward.gain.item<float>()) / ensemble.coefficient;
+        const double actual = tangent.tangent_gain.item<float>();
+        require(std::isfinite(expected) && expected != 0.0, "chain ensemble long/short leg gain must be usable");
+        require(std::isfinite(actual) && std::fabs(actual - expected) <= 1.0e-5 * std::fabs(expected),
+                "chain ensemble gain JVP lost accuracy at leg length " + std::to_string(length));
+    }
+}
+
+void test_realization_scalars_fail_loudly() {
+    for (const double bad : {0.0, -3.0, std::numeric_limits<double>::infinity(), 1.0e40}) {
+        for (const bool on_frequency : {true, false}) {
+            auto primal = realization_request();
+            (on_frequency ? primal.frequency_hz : primal.k0) = bad;
+            const std::string label = std::string(on_frequency ? "frequency_hz " : "k0 ") + std::to_string(bad);
+            require_throws([&] { (void)scattering_chain_realization_eval(primal); },
+                           "realization primal must reject " + label);
+            ScatteringChainRealizationEvalBackwardRequest backward;
+            backward.primal = primal;
+            backward.grad_total = at::ones({}, primal.patch_tris.options().dtype(at::kComplexFloat));
+            backward.need_grad_frequency = true;
+            require_throws([&] { (void)scattering_chain_realization_eval_backward(backward); },
+                           "realization backward must reject " + label);
+            ScatteringChainRealizationEvalJvpRequest jvp;
+            jvp.primal = primal;
+            jvp.tangent_frequency = 1.0;
+            require_throws([&] { (void)scattering_chain_realization_eval_jvp(jvp); },
+                           "realization JVP must reject " + label);
+        }
+        auto ensemble = ensemble_request();
+        ensemble.frequency_hz = bad;
+        require_throws([&] { (void)scattering_chain_ensemble_eval(ensemble); },
+                       "chain ensemble primal must reject frequency_hz " + std::to_string(bad));
+    }
+}
+
 } // namespace
 
 int main() {
@@ -596,6 +742,12 @@ int main() {
         test_nondefault_stream_dependency();
         std::cout << "[RUN] test_sparse_invalid_rows_short_circuit_poison\n";
         test_sparse_invalid_rows_short_circuit_poison();
+        std::cout << "[RUN] test_out_of_range_rows_are_inert\n";
+        test_out_of_range_rows_are_inert();
+        std::cout << "[RUN] test_chain_ensemble_jvp_long_and_short_legs\n";
+        test_chain_ensemble_jvp_long_and_short_legs();
+        std::cout << "[RUN] test_realization_scalars_fail_loudly\n";
+        test_realization_scalars_fail_loudly();
         std::cout << "rayd::torch chain scattering direct contracts passed\n";
         return 0;
     } catch (const std::exception& error) {

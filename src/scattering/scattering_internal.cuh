@@ -5,6 +5,10 @@
 
 #include <rayd/scattering.h>
 
+#include <cmath>
+#include <cstdint>
+#include <limits>
+
 namespace rayd::torch::detail {
 
 inline void check_tensor(const at::Tensor& tensor, const char* name, c10::ScalarType dtype, int64_t rank) {
@@ -21,6 +25,34 @@ inline void check_vec3_table(const at::Tensor& tensor, const char* name) {
 
 inline void check_flat_tensor(const at::Tensor& tensor, const char* name, c10::ScalarType dtype) {
     check_tensor(tensor, name, dtype, 1);
+}
+
+// Scalars such as k0 and frequency_hz reach the kernels as float32 divisors;
+// zero, negative, non-finite or float32-overflowing values only produce NaN or
+// Inf rows, so every primal, backward and JVP entry rejects them alike.
+inline void check_positive_finite_scalar(double value, const char* name) {
+    constexpr double kFloatMax = static_cast<double>(std::numeric_limits<float>::max());
+    TORCH_CHECK(std::isfinite(value) && value > 0.0 && value <= kFloatMax && static_cast<float>(value) > 0.0f, name,
+                " must be a positive finite float32 value, got ", value);
+}
+
+// Height screens are sampled with h - 1 / w - 1 clamps and int texel indices.
+inline void check_height_screen(const at::Tensor& heights, int64_t rows) {
+    for (int64_t axis = 0; axis < 2; ++axis)
+        TORCH_CHECK(rows == 0 || heights.size(axis) >= 1, "heights axis ", axis, " must not be empty");
+    TORCH_CHECK(heights.numel() <= std::numeric_limits<int32_t>::max(), "heights exceeds int32 texel indexing");
+}
+
+// Dense (theta_i, phi_i, theta_o, phi_o) table. The device interpolation and
+// nearest-cell lookups index every axis with n - 1 and take the extents as int,
+// so a table that is read (rows > 0) needs every axis in [1, INT32_MAX].
+inline void check_dense_table(const at::Tensor& tensor, const char* name, int64_t rows) {
+    check_tensor(tensor, name, at::kFloat, 4);
+    for (int64_t axis = 0; axis < 4; ++axis) {
+        TORCH_CHECK(rows == 0 || tensor.size(axis) >= 1, name, " axis ", axis, " must not be empty");
+        TORCH_CHECK(tensor.size(axis) <= std::numeric_limits<int32_t>::max(), name, " axis ", axis,
+                    " exceeds int32 indexing");
+    }
 }
 
 } // namespace rayd::torch::detail
@@ -74,7 +106,7 @@ inline int64_t check_scattering_chain_ensemble_request(const ScatteringChainEnse
     TORCH_CHECK(r.table_dims.size(1) == 4, "table_dims must have shape (M, 4)");
     TORCH_CHECK(r.table_dims.size(0) == r.table_offset.size(0), "table_dims and table_offset must have equal rows");
     check_flat_tensor(r.material_slot, "material_slot", at::kInt);
-    TORCH_CHECK(r.frequency_hz > 0.0, "frequency_hz must be positive");
+    check_positive_finite_scalar(r.frequency_hz, "frequency_hz");
 
     for (const auto& tensor :
          {r.valid,      r.rx_pol,       r.source,     r.vertex,       r.target,       r.c1_positions, r.c1_normals,
@@ -188,6 +220,58 @@ inline const at::Tensor* optional_grad(std::optional<at::Tensor> value, at::Tens
 
 template <typename T> const T* grad_ptr(const at::Tensor* tensor) {
     return tensor == nullptr ? nullptr : tensor->data_ptr<T>();
+}
+
+} // namespace rayd::torch::scattering_internal
+
+// Device-side range checks for row-addressed IDs and indices. The values are
+// caller-owned device data and the boundary may not read them on the host, so
+// every kernel tests them right after the validity gate and handles a row that
+// fails exactly like an invalid row: bitwise-zero primal/JVP outputs and row
+// gradients, and no shared-gradient atomics. Primal, backward and JVP apply the
+// same test, so a rejected row is consistent across the three.
+namespace rayd::torch::scattering_internal {
+
+// Extents of the flat Kirchhoff table storage that material_id ->
+// material_slot -> (table_offset, table_dims) addresses.
+struct FlatTableBounds {
+    int64_t material_count; // material_slot rows
+    int64_t slot_count;     // table_offset / table_dims rows
+    int64_t table_size;     // f_te_flat / f_tm_flat elements
+};
+
+inline FlatTableBounds flat_table_bounds(const at::Tensor& material_slot, const at::Tensor& table_offset,
+                                         const at::Tensor& fte_flat) {
+    return {material_slot.size(0), table_offset.size(0), fte_flat.size(0)};
+}
+
+// A negative slot means "no table" and stays valid; any other slot must name a
+// table row whose four extents are >= 1 and whose block lies inside the flat
+// storage.
+__device__ __forceinline__ bool flat_table_lookup_in_range(int material, const int* material_slot,
+                                                           const int64_t* table_offset, const int* table_dims,
+                                                           FlatTableBounds bounds) {
+    if (material < 0 || static_cast<int64_t>(material) >= bounds.material_count)
+        return false;
+    const int slot = material_slot[material];
+    if (slot < 0)
+        return true;
+    if (static_cast<int64_t>(slot) >= bounds.slot_count)
+        return false;
+    int64_t extent = 1;
+    for (int axis = 0; axis < 4; ++axis) {
+        const int n = table_dims[static_cast<int64_t>(slot) * 4 + axis];
+        if (n < 1 || extent > bounds.table_size / n)
+            return false;
+        extent *= n;
+    }
+    const int64_t base = table_offset[slot];
+    return base >= 0 && base <= bounds.table_size - extent;
+}
+
+// Per-row chain depths index fixed (R, 8) leg blocks and fixed-size AD stacks.
+__device__ __forceinline__ bool chain_depth_in_range(int depth) {
+    return depth >= 0 && depth <= kMaxAdDepth;
 }
 
 } // namespace rayd::torch::scattering_internal

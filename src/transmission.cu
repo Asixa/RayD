@@ -12,6 +12,9 @@
 #include <src/field_transport_ad.cuh>
 #include <rayd/transmission.h>
 
+#include <cmath>
+#include <limits>
+
 // Debug/parity surface for the shared em/ layer-stack core: evaluates the
 // full stack r/t (both polarizations) plus power R/T per input angle. This is
 // the oracle-parity op the CPU complex128 golden tests compare against.
@@ -26,14 +29,18 @@ __global__ void em_layer_stack_eval_kernel(int64_t count, const float* cos_theta
                                            const int* layer_offset, const int* layer_count,
                                            const float* layer_thickness_m, const float* layer_eps_r,
                                            const float* layer_sigma_e, const float* layer_mu_r, int64_t material_count,
-                                           float frequency_hz, float* r_te_real, float* r_te_imag, float* r_tm_real,
-                                           float* r_tm_imag, float* t_te_real, float* t_te_imag, float* t_tm_real,
-                                           float* t_tm_imag, float* cap_r_te, float* cap_r_tm, float* cap_t_te,
-                                           float* cap_t_tm) {
+                                           int64_t layer_total, float frequency_hz, float* r_te_real, float* r_te_imag,
+                                           float* r_tm_real, float* r_tm_imag, float* t_te_real, float* t_te_imag,
+                                           float* t_tm_real, float* t_tm_imag, float* cap_r_te, float* cap_r_tm,
+                                           float* cap_t_te, float* cap_t_tm) {
     for (int64_t index = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x; index < count;
          index += static_cast<int64_t>(blockDim.x) * gridDim.x) {
         const int material = material_id[index];
-        if (material < 0 || static_cast<int64_t>(material) >= material_count) {
+        const em::LayerView layers{
+            layer_offset, layer_count, layer_thickness_m, layer_eps_r, layer_sigma_e, layer_mu_r, material,
+        };
+        if (material < 0 || static_cast<int64_t>(material) >= material_count ||
+            !em::layer_material_usable(layers, layer_total)) {
             r_te_real[index] = 0.0f;
             r_te_imag[index] = 0.0f;
             r_tm_real[index] = 0.0f;
@@ -48,9 +55,6 @@ __global__ void em_layer_stack_eval_kernel(int64_t count, const float* cos_theta
             cap_t_tm[index] = 0.0f;
             continue;
         }
-        em::LayerView layers{
-            layer_offset, layer_count, layer_thickness_m, layer_eps_r, layer_sigma_e, layer_mu_r, material,
-        };
         const em::StackRT te = em::stack_rt(cos_theta[index], layers, frequency_hz, em::kPolTE);
         const em::StackRT tm = em::stack_rt(cos_theta[index], layers, frequency_hz, em::kPolTM);
         r_te_real[index] = te.r.re;
@@ -70,6 +74,21 @@ __global__ void em_layer_stack_eval_kernel(int64_t count, const float* cos_theta
 
 int launch_blocks(int64_t count) {
     return static_cast<int>((count + kBlockSize - 1) / kBlockSize);
+}
+
+// Every kernel receives frequency_hz as float32; an infinite, overflowing or
+// non-positive float32 frequency would turn every row into NaN or the clamped
+// static limit, so it is rejected before launch.
+void check_frequency(double frequency_hz) {
+    TORCH_CHECK(std::isfinite(frequency_hz) && frequency_hz > 0.0 &&
+                    frequency_hz <= static_cast<double>(std::numeric_limits<float>::max()) &&
+                    static_cast<float>(frequency_hz) > 0.0f,
+                "frequency_hz must be a positive finite float32 value, got ", frequency_hz);
+}
+
+// Layer slots are addressed with int offsets on the device.
+void check_layer_store_extent(int64_t layer_total) {
+    TORCH_CHECK(layer_total <= std::numeric_limits<int>::max(), "layer store exceeds int32 slot indexing");
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +156,7 @@ __global__ void em_layer_stack_backward_kernel(int64_t count, const float* cos_t
                                                const int* layer_offset, const int* layer_count,
                                                const float* layer_thickness_m, const float* layer_eps_r,
                                                const float* layer_sigma_e, const float* layer_mu_r,
-                                               int64_t material_count, float frequency_hz,
+                                               int64_t material_count, int64_t layer_total, float frequency_hz,
                                                StackGradPtrs grad_outputs, // 12 nullable cotangent arrays
                                                float* grad_cos_theta, float* grad_layer_thickness,
                                                float* grad_layer_eps_r, float* grad_layer_sigma_e,
@@ -145,7 +164,11 @@ __global__ void em_layer_stack_backward_kernel(int64_t count, const float* cos_t
     for (int64_t index = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x; index < count;
          index += static_cast<int64_t>(blockDim.x) * gridDim.x) {
         const int material = material_id[index];
-        if (material < 0 || static_cast<int64_t>(material) >= material_count)
+        const em::LayerView layers{
+            layer_offset, layer_count, layer_thickness_m, layer_eps_r, layer_sigma_e, layer_mu_r, material,
+        };
+        if (material < 0 || static_cast<int64_t>(material) >= material_count ||
+            !em::layer_material_usable(layers, layer_total))
             continue;
         float g[12];
         bool any = false;
@@ -155,9 +178,6 @@ __global__ void em_layer_stack_backward_kernel(int64_t count, const float* cos_t
         }
         if (!any)
             continue;
-        em::LayerView layers{
-            layer_offset, layer_count, layer_thickness_m, layer_eps_r, layer_sigma_e, layer_mu_r, material,
-        };
         const float ct = cos_theta[index];
         const StackZeroSeed zero_seed;
         if (grad_frequency != nullptr) {
@@ -197,7 +217,7 @@ __global__ void em_layer_stack_jvp_kernel(int64_t count, const float* cos_theta,
                                           const int* layer_offset, const int* layer_count,
                                           const float* layer_thickness_m, const float* layer_eps_r,
                                           const float* layer_sigma_e, const float* layer_mu_r, int64_t material_count,
-                                          float frequency_hz, const float* tangent_cos_theta,
+                                          int64_t layer_total, float frequency_hz, const float* tangent_cos_theta,
                                           const float* tangent_layer_thickness, const float* tangent_layer_eps_r,
                                           const float* tangent_layer_sigma_e, float tangent_frequency,
                                           StackTangentPtrs output_tangents) { // 12 tangent arrays
@@ -205,14 +225,15 @@ __global__ void em_layer_stack_jvp_kernel(int64_t count, const float* cos_theta,
     for (int64_t index = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x; index < count;
          index += static_cast<int64_t>(blockDim.x) * gridDim.x) {
         const int material = material_id[index];
-        if (material < 0 || static_cast<int64_t>(material) >= material_count) {
+        const em::LayerView layers{
+            layer_offset, layer_count, layer_thickness_m, layer_eps_r, layer_sigma_e, layer_mu_r, material,
+        };
+        if (material < 0 || static_cast<int64_t>(material) >= material_count ||
+            !em::layer_material_usable(layers, layer_total)) {
             for (int field = 0; field < 12; ++field)
                 output_tangents.p[field][index] = 0.0f;
             continue;
         }
-        em::LayerView layers{
-            layer_offset, layer_count, layer_thickness_m, layer_eps_r, layer_sigma_e, layer_mu_r, material,
-        };
         const float d_cos = tangent_cos_theta != nullptr ? tangent_cos_theta[index] : 0.0f;
         const ad::DualStackRT te =
             ad::stack_rt_dual(cos_theta[index], layers, frequency_hz, d_cos, tangent_frequency, em::kPolTE, seed);
@@ -270,7 +291,8 @@ rayd::torch::LayerStackResult rayd::torch::em_layer_stack_eval(const rayd::torch
          {material_id, layer_offset, layer_count, layer_thickness_m, layer_eps_r, layer_sigma_e, layer_mu_r})
         TORCH_CHECK(tensor.get_device() == cos_theta.get_device(),
                     "em_layer_stack_eval tensors must share one CUDA device");
-    TORCH_CHECK(frequency_hz > 0.0, "frequency_hz must be positive");
+    check_frequency(frequency_hz);
+    check_layer_store_extent(layer_total);
     const c10::cuda::CUDAGuard guard(static_cast<int>(cos_theta.get_device()));
 
     auto options = cos_theta.options();
@@ -282,7 +304,7 @@ rayd::torch::LayerStackResult rayd::torch::em_layer_stack_eval(const rayd::torch
         em_layer_stack_eval_kernel<<<launch_blocks(count), kBlockSize, 0, stream>>>(
             count, cos_theta.data_ptr<float>(), material_id.data_ptr<int>(), layer_offset.data_ptr<int>(),
             layer_count.data_ptr<int>(), layer_thickness_m.data_ptr<float>(), layer_eps_r.data_ptr<float>(),
-            layer_sigma_e.data_ptr<float>(), layer_mu_r.data_ptr<float>(), material_count,
+            layer_sigma_e.data_ptr<float>(), layer_mu_r.data_ptr<float>(), material_count, layer_total,
             static_cast<float>(frequency_hz), outputs[0].data_ptr<float>(), outputs[1].data_ptr<float>(),
             outputs[2].data_ptr<float>(), outputs[3].data_ptr<float>(), outputs[4].data_ptr<float>(),
             outputs[5].data_ptr<float>(), outputs[6].data_ptr<float>(), outputs[7].data_ptr<float>(),
@@ -337,7 +359,8 @@ void check_stack_primal(const at::Tensor& cos_theta, const at::Tensor& material_
     for (const auto& tensor :
          {material_id, layer_offset, layer_count, layer_thickness_m, layer_eps_r, layer_sigma_e, layer_mu_r})
         TORCH_CHECK(tensor.get_device() == cos_theta.get_device(), "em_layer_stack tensors must share one CUDA device");
-    TORCH_CHECK(frequency_hz > 0.0, "frequency_hz must be positive");
+    check_frequency(frequency_hz);
+    check_layer_store_extent(layer_total);
 }
 
 const float* stack_optional_grad(const std::optional<at::Tensor>& value, const char* name, int64_t rows,
@@ -392,7 +415,7 @@ rayd::torch::LayerStackBackwardResult rayd::torch::em_layer_stack_backward(
         em_layer_stack_backward_kernel<<<launch_blocks(count), kBlockSize, 0, stream>>>(
             count, cos_theta.data_ptr<float>(), material_id.data_ptr<int>(), layer_offset.data_ptr<int>(),
             layer_count.data_ptr<int>(), layer_thickness_m.data_ptr<float>(), layer_eps_r.data_ptr<float>(),
-            layer_sigma_e.data_ptr<float>(), layer_mu_r.data_ptr<float>(), material_count,
+            layer_sigma_e.data_ptr<float>(), layer_mu_r.data_ptr<float>(), material_count, layer_total,
             static_cast<float>(frequency_hz), grads, need_cos_theta ? grad_cos_theta.data_ptr<float>() : nullptr,
             need_layers ? grad_layer_thickness.data_ptr<float>() : nullptr,
             need_layers ? grad_layer_eps_r.data_ptr<float>() : nullptr,
@@ -441,7 +464,7 @@ rayd::torch::LayerStackResult rayd::torch::em_layer_stack_jvp(const rayd::torch:
         em_layer_stack_jvp_kernel<<<launch_blocks(count), kBlockSize, 0, stream>>>(
             count, cos_theta.data_ptr<float>(), material_id.data_ptr<int>(), layer_offset.data_ptr<int>(),
             layer_count.data_ptr<int>(), layer_thickness_m.data_ptr<float>(), layer_eps_r.data_ptr<float>(),
-            layer_sigma_e.data_ptr<float>(), layer_mu_r.data_ptr<float>(), material_count,
+            layer_sigma_e.data_ptr<float>(), layer_mu_r.data_ptr<float>(), material_count, layer_total,
             static_cast<float>(frequency_hz), t_cos, t_thickness, t_eps, t_sigma, static_cast<float>(tangent_frequency),
             tangents);
         C10_CUDA_KERNEL_LAUNCH_CHECK();
@@ -501,24 +524,28 @@ __global__ void transmission_sequence_kernel(
     const float* interaction_normals, const int* interaction_material_id, const bool* interaction_valid,
     const float* tx_power, const float* tx_polarization, const float* rx_polarization, const int* layer_offset,
     const int* layer_count, const float* layer_thickness_m, const float* layer_eps_r, const float* layer_sigma_e,
-    const float* layer_mu_r, int64_t material_count, float frequency_hz, c10::complex<float>* field_vector,
-    c10::complex<float>* coefficient, c10::complex<float>* path_field, float* path_gain, float* path_length,
-    float* delay, float* direction_out) {
+    const float* layer_mu_r, int64_t material_count, int64_t layer_total, float frequency_hz,
+    c10::complex<float>* field_vector, c10::complex<float>* coefficient, c10::complex<float>* path_field,
+    float* path_gain, float* path_length, float* delay, float* direction_out) {
+    auto write_inert_row = [&](int64_t index) {
+        const int64_t base = index * 3;
+        field_vector[base] = c10::complex<float>(0.0F, 0.0F);
+        field_vector[base + 1] = c10::complex<float>(0.0F, 0.0F);
+        field_vector[base + 2] = c10::complex<float>(0.0F, 0.0F);
+        coefficient[index] = c10::complex<float>(0.0F, 0.0F);
+        path_field[index] = c10::complex<float>(0.0F, 0.0F);
+        path_gain[index] = 0.0F;
+        path_length[index] = 0.0F;
+        delay[index] = 0.0F;
+        direction_out[base] = 0.0F;
+        direction_out[base + 1] = 0.0F;
+        direction_out[base + 2] = 0.0F;
+    };
     for (int64_t index = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x; index < count;
          index += static_cast<int64_t>(blockDim.x) * gridDim.x) {
         const int64_t base = index * 3;
         if (!path_valid[index]) {
-            field_vector[base] = c10::complex<float>(0.0F, 0.0F);
-            field_vector[base + 1] = c10::complex<float>(0.0F, 0.0F);
-            field_vector[base + 2] = c10::complex<float>(0.0F, 0.0F);
-            coefficient[index] = c10::complex<float>(0.0F, 0.0F);
-            path_field[index] = c10::complex<float>(0.0F, 0.0F);
-            path_gain[index] = 0.0F;
-            path_length[index] = 0.0F;
-            delay[index] = 0.0F;
-            direction_out[base] = 0.0F;
-            direction_out[base + 1] = 0.0F;
-            direction_out[base + 2] = 0.0F;
+            write_inert_row(index);
             continue;
         }
         const field::float3a source_value = load3(source, index);
@@ -536,7 +563,11 @@ __global__ void transmission_sequence_kernel(
             if (!interaction_valid[scalar])
                 continue;
             const int material = interaction_material_id[scalar];
-            if (material < 0 || static_cast<int64_t>(material) >= material_count) {
+            const em::LayerView layers{
+                layer_offset, layer_count, layer_thickness_m, layer_eps_r, layer_sigma_e, layer_mu_r, material,
+            };
+            if (material < 0 || static_cast<int64_t>(material) >= material_count ||
+                !em::layer_material_usable(layers, layer_total)) {
                 chain_valid = false;
                 break;
             }
@@ -546,9 +577,6 @@ __global__ void transmission_sequence_kernel(
             // incidence (same construction as reflect_complex3).
             const transport::WallFrame frame =
                 transport::wall_frame(direction, load_sequence3(interaction_normals, index, wall, depth));
-            em::LayerView layers{
-                layer_offset, layer_count, layer_thickness_m, layer_eps_r, layer_sigma_e, layer_mu_r, material,
-            };
             const em::StackRT te = em::stack_rt(frame.cos_theta, layers, frequency_hz, em::kPolTE);
             const em::StackRT tm = em::stack_rt(frame.cos_theta, layers, frequency_hz, em::kPolTM);
             const field::Complex e_s = transport::complex3_dot_real(value, frame.s_axis);
@@ -562,14 +590,18 @@ __global__ void transmission_sequence_kernel(
                 wall_thickness += fmaxf(layer_thickness_m[first + layer], 0.0f);
             carrier_length -= wall_thickness * frame.cos_theta;
         }
+        if (!chain_valid) {
+            // An unusable wall material invalidates the whole path; the
+            // backward and JVP kernels give such rows exact zero derivatives.
+            write_inert_row(index);
+            continue;
+        }
         const float wave_number = 2.0f * field::UTD_PI * frequency_hz / transport::kSpeedOfLight;
         const float amplitude = 1.0f / (2.0f * wave_number * fmaxf(total_length, field::UTD_EPS));
         const field::Complex propagation =
             field::cplx_mul_real(field::cplx_exp_phase(transport::precise_neg_kd(wave_number, carrier_length)),
                                  amplitude);
         value = field::c3_scale(value, propagation);
-        if (!chain_valid)
-            value = field::c3_zero();
         field_vector[base] = to_complex(value.x);
         field_vector[base + 1] = to_complex(value.y);
         field_vector[base + 2] = to_complex(value.z);
@@ -648,7 +680,8 @@ std::pair<int64_t, int64_t> check_transmission_primal(const rayd::torch::Transmi
           request.layer_eps_r, request.layer_sigma_e, request.layer_mu_r})
         TORCH_CHECK(tensor.get_device() == request.source.get_device(),
                     "transmission tensors must share one CUDA device");
-    TORCH_CHECK(request.frequency_hz > 0.0, "frequency_hz must be positive");
+    check_frequency(request.frequency_hz);
+    check_layer_store_extent(layer_total);
     return {depth, material_count};
 }
 
@@ -677,10 +710,11 @@ rayd::torch::TransmissionSequenceResult rayd::torch::field_transmission_sequence
             request.rx_polarization.data_ptr<float>(), request.layer_offset.data_ptr<int>(),
             request.layer_count.data_ptr<int>(), request.layer_thickness_m.data_ptr<float>(),
             request.layer_eps_r.data_ptr<float>(), request.layer_sigma_e.data_ptr<float>(),
-            request.layer_mu_r.data_ptr<float>(), material_count, static_cast<float>(request.frequency_hz),
-            field_vector.data_ptr<c10::complex<float>>(), coefficient.data_ptr<c10::complex<float>>(),
-            path_field.data_ptr<c10::complex<float>>(), path_gain.data_ptr<float>(), path_length.data_ptr<float>(),
-            delay.data_ptr<float>(), direction.data_ptr<float>());
+            request.layer_mu_r.data_ptr<float>(), material_count, request.layer_thickness_m.size(0),
+            static_cast<float>(request.frequency_hz), field_vector.data_ptr<c10::complex<float>>(),
+            coefficient.data_ptr<c10::complex<float>>(), path_field.data_ptr<c10::complex<float>>(),
+            path_gain.data_ptr<float>(), path_length.data_ptr<float>(), delay.data_ptr<float>(),
+            direction.data_ptr<float>());
         C10_CUDA_KERNEL_LAUNCH_CHECK();
     }
     return {field_vector, coefficient, path_field, path_gain, path_length, delay, direction};
@@ -750,8 +784,8 @@ __device__ void transmission_chain_eval(int64_t index, int64_t depth, const floa
                                         const float* interaction_normals, const int* interaction_material_id,
                                         const bool* interaction_valid, const float* tx_power,
                                         const float* tx_polarization, const float* rx_polarization,
-                                        const em::LayerView& layers_base, int64_t material_count, float frequency_hz,
-                                        TransmissionChain& chain) {
+                                        const em::LayerView& layers_base, int64_t material_count, int64_t layer_total,
+                                        float frequency_hz, TransmissionChain& chain) {
     const field::float3a source_value = load3f(source, index);
     const field::float3a target_value = load3f(target, index);
     const field::float3a offset = field::f3_sub(target_value, source_value);
@@ -768,14 +802,15 @@ __device__ void transmission_chain_eval(int64_t index, int64_t depth, const floa
         if (!interaction_valid[scalar])
             continue;
         const int material = interaction_material_id[scalar];
-        if (material < 0 || static_cast<int64_t>(material) >= material_count) {
+        em::LayerView layers = layers_base;
+        layers.material = material;
+        if (material < 0 || static_cast<int64_t>(material) >= material_count ||
+            !em::layer_material_usable(layers, layer_total)) {
             chain.path_valid = false;
             break;
         }
         const transport::WallFrame frame =
             transport::wall_frame(chain.direction, load_sequence3f(interaction_normals, index, wall, depth));
-        em::LayerView layers = layers_base;
-        layers.material = material;
         const em::StackRT te = em::stack_rt(frame.cos_theta, layers, frequency_hz, em::kPolTE);
         const em::StackRT tm = em::stack_rt(frame.cos_theta, layers, frequency_hz, em::kPolTM);
         const field::Complex e_s = transport::complex3_dot_real(value, frame.s_axis);
@@ -856,11 +891,11 @@ __global__ void transmission_sequence_backward_kernel(
     const float* interaction_normals, const int* interaction_material_id, const bool* interaction_valid,
     const float* tx_power, const float* tx_polarization, const float* rx_polarization, const int* layer_offset,
     const int* layer_count, const float* layer_thickness_m, const float* layer_eps_r, const float* layer_sigma_e,
-    const float* layer_mu_r, int64_t material_count, float frequency_hz, const c10::complex<float>* grad_field_vector,
-    const c10::complex<float>* grad_coefficient, const c10::complex<float>* grad_path_field,
-    const float* grad_path_gain, const float* grad_path_length, const float* grad_delay, float* grad_layer_thickness,
-    float* grad_layer_eps_r, float* grad_layer_sigma_e, float* grad_frequency, float* grad_source, float* grad_target,
-    float* grad_normals) {
+    const float* layer_mu_r, int64_t material_count, int64_t layer_total, float frequency_hz,
+    const c10::complex<float>* grad_field_vector, const c10::complex<float>* grad_coefficient,
+    const c10::complex<float>* grad_path_field, const float* grad_path_gain, const float* grad_path_length,
+    const float* grad_delay, float* grad_layer_thickness, float* grad_layer_eps_r, float* grad_layer_sigma_e,
+    float* grad_frequency, float* grad_source, float* grad_target, float* grad_normals) {
     const em::LayerView layers_base{
         layer_offset, layer_count, layer_thickness_m, layer_eps_r, layer_sigma_e, layer_mu_r, 0,
     };
@@ -872,9 +907,9 @@ __global__ void transmission_sequence_backward_kernel(
         TransmissionChain chain;
         transmission_chain_eval(index, depth, source, target, interaction_normals, interaction_material_id,
                                 interaction_valid, tx_power, tx_polarization, rx_polarization, layers_base,
-                                material_count, frequency_hz, chain);
+                                material_count, layer_total, frequency_hz, chain);
         if (!chain.path_valid)
-            continue; // forward zeroed the outputs; every gradient is zero
+            continue; // forward wrote an inert row; every gradient is zero
 
         const field::Complex3 value_final = field::c3_scale(chain.value_chain, chain.propagation);
         const field::Complex scalar = transport::complex3_dot_real(value_final, chain.rx_axis);
@@ -1020,9 +1055,9 @@ __global__ void transmission_sequence_jvp_kernel(
     const float* interaction_normals, const int* interaction_material_id, const bool* interaction_valid,
     const float* tx_power, const float* tx_polarization, const float* rx_polarization, const int* layer_offset,
     const int* layer_count, const float* layer_thickness_m, const float* layer_eps_r, const float* layer_sigma_e,
-    const float* layer_mu_r, int64_t material_count, float frequency_hz, const float* tangent_layer_thickness,
-    const float* tangent_layer_eps_r, const float* tangent_layer_sigma_e, float tangent_frequency,
-    const float* tangent_source, const float* tangent_target, const float* tangent_normals,
+    const float* layer_mu_r, int64_t material_count, int64_t layer_total, float frequency_hz,
+    const float* tangent_layer_thickness, const float* tangent_layer_eps_r, const float* tangent_layer_sigma_e,
+    float tangent_frequency, const float* tangent_source, const float* tangent_target, const float* tangent_normals,
     c10::complex<float>* t_field_vector, c10::complex<float>* t_coefficient, c10::complex<float>* t_path_field,
     float* t_path_gain, float* t_path_length, float* t_delay) {
     const em::LayerView layers_base{
@@ -1046,7 +1081,7 @@ __global__ void transmission_sequence_jvp_kernel(
         TransmissionChain chain;
         transmission_chain_eval(index, depth, source, target, interaction_normals, interaction_material_id,
                                 interaction_valid, tx_power, tx_polarization, rx_polarization, layers_base,
-                                material_count, frequency_hz, chain);
+                                material_count, layer_total, frequency_hz, chain);
         if (!chain.path_valid) {
             const int64_t base = index * 3;
             const c10::complex<float> zero(0.0f, 0.0f);
@@ -1188,7 +1223,8 @@ std::pair<int64_t, int64_t> check_transmission_ad_primal(const rayd::torch::Tran
                                interaction_valid, tx_power, tx_polarization, rx_polarization, layer_offset, layer_count,
                                layer_thickness_m, layer_eps_r, layer_sigma_e, layer_mu_r})
         TORCH_CHECK(tensor.get_device() == source.get_device(), "transmission tensors must share one CUDA device");
-    TORCH_CHECK(request.frequency_hz > 0.0, "frequency_hz must be positive");
+    check_frequency(request.frequency_hz);
+    check_layer_store_extent(layer_total);
     return {depth, material_count};
 }
 
@@ -1278,7 +1314,7 @@ rayd::torch::field_transmission_sequence_backward(const rayd::torch::Transmissio
             primal.rx_polarization.data_ptr<float>(), primal.layer_offset.data_ptr<int>(),
             primal.layer_count.data_ptr<int>(), primal.layer_thickness_m.data_ptr<float>(),
             primal.layer_eps_r.data_ptr<float>(), primal.layer_sigma_e.data_ptr<float>(),
-            primal.layer_mu_r.data_ptr<float>(), material_count, static_cast<float>(primal.frequency_hz),
+            primal.layer_mu_r.data_ptr<float>(), material_count, layer_total, static_cast<float>(primal.frequency_hz),
             gfv ? gfv->data_ptr<c10::complex<float>>() : nullptr, gc ? gc->data_ptr<c10::complex<float>>() : nullptr,
             gpf ? gpf->data_ptr<c10::complex<float>>() : nullptr, tensor_ptr<float>(gpg), tensor_ptr<float>(gpl),
             tensor_ptr<float>(gd), request.need_grad_layer_thickness_m ? grad_thickness.data_ptr<float>() : nullptr,
@@ -1349,7 +1385,7 @@ rayd::torch::TransmissionSequenceJvpResult rayd::torch::field_transmission_seque
             primal.rx_polarization.data_ptr<float>(), primal.layer_offset.data_ptr<int>(),
             primal.layer_count.data_ptr<int>(), primal.layer_thickness_m.data_ptr<float>(),
             primal.layer_eps_r.data_ptr<float>(), primal.layer_sigma_e.data_ptr<float>(),
-            primal.layer_mu_r.data_ptr<float>(), material_count, static_cast<float>(primal.frequency_hz),
+            primal.layer_mu_r.data_ptr<float>(), material_count, layer_total, static_cast<float>(primal.frequency_hz),
             tensor_ptr<float>(t_thickness), tensor_ptr<float>(t_eps), tensor_ptr<float>(t_sigma),
             static_cast<float>(request.tangent_frequency), tensor_ptr<float>(t_source), tensor_ptr<float>(t_target),
             tensor_ptr<float>(t_normals), t_field_vector.data_ptr<c10::complex<float>>(),

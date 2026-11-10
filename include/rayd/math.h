@@ -863,11 +863,24 @@ namespace rayd::shared::transmission {
 
 namespace utd = ::rayd::shared::diffraction;
 
+// Passive-branch square root: Re(w) >= 0 and Im(w) <= 0, so exp(-j w z) never
+// grows. The large component comes from t = sqrt((|z| + |Re z|) / 2) and the
+// small one from |Im z| / (2 t), which avoids the cancellation in |z| - Re z
+// that drops the loss term of low-loss media in float32. Exactly one component
+// differs from the cancelling form: Im(w) when Re z >= 0 and Re(w) when
+// Re z < 0; lossless inputs (Im z = 0) are bitwise unchanged. A zero, NaN or
+// infinite magnitude keeps the direct form, whose components are exact there
+// and which never divides infinity by infinity.
 RAYD_MATH_INLINE utd::Complex c_sqrt_passive(utd::Complex value) {
     const float magnitude = hypotf(value.re, value.im);
-    const float real = sqrtf(fmaxf(0.5f * (magnitude + value.re), 0.0f));
-    const float imaginary = -sqrtf(fmaxf(0.5f * (magnitude - value.re), 0.0f));
-    return utd::cplx(real, imaginary);
+    const float large = sqrtf(fmaxf(0.5f * (magnitude + fabsf(value.re)), 0.0f));
+    if (!(large > 0.0f) || !utd::isfinite(large)) {
+        const float real = sqrtf(fmaxf(0.5f * (magnitude + value.re), 0.0f));
+        const float imaginary = -sqrtf(fmaxf(0.5f * (magnitude - value.re), 0.0f));
+        return utd::cplx(real, imaginary);
+    }
+    const float small = fabsf(value.im) / (2.0f * large);
+    return value.re >= 0.0f ? utd::cplx(large, -small) : utd::cplx(small, -large);
 }
 
 RAYD_MATH_INLINE utd::Complex c_exp_neg_j(double phase) {

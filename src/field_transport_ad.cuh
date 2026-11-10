@@ -889,7 +889,37 @@ struct DualWallFrame {
     DualF cos_theta;
 };
 
-__device__ __forceinline__ DualWallFrame dual_wall_frame(DualF3 direction, DualF3 raw_normal) {
+// Near normal incidence the wall s axis is divided by its exact length (see
+// transport::wall_unit_axis). The established frames below are the unchanged
+// code path; the near-normal variants differ only in the s axis and its
+// derivative and stay out of line so they do not perturb the code generated for
+// the established path.
+
+// u = v / |v| and its tangent (v.d - u (u . v.d)) / |v|.
+__device__ __forceinline__ DualF3 dual_exact_unit(DualF3 v) {
+    const float n = utd::safe_length(v.v);
+    const float dn = utd::f3_dot(v.v, v.d) / n;
+    DualF3 out;
+    out.v = utd::f3_div(v.v, n);
+    out.d = utd::f3_sub(utd::f3_div(v.d, n), utd::f3_mul(v.v, dn / (n * n)));
+    return out;
+}
+
+// Adjoint of u = v / |v|: g_v += g/|v| - v (v . g)/|v|^3.
+__device__ __forceinline__ void adj_exact_unit(utd::float3a v, utd::float3a g_out, utd::float3a& g_v) {
+    const float n = utd::safe_length(v);
+    const float dg = utd::f3_dot(g_out, v);
+    g_v = utd::f3_add(g_v, utd::f3_sub(utd::f3_div(g_out, n), utd::f3_mul(v, dg / (n * n * n))));
+}
+
+// Primal replay of the wall-frame branch decision.
+__device__ __forceinline__ bool wall_frame_near_normal(utd::float3a direction, utd::float3a raw_normal) {
+    const utd::float3a n_unit = utd::safe_normalize(raw_normal, utd::make_f3(0.0f, 0.0f, 1.0f));
+    const utd::float3a normal = utd::f3_dot(direction, n_unit) > 0.0f ? utd::f3_neg(n_unit) : n_unit;
+    return transport::wall_axis_uses_exact_length(utd::f3_cross(normal, direction));
+}
+
+__device__ __forceinline__ DualWallFrame dual_wall_frame_established(DualF3 direction, DualF3 raw_normal) {
     const DualF3 e_z = df3_const(utd::make_f3(0.0f, 0.0f, 1.0f));
     DualF3 normal = dual_safe_normalize(raw_normal, e_z);
     if (utd::f3_dot(direction.v, normal.v) > 0.0f)
@@ -907,11 +937,36 @@ __device__ __forceinline__ DualWallFrame dual_wall_frame(DualF3 direction, DualF
     return frame;
 }
 
-// Reverse-mode adjoint of transport::wall_frame into the ray direction and
+inline __device__ __noinline__ DualWallFrame dual_wall_frame_near_normal(DualF3 direction, DualF3 raw_normal) {
+    const DualF3 e_z = df3_const(utd::make_f3(0.0f, 0.0f, 1.0f));
+    DualF3 normal = dual_safe_normalize(raw_normal, e_z);
+    if (utd::f3_dot(direction.v, normal.v) > 0.0f)
+        normal = df3_neg(normal);
+    DualWallFrame frame;
+    const DualF dot = df3_dot(direction, normal);
+    const float ct_abs = fabsf(dot.v);
+    const float d_ct_abs = d_fabsf(dot.v, dot.d);
+    frame.cos_theta.v = fminf(fmaxf(ct_abs, utd::UTD_SMALL_EPS), 1.0f);
+    frame.cos_theta.d = (ct_abs >= utd::UTD_SMALL_EPS && ct_abs <= 1.0f) ? d_ct_abs : 0.0f;
+    const DualF3 s_raw = df3_cross(normal, direction);
+    frame.s_axis = dual_exact_unit(s_raw);
+    frame.p_axis =
+        dual_safe_normalize(df3_cross(frame.s_axis, direction), dual_stable_perp_basis(direction, frame.s_axis));
+    return frame;
+}
+
+__device__ __forceinline__ DualWallFrame dual_wall_frame(DualF3 direction, DualF3 raw_normal) {
+    if (wall_frame_near_normal(direction.v, raw_normal.v))
+        return dual_wall_frame_near_normal(direction, raw_normal);
+    return dual_wall_frame_established(direction, raw_normal);
+}
+
+// Reverse-mode adjoints of transport::wall_frame into the ray direction and
 // the raw wall normal.
-__device__ __forceinline__ void adj_wall_frame(utd::float3a direction, utd::float3a raw_normal, utd::float3a g_s_axis,
-                                               utd::float3a g_p_axis, float g_cos_theta, utd::float3a& g_direction,
-                                               utd::float3a& g_raw_normal) {
+__device__ __forceinline__ void adj_wall_frame_established(utd::float3a direction, utd::float3a raw_normal,
+                                                           utd::float3a g_s_axis, utd::float3a g_p_axis,
+                                                           float g_cos_theta, utd::float3a& g_direction,
+                                                           utd::float3a& g_raw_normal) {
     const utd::float3a e_z = utd::make_f3(0.0f, 0.0f, 1.0f);
     // Primal replay (mirrors transport::wall_frame).
     const utd::float3a n_unit = utd::safe_normalize(raw_normal, e_z);
@@ -960,6 +1015,67 @@ __device__ __forceinline__ void adj_wall_frame(utd::float3a direction, utd::floa
     const utd::float3a g_n_unit = flip ? utd::f3_neg(g_normal) : g_normal;
     utd::float3a g_dump = utd::f3_zero();
     utd::adj_safe_normalize(raw_normal, e_z, g_n_unit, g_raw_normal, g_dump);
+}
+
+inline __device__ __noinline__ void adj_wall_frame_near_normal(utd::float3a direction, utd::float3a raw_normal,
+                                                               utd::float3a g_s_axis, utd::float3a g_p_axis,
+                                                               float g_cos_theta, utd::float3a& g_direction,
+                                                               utd::float3a& g_raw_normal) {
+    const utd::float3a e_z = utd::make_f3(0.0f, 0.0f, 1.0f);
+    // Primal replay (mirrors transport::wall_frame).
+    const utd::float3a n_unit = utd::safe_normalize(raw_normal, e_z);
+    const bool flip = utd::f3_dot(direction, n_unit) > 0.0f;
+    const utd::float3a normal = flip ? utd::f3_neg(n_unit) : n_unit;
+    const float dot = utd::f3_dot(direction, normal);
+    const float ct_abs = fabsf(dot);
+    const utd::float3a s_raw = utd::f3_cross(normal, direction);
+    const utd::float3a s_axis = utd::f3_div(s_raw, utd::safe_length(s_raw));
+    const utd::float3a p_raw = utd::f3_cross(s_axis, direction);
+
+    utd::float3a g_normal = utd::f3_zero();
+    utd::float3a g_s_total = g_s_axis;
+
+    // p_axis = safe_normalize(s x direction, stable_perp_basis(direction, s)).
+    {
+        utd::float3a g_raw = utd::f3_zero();
+        utd::float3a g_alt = utd::f3_zero();
+        utd::adj_safe_normalize(p_raw, utd::stable_perp_basis(direction, s_axis), g_p_axis, g_raw, g_alt);
+        g_s_total = utd::f3_add(g_s_total, utd::f3_cross(direction, g_raw));
+        g_direction = utd::f3_add(g_direction, utd::f3_cross(g_raw, s_axis));
+        utd::adj_stable_perp_basis(direction, s_axis, g_alt, g_direction, g_s_total);
+    }
+    // s_axis = (normal x direction) / |normal x direction|, the exact unit vector of the near-normal frame (no
+    // safe_normalize floor and no alternate axis, so the alternate-axis branch has no adjoint here).
+    {
+        utd::float3a g_raw = utd::f3_zero();
+        adj_exact_unit(s_raw, g_s_total, g_raw);
+        g_normal = utd::f3_add(g_normal, utd::f3_cross(direction, g_raw));
+        g_direction = utd::f3_add(g_direction, utd::f3_cross(g_raw, normal));
+    }
+    // cos_theta = clamp(|dot|, SMALL_EPS, 1).
+    if (ct_abs >= utd::UTD_SMALL_EPS && ct_abs <= 1.0f) {
+        float g_dot = 0.0f;
+        if (dot > 0.0f)
+            g_dot = g_cos_theta;
+        else if (dot < 0.0f)
+            g_dot = -g_cos_theta;
+        g_direction = utd::f3_add(g_direction, utd::f3_mul(normal, g_dot));
+        g_normal = utd::f3_add(g_normal, utd::f3_mul(direction, g_dot));
+    }
+    // Frozen flip sign, then the input normalize.
+    const utd::float3a g_n_unit = flip ? utd::f3_neg(g_normal) : g_normal;
+    utd::float3a g_dump = utd::f3_zero();
+    utd::adj_safe_normalize(raw_normal, e_z, g_n_unit, g_raw_normal, g_dump);
+}
+
+__device__ __forceinline__ void adj_wall_frame(utd::float3a direction, utd::float3a raw_normal, utd::float3a g_s_axis,
+                                               utd::float3a g_p_axis, float g_cos_theta, utd::float3a& g_direction,
+                                               utd::float3a& g_raw_normal) {
+    if (wall_frame_near_normal(direction, raw_normal)) {
+        adj_wall_frame_near_normal(direction, raw_normal, g_s_axis, g_p_axis, g_cos_theta, g_direction, g_raw_normal);
+        return;
+    }
+    adj_wall_frame_established(direction, raw_normal, g_s_axis, g_p_axis, g_cos_theta, g_direction, g_raw_normal);
 }
 
 // ---------------------------------------------------------------------------

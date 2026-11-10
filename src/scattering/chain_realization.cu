@@ -19,6 +19,32 @@ __device__ __forceinline__ field::float3a load_leg3(const float* __restrict__ va
     return load_sequence3f(values, row, bounce, kMaxAdDepth);
 }
 
+// Extents bounding the per-row patch index, material id and vertex layer run.
+struct RealizationBounds {
+    int64_t patch_count;    // patch_tris rows
+    int64_t material_count; // layer_offset / layer_count rows
+    int64_t layer_total;    // layer parameter elements
+};
+
+// The patch index, both leg depths and the vertex material (including its CSR
+// layer run and finite layer parameters) of one row are usable.
+__device__ __forceinline__ bool realization_row_in_range(int64_t row, const int64_t* __restrict__ rows,
+                                                         const int* __restrict__ c1_depth,
+                                                         const int* __restrict__ c2_depth,
+                                                         const int* __restrict__ material_id,
+                                                         const em::LayerView& layers_base, RealizationBounds bounds) {
+    const int64_t patch = rows[row];
+    if (patch < 0 || patch >= bounds.patch_count || !chain_depth_in_range(c1_depth[row]) ||
+        !chain_depth_in_range(c2_depth[row]))
+        return false;
+    const int material = material_id[row];
+    if (material < 0 || static_cast<int64_t>(material) >= bounds.material_count)
+        return false;
+    em::LayerView layers = layers_base;
+    layers.material = material;
+    return em::layer_material_usable(layers, bounds.layer_total);
+}
+
 // PhaseScreenRuntime.sample_height: bilinear with half-texel edge clamp
 // (verbatim op-2 forward).
 __device__ __forceinline__ float sample_height(const float* __restrict__ heights, int h_rows, int w_cols, float u,
@@ -168,13 +194,26 @@ __global__ void chain_realization_rows_kernel(
     const float* __restrict__ layer_eps_r, const float* __restrict__ layer_sigma_e,
     const float* __restrict__ layer_mu_r, const float* __restrict__ quad_a, const float* __restrict__ quad_b,
     const float* __restrict__ quad_w, float k0, float frequency_hz, cfloat* __restrict__ out_integral,
-    cfloat* __restrict__ out_row_value, cfloat* __restrict__ out_path_field, float* __restrict__ out_path_gain) {
+    cfloat* __restrict__ out_row_value, cfloat* __restrict__ out_path_field, float* __restrict__ out_path_gain,
+    RealizationBounds bounds) {
     __shared__ float sh_re[kQuadPoints];
     __shared__ float sh_im[kQuadPoints];
     const int row = blockIdx.x;
     if (row >= row_count)
         return;
     if (!valid[row]) {
+        if (threadIdx.x == 0) {
+            out_integral[row] = {0.0f, 0.0f};
+            out_row_value[row] = {0.0f, 0.0f};
+            out_path_field[row] = {0.0f, 0.0f};
+            out_path_gain[row] = 0.0f;
+        }
+        return;
+    }
+    if (!realization_row_in_range(row, rows, c1_depth, c2_depth, material_id,
+                                  em::LayerView{layer_offset, layer_count, layer_thickness_m, layer_eps_r,
+                                                layer_sigma_e, layer_mu_r, 0},
+                                  bounds)) {
         if (threadIdx.x == 0) {
             out_integral[row] = {0.0f, 0.0f};
             out_row_value[row] = {0.0f, 0.0f};
@@ -382,6 +421,8 @@ int64_t scattering_chain_realization_check(
     TORCH_CHECK(layer_count.size(0) == material_count, "layer_count must match layer_offset rows");
     for (const auto& tref : {layer_eps_r, layer_sigma_e, layer_mu_r})
         TORCH_CHECK(tref.size(0) == layer_total, "layer parameter tensors must match layer_thickness_m rows");
+    TORCH_CHECK(layer_total <= std::numeric_limits<int>::max(), "layer store exceeds int32 slot indexing");
+    rayd::torch::detail::check_height_screen(heights, row_count);
     for (const auto& tref : {valid,       patch_uvs,
                              rows,        d_i,
                              d_o,         n_rows,
@@ -428,7 +469,8 @@ rayd::torch::ScatteringChainRealizationEvalResult scattering_chain_realization_e
                                            layer_count, layer_thickness_m, layer_eps_r, layer_sigma_e, layer_mu_r,
                                            quad_a, quad_b, quad_w);
     const int64_t material_count = layer_offset.size(0);
-    TORCH_CHECK(frequency_hz > 0.0, "frequency_hz must be positive");
+    rayd::torch::detail::check_positive_finite_scalar(frequency_hz, "frequency_hz");
+    rayd::torch::detail::check_positive_finite_scalar(k0, "k0");
     const c10::cuda::CUDAGuard guard(static_cast<int>(patch_tris.get_device()));
 
     auto complex_options = patch_tris.options().dtype(at::kComplexFloat);
@@ -456,7 +498,8 @@ rayd::torch::ScatteringChainRealizationEvalResult scattering_chain_realization_e
             layer_eps_r.data_ptr<float>(), layer_sigma_e.data_ptr<float>(), layer_mu_r.data_ptr<float>(),
             quad_a.data_ptr<float>(), quad_b.data_ptr<float>(), quad_w.data_ptr<float>(), static_cast<float>(k0),
             static_cast<float>(frequency_hz), integral.data_ptr<cfloat>(), row_value.data_ptr<cfloat>(),
-            path_field.data_ptr<cfloat>(), path_gain.data_ptr<float>());
+            path_field.data_ptr<cfloat>(), path_gain.data_ptr<float>(),
+            RealizationBounds{patch_tris.size(0), layer_offset.size(0), layer_thickness_m.size(0)});
         C10_CUDA_KERNEL_LAUNCH_CHECK();
         chain_realization_total_kernel<<<1, kReduceBlock, 0, stream>>>(row_count, row_value.data_ptr<cfloat>(),
                                                                        total.data_ptr<cfloat>());
@@ -850,7 +893,7 @@ __global__ void chain_realization_backward_kernel(
     float* __restrict__ grad_l1, float* __restrict__ grad_l2, float* __restrict__ grad_sp1,
     float* __restrict__ grad_sp2, float* __restrict__ grad_centroids, float* __restrict__ grad_k0,
     float* __restrict__ grad_frequency, bool need_heights, bool need_layers, bool need_chain1, bool need_chain2,
-    bool need_geometry, bool need_k0, bool need_frequency) {
+    bool need_geometry, bool need_k0, bool need_frequency, RealizationBounds bounds) {
     __shared__ float sh_I_re[kQuadPoints];
     __shared__ float sh_I_im[kQuadPoints];
     __shared__ float sh_Sp_re[3][kQuadPoints];
@@ -864,6 +907,11 @@ __global__ void chain_realization_backward_kernel(
     if (row >= row_count)
         return;
     if (!valid[row])
+        return;
+    if (!realization_row_in_range(row, rows, c1_depth, c2_depth, material_id,
+                                  em::LayerView{layer_offset, layer_count, layer_thickness_m, layer_eps_r,
+                                                layer_sigma_e, layer_mu_r, 0},
+                                  bounds))
         return;
     const int64_t patch = rows[row];
     const int t = threadIdx.x;
@@ -1283,7 +1331,7 @@ __global__ void chain_realization_jvp_kernel(
     const float* __restrict__ t_c2_positions, const float* __restrict__ t_c2_normals, const float* __restrict__ t_l1,
     const float* __restrict__ t_l2, const float* __restrict__ t_sp1, const float* __restrict__ t_sp2,
     const float* __restrict__ t_centroids, float t_k0, float t_frequency, cfloat* __restrict__ out_t_row_value,
-    cfloat* __restrict__ out_t_path_field, float* __restrict__ out_t_path_gain) {
+    cfloat* __restrict__ out_t_path_field, float* __restrict__ out_t_path_gain, RealizationBounds bounds) {
     __shared__ float sh_I_re[kQuadPoints];
     __shared__ float sh_I_im[kQuadPoints];
     __shared__ float sh_tI_re[kQuadPoints];
@@ -1293,6 +1341,17 @@ __global__ void chain_realization_jvp_kernel(
     if (row >= row_count)
         return;
     if (!valid[row]) {
+        if (threadIdx.x == 0) {
+            out_t_row_value[row] = {0.0f, 0.0f};
+            out_t_path_field[row] = {0.0f, 0.0f};
+            out_t_path_gain[row] = 0.0f;
+        }
+        return;
+    }
+    if (!realization_row_in_range(row, rows, c1_depth, c2_depth, material_id,
+                                  em::LayerView{layer_offset, layer_count, layer_thickness_m, layer_eps_r,
+                                                layer_sigma_e, layer_mu_r, 0},
+                                  bounds)) {
         if (threadIdx.x == 0) {
             out_t_row_value[row] = {0.0f, 0.0f};
             out_t_path_field[row] = {0.0f, 0.0f};
@@ -1549,6 +1608,8 @@ rayd::torch::ScatteringChainRealizationEvalBackwardResult scattering_chain_reali
                                            sp1_rows, sp2_rows, centroids, heights, cos_spec, material_id, layer_offset,
                                            layer_count, layer_thickness_m, layer_eps_r, layer_sigma_e, layer_mu_r,
                                            quad_a, quad_b, quad_w);
+    rayd::torch::detail::check_positive_finite_scalar(frequency_hz, "frequency_hz");
+    rayd::torch::detail::check_positive_finite_scalar(k0, "k0");
     using rayd::torch::detail::check_tensor;
     check_tensor(grad_total, "grad_total", at::kComplexFloat, 0);
     TORCH_CHECK(grad_total.get_device() == patch_tris.get_device(), "grad_total must share the primal device");
@@ -1616,7 +1677,8 @@ rayd::torch::ScatteringChainRealizationEvalBackwardResult scattering_chain_reali
             fp(grad_c2_th), fp(grad_di), fp(grad_do), fp(grad_c1_pos), fp(grad_c1_nrm), fp(grad_c2_pos),
             fp(grad_c2_nrm), fp(grad_l1), fp(grad_l2), fp(grad_sp1), fp(grad_sp2), fp(grad_centroids), fp(grad_k0),
             fp(grad_frequency), need_grad_heights, need_grad_layers, need_grad_chain1, need_grad_chain2,
-            need_grad_geometry, need_grad_k0, need_grad_frequency);
+            need_grad_geometry, need_grad_k0, need_grad_frequency,
+            RealizationBounds{patch_tris.size(0), layer_offset.size(0), layer_thickness_m.size(0)});
         C10_CUDA_KERNEL_LAUNCH_CHECK();
     }
     auto opt = [](bool needed, const at::Tensor& t) -> std::optional<at::Tensor> {
@@ -1665,6 +1727,8 @@ rayd::torch::ScatteringChainRealizationEvalJvpResult scattering_chain_realizatio
                                            sp1_rows, sp2_rows, centroids, heights, cos_spec, material_id, layer_offset,
                                            layer_count, layer_thickness_m, layer_eps_r, layer_sigma_e, layer_mu_r,
                                            quad_a, quad_b, quad_w);
+    rayd::torch::detail::check_positive_finite_scalar(frequency_hz, "frequency_hz");
+    rayd::torch::detail::check_positive_finite_scalar(k0, "k0");
     const c10::cuda::CUDAGuard guard(static_cast<int>(patch_tris.get_device()));
     const int64_t layer_total = layer_thickness_m.size(0);
     at::Tensor s[23];
@@ -1739,7 +1803,8 @@ rayd::torch::ScatteringChainRealizationEvalJvpResult scattering_chain_realizatio
             grad_ptr<float>(c2p), grad_ptr<float>(c2n), grad_ptr<float>(tl1), grad_ptr<float>(tl2),
             grad_ptr<float>(ts1), grad_ptr<float>(ts2), grad_ptr<float>(tc), static_cast<float>(tangent_k0),
             static_cast<float>(tangent_frequency), t_row_value.data_ptr<cfloat>(), t_path_field.data_ptr<cfloat>(),
-            t_path_gain.data_ptr<float>());
+            t_path_gain.data_ptr<float>(),
+            RealizationBounds{patch_tris.size(0), layer_offset.size(0), layer_thickness_m.size(0)});
         C10_CUDA_KERNEL_LAUNCH_CHECK();
         chain_realization_jvp_total_kernel<<<1, kReduceBlock, 0, stream>>>(row_count, t_row_value.data_ptr<cfloat>(),
                                                                            tangent_total.data_ptr<cfloat>());

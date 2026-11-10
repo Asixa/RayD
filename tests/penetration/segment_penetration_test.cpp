@@ -10,6 +10,7 @@
 
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <exception>
 #include <iostream>
 #include <limits>
@@ -541,6 +542,65 @@ void test_validation(const rayd::torch::SceneResource& scene) {
                    "invalid policy accepted");
 }
 
+// A failed forward leaves an inert tape. Replaying it after the caller clears
+// the shared failure state must still give exact zero derivatives instead of
+// differentiating the inert direction through the 1e-9 denominator floor.
+void test_failed_tape_replay_after_clearing_failure(const rayd::torch::SceneResource& scene) {
+    const auto floats = at::TensorOptions().device(at::kCUDA).dtype(at::kFloat);
+    auto origins = at::tensor({7.0f, 7.0f, -1.0f, 0.0f, 0.0f, -1.0f}, floats).reshape({2, 3});
+    auto targets = at::tensor({7.0f, 7.0f, 3.0f, 0.0f, 0.0f, 3.0f}, floats).reshape({2, 3});
+    for (const auto policy : {rayd::torch::SegmentPenetrationPolicy::EnumeratedFullDistance,
+                              rayd::torch::SegmentPenetrationPolicy::MonteCarloTargetInset}) {
+        auto failure = failure_state();
+        auto overflow = request(scene, origins, targets, std::nullopt, true, 2, policy, failure, 8);
+        const auto failed = rayd::torch::segment_penetration_forward_tape(overflow);
+        require(failure.item<int>() == 8, "overflow failure bit");
+        failure.zero_();
+        rayd::torch::SegmentPenetrationBackwardRequest backward{
+            overflow,
+            failed,
+            at::ones_like(failed.result.distance),
+            at::ones_like(failed.result.direction),
+            at::ones_like(failed.result.t),
+            at::ones_like(failed.result.position),
+            at::ones_like(failed.result.normal),
+            at::ones_like(failed.result.geometric_normal),
+            true,
+            true,
+            true,
+        };
+        const auto gradients = rayd::torch::segment_penetration_backward(backward);
+        require(at::equal(gradients.grad_origins, at::zeros_like(gradients.grad_origins)) &&
+                    at::equal(gradients.grad_targets, at::zeros_like(gradients.grad_targets)) &&
+                    at::equal(gradients.grad_vertices, at::zeros_like(gradients.grad_vertices)),
+                "replayed failed tape produced a nonzero VJP after the failure state was cleared");
+        rayd::torch::SegmentPenetrationJvpRequest jvp{
+            overflow, failed, std::nullopt, at::ones_like(origins), at::ones_like(targets),
+        };
+        const auto tangents = rayd::torch::segment_penetration_jvp(jvp);
+        require(at::equal(tangents.tangent_distance, at::zeros_like(tangents.tangent_distance)) &&
+                    at::equal(tangents.tangent_direction, at::zeros_like(tangents.tangent_direction)),
+                "replayed failed tape produced a nonzero JVP after the failure state was cleared");
+    }
+}
+
+// The OptiX program addresses vec3 slots as int32 index * 3; capacities whose
+// element offsets leave int32 are rejected before any allocation.
+void test_int32_element_index_guard(const rayd::torch::SceneResource& scene) {
+    const auto floats = at::TensorOptions().device(at::kCUDA).dtype(at::kFloat);
+    auto too_wide = request(scene, at::zeros({1, 3}, floats), at::ones({1, 3}, floats), std::nullopt, true,
+                            std::numeric_limits<std::int32_t>::max() / 3 + 1,
+                            rayd::torch::SegmentPenetrationPolicy::EnumeratedFullDistance, failure_state());
+    try {
+        (void)rayd::torch::segment_penetration_forward(too_wide);
+    } catch (const std::exception& error) {
+        require(std::string(error.what()).find("element indexing") != std::string::npos,
+                std::string("int32 element-index guard raised an unexpected error: ") + error.what());
+        return;
+    }
+    fail("hit capacity whose element offsets exceed int32 was accepted");
+}
+
 } // namespace
 
 int main() {
@@ -555,6 +615,8 @@ int main() {
         test_failure_transaction(scene);
         test_ad_and_stream(scene, fixture);
         test_validation(scene);
+        test_failed_tape_replay_after_clearing_failure(scene);
+        test_int32_element_index_guard(scene);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "segment penetration direct test failed: " << error.what() << '\n';

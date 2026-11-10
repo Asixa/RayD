@@ -10,6 +10,7 @@
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -127,6 +128,15 @@ ValidatedRequest validate_request(const rayd::torch::SegmentPenetrationRequest& 
     const std::int32_t hit_capacity = checked_i32(request.hit_capacity, "hit_capacity");
     if (hit_capacity != 0 && segment_count > std::numeric_limits<std::int32_t>::max() / hit_capacity) {
         throw std::runtime_error("segment_count * hit_capacity exceeds int32 row indexing.");
+    }
+    // The OptiX program addresses vec3 elements of segments and hit slots as
+    // int32 index * 3 (and barycentric pairs as index * 2), so every such
+    // element offset must also fit in int32.
+    const std::int64_t addressed_rows =
+        (std::max)(static_cast<std::int64_t>(segment_count),
+                   static_cast<std::int64_t>(segment_count) * static_cast<std::int64_t>(hit_capacity));
+    if (addressed_rows > std::numeric_limits<std::int32_t>::max() / 3) {
+        throw std::runtime_error("segment_count * hit_capacity * 3 exceeds int32 element indexing.");
     }
     if (scene.meshes.empty())
         throw std::runtime_error("segment penetration requires a non-empty SceneResource.");

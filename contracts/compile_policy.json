@@ -862,7 +862,7 @@
     {
       "id": "D3",
       "aspect": "numeric_profile",
-      "summary": "shared/utd/utd.h is compiled under three numeric profiles inside the Torch backend alone: fast-math in the wedge translation unit and the diffraction PTX modules, nvcc-default through the fused multipath executor and the scattering primal, and no-fmad through the nine ADR-0026 lockstep/AD translation units.",
+      "summary": "include/rayd/utd.h is compiled under three numeric profiles inside the Torch backend alone: fast-math in the wedge translation unit and the diffraction PTX modules, nvcc-default through the fused multipath executor and the scattering primal, and no-fmad through the five ADR-0026 lockstep/AD source files (the nine no_fmad scattering units of this contract).",
       "sides": [
         {
           "backend": "torch",
@@ -885,7 +885,7 @@
       ],
       "evidence": [
         "torch/CMakeLists.txt: set_source_files_properties(src/diffraction/wedge.cu ... --use_fast_math)",
-        "torch/CMakeLists.txt: the nine-source --fmad=false block reaches utd.h through shared/rf/complex.cuh"
+        "torch/CMakeLists.txt: the five-source --fmad=false block reaches utd.h through src/scattering/scattering_internal.cuh -> src/field_transport_ad.cuh -> include/rayd/field_transport.cuh"
       ],
       "status": "frozen"
     },

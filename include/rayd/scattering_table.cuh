@@ -78,7 +78,7 @@ __device__ __forceinline__ float interp4(const float* __restrict__ table, int np
 }
 
 // Per-pair (f_te, f_tm) lookup: identical to the body of scattering_eval_kernel
-// in scattering.cu. Directions below the horizon return 0.
+// in src/scattering/table.cu. Directions below the horizon return 0.
 __device__ __forceinline__ void eval_te_tm(const float* __restrict__ fte, const float* __restrict__ ftm, int nti,
                                            int npi, int nto, int npo, const float* __restrict__ wi,
                                            const float* __restrict__ wo, float& out_te, float& out_tm) {
@@ -103,9 +103,12 @@ __device__ __forceinline__ void eval_te_tm(const float* __restrict__ fte, const 
     out_tm = interp4(ftm, npi, nto, npo, ti0, ti1, tw, pi0, pi1, pw, to0, to1, ow, po0, po1, qw);
 }
 
-// ADR-014 derivative companion of ``linear_axis``: same i0/i1/w as the forward
-// (bitwise, so recomputed table values round identically) plus the axis-weight
-// derivative ``dw/dcoord``. Non-periodic axes gate the derivative to 0 when the
+// Derivative companion of ``linear_axis``: the same i0/i1/w expressions
+// as the forward plus the axis-weight derivative ``dw/dcoord``. The recomputed
+// values are bitwise equal to the forward only under the same FMA-contraction
+// policy: the --fmad=false AD, ensemble and chain units agree with each other,
+// while the default-flag table primal may contract ``coord * scale - 0.5f`` and
+// differ in the last bits. Non-periodic axes gate the derivative to 0 when the
 // pre-clamp coordinate leaves the open interval (0, n-1); periodic axes use the
 // constant slope n/period; degenerate n==1 axes contribute 0.
 __device__ __forceinline__ void linear_axis_grad(float coord, int n, float period, bool periodic, int& i0, int& i1,
@@ -136,8 +139,10 @@ __device__ __forceinline__ void linear_axis_grad(float coord, int n, float perio
     }
 }
 
-// ADR-014 derivative companion of ``eval_te_tm``. Recomputes (f_te, f_tm) with
-// the exact forward interpolation (same corner order, same fmaf accumulation)
+// Derivative companion of ``eval_te_tm``. Recomputes (f_te, f_tm) with
+// the forward interpolation expressions (same corner order, same fmaf
+// accumulation; bitwise equal only under the same contraction policy, see
+// ``linear_axis_grad``)
 // and, in the same pass, the partials of both values w.r.t. the raw ``wi`` and
 // ``wo`` (= wo_local) 3-vectors, plus the 16 interpolation corners (flat index
 // and weight ``wa*wb*wc*wd``) for the table-value VJP/JVP. ``active`` is false

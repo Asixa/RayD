@@ -185,21 +185,27 @@ __global__ void sanitize_kernel(std::uint8_t* valid, int* num_hits, std::uint8_t
 
 __global__ void backward_kernel(
     const float* vertices, const int* faces, const float* origins, const float* targets,
-    const std::uint8_t* input_active, const int* failure_state, const std::uint8_t* valid, const float* t,
-    const float* position, const float* geometric_normal, const int* primitive_id, const float* barycentric,
-    const float* restart_epsilon, const std::uint8_t* restart_branch, const std::uint8_t* restart_tie_mask,
-    const std::uint8_t* direction_denominator_branch, const float* grad_distance, int64_t grad_distance_stride0,
-    const float* grad_direction, int64_t grad_direction_stride0, int64_t grad_direction_stride1, const float* grad_t,
-    int64_t grad_t_stride0, int64_t grad_t_stride1, const float* grad_position, int64_t grad_position_stride0,
-    int64_t grad_position_stride1, int64_t grad_position_stride2, const float* grad_normal, int64_t grad_normal_stride0,
-    int64_t grad_normal_stride1, int64_t grad_normal_stride2, const float* grad_geometric_normal,
-    int64_t grad_geometric_normal_stride0, int64_t grad_geometric_normal_stride1, int64_t grad_geometric_normal_stride2,
-    int policy, int64_t segment_count, int64_t hit_capacity, float* grad_vertices, float* grad_origins,
-    float* grad_targets) {
+    const std::uint8_t* input_active, const int* failure_state, const std::uint8_t* reached_target,
+    const std::uint8_t* valid, const float* t, const float* position, const float* geometric_normal,
+    const int* primitive_id, const float* barycentric, const float* restart_epsilon, const std::uint8_t* restart_branch,
+    const std::uint8_t* restart_tie_mask, const std::uint8_t* direction_denominator_branch, const float* grad_distance,
+    int64_t grad_distance_stride0, const float* grad_direction, int64_t grad_direction_stride0,
+    int64_t grad_direction_stride1, const float* grad_t, int64_t grad_t_stride0, int64_t grad_t_stride1,
+    const float* grad_position, int64_t grad_position_stride0, int64_t grad_position_stride1,
+    int64_t grad_position_stride2, const float* grad_normal, int64_t grad_normal_stride0, int64_t grad_normal_stride1,
+    int64_t grad_normal_stride2, const float* grad_geometric_normal, int64_t grad_geometric_normal_stride0,
+    int64_t grad_geometric_normal_stride1, int64_t grad_geometric_normal_stride2, int policy, int64_t segment_count,
+    int64_t hit_capacity, float* grad_vertices, float* grad_origins, float* grad_targets) {
     const int64_t segment = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (segment >= segment_count)
         return;
     if (failure_state[0] != 0 || (input_active != nullptr && input_active[segment] == 0u))
+        return;
+    // Every active row of a successful forward completes with reached_target;
+    // a failed forward leaves the whole tape inert with reached_target false.
+    // Gating on the tape keeps a failed tape inert even after the caller later
+    // clears the shared failure state.
+    if (reached_target[segment] == 0u)
         return;
 
     const float3 source = load3(origins, segment, 3, 1);
@@ -308,22 +314,28 @@ __global__ void backward_kernel(
 }
 
 __global__ void jvp_kernel(const float* vertices, const int* faces, const float* origins, const float* targets,
-                           const std::uint8_t* input_active, const int* failure_state, const std::uint8_t* valid,
-                           const float* t, const float* position, const float* geometric_normal,
-                           const int* primitive_id, const float* barycentric, const float* restart_epsilon,
-                           const std::uint8_t* restart_branch, const std::uint8_t* restart_tie_mask,
-                           const std::uint8_t* direction_denominator_branch, const float* tangent_vertices,
-                           int64_t tangent_vertices_stride0, int64_t tangent_vertices_stride1,
-                           const float* tangent_origins, int64_t tangent_origins_stride0,
-                           int64_t tangent_origins_stride1, const float* tangent_targets,
-                           int64_t tangent_targets_stride0, int64_t tangent_targets_stride1, int policy,
-                           int64_t segment_count, int64_t hit_capacity, float* tangent_distance,
-                           float* tangent_direction, float* tangent_t, float* tangent_position, float* tangent_normal,
-                           float* tangent_geometric_normal) {
+                           const std::uint8_t* input_active, const int* failure_state,
+                           const std::uint8_t* reached_target, const std::uint8_t* valid, const float* t,
+                           const float* position, const float* geometric_normal, const int* primitive_id,
+                           const float* barycentric, const float* restart_epsilon, const std::uint8_t* restart_branch,
+                           const std::uint8_t* restart_tie_mask, const std::uint8_t* direction_denominator_branch,
+                           const float* tangent_vertices, int64_t tangent_vertices_stride0,
+                           int64_t tangent_vertices_stride1, const float* tangent_origins,
+                           int64_t tangent_origins_stride0, int64_t tangent_origins_stride1,
+                           const float* tangent_targets, int64_t tangent_targets_stride0,
+                           int64_t tangent_targets_stride1, int policy, int64_t segment_count, int64_t hit_capacity,
+                           float* tangent_distance, float* tangent_direction, float* tangent_t, float* tangent_position,
+                           float* tangent_normal, float* tangent_geometric_normal) {
     const int64_t segment = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (segment >= segment_count)
         return;
     if (failure_state[0] != 0 || (input_active != nullptr && input_active[segment] == 0u))
+        return;
+    // Every active row of a successful forward completes with reached_target;
+    // a failed forward leaves the whole tape inert with reached_target false.
+    // Gating on the tape keeps a failed tape inert even after the caller later
+    // clears the shared failure state.
+    if (reached_target[segment] == 0u)
         return;
 
     const float3 source = load3(origins, segment, 3, 1);
@@ -499,6 +511,7 @@ SegmentPenetrationBackwardOutputs segment_penetration_backward_cuda(
         scene.global_vertices.data_ptr<float>(), scene.global_faces.data_ptr<int>(),
         request.primal.origins.data_ptr<float>(), request.primal.targets.data_ptr<float>(),
         optional_byte_mask_ptr(active), request.primal.capacity_failure_state.data_ptr<int>(),
+        reinterpret_cast<const std::uint8_t*>(request.tape.result.reached_target.data_ptr<bool>()),
         reinterpret_cast<const std::uint8_t*>(request.tape.result.valid.data_ptr<bool>()),
         request.tape.result.t.data_ptr<float>(), request.tape.result.position.data_ptr<float>(),
         request.tape.result.geometric_normal.data_ptr<float>(), request.tape.tape_primitive_id.data_ptr<int>(),
@@ -560,6 +573,7 @@ SegmentPenetrationJvpOutputs segment_penetration_jvp_cuda(const SceneCache& scen
         scene.global_vertices.data_ptr<float>(), scene.global_faces.data_ptr<int>(),
         request.primal.origins.data_ptr<float>(), request.primal.targets.data_ptr<float>(),
         optional_byte_mask_ptr(active), request.primal.capacity_failure_state.data_ptr<int>(),
+        reinterpret_cast<const std::uint8_t*>(request.tape.result.reached_target.data_ptr<bool>()),
         reinterpret_cast<const std::uint8_t*>(request.tape.result.valid.data_ptr<bool>()),
         request.tape.result.t.data_ptr<float>(), request.tape.result.position.data_ptr<float>(),
         request.tape.result.geometric_normal.data_ptr<float>(), request.tape.tape_primitive_id.data_ptr<int>(),

@@ -154,8 +154,8 @@ void check_table_eval_inputs(const at::Tensor& valid, const at::Tensor& wi, cons
     count = wi.size(0);
     TORCH_CHECK(valid.size(0) == count, "valid must match wi rows");
     TORCH_CHECK(wo.size(0) == count, "wi and wo must have matching rows");
-    check_tensor(f_te, "f_te", at::kFloat, 4);
-    check_tensor(f_tm, "f_tm", at::kFloat, 4);
+    rayd::torch::detail::check_dense_table(f_te, "f_te", count);
+    rayd::torch::detail::check_dense_table(f_tm, "f_tm", count);
     TORCH_CHECK(f_te.sizes() == f_tm.sizes(), "f_te and f_tm must share shape");
     TORCH_CHECK(valid.get_device() == wi.get_device() && wo.get_device() == wi.get_device() &&
                     f_te.get_device() == wi.get_device() && f_tm.get_device() == wi.get_device(),

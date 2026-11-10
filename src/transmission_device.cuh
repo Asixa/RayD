@@ -141,6 +141,26 @@ struct LayerView {
     int material;
 };
 
+// The CSR run of the view's material must lie inside the layer store of
+// layer_total entries and carry only finite parameters before stack_rt may read
+// it. Kernels treat a material that fails this test exactly like an
+// out-of-range material id, consistently in primal, backward and JVP.
+// Negative, oversized or overflowing offset/count values and NaN/Inf layer
+// parameters are therefore never read through or silently clamped.
+__device__ __forceinline__ bool layer_material_usable(const LayerView& layers, int64_t layer_total) {
+    const int offset = layers.layer_offset[layers.material];
+    const int count = layers.layer_count[layers.material];
+    if (offset < 0 || count < 0 || static_cast<int64_t>(offset) + static_cast<int64_t>(count) > layer_total)
+        return false;
+    for (int layer = 0; layer < count; ++layer) {
+        const int slot = offset + layer;
+        if (!isfinite(layers.layer_thickness_m[slot]) || !isfinite(layers.layer_eps_r[slot]) ||
+            !isfinite(layers.layer_sigma_e[slot]) || !isfinite(layers.layer_mu_r[slot]))
+            return false;
+    }
+    return true;
+}
+
 struct StackRT {
     utd::Complex r;
     utd::Complex t;

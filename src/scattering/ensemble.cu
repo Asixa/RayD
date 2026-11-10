@@ -37,6 +37,28 @@ __device__ __forceinline__ float dot3_torch_ordered(V3 a, V3 b) {
     return (p0 + p2) + p1;
 }
 
+namespace si = rayd::torch::scattering_internal;
+
+// Extents that bound the per-row sample/receiver indices and the flat table.
+struct EnsembleBounds {
+    int64_t samples;   // n_o rows (sc_idx range)
+    int64_t receivers; // rx_pol rows (rc_idx range)
+    si::FlatTableBounds table;
+};
+
+__device__ __forceinline__ bool ensemble_row_in_range(int64_t row, const int64_t* __restrict__ sc_idx,
+                                                      const int64_t* __restrict__ rc_idx,
+                                                      const int* __restrict__ material_id,
+                                                      const int* __restrict__ material_slot,
+                                                      const int64_t* __restrict__ table_offset,
+                                                      const int* __restrict__ table_dims, EnsembleBounds bounds) {
+    const int64_t s = sc_idx[row];
+    const int64_t c = rc_idx[row];
+    if (s < 0 || s >= bounds.samples || c < 0 || c >= bounds.receivers)
+        return false;
+    return si::flat_table_lookup_in_range(material_id[s], material_slot, table_offset, table_dims, bounds.table);
+}
+
 __global__ void ensemble_eval_kernel(
     int64_t count, const bool* __restrict__ valid, const float* __restrict__ wo_rows, const float* __restrict__ r2_rows,
     const float* __restrict__ cos_o_rows, const float* __restrict__ n_o, const float* __restrict__ t1r,
@@ -47,10 +69,17 @@ __global__ void ensemble_eval_kernel(
     const float* __restrict__ fte_flat, const float* __restrict__ ftm_flat, const int64_t* __restrict__ table_offset,
     const int* __restrict__ table_dims, const int* __restrict__ material_slot, float coef, float threshold,
     float* __restrict__ out_gain, float* __restrict__ out_amplitude, float* __restrict__ out_length,
-    bool* __restrict__ out_keep) {
+    bool* __restrict__ out_keep, EnsembleBounds bounds) {
     for (int64_t row = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x; row < count;
          row += static_cast<int64_t>(blockDim.x) * gridDim.x) {
         if (!valid[row]) {
+            out_gain[row] = 0.0f;
+            out_amplitude[row] = 0.0f;
+            out_length[row] = 0.0f;
+            out_keep[row] = false;
+            continue;
+        }
+        if (!ensemble_row_in_range(row, sc_idx, rc_idx, material_id, material_slot, table_offset, table_dims, bounds)) {
             out_gain[row] = 0.0f;
             out_amplitude[row] = 0.0f;
             out_length[row] = 0.0f;
@@ -186,7 +215,8 @@ rayd::torch::ScatteringEnsembleEvalResult scattering_ensemble_eval_impl(
             sc_idx.data_ptr<int64_t>(), fte_flat.data_ptr<float>(), ftm_flat.data_ptr<float>(),
             table_offset.data_ptr<int64_t>(), table_dims.data_ptr<int>(), material_slot.data_ptr<int>(),
             static_cast<float>(coef), static_cast<float>(threshold), gain.data_ptr<float>(),
-            amplitude.data_ptr<float>(), length.data_ptr<float>(), keep.data_ptr<bool>());
+            amplitude.data_ptr<float>(), length.data_ptr<float>(), keep.data_ptr<bool>(),
+            EnsembleBounds{samples, rx_pol.size(0), si::flat_table_bounds(material_slot, table_offset, fte_flat)});
         C10_CUDA_KERNEL_LAUNCH_CHECK();
     }
     return {gain, amplitude, length, keep};
@@ -365,10 +395,21 @@ __global__ void ensemble_eval_backward_kernel(
     float* __restrict__ out_grad_t2r, float* __restrict__ out_grad_wi_local, float* __restrict__ out_grad_cos_i,
     float* __restrict__ out_grad_r1, float* __restrict__ out_grad_a_te2, float* __restrict__ out_grad_a_tm2,
     float* __restrict__ out_grad_weights, float* __restrict__ out_grad_fte, float* __restrict__ out_grad_ftm,
-    float* __restrict__ out_grad_coef, bool need_rows, bool need_samples, bool need_tables, bool need_coef) {
+    float* __restrict__ out_grad_coef, bool need_rows, bool need_samples, bool need_tables, bool need_coef,
+    EnsembleBounds bounds) {
     for (int64_t row = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x; row < count;
          row += static_cast<int64_t>(blockDim.x) * gridDim.x) {
         if (!valid[row]) {
+            if (need_rows) {
+                out_grad_wo_rows[row * 3] = 0.0f;
+                out_grad_wo_rows[row * 3 + 1] = 0.0f;
+                out_grad_wo_rows[row * 3 + 2] = 0.0f;
+                out_grad_r2_rows[row] = 0.0f;
+                out_grad_cos_o_rows[row] = 0.0f;
+            }
+            continue;
+        }
+        if (!ensemble_row_in_range(row, sc_idx, rc_idx, material_id, material_slot, table_offset, table_dims, bounds)) {
             if (need_rows) {
                 out_grad_wo_rows[row * 3] = 0.0f;
                 out_grad_wo_rows[row * 3 + 1] = 0.0f;
@@ -516,10 +557,16 @@ __global__ void ensemble_eval_jvp_kernel(
     const float* __restrict__ t_wi_local, const float* __restrict__ t_cos_i, const float* __restrict__ t_r1,
     const float* __restrict__ t_a_te2, const float* __restrict__ t_a_tm2, const float* __restrict__ t_weights,
     const float* __restrict__ t_fte_flat, const float* __restrict__ t_ftm_flat, float* __restrict__ out_tangent_gain,
-    float* __restrict__ out_tangent_amplitude, float* __restrict__ out_tangent_length) {
+    float* __restrict__ out_tangent_amplitude, float* __restrict__ out_tangent_length, EnsembleBounds bounds) {
     for (int64_t row = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x; row < count;
          row += static_cast<int64_t>(blockDim.x) * gridDim.x) {
         if (!valid[row]) {
+            out_tangent_gain[row] = 0.0f;
+            out_tangent_amplitude[row] = 0.0f;
+            out_tangent_length[row] = 0.0f;
+            continue;
+        }
+        if (!ensemble_row_in_range(row, sc_idx, rc_idx, material_id, material_slot, table_offset, table_dims, bounds)) {
             out_tangent_gain[row] = 0.0f;
             out_tangent_amplitude[row] = 0.0f;
             out_tangent_length[row] = 0.0f;
@@ -759,8 +806,14 @@ rayd::torch::ScatteringEnsembleEvalBackwardResult scattering_ensemble_eval_backw
             need_grad_tables ? grad_fte.data_ptr<float>() : nullptr,
             need_grad_tables ? grad_ftm.data_ptr<float>() : nullptr,
             need_grad_coef ? grad_coef.data_ptr<float>() : nullptr, need_grad_rows, need_grad_samples, need_grad_tables,
-            need_grad_coef);
+            need_grad_coef,
+            EnsembleBounds{samples, rx_pol.size(0), si::flat_table_bounds(material_slot, table_offset, fte_flat)});
         C10_CUDA_KERNEL_LAUNCH_CHECK();
+    } else if (need_grad_rows && count > 0) {
+        // No cotangent -> the direct row stores are exactly zero.
+        grad_wo_rows.zero_();
+        grad_r2_rows.zero_();
+        grad_cos_o_rows.zero_();
     }
     return {need_grad_rows ? std::optional<at::Tensor>(grad_wo_rows) : std::nullopt,
             need_grad_rows ? std::optional<at::Tensor>(grad_r2_rows) : std::nullopt,
@@ -835,7 +888,8 @@ rayd::torch::ScatteringEnsembleEvalJvpResult scattering_ensemble_eval_jvp_impl(
             opt_ptr<float>(tw_n), opt_ptr<float>(tw_t1), opt_ptr<float>(tw_t2), opt_ptr<float>(tw_wil),
             opt_ptr<float>(tw_ci), opt_ptr<float>(tw_r1), opt_ptr<float>(tw_ate), opt_ptr<float>(tw_atm),
             opt_ptr<float>(tw_w), opt_ptr<float>(tw_fte), opt_ptr<float>(tw_ftm), tangent_gain.data_ptr<float>(),
-            tangent_amplitude.data_ptr<float>(), tangent_length.data_ptr<float>());
+            tangent_amplitude.data_ptr<float>(), tangent_length.data_ptr<float>(),
+            EnsembleBounds{samples, rx_pol.size(0), si::flat_table_bounds(material_slot, table_offset, fte_flat)});
         C10_CUDA_KERNEL_LAUNCH_CHECK();
     }
     return {tangent_gain, tangent_amplitude, tangent_length};
