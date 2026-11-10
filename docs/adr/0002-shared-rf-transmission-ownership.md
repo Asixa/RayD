@@ -11,6 +11,12 @@
 > is owned by `include/rayd/field_transport.cuh` and `src/field_transport_ad.cuh`. Numerical ownership, fusion,
 > stream, activation, rollback, and downstream atomic-switch clauses remain in
 > force.
+
+> **Status note, 2026-11-09.** The decisions below are unchanged. The
+> transmission-sequence family is active: Channel calls
+> `field_transmission_sequence`, `field_transmission_sequence_backward`, and
+> `field_transmission_sequence_jvp` from `native/channel/binding/fields.cpp` at
+> its RayD pin `c7a9997` (`dependencies/rayd.lock.json`, checked 2026-11-09).
 ## Context
 
 Channel Native currently owns both the public Channel contracts and the CUDA

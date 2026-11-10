@@ -1,7 +1,7 @@
 # Copyright Xingyu Chen.
 # Tests coverage.
 
-"""Assert the golden suite maps every RAY_TRACING_BACKEND_ARCHITECTURE section 16 case.
+"""Assert the golden suite maps every docs/RAY_TRACING_BACKEND_ARCHITECTURE.md section 16 case.
 
 Pure metadata checks over ``coverage.json`` and ``scenes.py``; no GPU required.
 """

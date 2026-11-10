@@ -6,7 +6,7 @@
 Each scene is pure Python data: mesh vertices/faces as lists of ``[x, y, z]``
 points and index triples, plus an ordered list of query dicts that
 ``tests.golden.runner`` interprets against a backend. The definitions freeze the
-current RayD public query contract (see ``RAY_TRACING_BACKEND_ARCHITECTURE.md``
+current RayD public query contract (see ``docs/RAY_TRACING_BACKEND_ARCHITECTURE.md``
 section 16); they are not tuned to any "correct" value.
 
 Query kinds understood by the runner:

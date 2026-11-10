@@ -17,7 +17,7 @@
 
 namespace rayd::shared::rt {
 
-// Backend-neutral trace-backend descriptors (RAY_TRACING_BACKEND_ARCHITECTURE.md
+// Backend-neutral trace-backend descriptors (docs/RAY_TRACING_BACKEND_ARCHITECTURE.md
 // §5, §12). These are host-safe enums/POD only: they name backends and report
 // capabilities, but include no CUDA/OptiX/Embree headers and use no device
 // qualifiers, so a third backend can include this header cleanly.
@@ -61,7 +61,7 @@ using shared::rt::TraceCapabilities;
 ///
 /// This interface is deliberately narrow: it covers backend lifecycle and
 /// capability introspection only. Per-ray batch trace methods are an eager-axis
-/// concern that arrives in a later phase (RAY_TRACING_BACKEND_ARCHITECTURE.md §5)
+/// concern that arrives in a later phase (docs/RAY_TRACING_BACKEND_ARCHITECTURE.md §5)
 /// and are intentionally absent here, so no virtual call can land in a per-ray
 /// hot loop. Concrete backends (today only OptixTraceBackend) expose their own
 /// typed build/sync/trace entry points.

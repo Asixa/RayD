@@ -10,6 +10,13 @@
 > are `include/rayd/detail/scattering_table.cuh`, `include/rayd/scattering.h`, and `src/scattering/`. The 17
 > operation contracts, compile profiles, fusion, stream, derivative, failure,
 > activation, rollback, and downstream atomic-switch clauses remain in force.
+
+> **Status note, 2026-11-09.** The decisions below are unchanged. The families
+> are no longer dormant candidates: Channel calls all 17 typed scattering
+> operations, including the six chain operations, from
+> `native/channel/binding/materials.cpp` at its RayD pin `c7a9997`
+> (`dependencies/rayd.lock.json`, checked 2026-11-09). Statements below that call
+> an implementation dormant describe the state when this record was written.
 ## Context
 
 Channel Native currently owns seventeen CUDA bindings that evaluate or sample

@@ -22,18 +22,34 @@ integrator framework.
 
 ## Installation
 
-Install both backends through the meta-distribution:
+Install the backend you use. For the Torch backend, install the CUDA 12.8 build
+of PyTorch first, from PyTorch's own index: PyPI's default `torch` wheel is
+CPU-only on Windows, and `rayd-torch` cannot load against a CPU-only or a
+different Torch release.
 
 ```bash
-pip install rayd
+# Torch backend
+python -m pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128
+python -m pip install rayd-torch
+
+# Dr.Jit backend (installs drjit==1.3.1)
+python -m pip install rayd-drjit
 ```
 
-Install only the backend you use when the other runtime is not needed:
+Then check the installation, the driver, and OptiX on this machine:
 
 ```bash
-pip install rayd-drjit
-pip install rayd-torch
+python -m rayd.torch.doctor
+python -m rayd.drjit.doctor
 ```
+
+`pip install rayd` installs the meta-distribution, which depends on both
+backends at exactly its own version: it pulls in `rayd-drjit` with its pinned
+`drjit==1.3.1` and `rayd-torch` with `torch>=2.10,<2.11`. Use it only when you
+want both runtimes in one environment, and install the CUDA Torch build first
+as above so pip keeps it instead of resolving `torch` from PyPI. The exact
+`drjit` pin can conflict with an environment that already holds another Dr.Jit
+release, such as one installed with Mitsuba; install `rayd-torch` alone there.
 
 All three distributions share version `0.8.0`. The `rayd` meta-distribution
 pins `rayd-drjit` and `rayd-torch` to exactly the same version.
@@ -314,6 +330,58 @@ Torch vector inputs use contiguous CUDA `float32` tensors with shape `(N, 3)`;
 index tensors use CUDA `int32`, and masks use `torch.bool`. CUDA operations run
 on the current Torch stream.
 
+## Scene Lifecycle and Input Checks
+
+Both backends check their inputs up front and fail with a specific error rather
+than reading out of bounds or answering for stale geometry:
+
+- Face indices must address existing vertices: Torch `Scene.build()` rejects
+  negative or out-of-range indices and meshes without vertices, and Dr.Jit
+  `Mesh` checks its face indices when they are set and again at build.
+- Vertices must be finite: a NaN or infinite vertex position is rejected at
+  `build()` and by every vertex update, in both backends.
+- Every ray, point, and other query tensor must live on the scene's CUDA device;
+  a query from another device raises instead of reading foreign memory.
+- A face with a repeated vertex index has no edges and contributes none. An edge
+  shared by more than 256 faces, which usually means duplicated or coincident
+  faces, fails the build unless edges are disabled for that mesh
+  (`edges_enabled=False`).
+- Torch queries refuse a scene with pending updates: after
+  `update_mesh_vertices()` or a transform change, call `sync()` before querying,
+  as Dr.Jit already required. A backward or forward-mode pass, a lazily read
+  result, or a `torch.compile` graph recorded before a geometry-changing
+  `sync()` raises instead of differentiating against the new geometry.
+  Double backward (`create_graph=True` followed by another backward) raises a
+  clear error.
+- Torch `visible()` reports `False` for segments with a non-finite endpoint,
+  `trace_reflections()` requires `max_bounces >= 1`, and
+  `update_mesh_vertices()` with an unknown mesh id raises `ValueError`.
+- Torch `Scene.build()` works from any thread, including one that has not used
+  CUDA yet, and one scene can be queried from several threads while another
+  thread updates it: each scene holds a reader/writer lock.
+- Dr.Jit symbolic `trace_reflections()` accepts at most 65,536 bounces and
+  evaluates every 8 bounces; `nearest_edge()` and `shadow_test()` return empty
+  results for empty batches, while `intersect()` raises for one.
+
+Nearest-edge queries default to a compact CUDA edge BVH in both backends.
+Torch's `edge_bvh_backend="auto"` resolves to `cuda`, measured 20-80x faster
+than the OptiX edge backend; pass `edge_bvh_backend="optix"` to select OptiX
+explicitly. Torch builds the edge acceleration structures on the first edge
+query after `build()` or a geometry-changing `sync()`, so scenes that never
+query edges never pay for them. Dr.Jit's `"auto"` resolves to `drjit`, a native
+traversal of the same compact BVH launched on Dr.Jit's stream, which was faster
+than the OptiX edge backend for point, ray, and top-k queries at every measured
+size; its edge BVH is built in `build()`, and `"optix"` and `"optix_drjit"`
+(OptiX for rays only) remain available. The two default backends break exact
+distance ties toward the lower global edge id (`contracts/operations.json`
+records where the OptiX backends differ). On every edge backend,
+`nearest_edge(ray)` searches a row only when its origin is finite, its
+direction is finite and non-zero, and its `tmax` is positive (`+inf` or no
+`tmax` is the half-ray); any other row returns the miss sentinels (distance
+`inf`, ids `-1`).
+A dynamic mesh's OptiX acceleration structure is refit on each `sync()` and
+rebuilt every 16th commit to bound refit quality loss.
+
 ## Edge Queries
 
 RayD provides scene-level GPU acceleration for point-to-edge and ray-to-edge
@@ -354,10 +422,9 @@ solver policy, accumulation, and result schemas. See
 [`ADR-0002`](docs/adr/0002-shared-rf-transmission-ownership.md) for the precise
 header, fusion, stream, failure, and cross-repository activation contracts.
 
-The accepted diffraction boundary will place the complete fixed-winner
-pure-wedge field primal/backward/JVP family in RayD after the dormant typed
-candidate is merged, pinned, validated, and activated by Channel. Until that
-switch, Channel remains the production numerical owner. Monte Carlo Sionna,
+The accepted diffraction boundary places the complete fixed-winner pure-wedge
+field primal/backward/JVP family in RayD. Channel calls its primal, backward,
+and JVP entries (checked 2026-11-09 against Channel's `dependencies/rayd.lock.json` pin `c7a9997`). Monte Carlo Sionna,
 coupled RD/DD operations, and BDPT estimator policy remain in Channel, and
 pure-wedge fast-math remains isolated to its family. See
 [`ADR-0025`](docs/adr/0025-diffraction-family-ownership.md) for the typed API,
@@ -365,9 +432,9 @@ AD, fusion, activation, legacy-cleanup, and stop contracts.
 
 The accepted generic-scattering boundary will place seventeen operations in
 six complete table-evaluation, table-sampling, single-bounce, patch-integral,
-chain-ensemble, and chain-realization families in RayD. Candidates remain
-dormant until Channel pins, validates, atomically switches, and deletes its
-local implementation. RayD consumes caller-owned resident table and
+chain-ensemble, and chain-realization families in RayD. A candidate becomes
+active when Channel pins, validates, atomically switches, and deletes its local
+implementation. RayD consumes caller-owned resident table and
 phase-screen tensors; Channel retains their construction/lifecycle plus
 topology, estimator, RNG/MIS, accumulation, and result policy. The move also
 preserves family-specific AD (including loud chain-ensemble geometry-VJP
@@ -375,12 +442,8 @@ rejection and supported chain-realization geometry VJP/JVP), row fusion,
 atomics, tape lifetime, and per-translation-unit compile flags. See
 [`ADR-0026`](docs/adr/0026-generic-scattering-runtime-ownership.md).
 
-The source tree now contains all seventeen operations. Channel has activated
-the first eleven Phase 10A table, sampling, single-bounce ensemble, and patch
-integral entries. The six Phase 10B chain operations are compiled and
-direct-tested in RayD but remain dormant; Channel stays their sole production
-numerical owner until it pins this exact revision, atomically switches all
-chain callers, and deletes its four local chain translation units.
+The source tree contains all seventeen operations, and Channel calls all
+seventeen, including the six chain operations (checked 2026-11-09 against Channel's `dependencies/rayd.lock.json` pin `c7a9997`).
 
 Naming follows the public API standard in
 [`docs/drjit/api_naming_standard.md`](docs/drjit/api_naming_standard.md):
@@ -490,6 +553,58 @@ and the benchmark that reproduces both
 ([`benchmarks/torch/benchmark_multi_device.py`](benchmarks/torch/benchmark_multi_device.py))
 are in the multi-GPU performance section of the same note.
 
+## Troubleshooting
+
+Start with the doctor of the backend you use. It prints the OS, Python, driver,
+each GPU with its compute capability and free memory, the installed build's
+GPU targets and the framework version it was compiled against, the OptiX
+library and the OptiX ABI the build needs versus what the driver offers, and
+the trace and edge backends `"auto"` resolves to, with one verdict and fix per
+check. It exits non-zero when a check fails, so it also works as a CI or
+container health check.
+
+```bash
+python -m rayd.torch.doctor
+python -m rayd.drjit.doctor
+```
+
+- **`rayd-torch` does not load.** The native libraries are built against one
+  CUDA Torch release. With a CPU-only or a different Torch, `import rayd.torch`
+  warns with the installed Torch, the Torch the wheel was built for, the loader
+  error, and the fix, and the first native call raises the same explanation.
+  The fix is the CUDA build from PyTorch's index:
+  `python -m pip install "torch==2.10.0+cu128" --index-url https://download.pytorch.org/whl/cu128`.
+  The import itself still succeeds, so the doctor and `api_manifest()` work.
+- **Slower than expected / `OptiX is unavailable`.** Without the driver's OptiX
+  library (`libnvoptix.so.1`, `nvoptix.dll`) or with a driver older than the
+  build's OptiX ABI, `trace_backend="auto"` falls back to the CUDA trace
+  backend and prints one warning per process with the reason, in both
+  backends. An explicit
+  `trace_backend="optix"` raises the same reason. Set `RAYD_DISABLE_OPTIX=1` to
+  choose the CUDA backend deliberately.
+- **Docker.** The NVIDIA Container Toolkit mounts the OptiX library only with
+  the `graphics` driver capability: run the container with
+  `--gpus all -e NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility` (or
+  `all`). The default `compute,utility` silently loses OptiX.
+- **WSL2.** Install the NVIDIA Windows driver (R555 or newer) and no Linux
+  driver inside WSL; the Windows driver provides the GPU to WSL. Whether its
+  OptiX library is visible inside WSL depends on the driver release, so run the
+  doctor: without it RayD runs on the CUDA trace backend. RayD has not been
+  tested under WSL2.
+- **Headless servers** need no display or X server; the driver and a visible
+  GPU are enough.
+- **Driver floor.** The wheels need R555 or newer (OptiX 8.1 ABI). The doctor
+  reports `driver version` and `OptiX ABI` failures with the required branch.
+- **Unsupported GPU.** On a GPU the installed build has no code for, the first
+  native call (Torch) or the import (Dr.Jit) raises `UnsupportedDeviceError`
+  naming the GPU, its compute capability, the GPUs the build covers, and the
+  command that builds RayD for it. GPUs below compute capability 7.0 (Maxwell,
+  Pascal) cannot run RayD at all. `RAYD_SKIP_DEVICE_CHECK=1` skips the check.
+- **Editable install raises `ImportError: ... no longer match the checkout`.**
+  The build copies `python/rayd/_impl/*.py`; rebuild the backend after a
+  `git pull` or an edit (`scripts/build_local.sh torch` or
+  `.\scripts\build_local.cmd -Backend torch`).
+
 ## Building from Source
 
 The `rayd-torch` wheel includes a lock-verifiable source bundle for native
@@ -530,10 +645,13 @@ and Windows.
 No other physical GPU, driver, or Linux has run it. Details are in the
 [verification record](docs/dev/gpu_support.md#verification-record-2026-11-01).
 
-**Driver minimum:** everything needs R555 or newer. Torch builds made with CUDA 12.9
-or newer need R575 or newer; on an older driver they fail with `OptiX error in
+**Driver minimum:** everything needs R555 or newer for the OptiX 8.1 ABI the
+wheels use (a source build against newer OptiX headers needs the driver that
+ships that ABI). Torch builds made with CUDA 12.9 or newer need R575 or newer;
+on an older driver they fail with `OptiX error in
 optixModuleCreate(multipath)`, and the OptiX log names the missing intrinsic
-`optix.ptx.copysign.f32`.
+`optix.ptx.copysign.f32`. `python -m rayd.torch.doctor` and
+`python -m rayd.drjit.doctor` compare the driver with the build's OptiX ABI.
 
 On a GPU the installed build cannot run, RayD fails at first use with an
 `UnsupportedDeviceError` that names the GPU, its compute capability, the
@@ -543,10 +661,14 @@ a Git checkout. The backend distributions publish no sdist; see
 [`docs/dev/gpu_support.md`](docs/dev/gpu_support.md) for the reasons, the
 detailed compatibility findings, and verification steps.
 
-Requirements: Python 3.10-3.14, CMake 3.22+, a C++17 compiler (Visual Studio
-2022 Desktop C++ on Windows), CUDA Toolkit 12.x (Volta cannot be targeted by
-CUDA 13), and for `rayd-torch` the OptiX SDK 8.1+ headers via
-`OPTIX_INCLUDE_DIR` or `OPTIX_PATH`. Install the backend's framework and build
+Requirements: Python 3.10-3.14, CMake 3.26+ for `rayd-torch` (3.17+ for
+`rayd-drjit`), a C++17 compiler (Visual Studio 2022 Desktop C++ on Windows, GCC
+11+ on Linux), CUDA Toolkit 12.x (Volta cannot be targeted by CUDA 13; a conda
+CUDA toolkit works), and for `rayd-torch` the OptiX SDK 8.1+ headers via
+`OPTIX_INCLUDE_DIR` or `OPTIX_PATH` (for example a checkout of
+[`NVIDIA/optix-dev`](https://github.com/NVIDIA/optix-dev) at tag `v8.1.0`, which
+is what release CI uses, or configure with `-DRAYD_FETCH_OPTIX_HEADERS=ON` to
+let CMake download those headers). Install the backend's framework and build
 tools into the target environment first:
 
 ```bash
@@ -564,6 +686,13 @@ RAYD_CUDA_ARCHS=native python -m pip install --no-build-isolation ./drjit
 RAYD_CUDA_ARCHS=native python -m pip install --no-build-isolation ./torch
 ```
 
+or, as an editable install with one build directory per target list:
+
+```bash
+scripts/build_local.sh drjit --cuda-arch native
+scripts/build_local.sh torch --cuda-arch native
+```
+
 Windows:
 
 ```powershell
@@ -578,10 +707,24 @@ machine), one compute capability such as `70` or `7.0`, a list such as
 `70,86,89`, and a `+PTX` suffix such as `8.9+PTX` for forward-compatible PTX.
 It drives every CUDA target of both backends; the OptiX PTX is `compute_70` in
 every build.
-`build_local` initializes MSVC, installs editable into the current `python`
+`RAYD_CUDA_ARCHS` cannot be combined with the release-only variables
+`CMAKE_CUDA_ARCHITECTURES`, `TORCH_CUDA_ARCH_LIST`, `RAYD_CUDA_GENCODE_ARCHES`,
+or `RAYD_CUDA_PTX_ARCH`; configuring with both fails and names the conflicting
+variable. A default build without `RAYD_CUDA_ARCHS` targets the local GPU, so on
+a machine without one it fails and asks for `RAYD_CUDA_ARCHS`.
+`build_local.cmd` initializes MSVC, installs editable into the current `python`
 (pass `-PythonExe <path>` otherwise), and keeps one build directory per target
-list. Without `-CudaArch` it targets the first local GPU. The multi-architecture
-release matrix is reserved for release CI.
+list; without `-CudaArch` it targets the first local GPU. `build_local.sh` does
+the same on Linux (`--python <path>`), defaults to `RAYD_CUDA_ARCHS=native`,
+clears the release-only variables, and stops with instructions when the OptiX
+headers or a CUDA build of Torch are missing. Both pass `--no-build-isolation`:
+an isolated build would download its own pinned framework instead of using the
+installed one, and for Torch that is a CPU-only wheel that cannot build the
+extension. An editable install copies `python/rayd/_impl/*.py` into
+site-packages when it builds, so rebuild after pulling or editing those files;
+`import rayd.torch` and `import rayd.drjit` raise an `ImportError` with the
+rebuild command when the copies no longer match the checkout. The
+multi-architecture release matrix is reserved for release CI.
 
 Native downstream projects can add the Torch backend with CMake and link
 against `rayd_torch_native_core`. The source-level integration declarations
@@ -592,9 +735,12 @@ it is not a stable binary ABI across unrelated libtorch builds.
 
 Shared RF device headers are source-level contracts under
 `src/transmission_device.cuh` and
-`include/rayd/scattering_table.cuh`. Transmission families are introduced as
-dormant RayD candidates before a downstream pin and switch; dormancy does not
-create a second production owner or authorize runtime fallback dispatch.
+`include/rayd/scattering_table.cuh`. RF families enter RayD as candidates and
+become active through an atomic downstream pin and switch; a candidate never
+creates a second production owner or authorizes runtime fallback dispatch. The
+transmission-sequence, segment-penetration, and generic scattering families
+are active: Channel calls them through `rayd/integration.h` at its current
+RayD pin.
 
 ## Repository Layout
 
@@ -609,7 +755,7 @@ create a second production owner or authorize runtime fallback dispatch.
   operation, and path-exchange manifests
 - [`benchmarks`](benchmarks): benchmark schemas and recorded
   baselines
-- [`scripts`](scripts): local build helpers (`build_local.cmd` / `.ps1`)
+- [`scripts`](scripts): local build helpers (`build_local.sh` on Linux, `build_local.cmd` / `.ps1` on Windows)
 - [`tests/packaging`](tests/packaging): distribution, namespace, and wheel-layout
   checks
 - [`docs`](docs): migration, validation, and OptiX pipeline notes
@@ -617,16 +763,26 @@ create a second production owner or authorize runtime fallback dispatch.
 
 ## Testing
 
-Run packaging and namespace checks from the repository root:
+Run packaging and namespace checks from the repository root (the commands are
+the same in bash and PowerShell):
 
-```powershell
+```bash
 python -m unittest tests.packaging.test_project_metadata -v
 python -m unittest tests.test_namespace_isolation -v
 ```
 
+Run the governance and packaging suite that needs no GPU and no built backend,
+as the `Governance` workflow does on every push and pull request:
+
+```bash
+python -m pip install "ruff==0.14.10" "clang-format==21.1.8"
+python scripts/format_code.py --check
+python -m tests.support.hosted_governance
+```
+
 Run representative Dr.Jit suites:
 
-```powershell
+```bash
 python -m unittest tests.scene.test_geometry_jit -v
 python -m unittest tests.visibility.test_visibility_topk_jit -v
 python -m unittest tests.reflection.test_epc_jit -v
@@ -636,16 +792,15 @@ python -m unittest tests.diffraction.test_accumulation_jit -v
 
 Run representative Torch suites:
 
-```powershell
+```bash
 python -m unittest tests.scene.test_intersect_forward -v
 python -m unittest tests.scene.test_intersect_grad -v
 python -m unittest tests.edge.test_edge_queries -v
 python -m unittest tests.native.test_multipath -v
 ```
 
-The default local development environment used by this repository is
-`witwin3`; downstream migration and release validation in the 0.6 cycle were
-also run in `witwin2`.
+Behaviour tests skip cleanly without CUDA; the full suite runs on a machine
+with an NVIDIA GPU (two for the multi-device tests).
 
 ## Credits
 

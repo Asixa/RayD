@@ -7,8 +7,21 @@ RayD-style multipath/diffraction kernels.
 import rayd.torch as rt
 ```
 
-Install the `rayd-torch` distribution. It owns only `rayd/torch/**` and can
-coexist with the independently installed `rayd-drjit` backend.
+Install the CUDA 12.8 build of PyTorch from PyTorch's index first, then the
+`rayd-torch` distribution, and check the result:
+
+```bash
+python -m pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128
+python -m pip install rayd-torch
+python -m rayd.torch.doctor
+```
+
+`rayd-torch` owns only `rayd/torch/**` and its manifest-listed `rayd/_impl`
+modules, and can coexist with the independently installed `rayd-drjit` backend.
+With a CPU-only or a different Torch release its native libraries do not load:
+`import rayd.torch` then warns with both Torch versions, the loader error, and
+the install command above, and the first native call raises the same
+explanation.
 
 Published complete wheels are built for and require PyTorch 2.10
 (`torch>=2.10,<2.11`) because `_legacy_ops` uses the non-Stable-ABI
@@ -25,10 +38,18 @@ the platform CUDA driver library.
 
 ## Ray-tracing backend selection
 
-`Scene()` selects OptiX when the current CUDA device and driver expose it and
-otherwise selects RayD's pure-CUDA triangle and edge BVHs. The resolved choices
-are available through `scene.trace_backend` and `scene.edge_bvh_backend` after
-`build()`:
+`Scene()` traces triangles with OptiX when the current CUDA device and driver
+expose it and otherwise with RayD's pure-CUDA triangle BVH; that fallback prints
+one warning per process with the reason (a missing driver OptiX library, as in
+a container without the `graphics` driver capability, or a driver older than
+the build's OptiX ABI). Nearest-edge queries use the compact CUDA edge BVH by
+default, measured 20-80x faster than the OptiX edge backend; its acceleration
+structure is built on the first edge query. Both edge backends break exact ray
+distance ties toward the lower global edge id and apply the same degenerate-row
+rule to `nearest_edge(ray)`: a row is searched only with a finite origin, a
+finite non-zero direction and a positive `tmax` (`+inf` is the half-ray), and
+every other row returns the miss sentinels. The resolved choices are available through `scene.trace_backend` and
+`scene.edge_bvh_backend` after `build()`:
 
 ```python
 scene = rt.Scene()  # trace_backend="auto", edge_bvh_backend="auto"
@@ -39,9 +60,10 @@ print(scene.trace_backend, scene.edge_bvh_backend)
 
 Pass `trace_backend="optix"` or `"cuda"` and
 `edge_bvh_backend="optix"` or `"cuda"` to require a backend. An explicit
-OptiX request fails if OptiX is unavailable; runtime pipeline, allocation, and
-CUDA errors are never converted into a fallback. `RAYD_DISABLE_OPTIX=1` is the
-deployment and test kill switch. Both backends use Torch-owned tensors and the
+OptiX request fails with the reason if OptiX is unavailable; runtime pipeline,
+allocation, and CUDA errors are never converted into a fallback.
+`RAYD_DISABLE_OPTIX=1` is the deployment and test kill switch and silences the
+fallback warning. Both backends use Torch-owned tensors and the
 current Torch CUDA stream.
 
 The separately governed ADR-0029 exact four-sample axial-edge primitive and
@@ -127,16 +149,15 @@ fallback.
 RayD owns the numerical primitives and typed native operations, not a
 downstream application's material encoding, topology selection, solver
 estimator policy, RNG/MIS, accumulation, metadata, or result schema. A newly
-merged transmission implementation may remain a dormant candidate until the
-consumer pins it, switches all callers, proves parity, and deletes its local
-implementation. See
+merged transmission implementation is a candidate until the consumer pins it,
+switches all callers, proves parity, and deletes its local implementation.
+Channel calls the transmission-sequence primal, backward, and JVP entries
+(checked 2026-11-09 against Channel's `dependencies/rayd.lock.json` pin `c7a9997`). See
 [`docs/adr/0002-shared-rf-transmission-ownership.md`](../docs/adr/0002-shared-rf-transmission-ownership.md).
 
-The accepted diffraction surface will place the complete fixed-winner
-pure-wedge field primal/backward/JVP family behind the typed integration header
-once the dormant RayD candidate is implemented and direct-tested. Channel
-remains the production numerical owner until it pins, validates, activates, and
-deletes its local CUDA implementation. The future typed family must preserve
+The accepted diffraction surface places the complete fixed-winner pure-wedge
+field primal/backward/JVP family behind the typed integration header, and
+Channel calls all three entries (checked 2026-11-09 against Channel's `dependencies/rayd.lock.json` pin `c7a9997`). The typed family preserves
 optional winner vertices, three separate native entry launches, current-stream
 execution, output schemas, and the family-local `--use_fast_math` contract
 required for order-1 exporter parity. Monte Carlo Sionna accumulation, coupled
@@ -159,12 +180,12 @@ Complete row fusion, launch count, recomputation/tape lifetime, backward
 atomics, output schemas, and the source-TU compile split are frozen: table
 primal/sample/PDF uses default CUDA flags, while the audited table-AD,
 ensemble, patch, and chain lockstep TUs retain `--fmad=false`. A merged RayD
-implementation remains dormant until Channel pins it, switches a complete
-family with parity evidence, and deletes the local implementation. See
+implementation becomes active when Channel pins it, switches a complete family
+with parity evidence, and deletes the local implementation. See
 [`docs/adr/0026-generic-scattering-runtime-ownership.md`](../docs/adr/0026-generic-scattering-runtime-ownership.md).
 
 The stable source-level boundary is named `rayd/integration.h`, its exact
-identity is `rayd.torch.integration`, and its numeric API version is `7`.
+identity is `rayd.torch.integration`, and its numeric API version is `8`.
 No `integration_v2` forwarding header, CMake target alias, or alternate
 identity is supported. See
 [`docs/adr/0028-stable-typed-integration-naming.md`](../docs/adr/0028-stable-typed-integration-naming.md).
@@ -185,17 +206,16 @@ API nor dispatcher accepts omitted, `None`, broadcast, or strided validity.
 Diffraction accumulation and coherent-accumulation contracts are unchanged. See
 [`docs/adr/0031-required-diffraction-path-validity.md`](../docs/adr/0031-required-diffraction-path-validity.md).
 
-The typed boundary also carries a dormant axial-edge visibility candidate for
-device-resident diffraction state selection. It consumes broadcast TX and
+The typed boundary also carries the axial-edge visibility primitive for
+device-resident diffraction state selection, which Channel calls (checked 2026-11-09 against Channel's `dependencies/rayd.lock.json` pin `c7a9997`). It consumes broadcast TX and
 contiguous AoS edge tensors, evaluates the four exact binary32 fractions in one
 separate OptiX launch on the caller's current CUDA stream, and returns a
 resident boolean state mask. Its traversal inherits the legacy OptiX compile
 policy while inline PTX locks
 only point construction to non-FTZ, non-FMA round-to-nearest operations. The
 legacy visibility dispatcher is unchanged and cannot select this entry. The
-operation adds no synchronization beyond the existing common launch-parameter
-staging path; removing that staging path's host event wait is a separate
-optimization.
+operation adds no host synchronization: like every OptiX launch, its launch
+parameters reach the device through an asynchronous copy on the launch stream.
 See [`docs/adr/0029-typed-axial-edge-visibility.md`](../docs/adr/0029-typed-axial-edge-visibility.md).
 
 API version 5 adds an explicit `DiffractionPathLayout` to the typed order-1
@@ -206,7 +226,8 @@ the CUDA count remains actual-count metadata rather than a storage ordinal.
 Both layouts use the same traversal and UTD implementation. See
 [`docs/adr/0032-source-lane-diffraction-path-layout.md`](../docs/adr/0032-source-lane-diffraction-path-layout.md).
 
-API version 6 adds the dormant complete batched segment-penetration family.
+API version 6 adds the complete batched segment-penetration family, whose four
+entries Channel calls (checked 2026-11-09 against Channel's `dependencies/rayd.lock.json` pin `c7a9997`).
 Each non-empty structurally active forward call submits one OptiX launch and
 performs its ordered `D+1` capacity probe in raygen; an explicit structurally
 all-inactive call uses only a same-stream CUDA mask consistency check. Results
@@ -216,12 +237,9 @@ Python dispatcher for this family, and Channel retains material and wall-product
 policy. See
 [`docs/adr/0033-batched-segment-penetration.md`](../docs/adr/0033-batched-segment-penetration.md).
 
-RayD Torch carries all seventeen typed operations. Channel has activated the
-Phase 10A table, sampling, single-bounce ensemble, and patch-integral entries.
-The six Phase 10B chain entries are source-linked into the native core and
-direct-tested but remain dormant: no RayD Python binding dispatches them, and
-Channel remains their production numerical owner until its atomic
-pin/switch/delete commit.
+RayD Torch carries all seventeen typed scattering operations, and Channel calls
+all seventeen, including the six chain entries (checked 2026-11-09 against Channel's `dependencies/rayd.lock.json` pin `c7a9997`). No RayD Python
+binding dispatches them.
 
 ## Current Status
 
@@ -238,10 +256,16 @@ coverage exists for geometry, edge, reflection trace, EPC, and diffraction
 accumulation under the fixed-winner contract.
 
 On the recorded same-script benchmark shape (grid 64, 4,096 queries, warm
-caches), RayD Torch currently measures faster than RayD for scene build,
-intersect, nearest edge, reflection trace, diffraction paths, and direct
-diffraction accumulation. Far-from-surface nearest-edge queries use a tiled
-exact fallback scan instead of the scene-diagonal OptiX tier. Release-size and
+caches), RayD Torch measured faster than the Dr.Jit backend for scene build,
+intersect, reflection trace, diffraction paths, and direct diffraction
+accumulation. Nearest-edge queries are slower in Torch since the Dr.Jit backend
+moved to its native compact-BVH traversal: with each backend's default edge
+BVH, 65,536 queries on one RTX A6000 (minimum of 5) took 4.0 ms (points) and
+43 ms (rays) at 100k edges and 42 ms and 644 ms at 1M edges in Torch, against
+1.5, 21, 25 and 310 ms in the Dr.Jit backend. With
+`edge_bvh_backend="optix"`, point nearest-edge queries trace only the tightest OptiX radius tier and resolve the
+remaining queries with a tiled exact scan over the edges instead of the
+scene-diagonal tier. Release-size and
 Nsight-counter-backed runs remain the broader performance gate. See
 [`torch_gap_analysis.md`](../docs/torch/torch_gap_analysis.md) and
 

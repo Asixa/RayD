@@ -9,6 +9,15 @@
 > typed public owner is now `rayd/visibility.h`, aggregated by
 > `rayd/integration.h` at API version 8.
 
+> **Status note, 2026-11-09.** This record's decisions are unchanged; two facts
+> it describes have since changed. The primitive is active rather than dormant:
+> Channel calls `rayd::torch::axial_edge_visibility_forward` from
+> `native/channel/rayd/diffraction.cpp` at its RayD pin `c7a9997`
+> (`dependencies/rayd.lock.json`). The separate optimization named at the end
+> of this record has landed: the common launch path no longer waits on a
+> staging-slot CUDA event; it copies the launch parameters into a
+> stream-ordered device block with an asynchronous copy on the launch stream.
+
 ## Context
 
 Channel ADR-028 selects four axial-edge sample points while building a
@@ -40,7 +49,8 @@ One separate Params layout, PTX module, and OptiX pipeline owns this primitive.
 One call makes exactly one OptiX launch on the caller's current CUDA stream,
 reducing four public launch-parameter staging checks to one. It adds no explicit
 synchronization beyond the existing common launch staging implementation,
-which currently waits on a reusable staging-slot CUDA event.
+which at the time of this decision waited on a reusable staging-slot CUDA event
+(removed since; see the status note).
 `N == 0` returns without a launch. Inactive rows and rows containing any
 non-finite transmitter, edge, bound, derived parameter, or sample value produce
 `false`. Invalid rank, shape, dtype, contiguity, device, scene, or fraction bits
@@ -84,4 +94,5 @@ change, contraction or arithmetic-order drift, a fallback, or activation
 before the atomic downstream pin/switch/delete gate.
 
 Removing `cudaEventSynchronize` from the common launch-parameter staging ring
-is a separate Phase 12 optimization. It is not part of this ownership move.
+is a separate Phase 12 optimization. It is not part of this ownership move. (It
+has since landed; see the status note.)

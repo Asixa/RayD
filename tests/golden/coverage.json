@@ -1,5 +1,5 @@
 {
-  "reference": "RAY_TRACING_BACKEND_ARCHITECTURE.md section 16 (test scope)",
+  "reference": "docs/RAY_TRACING_BACKEND_ARCHITECTURE.md section 16 (test scope)",
   "policy": "Every section 16 geometry and edge case maps to a golden scene, or to a documented reason it is not a golden scene (public API gap, or covered by an existing dedicated test).",
   "golden": {
     "miss": {

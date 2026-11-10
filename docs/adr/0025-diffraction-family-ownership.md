@@ -10,6 +10,12 @@
 > `include/rayd/diffraction.h`; the shared UTD domain has one public owner in
 > `include/rayd/utd.h`, while launch and algorithm internals live in `src/diffraction/`. Numerical, derivative, activation,
 > rollback, and downstream atomic-switch clauses remain in force.
+
+> **Status note, 2026-11-09.** The decisions below are unchanged. The pure-wedge
+> family is active: Channel calls `field_diffraction_wedge`,
+> `field_diffraction_wedge_backward`, and `field_diffraction_wedge_jvp` from
+> `native/channel/binding/fields.cpp` at its RayD pin `c7a9997`
+> (`dependencies/rayd.lock.json`, checked 2026-11-09).
 ## Context
 
 RayD already owns solver-neutral diffraction discovery, visibility, path export,

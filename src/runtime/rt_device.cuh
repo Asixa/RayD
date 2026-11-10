@@ -12,7 +12,7 @@
 namespace rayd::shared::rt {
 
 // Backend-neutral, decoded closest-hit record produced by a Traverser
-// (RAY_TRACING_BACKEND_ARCHITECTURE.md §7). It is the host-side mirror of the
+// (docs/RAY_TRACING_BACKEND_ARCHITECTURE.md §7). It is the host-side mirror of the
 // OptiX six-register TriangleHitPayload (shared/reflection/optix_hit.h) after the
 // float-as-uint payload codec has been undone: `t`, `bary_u`, `bary_v` are plain
 // floats, `prim` is the mesh-local primitive id, `instance` is the shape id, and

@@ -17,14 +17,18 @@ Release wheels cover Linux x86-64 and Windows x86-64 on CPython 3.10-3.14. They 
 
 ## Ray-tracing backend selection
 
-`Scene()` uses OptiX when the current CUDA device/context accepts an OptiX
-context and otherwise selects the
-pure-CUDA triangle backend plus the Dr.Jit/CUDA edge BVH. Use
-`trace_backend="optix"` or `"cuda"` and `edge_bvh_backend="optix"` or
-`"drjit"` to require a backend. `scene.capabilities()` reports the resolved
-choice. An explicit OptiX request fails when unavailable, and operational
-pipeline, allocation, or CUDA failures are not converted into a fallback.
-`RAYD_DISABLE_OPTIX=1` forces capability discovery to report OptiX unavailable.
+`Scene()` traces triangles with OptiX when the current CUDA device/context
+accepts an OptiX context and otherwise with the pure-CUDA triangle backend,
+printing one warning per process with the reason. Nearest-edge queries always
+default to `edge_bvh_backend="drjit"`, a native compact-BVH traversal launched
+on Dr.Jit's stream that was faster than the OptiX edge backend for point, ray,
+and top-k queries at every measured size. Use `trace_backend="optix"` or
+`"cuda"` and `edge_bvh_backend="optix"`, `"optix_drjit"` (OptiX for rays
+only), or `"drjit"` to require a backend. `scene.capabilities()` reports the
+resolved choice. An explicit OptiX request fails when unavailable, and
+operational pipeline, allocation, or CUDA failures are not converted into a
+fallback. `RAYD_DISABLE_OPTIX=1` forces capability discovery to report OptiX
+unavailable and selects the CUDA trace backend without a warning.
 
 RayD is Dr.Jit-native and does not depend on PyTorch. Because its nanobind extension uses the CPython ABI, CI builds one wheel per Python version rather than one Python-independent wheel. The complete build matrix and release configuration are documented in [`ci_build_matrix.md`](../docs/dev/ci_build_matrix.md).
 
@@ -203,13 +207,13 @@ Existing RayD scenes, OptiX pipelines, and BVHs should not be reused across devi
 
 RayD is a Python package with a C++/CUDA extension.
 
-You need Python `>=3.10,<3.15`, CUDA Toolkit `>=11.0`, CMake, a C++17 compiler, `drjit==1.3.1`, `nanobind==2.11.0`, and `scikit-build-core`. The nanobind pin must match the version embedded by the pinned Dr.Jit release so both extensions share one nanobind registry ABI.
+You need Python `>=3.10,<3.15`, CUDA Toolkit `>=11.0` (a conda CUDA toolkit works), CMake 3.17 or newer, a C++17 compiler, `drjit==1.3.1`, `nanobind==2.11.0`, and `scikit-build-core`. The nanobind pin must match the version embedded by the pinned Dr.Jit release so both extensions share one nanobind registry ABI.
 
 On Windows, use Visual Studio 2022 with Desktop C++ tools. On Linux, use GCC or Clang with C++17 support.
 
-Recommended environment:
+Recommended environment (the commands are the same in bash and PowerShell):
 
-```powershell
+```bash
 conda create -n myenv python=3.10 -y
 conda activate myenv
 python -m pip install -U pip setuptools wheel
@@ -219,15 +223,25 @@ python -m pip install drjit==1.3.1
 
 Install from the repository root:
 
-```powershell
+```bash
 python -m pip install ./drjit
 ```
 
-For editable development builds:
+For editable development builds, use the helper for your platform, which also
+sets `RAYD_CUDA_ARCHS` and keeps one build directory per target list:
+
+```bash
+scripts/build_local.sh drjit                  # Linux
+```
 
 ```powershell
-python -m pip install --no-build-isolation -ve ./drjit
+.\scripts\build_local.cmd -Backend drjit     # Windows
 ```
+
+An editable build copies `python/rayd/_impl/*_jit.py` into site-packages, so
+rebuild after pulling or editing those files; `import rayd.drjit` raises an
+`ImportError` with the rebuild command when the copies no longer match the
+checkout. Check an installation with `python -m rayd.drjit.doctor`.
 
 ## Repository Layout
 
@@ -241,18 +255,12 @@ python -m pip install --no-build-isolation -ve ./drjit
 
 ## Testing
 
-```powershell
+```bash
 python -m unittest tests.scene.test_geometry_jit -v
 python -m unittest tests.visibility.test_visibility_topk_jit -v
 python -m unittest tests.reflection.test_epc_jit -v
 python -m unittest tests.reflection.test_accumulation_jit -v
 python -m unittest tests.packaging.test_project_metadata -v
-```
-
-The default development environment used by this repository is:
-
-```powershell
-conda activate witwin3
 ```
 
 ## Credits

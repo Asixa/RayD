@@ -79,6 +79,18 @@ for the diffraction-accumulation module on an RTX 4090 Laptop GPU: if that modul
 try a fresh `OPTIX_CACHE_PATH` before looking elsewhere.
 `test_large_multipath_pipelines_alternate_in_one_process` covers it.
 
+Both backends now follow the same retry rules (2026-11-09):
+
+- Only a compile, link, or disk-cache OptiX failure is retried (in the Torch backend, `OptixCompileError`, which
+  `optix_check` raises for the pipeline, module, and cache error codes). Invalid input, out-of-memory, and CUDA
+  errors propagate on the first failure.
+- A build that succeeds only on a retry warns once per process, naming the entry point, the retry that worked, and
+  the first failure including its OptiX log, so a recurring driver or cache problem is visible instead of only slow.
+- The Torch backend serializes builds per OptiX context and no longer holds its global pipeline-cache lock during a
+  compile, so lookups of pipelines that are already built never wait behind a cold compile on another thread.
+- The Dr.Jit backend's OptiX disk cache is Dr.Jit's, `optix7cache.db` in `~/.drjit`; a fresh cache there is the
+  equivalent of a fresh `OPTIX_CACHE_PATH`.
+
 Two experimental fixes were rejected because they were not causal:
 
 - splitting `trace_reflections()` into primary/one-bounce raygen variants did not fix production cold creation
@@ -127,8 +139,20 @@ After changing a `.cu` OptiX kernel, regenerate and commit the matching embedded
 4. Read the OptiX stderr pipeline statistics. Treat them as risk diagnostics, not the final root cause.
 5. Count trace sites in the embedded PTX:
 
+   ```bash
+   # Linux
+   python - <<'PY'
+   ptx = open("generated/drjit/ptx/diffraction_paths_ptx.h", encoding="utf-8").read()
+   entry = "__raygen__diffraction_paths_order1_target_export_primary"
+   start = ptx.index(f".visible .entry {entry}")
+   end = ptx.find(".visible .entry ", start + 1)
+   print(ptx[start : end if end >= 0 else len(ptx)].count("_optix_trace"))
+   PY
+   ```
+
    ```powershell
-   $ptx = Get-Content backends\drjit\include\rayd\multipath\diffraction_paths_ptx.h -Raw
+   # Windows
+   $ptx = Get-Content generated\drjit\ptx\diffraction_paths_ptx.h -Raw
    $entry = "__raygen__diffraction_paths_order1_target_export_primary"
    $start = $ptx.IndexOf(".visible .entry $entry")
    $next = $ptx.IndexOf(".visible .entry ", $start + 1)
@@ -138,14 +162,14 @@ After changing a `.cu` OptiX kernel, regenerate and commit the matching embedded
    ```
 
 6. If a failing primary-only path has more than one trace site, consider staged launches only if that matches the operation contract.
-7. Reinstall the package and verify the actual `.pyd` size/timestamp under the target conda environment.
+7. Reinstall the package and verify the actual `.pyd` or `.so` size and timestamp in the target environment.
 8. Run the full cold-create matrix; do not accept a single warmed-process pass as proof.
 
 ## Regression Tests
 
-Run RayD tests:
+Run RayD tests (the same commands in bash and PowerShell):
 
-```powershell
+```bash
 python -m unittest tests.reflection.test_epc_jit -v
 python -m unittest tests.native.test_optix_pipeline_cold_create_jit -v
 python -m unittest tests.scene.test_geometry_jit.GeometryCoreTests.test_trace_reflections_cold_pipeline_survives_materialized_ad_inputs -v
@@ -160,6 +184,10 @@ the downstream Channel repo checkout (see `docs/downstream-migration.md`):
 python -m pytest tests\path\test_endpoint_api_contract.py -q --gpu
 python -m pytest tests\path\test_example_path_solver_minimal.py tests\deterministic\test_reflection_rayd_epc_backend.py tests\deterministic\test_example_deterministic_radiomap_three_cubes.py -q --gpu
 ```
+
+On a Linux RTX A6000 machine (driver 595.99.02, 2026-11-09), cold creation of every multipath pipeline succeeded
+with multipath exception flags `0`, `3`, and `11` alike, so the flag dependence could not be reproduced there and the
+Dr.Jit value `11` was kept; the failures above remain specific to the drivers and machines where they were recorded.
 
 The 2026-05-26 verified state after the multipath exception-flag fix:
 

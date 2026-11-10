@@ -6,6 +6,15 @@
 - Scope: every ray RayD starts on a surface: reflection, EPC, reflection accumulation, segment visibility, and
   diffraction segments, in both backends and on both trace backends. It does not change `scene.intersect`.
 
+> **Status note, 2026-11-09.** The decisions below are unchanged, but one
+> premise is out of date. The consequences list exempts "the dormant penetration
+> paths". The ADR-0033 segment-penetration family is active: Channel calls all
+> four of its entry points from `native/channel/rayd/geometry.cpp` at its RayD
+> pin `c7a9997` (checked 2026-11-09). An audit of that family measured about 50%
+> miscounted crossings for segments that start on a surface at coordinates of
+> 100 m or more, the failure this record fixed for the other ray families.
+> Whether penetration adopts this policy is open and needs its own decision.
+
 ## Context
 
 RayD kept rays off the surface they leave with fixed distances: a minimum ray distance of `1e-5` for multipath and

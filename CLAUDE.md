@@ -4,19 +4,25 @@ This repository contains **RayD**, a CUDA/OptiX package for differentiable ray g
 
 ## Environment
 
-Default conda environment:
-
-```bash
-conda activate witwin3
-```
+Use any Python 3.10-3.14 environment that holds the backend frameworks (`drjit==1.3.1` and `nanobind==2.11.0`, or a
+CUDA build of `torch==2.10.*`), `scikit-build-core`, `ninja`, `cmake`, and a CUDA 12.x toolkit; a conda environment
+with a conda CUDA toolkit works. No environment name is assumed.
 
 ## Build
 
 The repository root is a meta-distribution and builds no native code. Build a backend explicitly:
 
-```powershell
-.\scripts\build_local.cmd -Backend drjit   # or: torch, all
+```bash
+scripts/build_local.sh drjit                # Linux; or: torch, all
 ```
+
+```powershell
+.\scripts\build_local.cmd -Backend drjit   # Windows; or: torch, all
+```
+
+Both helpers install editable. The build copies `python/rayd/_impl/*.py` into site-packages, so rebuild after editing
+or pulling those files; the import refuses copies that no longer match the checkout. `python -m rayd.torch.doctor` and
+`python -m rayd.drjit.doctor` check an installation, its driver, and its OptiX runtime.
 
 ## Architecture
 
@@ -64,10 +70,14 @@ metadata, and public results.
 - Preserve per-TU flags: table primal/sample/PDF uses default CUDA flags; the
   audited table-AD, ensemble, patch, and chain lockstep TUs use `--fmad=false`.
   Neither flag policy may spread across operation families.
-- A RayD implementation is dormant until Channel pins the reviewed commit,
-  validates it, switches every caller in a complete family, and deletes its
-  local implementation atomically. Rollback changes the pin to a prior complete
-  owner; it never adds runtime owner selection or fallback.
+- Activation is the atomic downstream switch: Channel pins the reviewed
+  commit, validates it, switches every caller in a complete family, and deletes
+  its local implementation atomically. Rollback changes the pin to a prior
+  complete owner; it never adds runtime owner selection or fallback.
+- Status, checked 2026-11-09 against a Channel checkout: Channel pins RayD
+  `c7a9997` in `dependencies/rayd.lock.json` and calls all 17 typed scattering
+  operations from `native/channel/binding/materials.cpp`, so these families are
+  active RayD code, not dormant candidates.
 
 See `docs/adr/0026-generic-scattering-runtime-ownership.md` for the exact symbol
 matrix, resource boundary, activation gates, and stop conditions.
@@ -116,9 +126,13 @@ the same traversal and UTD body; do not add a second exporter, host compaction,
 or floating-point reduction to RayD. See
 `docs/adr/0032-source-lane-diffraction-path-layout.md`.
 
-The dormant ADR-0033 segment-penetration family uses the stable typed boundary
-only. Every structurally active non-empty forward entry submits one OptiX
-launch, with the ordered `D + 1` capacity probe inside each raygen lane.
+The ADR-0033 segment-penetration family uses the stable typed boundary only.
+It is active: Channel calls all four of its entry points from
+`native/channel/rayd/geometry.cpp` at its RayD pin `c7a9997` (checked
+2026-11-09), as it calls the three ADR-0002 transmission-sequence entry points
+from `native/channel/binding/fields.cpp`. Every structurally active non-empty
+forward entry submits one OptiX launch, with the ordered `D + 1` capacity probe
+inside each raygen lane.
 `input_active_any=false` submits zero OptiX work and must validate the device
 mask on the caller's stream. Results and tapes are fixed `[N,D]`, share the
 caller's CUDA int32 `[1]` failure transaction and single assigned bit, and are
@@ -224,12 +238,13 @@ contract and the measured 2x RTX A6000 results.
 Current edge-query acceleration design:
 
 - triangle intersections still use OptiX through `scene.intersect(ray)`
-- nearest-edge queries default to the OptiX custom-AABB edge backend; a custom Dr.Jit/CUDA BVH over scene-global `SecondaryEdgeInfo` is available as an alternate backend (`edge_bvh_backend="drjit"`)
+- Torch: `edge_bvh_backend="auto"` resolves to the compact CUDA BVH (`cuda`), which was measured 20-80x faster than the OptiX custom-AABB backend for nearest-edge queries; the OptiX edge backend is the explicit `edge_bvh_backend="optix"`. The edge data and acceleration structures are built on the first edge query after `build()` or a geometry-changing `sync()`. The OptiX ray query has no any-hit program: it keeps the running nearest edge in the intersection program and clips a half-ray once, at the exit of the scene edge bounds grown by the widest tier radius (capped at `1e8`), so a ray that misses that box returns a miss
+- Dr.Jit: `edge_bvh_backend="auto"` resolves to `drjit`, the native compact-BVH traversal: point, ray, and top-k queries launch the shared `launch_*_bvh_query_async` kernels on Dr.Jit's stream without a host synchronization, and break exact distance ties toward the lower global edge id. `optix` (custom-AABB) and `optix_drjit` (OptiX rays, native BVH points and top-k) remain explicit choices. The Dr.Jit edge BVH is built in `build()`
 - the Dr.Jit backend build path is:
   - GPU LBVH construction with Morton codes
   - host-side treelet optimization for large-scene query quality
-  - GPU traversal for point and ray closest-edge queries
-- `nearest_edge(ray)` uses segment semantics on `[0, tmax]` when `tmax` is finite
+  - native compact-BVH traversal for point, ray, and top-k closest-edge queries
+- `nearest_edge(ray)` searches a row only when its origin is finite, its direction is finite and non-zero, and its `tmax` is positive: a finite `tmax` is the segment `[0, tmax]` and `+inf` (or no `tmax`) the half-ray. A NaN, zero, or negative `tmax` (`-inf` included), a zero or non-finite direction, and a non-finite origin return the miss sentinels on every edge backend of both frontends (`contracts/operations.json` `nearest_edge_ray.degenerate_rows`)
 - the broad phase is detached; after the winning edge is found, the implementation re-gathers AD geometry and recomputes the exact result so gradients remain available while the winning edge stays fixed
 - dynamic vertex and transform updates use BVH refit after `sync()`
 
@@ -241,7 +256,7 @@ Current status notes:
 - the former `LBVH + top-level SAH` HLBVH experiment was removed after it made large-scene queries much slower; its historical measurements are retained below
 - the dead GPU-prepared flat-treelet prototype was removed; the supported treelet path keeps its host-prepared schedule and launches GPU treelet optimization kernels
 - the shared edge core owns the backend-neutral OptiX AABB kernel, LBVH/treelet build stages, dirty-ancestor/dirty-level/refit launchers, compact-BVH CUDA traversal, and exact-distance launchers; every API takes raw pointers, caller-owned buffers, and an explicit stream
-- Dr.Jit still owns CUB/allocation, LBVH/treelet host orchestration, host compaction, and its JIT traversal; Torch persistent compact-BVH ownership and public top-k/visibility integration landed in F1 (`src/scene/scene.cpp`, `tests/test_f1_torch_global_geometry_contract.py`)
+- Dr.Jit still owns CUB/allocation, LBVH/treelet host orchestration, and host compaction, and calls the shared compact-BVH traversal for its queries; Torch persistent compact-BVH ownership and public top-k/visibility integration landed in F1 (`src/scene/scene.cpp`, `tests/test_f1_torch_global_geometry_contract.py`)
 
 Supported custom-BVH configuration after BVH-3 convergence:
 
@@ -271,14 +286,16 @@ RayD is not a full renderer and intentionally does not include:
 This exclusion does not prohibit low-level, solver-neutral RF scattering
 table/sample/integral primitives governed by ADR-0026.
 
-The dormant typed axial-edge visibility candidate governed by ADR-0029 owns
-only its exact four-sample OptiX numerical primitive. Keep its Params/PTX/
+The typed axial-edge visibility primitive governed by ADR-0029 owns only its
+exact four-sample OptiX numerical primitive. Channel calls it
+(`axial_edge_visibility_forward` from `native/channel/rayd/diffraction.cpp` at
+its RayD pin `c7a9997`, checked 2026-11-09). Keep its Params/PTX/
 pipeline separate from legacy segment visibility, inherit the legacy OptiX
 compile policy for traversal, and lock only point construction with inline PTX
 round-to-nearest add/subtract/multiply instructions without FTZ or FMA. Do not
-bind it to Python or the legacy dispatcher. Activation requires an atomic
-downstream pin, switch, parity proof, and deletion of the former numerical
-owner.
+bind it to Python or the legacy dispatcher. Moving it to another numerical owner
+requires an atomic downstream pin, switch, parity proof, and deletion of the
+former owner.
 
 ## Source Layout, Math Ownership, and File Headers
 

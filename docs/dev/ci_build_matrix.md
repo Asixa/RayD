@@ -32,11 +32,23 @@ The Dr.Jit backend must not add PyTorch merely to make the matrix look identical
 
 ## RayD GitHub Actions matrix
 
-Pull requests use `.github/workflows/ci.yml`: GitHub-hosted Linux and Windows
-runners build representative CPython 3.12 wheels with native `sm_87` and
-`sm_120` SASS plus `compute_120` PTX. This fast profile proves both native
-backends compile and package without paying the full release fan-out on every
-commit.
+Every push and pull request runs `.github/workflows/governance.yml` on a
+GitHub-hosted Ubuntu runner for CPython 3.10 and 3.14. It needs no GPU, no CUDA
+toolkit, and no native build: it runs `python scripts/format_code.py --check`
+with pinned `ruff==0.14.10` and `clang-format==21.1.8`, then
+`python -m tests.support.hosted_governance`, which discovers every `test_*.py`
+module at the root of `tests/` and in `tests/governance/` and
+`tests/packaging/` (source-file standards, layout, contracts and schemas, the
+compile-flag policy, the public-API manifest, and packaging metadata) and skips
+only the modules that module lists with a reason because they need a built
+backend or still fail on the committed tree. This is the only automatic CI.
+
+The native workflows run only on request. `.github/workflows/ci.yml` runs when a
+pull request receives the `run-ci` label or by manual dispatch: GitHub-hosted
+Linux and Windows runners build representative CPython 3.12 wheels with native
+`sm_87` and `sm_120` SASS plus `compute_120` PTX. This fast profile proves both
+native backends compile and package without paying the full release fan-out.
+It does not run on every commit.
 
 The complete distribution workflow is `.github/workflows/pypi.yml`. It runs
 by manual dispatch and for published releases. Every run builds and audits the
@@ -101,8 +113,8 @@ between two self-hosted workflows:
 
 | Workflow | Runner labels | Trigger | Scope |
 | --- | --- | --- | --- |
-| `.github/workflows/single_gpu.yml` | `self-hosted`, `linux`, `x64`, `cuda`, `single-gpu` | PR label `run-gpu-ci`, weekly schedule, or manual dispatch | Builds both backends from the checkout; requires live Torch and Dr.Jit CUDA plus one successful OptiX hit per backend; runs Torch/Dr.Jit core geometry and multipath, the Dr.Jit cold-pipeline matrix, mixed geometry, SDF, and cross-backend parity |
-| `.github/workflows/multi_gpu.yml` | `self-hosted`, `linux`, `x64`, `cuda`, `multi-gpu` | PR label `run-multi-gpu-ci`, weekly schedule, or manual dispatch | Requires at least two visible devices and runs replicated-scene sharding, chunking, resilience, distributed, and benchmark acceptance |
+| `.github/workflows/single_gpu.yml` | `self-hosted`, `linux`, `x64`, `cuda`, `single-gpu` | PR label `run-gpu-ci`, weekly schedule, or manual dispatch | Builds both backends from the checkout; requires live Torch and Dr.Jit CUDA plus one successful OptiX hit per backend; runs Torch/Dr.Jit core geometry, input validation, edge queries and multipath, the Dr.Jit cold-pipeline matrix, runtime diagnostics and OptiX pipeline-create retry (fault injection needs a C compiler), mixed geometry, SDF, cross-backend value and validation parity, and finite-difference gradient checks |
+| `.github/workflows/multi_gpu.yml` | `self-hosted`, `linux`, `x64`, `cuda`, `multi-gpu` | PR label `run-multi-gpu-ci`, weekly schedule, or manual dispatch | Requires at least two visible devices and runs replicated-scene sharding, chunking, resilience, Torch cross-device input rejection, distributed, and benchmark acceptance. It builds only the Torch backend, so the Dr.Jit two-device cases run only where both backends and two GPUs are present |
 
 The single-GPU preflight is deliberately outside the skip-guarded unit-test
 modules. A missing CUDA device, failed Dr.Jit CUDA evaluation, unavailable
@@ -149,7 +161,8 @@ the 5 GiB full toolkit metapackage. Torch also installs the NVRTC development
 package required by its Caffe2 CMake targets.
 
 Pull-request cache keys use the PR head commit rather than the synthetic merge
-commit. Push, schedule, release, and manual builds use `github.sha`. Restore
+commit. Release and manual builds use `github.sha`; no native build workflow runs
+on push or on a schedule. Restore
 prefixes still allow reuse across commits, while a new head can save updated
 compiler results instead of being blocked by an immutable empty cache entry.
 
@@ -227,3 +240,53 @@ When changing CUDA, Python, Dr.Jit, PyTorch, or runner versions:
 5. Keep a PTX target for forward compatibility.
 6. Build an sdist and inspect wheel metadata (`Requires-Python` and framework dependencies).
 7. Record any deliberate exception, such as RayD's lower manylinux baseline or framework-specific ABI matrix.
+
+## Proposed release and wheel changes (not applied)
+
+These changes alter what gets published and when, so they are recorded here for
+the owner's decision rather than made in `pypi.yml`.
+
+**U-7: build before the release is published.** `pypi.yml` starts building only
+after a GitHub Release is published (`release: types: [published]`). If any of
+the 20 native matrix entries fails, the published release and tag point at a
+version that has no artifacts on PyPI, and fixing it needs a new version
+number. The three projects also publish independently (`publish-drjit`,
+`publish-torch`, then `publish-rayd`), so a failure in a later job leaves PyPI
+with one backend at the new version and the meta-distribution still pinning
+the old pair. Recommended shape:
+
+1. Run the complete matrix and every artifact check from a pushed tag (or a
+   manual dispatch on a tag) and upload the validated wheels as one workflow
+   artifact set.
+2. Publish the GitHub Release only after that run is green, and make the
+   release job a pure promotion step that downloads that exact artifact set by
+   run ID and uploads it, with no rebuild.
+3. Upload both backend projects before the meta-distribution, and gate the
+   meta upload on both backend uploads having succeeded for the same version
+   (as `publish-rayd` does today), so the worst partial state is backends
+   without the meta wheel, which is installable.
+
+**U-7: the Windows Torch wall-clock limit.** The Windows Torch wheel step
+throws once it has run for 60 minutes (`Windows Torch full wheel build exceeded
+the 60-minute release limit`), inside a job whose own `timeout-minutes` is
+larger. A slow hosted runner therefore fails a release that would have
+finished. Either raise the in-step limit to the job budget or make it a
+warning that is reported in the job summary; with the build-first shape above
+it can no longer strand a published release in any case.
+
+**U-8: no `sm_87` cubins in x86-64 wheels.** `sm_87` is Jetson Orin, which runs
+only its own cubin and has no x86-64 host, while `device_support.py` treats
+`sm_87` as an exact-match Jetson architecture. The wheels are x86-64 only, so
+the `sm_87` image in every Dr.Jit and Torch wheel can never run; it costs about
+9% of the fatbin size and of the CUDA compile time (estimated from a single-architecture build). Drop `87` from
+`RAYD_CUDA_GENCODE_ARCHES`, `CMAKE_CUDA_ARCHITECTURES`, and
+`TORCH_CUDA_ARCH_LIST` in the release matrix and from the
+`verify_cuda_binary_arches.py` expectations, and keep it for source builds on
+Jetson. The hosted `ci.yml` profile uses `sm_87` only as a cheap compile check
+and can keep it.
+
+**U-8: a wheel-size gate.** Nothing checks wheel size today. Add a step to
+`validate-wheel-set` that records each wheel's compressed and uncompressed
+size in the job summary and fails above a recorded budget (for example 20%
+above the previous release), so a new architecture or an accidental debug
+build is noticed before upload rather than at PyPI's file-size limit.

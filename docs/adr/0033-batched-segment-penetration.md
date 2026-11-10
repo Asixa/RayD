@@ -10,6 +10,15 @@
 > remain evidence. Its canonical public owner is now `rayd/penetration.h`,
 > aggregated by `rayd/integration.h` at API version 8.
 
+> **Status note, 2026-11-09.** The decisions below are unchanged. The family is
+> no longer dormant: Channel calls `segment_penetration_forward`,
+> `segment_penetration_forward_tape`, `segment_penetration_backward`, and
+> `segment_penetration_jvp` from `native/channel/rayd/geometry.cpp` at its RayD
+> pin `c7a9997` (`dependencies/rayd.lock.json`, checked 2026-11-09), and
+> `witwin/channel/interactions/transmission.py` uses them for wall penetration.
+> ADR-0045 exempted this family from its surface-leaving-ray change because it
+> was dormant; that exemption is an open decision now that the family is active.
+
 ## Context
 
 Channel previously discovered straight transmission crossings through a Python

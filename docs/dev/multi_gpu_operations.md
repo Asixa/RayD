@@ -163,12 +163,15 @@ Consequences worth planning around:
   it; they never race. Measured on the verification machine, a cold first
   `intersect` on two devices takes ~0.47 s from two threads against ~0.52 s
   device-after-device, so the overlap is real but partial.
-- **The GIL is a second serializer, above those locks.** Op wrappers hold the
-  GIL for the whole native call (see the header comment in `library.cpp` for
-  why), so whatever build or launch work happens inside an op does not overlap
-  with another Python thread's op. Scene construction — where the OptiX
-  context and the acceleration structures are built — runs GIL-free, which is
-  why per-device warm-up still overlaps well in practice.
+- **The GIL is a second serializer, above those locks.** Most op wrappers hold
+  the GIL for the whole native call (see the header comment in `library.cpp`
+  for why), so whatever build or launch work happens inside such an op does
+  not overlap with another Python thread's op. The hot forward queries
+  (`intersect`, `nearest_edge`, `nearest_edges`, `visible` and
+  `trace_reflections`) run their native work without the GIL, so per-device
+  threads issuing them overlap their host work too. Scene construction — where
+  the OptiX context and the acceleration structures are built — runs GIL-free,
+  which is why per-device warm-up still overlaps well in practice.
 - **After warm-up, launches on distinct devices do not serialize against each
   other.** Launch-side locking is per pipeline object, and pipeline objects
   are per device context.
@@ -256,13 +259,12 @@ These are the limits of the caller-driven shape above. `Scene(devices=[...])`
   bits, Monte-Carlo lane assignment) are defined per launch. Splitting a batch
   by hand changes them; see D5/D6 in [`multi_gpu_plan.md`](multi_gpu_plan.md)
   before doing so.
-- No cross-thread parallelism inside a single op: op wrappers hold the GIL for
-  the native call, so per-device threads overlap on scene construction and on
-  their own stream waits, not on the op bodies themselves. This still holds
-  after Phase 2 -- the in-process layer of section 5 drives every device from
-  one host thread and overlaps on streams, not on threads. Removing the GIL
-  serialization would need refcounted scene ownership, and it is a throughput
-  question, not a correctness one.
+- Limited cross-thread parallelism inside ops: most op wrappers hold the GIL
+  for the native call, so per-device threads overlap on scene construction, on
+  their own stream waits, and on the GIL-free hot forward queries, not on the
+  other op bodies. The in-process layer of section 5 drives every device from
+  one host thread and overlaps on streams, not on threads. Releasing the GIL
+  in further ops is a throughput question, not a correctness one.
 
 ## 5. Multi-GPU performance
 
