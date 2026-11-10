@@ -90,9 +90,6 @@ struct ValidatedRequest {
 
 ValidatedRequest validate_request(const rayd::torch::SegmentPenetrationRequest& request) {
     SceneCache& scene = rayd::torch::detail::IntegrationAccess::scene_cache(request.scene);
-    if (scene.trace_backend == TraceBackend::Cuda)
-        throw std::runtime_error("ADR-0033 segment penetration is unsupported by the CUDA ray-tracing backend; "
-                                 "select trace_backend='optix'.");
     require_vec3f(request.origins, "origins");
     require_vec3f(request.targets, "targets");
     if (request.targets.size(0) != request.origins.size(0))
@@ -237,11 +234,15 @@ SegmentPenetrationNativeOutputs forward_native(const rayd::torch::SegmentPenetra
         // The context, the pipeline, and the stream all belong to the validated
         // scene device, not to whichever device happens to be ambient.
         const int device_index = static_cast<int>(validated.scene.device_index);
-        OptixDeviceContextEntry& optix = get_optix_context(device_index);
-        shared_optix_launch_pipeline(optix.optix_context, device_index, params.mesh_count,
-                                     segment_penetration_pipeline_config())
-            ->launch(0, params, static_cast<unsigned int>(validated.segment_count),
-                     at::cuda::getCurrentCUDAStream(device_index).stream());
+        const cudaStream_t stream = at::cuda::getCurrentCUDAStream(device_index).stream();
+        if (validated.scene.trace_backend == TraceBackend::Cuda) {
+            segment_penetration_forward_cuda_bvh(validated.scene, params, stream);
+        } else {
+            OptixDeviceContextEntry& optix = get_optix_context(device_index);
+            shared_optix_launch_pipeline(optix.optix_context, device_index, params.mesh_count,
+                                         segment_penetration_pipeline_config())
+                ->launch(0, params, static_cast<unsigned int>(validated.segment_count), stream);
+        }
     }
     segment_penetration_sanitize_cuda(outputs, request.capacity_failure_state);
     return outputs;

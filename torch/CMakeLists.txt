@@ -718,6 +718,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
         DEPENDS
             ${RAYD_ROOT_DIR}/src/visibility/axial_edge_visibility_optix.cu
             ${RAYD_ROOT_DIR}/src/visibility/axial_edge_visibility_params.h
+            ${RAYD_ROOT_DIR}/src/visibility/axial_edge_visibility.cuh
             "${RAYD_INCLUDE_DIR}/rayd/math.h"
             "${RAYD_ROOT_DIR}/src/visibility/segment_visibility.cuh"
             "${RAYD_ROOT_DIR}/src/runtime/rt_device.cuh"
@@ -909,6 +910,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
         DEPENDS
             ${RAYD_ROOT_DIR}/src/penetration/penetration_optix.cu
             ${RAYD_ROOT_DIR}/src/penetration/segment_penetration_params.h
+            ${RAYD_ROOT_DIR}/src/penetration/segment_penetration_march.cuh
             "${RAYD_INCLUDE_DIR}/rayd/contracts.h"
         DEPFILE "${RAYD_TORCH_SEGMENT_PENETRATION_PTX}.d"
         VERBATIM

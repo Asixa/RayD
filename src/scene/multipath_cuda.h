@@ -5,6 +5,7 @@
 
 #include <src/reflection/reflection_internal.h>
 #include <src/visibility/segment_visibility.cuh>
+#include <src/visibility/axial_edge_visibility_params.h>
 #include <src/reflection/accum_params.h>
 #include <src/diffraction/paths_params.h>
 #include <src/diffraction/accum_params.h>
@@ -25,6 +26,9 @@ void launch_reflection_trace_cuda(const SceneCache& scene, const shared::optix::
 
 void launch_segment_visibility_cuda(const SceneCache& scene, const shared::optix::SegmentVisibilityParams& params,
                                     CudaVisibilityVariant variant, int lane_count);
+
+// One lane per state; the launch covers params.state_count lanes.
+void launch_axial_edge_visibility_cuda(const SceneCache& scene, const AxialEdgeVisibilityParams& params);
 
 void launch_reflection_accumulation_cuda(const SceneCache& scene, const AccumParams& params, int lane_count);
 

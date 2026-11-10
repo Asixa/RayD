@@ -50,10 +50,17 @@ class Adr0033SegmentPenetrationTests(unittest.TestCase):
 
     def test_one_optix_launch_contains_the_d_plus_one_march(self) -> None:
         host = read("src/penetration/penetration.cpp")
-        device = read("src/penetration/penetration_optix.cu")
+        optix = read("src/penetration/penetration_optix.cu")
+        # The march is shared by the OptiX raygen and the CUDA BVH kernel; only the closest-hit query differs.
+        device = optix + read("src/penetration/segment_penetration_march.cuh")
         self.assertEqual(host.count("->launch("), 1)
+        self.assertEqual(host.count("segment_penetration_forward_cuda_bvh("), 1)
+        self.assertNotIn("unsupported by the CUDA ray-tracing backend", host)
         self.assertIn("validated.segment_count > 0 && request.input_active_any", host)
+        self.assertEqual(optix.count("optixTrace("), 1)
         self.assertEqual(device.count("optixTrace("), 1)
+        self.assertIn("segment_penetration::march(", optix)
+        self.assertIn("segment_penetration::march(", read("src/penetration/penetration.cu"))
         self.assertIn("probe <= params.hit_capacity", device)
         self.assertIn("probe == params.hit_capacity", device)
         self.assertIn("atomicOr(params.capacity_failure_state, params.failure_bit)", device)
@@ -104,6 +111,7 @@ class Adr0033SegmentPenetrationTests(unittest.TestCase):
         cmake = read("torch/CMakeLists.txt")
         self.assertIn("rayd_torch_segment_penetration_optix_ptx", cmake)
         self.assertIn("penetration/penetration_optix.cu", cmake)
+        self.assertIn("penetration/segment_penetration_march.cuh", cmake)
         self.assertIn("penetration/penetration.cu", cmake)
         self.assertIn("penetration/penetration.cpp", cmake)
         self.assertIn("penetration/penetration.cpp", cmake)

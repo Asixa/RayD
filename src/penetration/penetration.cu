@@ -6,6 +6,8 @@
 #include <rayd/math.h>
 #include <src/runtime/optix_context.h>
 #include <src/penetration/segment_penetration_params.h>
+#include <src/penetration/segment_penetration_march.cuh>
+#include <src/bvh_query_device.cuh>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>
@@ -417,7 +419,55 @@ __global__ void jvp_kernel(const float* vertices, const int* faces, const float*
     }
 }
 
+constexpr int kForwardBlockSize = 128;
+
+__global__ void forward_cuda_bvh_kernel(__grid_constant__ const SegmentPenetrationParams params,
+                                        shared::bvh::CudaBvhView view, int* stack_nodes, int* overflow) {
+    const unsigned int lane = blockIdx.x * blockDim.x + threadIdx.x;
+    if (lane >= static_cast<unsigned int>(params.segment_count))
+        return;
+    const std::size_t lane_count = static_cast<std::size_t>(params.segment_count);
+    const shared::bvh::TriangleTraversalScratchView scratch = {
+        stack_nodes,
+        overflow,
+        lane_count,
+        static_cast<std::size_t>(shared::bvh::kBvhTraversalStackDepth),
+        lane_count * static_cast<std::size_t>(shared::bvh::kBvhTraversalStackDepth),
+        lane_count,
+    };
+    const shared::bvh::CudaBvhTraverser traverser{view, scratch, static_cast<std::size_t>(lane)};
+    segment_penetration::march(params, lane, [&](float3 origin, float3 direction, float tmin, float tmax) {
+        const shared::rt::TriangleHit hit =
+            traverser.trace_closest(shared::math::make_vec3(origin.x, origin.y, origin.z),
+                                    shared::math::make_vec3(direction.x, direction.y, direction.z), tmin, tmax);
+        // A miss carries the same sentinels as the OptiX payload defaults.
+        if (hit.hit == 0u)
+            return segment_penetration::ProbeHit{__uint_as_float(0x7f800000u), -1, 0.0f, 0.0f, -1};
+        return segment_penetration::ProbeHit{hit.t, hit.instance, hit.bary_u, hit.bary_v, hit.prim};
+    });
+}
+
 } // namespace
+
+void segment_penetration_forward_cuda_bvh(const SceneCache& scene, const SegmentPenetrationParams& params,
+                                          cudaStream_t stream) {
+    if (params.segment_count == 0)
+        return;
+    const auto int_options = scene.global_faces.options();
+    at::Tensor stack = at::empty({shared::bvh::kBvhTraversalStackDepth, params.segment_count}, int_options);
+    at::Tensor overflow = at::empty({params.segment_count}, int_options);
+    const shared::bvh::CudaBvhView view = {
+        scene_triangle_view(scene),
+        scene_triangle_bvh_bounds_view(scene),
+        scene_triangle_bvh_topology_view(scene),
+        {scene.face_shape_id.data_ptr<int>(), scene.face_local_id.data_ptr<int>(),
+         static_cast<std::size_t>(scene.global_faces.size(0))},
+    };
+    const int blocks = (params.segment_count + kForwardBlockSize - 1) / kForwardBlockSize;
+    forward_cuda_bvh_kernel<<<blocks, kForwardBlockSize, 0, stream>>>(params, view, stack.data_ptr<int>(),
+                                                                      overflow.data_ptr<int>());
+    cuda_check(cudaGetLastError(), "segment penetration CUDA BVH forward launch");
+}
 
 void segment_penetration_initialize_cuda(SegmentPenetrationNativeOutputs& outputs, const at::Tensor* input_active,
                                          const at::Tensor& capacity_failure_state, std::int32_t failure_bit,

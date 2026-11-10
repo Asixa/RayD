@@ -701,9 +701,6 @@ at::Tensor axial_edge_visibility_forward_native_impl(
     SceneCache& scene, const at::Tensor& tx, const at::Tensor& edge_position, const at::Tensor& edge_direction,
     const at::Tensor& edge_t_min, const at::Tensor& edge_t_max, const at::Tensor* active,
     const std::array<std::uint32_t, AxialEdgeVisibilitySampleCount>& sample_fraction_bits) {
-    if (scene.trace_backend == TraceBackend::Cuda)
-        throw std::runtime_error("ADR-0029 axial-edge visibility is unsupported by the CUDA ray-tracing backend; "
-                                 "select trace_backend='optix'.");
     require_cuda(tx, "tx");
     require_contiguous(tx, "tx");
     require_dtype(tx, at::kFloat, "tx");
@@ -761,6 +758,10 @@ at::Tensor axial_edge_visibility_forward_native_impl(
         params.sample_fractions[index] = sample_fractions[index];
     params.out_any_visible = mutable_mask_ptr(any_visible);
 
+    if (scene.trace_backend == TraceBackend::Cuda) {
+        launch_axial_edge_visibility_cuda(scene, params);
+        return any_visible;
+    }
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     optix_pipeline_for_scene(scene, axial_edge_visibility_pipeline_config())
         ->launch(0, params, static_cast<unsigned int>(state_count), torch_ctx.stream);

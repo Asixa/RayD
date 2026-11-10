@@ -11,6 +11,7 @@
 #include <src/diffraction/accumulation.h>
 #include <src/reflection/reflection_algorithms.cuh>
 #include <src/visibility/segment_visibility.cuh>
+#include <src/visibility/axial_edge_visibility.cuh>
 #include <src/runtime/rt_device.cuh>
 
 #include <ATen/cuda/CUDAContext.h>
@@ -423,6 +424,56 @@ __global__ void visibility_kernel(shared::optix::SegmentVisibilityParams params,
     }
 }
 
+// Occlusion-only view of the scene BVH for callers that need just the blocked/visible decision and no blocker
+// identity: an unfiltered query stops at the first surface in range instead of searching for the closest one.
+struct CudaOcclusionTraverser {
+    shared::bvh::CudaBvhTraverser base;
+
+    __device__ __forceinline__ shared::rt::TriangleHit trace_closest(shared::math::Vec3f origin,
+                                                                     shared::math::Vec3f direction, float tmin,
+                                                                     float tmax) const {
+        return base.trace_closest(origin, direction, tmin, tmax);
+    }
+    __device__ __forceinline__ shared::rt::TriangleHit trace_first_blocker(shared::math::Vec3f origin,
+                                                                           shared::math::Vec3f direction, float tmin,
+                                                                           float tmax, const int32_t* ignore,
+                                                                           int ignore_count) const {
+        if (ignore != nullptr && ignore_count > 0)
+            return base.trace_first_blocker(origin, direction, tmin, tmax, ignore, ignore_count);
+        shared::rt::TriangleHit hit{};
+        hit.t = tmax;
+        hit.prim = -1;
+        hit.instance = -1;
+        hit.hit = base.trace_occluded(origin, direction, tmin, tmax) ? 1u : 0u;
+        return hit;
+    }
+    __device__ __forceinline__ bool trace_occluded_ignore(shared::math::Vec3f origin, shared::math::Vec3f direction,
+                                                          float tmin, float tmax, const int32_t* ignore,
+                                                          int ignore_count) const {
+        return trace_first_blocker(origin, direction, tmin, tmax, ignore, ignore_count).hit != 0u;
+    }
+    __device__ __forceinline__ bool trace_occluded(shared::math::Vec3f origin, shared::math::Vec3f direction,
+                                                   float tmin, float tmax) const {
+        return base.trace_occluded(origin, direction, tmin, tmax);
+    }
+};
+
+static_assert(shared::rt::is_traverser_v<CudaOcclusionTraverser>);
+
+__global__ void axial_edge_visibility_kernel(__grid_constant__ const AxialEdgeVisibilityParams params,
+                                             shared::bvh::TriangleSoAView triangles, shared::bvh::AabbSoAView bounds,
+                                             shared::bvh::CompactBvhTopologyView topology,
+                                             shared::bvh::TrianglePrimIdMapView prim_map, int* stack_nodes,
+                                             int* overflow, int lane_count) {
+    const unsigned int lane = blockIdx.x * blockDim.x + threadIdx.x;
+    if (lane >= static_cast<unsigned int>(lane_count))
+        return;
+    const CudaOcclusionTraverser traverser{
+        make_traverser(make_view(triangles, bounds, topology, prim_map), stack_nodes, overflow, lane_count, lane)};
+    using Config = shared::rt::TraceConfig<TorchCudaVisibilityPolicy, CudaOcclusionTraverser>;
+    axial_edge_visibility::exact_state<Config>(params, lane, traverser);
+}
+
 __global__ void reflection_accumulation_kernel(AccumParams params, shared::bvh::TriangleSoAView triangles,
                                                shared::bvh::AabbSoAView bounds,
                                                shared::bvh::CompactBvhTopologyView topology,
@@ -557,6 +608,27 @@ void launch_segment_visibility_cuda(const SceneCache& scene, const shared::optix
                                                          scene_triangle_bvh_topology_view(scene), scene_prim_map(scene),
                                                          stack.data_ptr<int>(), overflow.data_ptr<int>(), lane_count);
     cuda_check(cudaGetLastError(), "launch_segment_visibility_cuda");
+}
+
+void launch_axial_edge_visibility_cuda(const SceneCache& scene, const AxialEdgeVisibilityParams& params) {
+    const int lane_count = params.state_count;
+    if (lane_count == 0)
+        return;
+    const auto iopts = scene.global_faces.options();
+    at::Tensor stack = at::empty({shared::bvh::kBvhTraversalStackDepth, lane_count}, iopts);
+    at::Tensor overflow = at::empty({lane_count}, iopts);
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream(scene.device_index).stream();
+    const int blocks = (lane_count + kBlockSize - 1) / kBlockSize;
+    // The shared lane keeps the null-handle guard of the OptiX program; a CUDA BVH is addressed through explicit
+    // views, so a non-zero sentinel stands in for the handle.
+    AxialEdgeVisibilityParams cuda_params = params;
+    cuda_params.trace.handle = 1ull;
+    axial_edge_visibility_kernel<<<blocks, kBlockSize, 0, stream>>>(cuda_params, scene_triangle_view(scene),
+                                                                    scene_triangle_bvh_bounds_view(scene),
+                                                                    scene_triangle_bvh_topology_view(scene),
+                                                                    scene_prim_map(scene), stack.data_ptr<int>(),
+                                                                    overflow.data_ptr<int>(), lane_count);
+    cuda_check(cudaGetLastError(), "launch_axial_edge_visibility_cuda");
 }
 
 void launch_reflection_accumulation_cuda(const SceneCache& scene, const AccumParams& params, int lane_count) {

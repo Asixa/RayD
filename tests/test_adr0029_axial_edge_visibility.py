@@ -15,7 +15,10 @@ class TypedAxialEdgeVisibilityGovernanceTests(unittest.TestCase):
         cls.adr = (ROOT / "docs/adr/0029-typed-axial-edge-visibility.md").read_text(encoding="utf-8")
         cls.header = (ROOT / "include/rayd/visibility.h").read_text(encoding="utf-8")
         cls.ops = (ROOT / "src/visibility/visibility.cpp").read_text(encoding="utf-8")
-        cls.device = (ROOT / "src/visibility/axial_edge_visibility_optix.cu").read_text(encoding="utf-8")
+        # The exact lane is shared by the OptiX program and the CUDA BVH kernel.
+        cls.device = (ROOT / "src/visibility/axial_edge_visibility_optix.cu").read_text(encoding="utf-8") + (
+            ROOT / "src/visibility/axial_edge_visibility.cuh"
+        ).read_text(encoding="utf-8")
         cls.cmake = (TORCH / "CMakeLists.txt").read_text(encoding="utf-8")
         cls.direct_test = (ROOT / "tests/native/integration_test.cpp").read_text(encoding="utf-8")
 
@@ -48,6 +51,17 @@ class TypedAxialEdgeVisibilityGovernanceTests(unittest.TestCase):
         for forbidden in ("--fmad=false", "--prec-div=true", "--prec-sqrt=true"):
             self.assertNotIn(forbidden, block)
         self.assertIn("axial_edge_visibility_pipeline_config", self.ops)
+        self.assertIn("src/visibility/axial_edge_visibility.cuh", block)
+
+    def test_cuda_backend_shares_the_exact_lane(self):
+        multipath = (ROOT / "src/scene/multipath.cu").read_text(encoding="utf-8")
+        optix = (ROOT / "src/visibility/axial_edge_visibility_optix.cu").read_text(encoding="utf-8")
+        self.assertIn("axial_edge_visibility::exact_state<Config>", multipath)
+        self.assertIn("axial_edge_visibility::exact_state<ExactConfig>", optix)
+        self.assertNotIn("unsupported by the CUDA ray-tracing backend", self.ops)
+        start = self.ops.index("axial_edge_visibility_forward_native_impl")
+        body = self.ops[start : self.ops.index("} // namespace rayd::torch_backend", start)]
+        self.assertLess(body.index("state_count == 0"), body.index("launch_axial_edge_visibility_cuda("))
 
     def test_one_launch_and_empty_returns_before_launch(self):
         start = self.ops.index("axial_edge_visibility_forward_native_impl")
