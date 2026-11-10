@@ -17,6 +17,9 @@ struct EdgeOptixQueryParams {
     uint64_t tier_handles[EdgeOptixMaxTiers] = {};
     float tier_search_radii[EdgeOptixMaxTiers] = {};
     int tier_count = 0;
+    float edge_bounds_min[3] =
+        {}; ///< Lower corner of every edge endpoint; half-rays are clipped to it plus the radius.
+    float edge_bounds_max[3] = {}; ///< Upper corner of every edge endpoint.
 
     const float* edge_p0_x = nullptr;
     const float* edge_p0_y = nullptr;

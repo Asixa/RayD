@@ -157,6 +157,13 @@ namespace rayd {
 constexpr float Epsilon = shared::GeneralEpsilon;      // General-purpose geometric tolerance.
 constexpr float RayEpsilon = shared::RayEpsilon;       // RayAD t_min offset to avoid self-intersection.
 constexpr float ShadowEpsilon = shared::ShadowEpsilon; // Shadow/visibility ray offset.
+// Degeneracy thresholds of the closest-point recomputes below. They equal the shared edge-distance kernels'
+// constants (src/edge/edge_distance.h) so that the AD recompute takes the same interior/endpoint branches as the
+// traversal that chose the winning edge: a squared length at or below EdgeDegenerateSquaredLength is a point, and
+// two lines are parallel when their Gram determinant is at most EdgeDistanceEpsilon * min(a * c, 1) (a relative
+// sin^2 test for short segments) or at most EdgeDegenerateSquaredLength.
+constexpr float EdgeDistanceEpsilon = 1.0e-7f;
+constexpr float EdgeDegenerateSquaredLength = 1.0e-18f;
 constexpr float Pi = 3.14159265358979323846f;
 constexpr float Infinity = std::numeric_limits<float>::infinity();
 
@@ -405,6 +412,16 @@ template <typename Float_> DRJIT_INLINE Float_ clamp01(const Float_& value) {
     return maximum(minimum(value, Float_(1.f)), Float_(0.f));
 }
 
+/// Whether the closest points of two lines with squared lengths \p a, \p c and Gram determinant \p det are
+/// well-conditioned enough to evaluate the interior solution (see EdgeDistanceEpsilon).
+template <typename Float_> DRJIT_INLINE auto lines_not_parallel(const Float_& a, const Float_& c, const Float_& det) {
+    // (epsilon * a) * c rather than epsilon * (a * c): the latter would share a * c with the Gram determinant and
+    // let the compiler change how that determinant is rounded.
+    const Float_ bound = maximum(minimum((EdgeDistanceEpsilon * a) * c, Float_(EdgeDistanceEpsilon)),
+                                 Float_(EdgeDegenerateSquaredLength));
+    return (a > EdgeDegenerateSquaredLength) && (c > EdgeDegenerateSquaredLength) && (abs(det) > bound);
+}
+
 /// \brief Closest point on the segment [p0, p0 + e1] to \p point.
 ///
 /// \return Tuple of (segment parameter in [0, 1], closest point, squared distance).
@@ -412,7 +429,7 @@ template <bool Detached>
 DRJIT_INLINE auto closest_point_on_segment(const Vector3fT<Detached>& point, const Vector3fT<Detached>& p0,
                                            const Vector3fT<Detached>& e1) {
     const FloatT<Detached> edge_length_sq = squared_norm(e1);
-    const MaskT<Detached> valid_edge = edge_length_sq > Epsilon;
+    const MaskT<Detached> valid_edge = edge_length_sq > EdgeDegenerateSquaredLength;
     const FloatT<Detached> safe_edge_length_sq = select(valid_edge, edge_length_sq, FloatT<Detached>(1.f));
     const FloatT<Detached> edge_t =
         select(valid_edge, clamp01<FloatT<Detached>>(dot(point - p0, e1) / safe_edge_length_sq), FloatT<Detached>(0.f));
@@ -507,7 +524,7 @@ DRJIT_INLINE auto closest_segment_segment(const Vector3fT<Detached>& query_origi
         update(full<MaskT<Detached>>(true, slices(query_origin)), query_t, FloatT<Detached>(1.f));
     }
 
-    const MaskT<Detached> interior = (a > Epsilon) && (c > Epsilon) && (abs(det) > Epsilon);
+    const MaskT<Detached> interior = lines_not_parallel(a, c, det);
     const FloatT<Detached> safe_det = select(interior, det, FloatT<Detached>(1.f));
     const FloatT<Detached> query_t_line = (b * e - c * d) / safe_det;
     const FloatT<Detached> edge_t_line = (a * e - b * d) / safe_det;
@@ -565,7 +582,7 @@ DRJIT_INLINE auto closest_ray_segment(const Vector3fT<Detached>& ray_origin, con
         update(full<MaskT<Detached>>(true, slices(ray_origin)), FloatT<Detached>(0.f), edge_t);
     }
 
-    const MaskT<Detached> valid_ray = a > Epsilon;
+    const MaskT<Detached> valid_ray = a > EdgeDegenerateSquaredLength;
     const FloatT<Detached> safe_a = select(valid_ray, a, FloatT<Detached>(1.f));
     update(full<MaskT<Detached>>(true, slices(ray_origin)),
            select(valid_ray, maximum(-d / safe_a, FloatT<Detached>(0.f)), FloatT<Detached>(0.f)),
@@ -574,7 +591,7 @@ DRJIT_INLINE auto closest_ray_segment(const Vector3fT<Detached>& ray_origin, con
            select(valid_ray, maximum((b - d) / safe_a, FloatT<Detached>(0.f)), FloatT<Detached>(0.f)),
            FloatT<Detached>(1.f));
 
-    const MaskT<Detached> interior = valid_ray && (c > Epsilon) && (abs(det) > Epsilon);
+    const MaskT<Detached> interior = lines_not_parallel(a, c, det);
     const FloatT<Detached> safe_det = select(interior, det, FloatT<Detached>(1.f));
     const FloatT<Detached> query_t_line = (b * e - c * d) / safe_det;
     const FloatT<Detached> edge_t_line = (a * e - b * d) / safe_det;

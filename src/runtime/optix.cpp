@@ -867,12 +867,11 @@ void ensure_edge_pipeline(OptixDeviceContextEntry& entry) {
         hitgroup_desc.hitgroup.entryFunctionNameIS = intersection;
         return pending.add(create_program_group(entry.optix_context, hitgroup_desc));
     };
-    make_hitgroup(entry.edge_module, "__closesthit__edge_point", nullptr, "__intersection__edge_point",
-                  &entry.edge_hit_point_group);
-    make_hitgroup(entry.edge_module, nullptr, "__anyhit__edge_ray", "__intersection__edge_ray",
-                  &entry.edge_hit_ray_group);
-    make_hitgroup(entry.edge_topk_module, nullptr, "__anyhit__edge_topk_point", "__intersection__edge_topk_point",
-                  &entry.edge_hit_topk_group);
+    OptixProgramGroup hit_point_group =
+        make_hitgroup(edge_module, "__closesthit__edge_point", nullptr, "__intersection__edge_point");
+    OptixProgramGroup hit_ray_group = make_hitgroup(edge_module, nullptr, nullptr, "__intersection__edge_ray");
+    OptixProgramGroup hit_topk_group =
+        make_hitgroup(topk_module, nullptr, "__anyhit__edge_topk_point", "__intersection__edge_topk_point");
 
     OptixProgramGroup point_ray_groups[] = {
         raygen_point_group, raygen_ray_group, miss_group, hit_point_group, hit_ray_group,

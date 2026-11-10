@@ -921,6 +921,11 @@ std::vector<float> compute_edge_search_radii(const EdgeSearchStats& stats) {
     return unique_radii;
 }
 
+void store_edge_bounds(SceneCache& scene, const EdgeSearchStats& stats) {
+    const float bounds[6] = {stats.min_x, stats.min_y, stats.min_z, stats.max_x, stats.max_y, stats.max_z};
+    std::copy(std::begin(bounds), std::end(bounds), std::begin(scene.edge_bounds));
+}
+
 void refresh_edge_soa(SceneCache& scene) {
     const int64_t edge_count = scene.edge_v0.size(0);
     at::Device device(at::kCUDA, scene.device_index);
@@ -948,6 +953,7 @@ void build_edge_accel(SceneCache& scene, OptixDeviceContext optix_context, cudaS
         compute_edge_search_stats_cuda(edge_count, scene.edge_p0_x, scene.edge_p0_y, scene.edge_p0_z, scene.edge_e1_x,
                                        scene.edge_e1_y, scene.edge_e1_z);
     std::vector<float> radii = compute_edge_search_radii(stats);
+    store_edge_bounds(scene, stats);
     scene.edge_accels.resize(radii.size());
     at::Device device(at::kCUDA, scene.device_index);
     at::TensorOptions byte_options = at::TensorOptions().device(device).dtype(at::kByte);
@@ -1025,6 +1031,7 @@ bool update_edge_accel(SceneCache& scene, OptixDeviceContext optix_context, cuda
     std::vector<float> radii = compute_edge_search_radii(stats);
     if (radii.size() != scene.edge_accels.size())
         return false;
+    store_edge_bounds(scene, stats);
 
     at::Device device(at::kCUDA, scene.device_index);
     at::TensorOptions byte_options = at::TensorOptions().device(device).dtype(at::kByte);

@@ -154,6 +154,15 @@ class SharedOperationContractTests(unittest.TestCase):
         self.assertEqual(shared["epc_barycentric_slack"], 1e-4)
         self.assertEqual(shared["normalize_floor"], 1e-12)
         self.assertEqual(shared["edge_distance_epsilon"], 1e-7)
+        self.assertEqual(shared["edge_degenerate_squared_length"], 1e-18)
+        rule = shared["edge_degeneracy_rule"]
+        for clause in (
+            "squared length is at most edge_degenerate_squared_length",
+            "|a*c - b*b| > max(edge_distance_epsilon * min(a*c, 1), edge_degenerate_squared_length)",
+            "both frontends",
+            "top-k",
+        ):
+            self.assertIn(clause, rule)
 
     def test_numeric_policy_backend_profiles_freeze_divergence(self):
         profiles = CONTRACT["numeric_policy"]["backend_profiles"]

@@ -44,7 +44,11 @@ inline constexpr float kMultipathRayBias = 1.0e-5f;
 inline constexpr float kMinSegmentLength = 2.0e-5f;
 inline constexpr float kEpcBarycentricSlack = 1.0e-4f;
 inline constexpr float kNormalizeFloor = 1.0e-12f;
+// Edge-distance degeneracy: a segment whose squared length is at most kEdgeDegenerateSquaredLength is a point, and two
+// lines are parallel when their Gram determinant a*c - b*b is at most max(kEdgeDistanceEpsilon * min(a*c, 1),
+// kEdgeDegenerateSquaredLength), a relative sin^2 test for short segments.
 inline constexpr float kEdgeDistanceEpsilon = 1.0e-7f;
+inline constexpr float kEdgeDegenerateSquaredLength = 1.0e-18f;
 inline constexpr float kSurfelEndpointOffset = ShadowEpsilon;
 inline constexpr float kMissDistance = std::numeric_limits<float>::infinity();
 inline constexpr float kReflectionTraceMissDistance = 1.0e8f;

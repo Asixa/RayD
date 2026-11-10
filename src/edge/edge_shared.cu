@@ -140,7 +140,7 @@ __device__ __forceinline__ float point_aabb_distance_squared(math::Vec3f point, 
 __device__ __forceinline__ float line_aabb_sphere_lower_bound_squared(math::Vec3f origin, math::Vec3f direction,
                                                                       math::Vec3f lower, math::Vec3f upper) {
     const float direction_squared = math::squared_norm(direction);
-    if (!(direction_squared > EdgeDistanceDeviceEpsilon)) {
+    if (!has_extent(direction_squared)) {
         return 0.0f;
     }
     const math::Vec3f center = math::scale(math::add(lower, upper), 0.5f);
@@ -166,11 +166,13 @@ __device__ __forceinline__ float segment_aabb_lower_bound_squared(math::Vec3f or
     return fmaxf(box_bound, line_bound);
 }
 
+// Any non-zero direction component moves the ray towards the slab on that side, so only an exact zero keeps both
+// sides; a magnitude threshold would make the bound non-conservative for rays with tiny direction vectors.
 __device__ __forceinline__ float ray_axis_separation(float origin, float direction, float lower, float upper) {
-    if (direction > EdgeDistanceDeviceEpsilon) {
+    if (direction > 0.0f) {
         return fmaxf(origin - upper, 0.0f);
     }
-    if (direction < -EdgeDistanceDeviceEpsilon) {
+    if (direction < 0.0f) {
         return fmaxf(lower - origin, 0.0f);
     }
     return fmaxf(lower - origin, 0.0f) + fmaxf(origin - upper, 0.0f);

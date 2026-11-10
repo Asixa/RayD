@@ -20,6 +20,10 @@
 
 namespace rayd {
 
+static_assert(EdgeDistanceEpsilon == shared::rt::kEdgeDistanceEpsilon &&
+                  EdgeDegenerateSquaredLength == shared::rt::kEdgeDegenerateSquaredLength,
+              "the Dr.Jit edge-distance recompute must share the edge-distance kernels' degeneracy thresholds");
+
 namespace {
 
 constexpr size_t EdgeBVHTraversalStackSize = static_cast<size_t>(shared::bvh::kBvhTraversalStackDepth);

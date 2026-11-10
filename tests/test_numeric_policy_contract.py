@@ -73,10 +73,31 @@ class NumericPolicyContractTests(unittest.TestCase):
             "kEpcBarycentricSlack": "epc_barycentric_slack",
             "kNormalizeFloor": "normalize_floor",
             "kEdgeDistanceEpsilon": "edge_distance_epsilon",
+            "kEdgeDegenerateSquaredLength": "edge_degenerate_squared_length",
         }
         shared = self.policy["shared_multipath"]
         for header_name, json_key in mapping.items():
             self.assertEqual(self.family_constant(header_name), shared[json_key])
+
+    def test_edge_degeneracy_rule_is_the_one_implemented(self):
+        # The traversal kernels (shared by both frontends) and the Dr.Jit AD recompute must use the recorded rule.
+        sources = {
+            ROOT / "src" / "edge" / "edge_distance.h": (
+                r"fabsf\(determinant\)\s*>\s*fmaxf\(fminf\(\(EdgeDistanceDeviceEpsilon \* a\) \* c,\s*"
+                r"EdgeDistanceDeviceEpsilon\),\s*EdgeDegenerateSquaredLength\)",
+                r"squared_length > EdgeDegenerateSquaredLength",
+            ),
+            ROOT / "include" / "rayd" / "jit" / "core.h": (
+                r"maximum\(minimum\(\(EdgeDistanceEpsilon \* a\) \* c,\s*Float_\(EdgeDistanceEpsilon\)\),\s*"
+                r"Float_\(EdgeDegenerateSquaredLength\)\)",
+                r"\(a > EdgeDegenerateSquaredLength\) && \(c > EdgeDegenerateSquaredLength\) && \(abs\(det\) > bound\)",
+            ),
+        }
+        for path, patterns in sources.items():
+            text = path.read_text(encoding="utf-8")
+            for pattern in patterns:
+                self.assertRegex(text, pattern, f"{path.name} no longer implements edge_degeneracy_rule")
+        self.assertIn("min(a*c, 1)", self.policy["shared_multipath"]["edge_degeneracy_rule"])
 
     def test_surface_tolerance_matches_operations_json(self):
         text = (ROOT / "src" / "runtime" / "rt_device.cuh").read_text(encoding="utf-8")

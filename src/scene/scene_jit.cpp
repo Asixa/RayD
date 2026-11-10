@@ -1866,6 +1866,9 @@ NearestRayEdgeT<Detached> Scene::nearest_edge(const RayT<Detached>& ray, MaskT<D
 
     ensure_scene_edge_data_ready();
 
+    // Degenerate rows (contracts/operations.json nearest_edge_ray.degenerate_rows): only a finite origin, a finite
+    // non-zero direction and a positive tmax are searched. +inf is the half-ray and a finite tmax the segment
+    // [0, tmax]; a NaN, zero or negative tmax (-inf included) is an empty segment and keeps the miss sentinels.
     Float t_max_input;
     Mask active_detached;
     if constexpr (!Detached) {
@@ -1877,7 +1880,7 @@ NearestRayEdgeT<Detached> Scene::nearest_edge(const RayT<Detached>& ray, MaskT<D
                            drjit::isfinite(detach<false>(ray.d.z()));
         active_detached &=
             squared_norm(Vector3f(detach<false>(ray.d.x()), detach<false>(ray.d.y()), detach<false>(ray.d.z()))) > 0.f;
-        active_detached &= ~drjit::isfinite(t_max_input) || (t_max_input > 0.f);
+        active_detached &= t_max_input > 0.f;
         active &= MaskAD(active_detached);
     } else {
         t_max_input = ray.tmax;
@@ -1885,7 +1888,7 @@ NearestRayEdgeT<Detached> Scene::nearest_edge(const RayT<Detached>& ray, MaskT<D
         active_detached &= drjit::isfinite(ray.o.x()) && drjit::isfinite(ray.o.y()) && drjit::isfinite(ray.o.z());
         active_detached &= drjit::isfinite(ray.d.x()) && drjit::isfinite(ray.d.y()) && drjit::isfinite(ray.d.z());
         active_detached &= squared_norm(ray.d) > 0.f;
-        active_detached &= ~drjit::isfinite(t_max_input) || (t_max_input > 0.f);
+        active_detached &= t_max_input > 0.f;
         active = active_detached;
     }
 

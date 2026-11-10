@@ -255,6 +255,8 @@ struct SceneCache {
     CompactEdgeBvh custom_edge_bvh;
     OptixEdgeAccel edge_accel;
     std::vector<OptixEdgeAccel> edge_accels;
+    // Min corner then max corner of every edge endpoint the OptiX edge tiers were built from.
+    float edge_bounds[6] = {};
     at::Tensor tri_p0_packed;
     at::Tensor tri_e1_packed;
     at::Tensor tri_e2_packed;

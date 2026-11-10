@@ -39,6 +39,18 @@ void cuda_check(cudaError_t result, const char* expr) {
     throw std::runtime_error(std::string("CUDA error in ") + expr + ": " + cudaGetErrorString(result));
 }
 
+// nearest_edge(ray) searches a row only when its origin is finite, its direction is finite and non-zero, and its tmax
+// is positive: a finite tmax selects the segment [0, tmax] and +inf (or no tmax tensor) the half-ray. NaN, zero and
+// negative tmax (-inf included) are empty segments. Every other row finds no edge and keeps the miss sentinels, so
+// the answer never depends on the edge acceleration structure.
+__device__ bool edge_ray_row_searchable(float3 origin, float3 direction, const float* ray_tmax, int64_t row) {
+    const bool finite_origin = isfinite(origin.x) && isfinite(origin.y) && isfinite(origin.z);
+    const bool finite_direction = isfinite(direction.x) && isfinite(direction.y) && isfinite(direction.z);
+    const bool nonzero_direction = direction.x != 0.f || direction.y != 0.f || direction.z != 0.f;
+    const bool positive_tmax = ray_tmax == nullptr || ray_tmax[row] > 0.f;
+    return finite_origin && finite_direction && nonzero_direction && positive_tmax;
+}
+
 void require_edge_cache_dtype(const at::Tensor& tensor, at::ScalarType dtype, const char* name) {
     if (tensor.scalar_type() != dtype)
         throw std::runtime_error(std::string("edge cache tensor ") + name + " has dtype " +
@@ -73,6 +85,10 @@ void fill_edge_tiers(const SceneCache& scene, EdgeOptixQueryParams& params) {
 
     params.handle = static_cast<uint64_t>(scene.edge_accels.front().traversable);
     params.search_radius = scene.edge_accels.back().search_radius;
+    for (int axis = 0; axis < 3; ++axis) {
+        params.edge_bounds_min[axis] = scene.edge_bounds[axis];
+        params.edge_bounds_max[axis] = scene.edge_bounds[axis + 3];
+    }
     for (int tier = 0; tier < params.tier_count; ++tier) {
         const OptixEdgeAccel& accel = scene.edge_accels[static_cast<std::size_t>(tier)];
         params.tier_handles[tier] = static_cast<uint64_t>(accel.traversable);
@@ -164,12 +180,15 @@ __global__ void split_ray_vec3_to_soa_kernel(const float* __restrict__ ray_o, co
     ray_dz[idx] = direction[2 * ray_d_stride1];
 }
 
-__global__ void init_edge_ray_outputs_kernel(const bool* __restrict__ active, int64_t ray_count,
-                                             float* __restrict__ distance, float* __restrict__ ray_t,
-                                             float* __restrict__ point, float* __restrict__ edge_t,
-                                             float* __restrict__ edge_point, int* __restrict__ shape_id,
-                                             int* __restrict__ edge_id, int* __restrict__ global_edge_id,
-                                             int* __restrict__ tape_edge_id, bool* __restrict__ unresolved) {
+__global__ void init_edge_ray_outputs_kernel(const bool* __restrict__ active, const float* __restrict__ ray_o,
+                                             const float* __restrict__ ray_d, const float* __restrict__ ray_tmax,
+                                             int64_t ray_o_stride0, int64_t ray_o_stride1, int64_t ray_d_stride0,
+                                             int64_t ray_d_stride1, int64_t ray_count, float* __restrict__ distance,
+                                             float* __restrict__ ray_t, float* __restrict__ point,
+                                             float* __restrict__ edge_t, float* __restrict__ edge_point,
+                                             int* __restrict__ shape_id, int* __restrict__ edge_id,
+                                             int* __restrict__ global_edge_id, int* __restrict__ tape_edge_id,
+                                             bool* __restrict__ unresolved) {
     const int ray_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (ray_idx >= ray_count)
         return;
@@ -180,7 +199,12 @@ __global__ void init_edge_ray_outputs_kernel(const bool* __restrict__ active, in
     edge_id[ray_idx] = -1;
     global_edge_id[ray_idx] = -1;
     tape_edge_id[ray_idx] = -1;
-    unresolved[ray_idx] = active == nullptr || active[ray_idx];
+    const float* o = ray_o + static_cast<int64_t>(ray_idx) * ray_o_stride0;
+    const float* d = ray_d + static_cast<int64_t>(ray_idx) * ray_d_stride0;
+    const float3 origin = make_float3(o[0 * ray_o_stride1], o[1 * ray_o_stride1], o[2 * ray_o_stride1]);
+    const float3 direction = make_float3(d[0 * ray_d_stride1], d[1 * ray_d_stride1], d[2 * ray_d_stride1]);
+    unresolved[ray_idx] =
+        (active == nullptr || active[ray_idx]) && edge_ray_row_searchable(origin, direction, ray_tmax, ray_idx);
     for (int axis = 0; axis < 3; ++axis) {
         point[ray_idx * 3 + axis] = 0.f;
         edge_point[ray_idx * 3 + axis] = 0.f;
@@ -550,10 +574,12 @@ EdgeRayForwardOutputs edge_ray_forward_cuda(const SceneCache& scene, const at::T
     at::Tensor unresolved = at::empty({ray_count}, bopts);
     at::Tensor active_c = active.numel() == 0 ? active : active.contiguous();
     init_edge_ray_outputs_kernel<<<blocks, threads, 0, torch_ctx.stream>>>(
-        active_c.numel() == 0 ? nullptr : active_c.data_ptr<bool>(), ray_count, out.distance.data_ptr<float>(),
-        out.ray_t.data_ptr<float>(), out.point.data_ptr<float>(), out.edge_t.data_ptr<float>(),
-        out.edge_point.data_ptr<float>(), out.shape_id.data_ptr<int>(), out.edge_id.data_ptr<int>(),
-        out.global_edge_id.data_ptr<int>(), out.tape_edge_id.data_ptr<int>(), unresolved.data_ptr<bool>());
+        active_c.numel() == 0 ? nullptr : active_c.data_ptr<bool>(), ray_o.data_ptr<float>(), ray_d.data_ptr<float>(),
+        ray_tmax.numel() == 0 ? nullptr : ray_tmax.data_ptr<float>(), ray_o.stride(0), ray_o.stride(1), ray_d.stride(0),
+        ray_d.stride(1), ray_count, out.distance.data_ptr<float>(), out.ray_t.data_ptr<float>(),
+        out.point.data_ptr<float>(), out.edge_t.data_ptr<float>(), out.edge_point.data_ptr<float>(),
+        out.shape_id.data_ptr<int>(), out.edge_id.data_ptr<int>(), out.global_edge_id.data_ptr<int>(),
+        out.tape_edge_id.data_ptr<int>(), unresolved.data_ptr<bool>());
 
     if (edge_count <= 0 || ray_count <= 0 || scene.edge_accels.empty())
         return out;
@@ -1275,10 +1301,9 @@ __global__ void prepare_ray_query_kernel(const float* ray_o, const float* ray_d,
     dy[ray] = d[1 * d_s1];
     dz[ray] = d[2 * d_s1];
     tmax[ray] = ray_tmax == nullptr ? CUDART_INF_F : ray_tmax[ray];
-    query_active[ray] = (active == nullptr || active[ray]) && isfinite(ox[ray]) && isfinite(oy[ray]) &&
-                                isfinite(oz[ray]) && isfinite(dx[ray]) && isfinite(dy[ray]) && isfinite(dz[ray])
-                            ? 1u
-                            : 0u;
+    const bool searchable = edge_ray_row_searchable(make_float3(ox[ray], oy[ray], oz[ray]),
+                                                    make_float3(dx[ray], dy[ray], dz[ray]), ray_tmax, ray);
+    query_active[ray] = (active == nullptr || active[ray]) && searchable ? 1u : 0u;
 }
 
 __global__ void repair_ray_overflow_kernel(const float* ox, const float* oy, const float* oz, const float* dx,

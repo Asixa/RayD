@@ -106,9 +106,11 @@ RAYD_SHARED_EDGE_ASSERT_POD(RayEdgeDistanceParams);
 namespace rayd::shared::edge {
 
 inline constexpr float EdgeDistanceDeviceEpsilon = 1.0e-7f;
+inline constexpr float EdgeDegenerateSquaredLength = 1.0e-18f;
 inline constexpr float EdgeDistanceFloatMax = 3.4028234663852886e38f;
 
 static_assert(EdgeDistanceDeviceEpsilon == ::rayd::shared::rt::kEdgeDistanceEpsilon);
+static_assert(EdgeDegenerateSquaredLength == ::rayd::shared::rt::kEdgeDegenerateSquaredLength);
 
 struct PointSegmentDistance {
     float edge_parameter;
@@ -179,12 +181,29 @@ RAYD_SHARED_EDGE_MATH_INLINE float clamp_unit(float value) {
     return fminf(fmaxf(value, 0.0f), 1.0f);
 }
 
+/// A segment or direction whose squared length is at most EdgeDegenerateSquaredLength is treated as a point. The
+/// floor is absolute only so that 1/c and 1/c^2 stay normal float32 values in the fixed-winner derivatives; float32
+/// cannot represent a shorter non-zero edge at coordinates above about 1e-2.
+RAYD_SHARED_EDGE_MATH_INLINE bool has_extent(float squared_length) {
+    return squared_length > EdgeDegenerateSquaredLength;
+}
+
+/// Whether the closest points of two lines with squared lengths a and c and Gram determinant a*c - b*b are
+/// well-conditioned enough to evaluate the interior solution. The test is relative (sin^2 of the angle above
+/// EdgeDistanceDeviceEpsilon) for short segments, keeps the absolute determinant bound EdgeDistanceDeviceEpsilon once
+/// a*c reaches 1, and never accepts a determinant at or below EdgeDegenerateSquaredLength. Interior candidates are
+/// only kept when they are closer than every endpoint candidate, so accepting more of them cannot worsen a result.
+RAYD_SHARED_EDGE_MATH_INLINE bool lines_not_parallel(float a, float c, float determinant) {
+    return has_extent(a) && has_extent(c) &&
+           fabsf(determinant) > fmaxf(fminf((EdgeDistanceDeviceEpsilon * a) * c, EdgeDistanceDeviceEpsilon),
+                                      EdgeDegenerateSquaredLength);
+}
+
 RAYD_SHARED_EDGE_MATH_INLINE PointSegmentDistance point_segment_distance(math::Vec3f point, math::Vec3f edge_origin,
-                                                                         math::Vec3f edge_vector,
-                                                                         float epsilon = EdgeDistanceDeviceEpsilon) {
+                                                                         math::Vec3f edge_vector) {
     const float edge_length_squared = math::squared_norm(edge_vector);
     const float edge_parameter =
-        edge_length_squared > epsilon
+        has_extent(edge_length_squared)
             ? clamp_unit(math::dot(math::subtract(point, edge_origin), edge_vector) / edge_length_squared)
             : 0.0f;
     const math::Vec3f edge_point = math::add(edge_origin, math::scale(edge_vector, edge_parameter));
@@ -212,9 +231,10 @@ RAYD_SHARED_EDGE_MATH_INLINE void update_segment_best(math::Vec3f query_origin, 
     }
 }
 
-RAYD_SHARED_EDGE_MATH_INLINE SegmentSegmentDistance
-segment_segment_distance(math::Vec3f query_origin, math::Vec3f query_vector, math::Vec3f edge_origin,
-                         math::Vec3f edge_vector, float epsilon = EdgeDistanceDeviceEpsilon) {
+RAYD_SHARED_EDGE_MATH_INLINE SegmentSegmentDistance segment_segment_distance(math::Vec3f query_origin,
+                                                                             math::Vec3f query_vector,
+                                                                             math::Vec3f edge_origin,
+                                                                             math::Vec3f edge_vector) {
     const math::Vec3f w0 = math::subtract(query_origin, edge_origin);
     const math::Vec3f query_end = math::add(query_origin, query_vector);
     const math::Vec3f edge_end = math::add(edge_origin, edge_vector);
@@ -229,24 +249,23 @@ segment_segment_distance(math::Vec3f query_origin, math::Vec3f query_vector, mat
         0.0f, query_origin, 0.0f, edge_origin, EdgeDistanceFloatMax,
     };
 
-    const PointSegmentDistance query_start = point_segment_distance(query_origin, edge_origin, edge_vector, epsilon);
+    const PointSegmentDistance query_start = point_segment_distance(query_origin, edge_origin, edge_vector);
     update_segment_best(query_origin, query_vector, edge_origin, edge_vector, 0.0f, query_start.edge_parameter, true,
                         best);
 
-    const PointSegmentDistance query_finish = point_segment_distance(query_end, edge_origin, edge_vector, epsilon);
+    const PointSegmentDistance query_finish = point_segment_distance(query_end, edge_origin, edge_vector);
     update_segment_best(query_origin, query_vector, edge_origin, edge_vector, 1.0f, query_finish.edge_parameter, true,
                         best);
 
-    const PointSegmentDistance edge_start = point_segment_distance(edge_origin, query_origin, query_vector, epsilon);
+    const PointSegmentDistance edge_start = point_segment_distance(edge_origin, query_origin, query_vector);
     update_segment_best(query_origin, query_vector, edge_origin, edge_vector, edge_start.edge_parameter, 0.0f, true,
                         best);
 
-    const PointSegmentDistance edge_finish = point_segment_distance(edge_end, query_origin, query_vector, epsilon);
+    const PointSegmentDistance edge_finish = point_segment_distance(edge_end, query_origin, query_vector);
     update_segment_best(query_origin, query_vector, edge_origin, edge_vector, edge_finish.edge_parameter, 1.0f, true,
                         best);
 
-    const bool interior = a > epsilon && c > epsilon && fabsf(determinant) > epsilon;
-    if (interior) {
+    if (lines_not_parallel(a, c, determinant)) {
         const float query_parameter = (b * e - c * d) / determinant;
         const float edge_parameter = (a * e - b * d) / determinant;
         update_segment_best(query_origin, query_vector, edge_origin, edge_vector, query_parameter, edge_parameter,
@@ -258,8 +277,7 @@ segment_segment_distance(math::Vec3f query_origin, math::Vec3f query_vector, mat
 }
 
 RAYD_SHARED_EDGE_MATH_INLINE RaySegmentDistance ray_segment_distance(math::Vec3f ray_origin, math::Vec3f ray_direction,
-                                                                     math::Vec3f edge_origin, math::Vec3f edge_vector,
-                                                                     float epsilon = EdgeDistanceDeviceEpsilon) {
+                                                                     math::Vec3f edge_origin, math::Vec3f edge_vector) {
     const math::Vec3f w0 = math::subtract(ray_origin, edge_origin);
     const math::Vec3f edge_end = math::add(edge_origin, edge_vector);
     const float a = math::squared_norm(ray_direction);
@@ -272,18 +290,18 @@ RAYD_SHARED_EDGE_MATH_INLINE RaySegmentDistance ray_segment_distance(math::Vec3f
     SegmentSegmentDistance best = {
         0.0f, ray_origin, 0.0f, edge_origin, EdgeDistanceFloatMax,
     };
-    const PointSegmentDistance ray_start = point_segment_distance(ray_origin, edge_origin, edge_vector, epsilon);
+    const PointSegmentDistance ray_start = point_segment_distance(ray_origin, edge_origin, edge_vector);
     update_segment_best(ray_origin, ray_direction, edge_origin, edge_vector, 0.0f, ray_start.edge_parameter, true,
                         best);
 
-    const float safe_a = a > epsilon ? a : 1.0f;
+    const bool ray_has_direction = has_extent(a);
+    const float safe_a = ray_has_direction ? a : 1.0f;
     update_segment_best(ray_origin, ray_direction, edge_origin, edge_vector,
-                        a > epsilon ? fmaxf(-d / safe_a, 0.0f) : 0.0f, 0.0f, true, best);
+                        ray_has_direction ? fmaxf(-d / safe_a, 0.0f) : 0.0f, 0.0f, true, best);
     update_segment_best(ray_origin, ray_direction, edge_origin, edge_vector,
-                        a > epsilon ? fmaxf((b - d) / safe_a, 0.0f) : 0.0f, 1.0f, true, best);
+                        ray_has_direction ? fmaxf((b - d) / safe_a, 0.0f) : 0.0f, 1.0f, true, best);
 
-    const bool interior = a > epsilon && c > epsilon && fabsf(determinant) > epsilon;
-    if (interior) {
+    if (lines_not_parallel(a, c, determinant)) {
         const float ray_parameter = (b * e - c * d) / determinant;
         const float edge_parameter = (a * e - b * d) / determinant;
         update_segment_best(ray_origin, ray_direction, edge_origin, edge_vector, ray_parameter, edge_parameter,
@@ -389,12 +407,12 @@ RAYD_SHARED_EDGE_MATH_INLINE RaySegmentJvp ray_segment_jvp_fixed_winner(
         math::dot(tangent_separation_fixed, ray_direction) + math::dot(separation, tangent_ray_direction);
     const float edge_stationarity_tangent =
         math::dot(tangent_separation_fixed, edge_vector) + math::dot(separation, tangent_edge_vector);
-    if (ray_parameter_free && edge_parameter_free && fabsf(determinant) > EdgeDistanceDeviceEpsilon) {
+    if (ray_parameter_free && edge_parameter_free && lines_not_parallel(a, c, determinant)) {
         tangent_ray_parameter = (-c * ray_stationarity_tangent + b * edge_stationarity_tangent) / determinant;
         tangent_edge_parameter = (-b * ray_stationarity_tangent + a * edge_stationarity_tangent) / determinant;
-    } else if (ray_parameter_free && a > EdgeDistanceDeviceEpsilon) {
+    } else if (ray_parameter_free && has_extent(a)) {
         tangent_ray_parameter = -ray_stationarity_tangent / a;
-    } else if (edge_parameter_free && c > EdgeDistanceDeviceEpsilon) {
+    } else if (edge_parameter_free && has_extent(c)) {
         tangent_edge_parameter = edge_stationarity_tangent / c;
     }
 

@@ -3,6 +3,7 @@
 
 #include <optix.h>
 #include <optix_device.h>
+#include <math_constants.h>
 
 #include <rayd/math.h>
 #include <src/edge/optix_params.h>
@@ -18,8 +19,9 @@ __constant__ EdgeOptixQueryParams params;
 
 namespace {
 
-constexpr float kInfiniteRayTMax = 1.0e8f;
 constexpr float kPointProbeTMax = shared::EdgeEpsilon;
+// Caps a half-ray whose clip box is unbounded, which happens only when an edge endpoint is infinite.
+constexpr float kUnboundedRayTMax = 1.0e8f;
 constexpr uint32_t kInvalidEdgeId = shared::InvalidUnsignedId;
 
 static __forceinline__ __device__ shared::optix::EdgeGeometrySoAView edge_geometry_view() {
@@ -81,6 +83,24 @@ static __forceinline__ __device__ uint64_t tier_handle(int tier) {
 
 static __forceinline__ __device__ float tier_search_radius(int tier) {
     return params.tier_count > 0 ? fmaxf(params.tier_search_radii[tier], 0.0f) : safe_search_radius();
+}
+
+/// Parameter where a ray leaves the scene edge bounds grown by `pad`, or a non-positive value when it misses that box
+/// or the box lies behind the origin. Zero direction components are handled by the IEEE infinities of the slab
+/// division.
+static __forceinline__ __device__ float ray_box_exit(float3 origin, float3 direction, float pad) {
+    const float o[3] = {origin.x, origin.y, origin.z};
+    const float d[3] = {direction.x, direction.y, direction.z};
+    float t_enter = 0.0f;
+    float t_exit = CUDART_INF_F;
+    for (int axis = 0; axis < 3; ++axis) {
+        const float inv = 1.0f / d[axis];
+        const float t0 = (params.edge_bounds_min[axis] - pad - o[axis]) * inv;
+        const float t1 = (params.edge_bounds_max[axis] + pad - o[axis]) * inv;
+        t_enter = fmaxf(t_enter, fminf(t0, t1));
+        t_exit = fminf(t_exit, fmaxf(t0, t1));
+    }
+    return t_enter <= t_exit ? t_exit : -1.0f;
 }
 
 static __forceinline__ __device__ shared::math::Vec3f to_shared_vec3(float3 value) {
@@ -181,7 +201,8 @@ static __forceinline__ __device__ void insert_topk_candidate(unsigned int query,
 
 // OptiX programs for the custom-AABB edge backend. Each raygen launch handles one
 // query (launch index x); intersection programs report the point/segment-to-edge
-// distance, and the anyhit/closesthit programs keep the running nearest edge.
+// distance or, for rays, keep the running nearest edge in payload; the anyhit/closesthit programs keep the point
+// and top-k winners.
 
 /// IntersectionAD for point queries: report the point-to-edge distance if within the search radius.
 #ifndef RAYD_TORCH_EDGE_TOPK_ONLY
@@ -201,7 +222,10 @@ extern "C" __global__ void __intersection__edge_point() {
     }
 }
 
-/// IntersectionAD for ray queries: report the ray-to-edge closest approach within the search radius.
+/// Intersection for ray queries: compare the ray-to-edge closest approach against the running best in payload and
+/// keep the better one. Nothing is reported, so no any-hit program runs and the ray interval stays fixed; equal
+/// distances keep the lower edge id so the winner does not depend on traversal order. Payload 4 carries the radius
+/// of the tier being traced.
 extern "C" __global__ void __intersection__edge_ray() {
     const unsigned int edge = optixGetPrimitiveIndex();
     if (edge >= static_cast<unsigned int>(params.edge_count) || !edge_visible(edge)) {
@@ -217,9 +241,16 @@ extern "C" __global__ void __intersection__edge_ray() {
     segment_segment_distance(optixGetWorldRayOrigin(), optixGetWorldRayDirection() * trace_tmax, load_edge_start(edge),
                              load_edge_vector(edge), query_t, edge_t, distance_sq);
     const float ray_t = query_t * trace_tmax;
-    if (ray_t >= optixGetRayTmin() && ray_t <= trace_tmax && sqrtf(fmaxf(distance_sq, 0.0f)) <= search_radius) {
-        optixReportIntersection(ray_t, 0u, __float_as_uint(distance_sq), __float_as_uint(ray_t),
-                                __float_as_uint(edge_t));
+    const bool in_range = ray_t >= optixGetRayTmin() && ray_t <= trace_tmax;
+    if (!in_range || !(sqrtf(fmaxf(distance_sq, 0.0f)) <= search_radius)) {
+        return;
+    }
+    const float best_distance_sq = __uint_as_float(optixGetPayload_1());
+    if (distance_sq < best_distance_sq || (distance_sq == best_distance_sq && edge < optixGetPayload_0())) {
+        optixSetPayload_0(edge);
+        optixSetPayload_1(__float_as_uint(distance_sq));
+        optixSetPayload_2(__float_as_uint(ray_t));
+        optixSetPayload_3(__float_as_uint(edge_t));
     }
 }
 #endif
@@ -248,19 +279,6 @@ extern "C" __global__ void __intersection__edge_topk_point() {
 extern "C" __global__ void __closesthit__edge_point() {
     const float distance = optixGetRayTmax();
     shared::optix::set_edge_point_payload(distance, optixGetPrimitiveIndex(), optixGetAttribute_0());
-}
-
-/// Anyhit for ray queries: keep the nearest edge so far in payload, then ignore the hit to continue.
-extern "C" __global__ void __anyhit__edge_ray() {
-    const float candidate_distance_sq = __uint_as_float(optixGetAttribute_0());
-    const float best_distance_sq = __uint_as_float(optixGetPayload_1());
-    if (candidate_distance_sq < best_distance_sq) {
-        optixSetPayload_0(optixGetPrimitiveIndex());
-        optixSetPayload_1(__float_as_uint(candidate_distance_sq));
-        optixSetPayload_2(optixGetAttribute_1());
-        optixSetPayload_3(optixGetAttribute_2());
-    }
-    optixIgnoreIntersection();
 }
 #endif
 
@@ -334,7 +352,9 @@ extern "C" __global__ void __raygen__edge_point() {
     }
 }
 
-/// Raygen for ray queries: trace each query ray (anyhit-enforced) and write the nearest edge.
+/// Raygen for ray queries: trace each query ray (intersection-only) through the tiers and write the nearest edge of
+/// the first tier that finds one. The host masks every row without a finite origin, a non-zero direction and a
+/// positive tmax, so an active row is a segment [0, tmax] or, for tmax = +inf or no tmax, the half-ray.
 extern "C" __global__ void __raygen__edge_ray() {
     const unsigned int query = optixGetLaunchIndex().x;
     if (query >= static_cast<unsigned int>(params.query_count) || !is_active(query) || params.edge_count <= 0) {
@@ -342,12 +362,27 @@ extern "C" __global__ void __raygen__edge_ray() {
         return;
     }
 
-    float trace_tmax = params.ray_tmax != nullptr ? params.ray_tmax[query] : kInfiniteRayTMax;
+    const float3 origin = load_query_point(query);
+    const float3 direction = load_ray_direction(query);
+    const int tiers = active_tier_count();
+    float trace_tmax = params.ray_tmax != nullptr ? params.ray_tmax[query] : CUDART_INF_F;
     if (!(trace_tmax > 0.0f) || isinf(trace_tmax)) {
-        trace_tmax = kInfiniteRayTMax;
+        // Every edge AABB of every tier lies inside the scene edge bounds grown by the widest tier radius, so an edge
+        // within a tier's radius of the half-ray is within it of the part of the ray inside that box. Clipping to the
+        // box exit keeps the query segment short enough for accurate float distances; one box for all tiers keeps
+        // the per-tier loop as light as the unclipped one. The pad is grown slightly so float rounding of the
+        // per-edge AABBs never leaves one outside the box.
+        float widest_radius = 0.0f;
+        for (int tier = 0; tier < tiers; ++tier) {
+            widest_radius = fmaxf(widest_radius, tier_search_radius(tier));
+        }
+        trace_tmax = fminf(ray_box_exit(origin, direction, widest_radius * 1.001f + 1.0e-6f), kUnboundedRayTMax);
+        if (!(trace_tmax > 0.0f)) {
+            write_invalid(query);
+            return;
+        }
     }
 
-    const int tiers = active_tier_count();
     for (int tier = 0; tier < tiers; ++tier) {
         const uint64_t handle = tier_handle(tier);
         const float radius = tier_search_radius(tier);
@@ -360,9 +395,9 @@ extern "C" __global__ void __raygen__edge_ray() {
         uint32_t ray_t = __float_as_uint(0.0f);
         uint32_t edge_t = __float_as_uint(0.0f);
         uint32_t radius_bits = __float_as_uint(radius);
-        optixTrace(static_cast<OptixTraversableHandle>(handle), load_query_point(query), load_ray_direction(query),
-                   0.0f, trace_tmax, 0.0f, 255u, OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT | OPTIX_RAY_FLAG_ENFORCE_ANYHIT, 1,
-                   1, 0, edge_id, distance_sq, ray_t, edge_t, radius_bits);
+        optixTrace(static_cast<OptixTraversableHandle>(handle), origin, direction, 0.0f, trace_tmax, 0.0f, 255u,
+                   OPTIX_RAY_FLAG_DISABLE_ANYHIT | OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT, 1, 1, 0, edge_id, distance_sq,
+                   ray_t, edge_t, radius_bits);
 
         if (edge_id == kInvalidEdgeId) {
             continue;
