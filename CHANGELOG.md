@@ -16,6 +16,25 @@ All notable changes to RayD are documented in this file.
   (`max_order` 2 and 3) of both backends weights each lane's initial state by
   S, in the primal and in its derivatives. Each further diffraction event
   still draws one recursive state per lane with weight 1.
+- First-order diffraction visibility segments end just off the wedge instead
+  of on its edge, on every path of both backends (OptiX and CUDA trace) and in
+  every first-order site: path export, and direct, Keller-cone, suffix and
+  coherent accumulation. The segment end moves from the edge point along the
+  exterior bisector `n0 + n1` of the wedge's face normals by the larger of the
+  diffraction ray bias (1e-4) and 2^-22 of the point's largest coordinate
+  magnitude, and takes no further along-segment bias. A segment towards a
+  source or receiver inside the wedge's solid interior now crosses one of the
+  wedge's faces and is blocked, where it used to end on the edge without
+  crossing any face and count as visible. Diffraction rows and Monte-Carlo
+  lanes whose target lies inside the wedge are therefore rejected, so path
+  row counts and accumulation tapes change for such receivers (a downstream
+  check saw one single-wedge row set go from `[0, 1, 2, 5]` to `[1, 2, 5]`, a
+  vertical-edge-only scene go from 3 rows to 2, and accumulation tapes lose
+  the lanes depositing inside the wedge; the dropped contributions were about
+  1e-10 of the others). Only the Torch OptiX path export used to move the end
+  off the faces, so Torch OptiX and CUDA path counts disagreed by 17-33%; they
+  now agree. A thin screen (opposite face normals) has no bisector and keeps
+  its edge point and bias, and the UTD field still uses the true edge point.
 - `nearest_edge(ray)` follows one degenerate-row rule on every edge backend of
   both frontends: a row is searched only with a finite origin, a finite
   non-zero direction and a positive `tmax` (`+inf` or no `tmax` is the
