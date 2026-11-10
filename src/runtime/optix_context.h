@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <mutex>
+#include <string>
 
 namespace rayd::torch_backend {
 
@@ -68,6 +69,9 @@ struct OptixDeviceContextEntry {
 TorchCudaContext current_torch_cuda_context();
 OptixDeviceContextEntry& get_optix_context(int device_index);
 bool optix_context_available(int device_index);
+// Reports whether OptiX can trace on the device without warning; on failure `reason` (when given) says why. Other
+// CUDA or OptiX failures propagate as errors.
+bool optix_context_probe(int device_index, std::string* reason);
 void ensure_intersect_pipeline(OptixDeviceContextEntry& entry);
 void ensure_edge_pipeline(OptixDeviceContextEntry& entry);
 OptixPipeline edge_pipeline(const OptixDeviceContextEntry& entry, EdgeOptixLaunchKind kind);

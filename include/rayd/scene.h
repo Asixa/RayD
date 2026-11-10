@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace rayd::torch {
@@ -26,6 +27,21 @@ struct MeshInput {
     bool use_face_normals = false;
     bool edges_enabled = true;
     bool dynamic = false;
+};
+
+// Which ray tracer a scene's triangle queries run on. Every scene operation of this API gives the same discrete
+// results on both tracers; floating-point outputs agree to float32 rounding of the triangle test.
+enum class SceneTraceBackend : std::uint8_t {
+    // OptiX when it is usable on the scene device, otherwise the CUDA BVH.
+    Auto = 0,
+    // OptiX; scene creation fails when OptiX is not usable on the scene device.
+    Optix = 1,
+    // The pure-CUDA triangle BVH; needs no OptiX runtime.
+    Cuda = 2,
+};
+
+struct SceneOptions {
+    SceneTraceBackend trace_backend = SceneTraceBackend::Auto;
 };
 
 class SceneResource final {
@@ -48,9 +64,26 @@ class SceneResource final {
 
     friend struct detail::IntegrationAccess;
     friend SceneResource create_scene(std::vector<MeshInput> meshes);
+    friend SceneResource create_scene(std::vector<MeshInput> meshes, const SceneOptions& options);
 };
 
+// Same as create_scene(meshes, SceneOptions{}).
 SceneResource create_scene(std::vector<MeshInput> meshes);
+SceneResource create_scene(std::vector<MeshInput> meshes, const SceneOptions& options);
+
+// The tracer a built scene resolved to: Optix or Cuda, never Auto.
+SceneTraceBackend scene_trace_backend(const SceneResource& scene);
+
+struct OptixAvailability {
+    bool available = false;
+    // Why OptiX is unusable (driver library missing, driver too old, device unsupported, or disabled by
+    // RAYD_DISABLE_OPTIX); empty when available.
+    std::string reason;
+};
+
+// Probes whether OptiX can trace on a CUDA device, without warning. A usable context is kept for later scenes. CUDA
+// errors that are not an OptiX capability gap are thrown.
+OptixAvailability optix_availability(int device_index);
 
 struct SceneEdgeRecordsResult {
     at::Tensor global_vertices;

@@ -8,10 +8,12 @@
 #include <src/scene/cache.h>
 #include <src/scene/cache_kernels.h>
 #include <src/bindings/tensor_contract.h>
+#include <src/runtime/optix_context.h>
 #include <rayd/scene.h>
 
 #include "../bindings/integration_internal.h"
 
+#include <c10/cuda/CUDAFunctions.h>
 #include <torch/extension.h>
 
 #include <string>
@@ -227,8 +229,26 @@ torch_backend::SceneCache& detail::IntegrationAccess::scene_cache(const SceneRes
 }
 
 SceneResource create_scene(std::vector<MeshInput> meshes) {
+    return create_scene(std::move(meshes), SceneOptions{});
+}
+
+SceneResource create_scene(std::vector<MeshInput> meshes, const SceneOptions& options) {
     if (meshes.empty())
         throw std::runtime_error("rayd::torch::create_scene requires at least one mesh");
+    torch_backend::TraceBackend trace_backend = torch_backend::TraceBackend::Auto;
+    switch (options.trace_backend) {
+    case SceneTraceBackend::Auto:
+        trace_backend = torch_backend::TraceBackend::Auto;
+        break;
+    case SceneTraceBackend::Optix:
+        trace_backend = torch_backend::TraceBackend::Optix;
+        break;
+    case SceneTraceBackend::Cuda:
+        trace_backend = torch_backend::TraceBackend::Cuda;
+        break;
+    default:
+        throw std::runtime_error("rayd::torch::create_scene received an invalid SceneTraceBackend");
+    }
     std::vector<torch_backend::MeshRecord> records;
     records.reserve(meshes.size());
     for (MeshInput& mesh : meshes) {
@@ -244,8 +264,22 @@ SceneResource create_scene(std::vector<MeshInput> meshes) {
                                                                  std::move(mesh.to_world_left),
                                                                  std::move(mesh.to_world_right), flags));
     }
-    auto owner = torch_backend::create_scene_cache(std::move(records));
+    auto owner = torch_backend::create_scene_cache(std::move(records), trace_backend, torch_backend::EdgeBackend::Auto);
     return SceneResource(std::make_unique<SceneResource::Impl>(std::move(owner)));
+}
+
+SceneTraceBackend scene_trace_backend(const SceneResource& scene) {
+    return detail::IntegrationAccess::scene_cache(scene).trace_backend == torch_backend::TraceBackend::Cuda
+               ? SceneTraceBackend::Cuda
+               : SceneTraceBackend::Optix;
+}
+
+OptixAvailability optix_availability(int device_index) {
+    if (device_index < 0 || device_index >= static_cast<int>(c10::cuda::device_count()))
+        throw std::runtime_error("rayd::torch::optix_availability received an invalid CUDA device index");
+    OptixAvailability result;
+    result.available = torch_backend::optix_context_probe(device_index, &result.reason);
+    return result;
 }
 
 SceneEdgeRecordsResult scene_edge_records(const SceneResource& scene) {
