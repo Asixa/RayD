@@ -85,8 +85,8 @@ def audit() -> dict[str, object]:
         "migration": {
             "stable": stable_ops,
             "typed_native_candidates": {
-                "axial_edge_visibility_forward": ("dormant_same_graph_exact_optix_source_integration"),
-                "segment_penetration_complete_family": ("dormant_same_graph_batched_optix_fixed_winner_ad"),
+                "axial_edge_visibility_forward": ("active_same_graph_exact_optix_source_integration"),
+                "segment_penetration_complete_family": ("active_same_graph_batched_optix_fixed_winner_ad"),
             },
             "legacy_retained": {
                 "scene_custom_class_and_stateful_queries": (

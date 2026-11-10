@@ -180,7 +180,7 @@ class Adr0033SegmentPenetrationTests(unittest.TestCase):
         audit = json.loads(read("torch/abi_audit.json"))
         self.assertEqual(
             audit["migration"]["typed_native_candidates"]["segment_penetration_complete_family"],
-            "dormant_same_graph_batched_optix_fixed_winner_ad",
+            "active_same_graph_batched_optix_fixed_winner_ad",
         )
         self.assertTrue((ROOT / "docs/adr/0033-batched-segment-penetration.md").is_file())
         agents = read("AGENTS.md")
