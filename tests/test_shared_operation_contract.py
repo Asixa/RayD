@@ -189,6 +189,9 @@ class SharedOperationContractTests(unittest.TestCase):
         self.assertEqual(sentinels["reflection_trace_distance"], 1e8)
         self.assertEqual(sentinels["invalid_id"], -1)
         self.assertNotEqual(sentinels["reflection_trace_distance"], sentinels["distance"])
+        # Invalid-bounce ReflectionChain.t is a recorded backend divergence.
+        self.assertEqual(sentinels["reflection_trace_distance_by_backend"], {"torch": 1e8, "drjit": "inf"})
+        self.assertIn("divergence", sentinels["reflection_trace_distance_note"])
 
     def test_edge_topk_tie_break_asymmetry_is_recorded(self):
         tie = CONTRACT["edge_topk_tie_break"]

@@ -400,6 +400,8 @@
   "miss_sentinels": {
     "distance": "inf",
     "reflection_trace_distance": 1e8,
+    "reflection_trace_distance_by_backend": {"torch": 1e8, "drjit": "inf"},
+    "reflection_trace_distance_note": "Recorded backend divergence: Torch ReflectionChain.t reports the shared reflection-trace kernel's finite tmax (1e8) for an invalid bounce, while Dr.Jit ReflectionChain.t and ReflectionBounce.t have reported +inf since before this record and keep it. Detect a missing bounce from validity, not from t.",
     "invalid_id": -1
   },
   "edge_topk_tie_break": {

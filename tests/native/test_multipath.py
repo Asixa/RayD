@@ -8,6 +8,9 @@ from unittest import mock
 import torch
 import rayd.torch as rt
 
+from tests.support.finite_difference import assert_derivative_close, fd_tolerance
+from tests.support.multipath_fd_cases import assert_directional, torch_grad_along_direction
+
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA torch is required")
 class MultipathTests(unittest.TestCase):
@@ -90,6 +93,22 @@ class MultipathTests(unittest.TestCase):
         self.assertIsNotNone(verts1.grad)
         torch.testing.assert_close(verts0.grad, torch.zeros_like(verts0), atol=1e-5, rtol=1e-5)
         self.assertTrue(bool(torch.isfinite(verts1.grad).all().item()))
+        # The hit lies on the hit triangle's hypotenuse, so only height changes keep the hit decision fixed: compare
+        # the hit-mesh gradient with a central difference along a vertical vertex direction.
+        tangent = torch.zeros_like(verts1)
+        tangent[:, 2] = torch.tensor([0.6, -0.48, 0.64], device="cuda")
+
+        def upstream_t_at(values):
+            fd_scene = rt.Scene()
+            fd_scene.add_mesh(rt.Mesh(verts0.detach(), faces))
+            fd_scene.add_mesh(rt.Mesh(values["verts1"], faces))
+            fd_scene.build()
+            return (upstream * fd_scene.trace_reflections(ray, max_bounces=1).t).sum()
+
+        result = torch_grad_along_direction(
+            {"verts1": verts1}, upstream_t_at, step=2e-3, seed=0, tangents={"verts1": tangent}
+        )
+        assert_directional(self, result, label="trace_reflections hit-mesh vertex gradient")
 
     def test_single_bounce_reflection_t_backward_matches_intersect_t_vjp_nonuniform(self):
         verts = torch.tensor(
@@ -1548,6 +1567,34 @@ class MultipathTests(unittest.TestCase):
         for tensor in (edge_pos, edge_dir, edge_t_min, edge_t_max, exterior_angle, src, src_power, wi, gain):
             self.assertIsNotNone(tensor.grad)
             self.assertTrue(bool(torch.isfinite(tensor.grad).all().item()))
+        # The finite gradients must also be the right ones: one central difference along a seeded direction over
+        # every differentiable state and material input of the same loss.
+        leaves = {
+            "edge_pos": edge_pos,
+            "edge_dir": edge_dir,
+            "edge_t_min": edge_t_min,
+            "edge_t_max": edge_t_max,
+            "exterior_angle": exterior_angle,
+            "src": src,
+            "src_power": src_power,
+            "wi": wi,
+            "gain": gain,
+        }
+
+        def loss_at(values):
+            fd_states = replace(states, **{name: values[name] for name in leaves if name != "gain"})
+            fd_out = scene.accum_dfr_direct(
+                states=fd_states,
+                grid=grid,
+                material=replace(material, gain=values["gain"]),
+                wavelength=0.125,
+                seed=17,
+                direct_samples=64,
+            )
+            return fd_out.power.sum() + fd_out.field_x_re.sum()
+
+        result = torch_grad_along_direction(leaves, loss_at, step=2e-3, seed=0)
+        assert_directional(self, result, label="accum_dfr_direct backward over states and material")
 
     def test_scene_accum_dfr_direct_backward_accepts_strided_states_material_and_upstream_grads(self):
         def strided_vec3_leaf(rows):
@@ -1787,6 +1834,27 @@ class MultipathTests(unittest.TestCase):
         self.assertIsNotNone(tangent_field_x_re)
         self.assertTrue(bool(torch.isfinite(tangent_power).all().item()))
         self.assertTrue(bool(torch.isfinite(tangent_field_x_re).all().item()))
+        # The tangents must also match a central difference along the same edge_pos direction; the step is in
+        # units of the 0.01 tangent, so it moves the edge by about 3.5e-3.
+        direction = torch.ones_like(edge_pos) * 0.01
+        step = 0.2
+
+        def outputs_at(scale):
+            shifted = replace(states, edge_pos=edge_pos + scale * direction)
+            fd_out = scene.accum_dfr_direct(
+                states=shifted, grid=grid, material=material, wavelength=0.125, seed=17, direct_samples=64
+            )
+            return float(fd_out.power.sum()), float(fd_out.field_x_re.sum())
+
+        (power_plus, field_plus), (power_minus, field_minus) = outputs_at(step), outputs_at(-step)
+        for label, tangent, plus, minus in (
+            ("power", tangent_power, power_plus, power_minus),
+            ("field_x_re", tangent_field_x_re, field_plus, field_minus),
+        ):
+            fd = (plus - minus) / (2.0 * step)
+            tolerance = fd_tolerance(max(abs(plus), abs(minus)), step, rel=0.0, floor=1e-10)
+            self.assertGreater(abs(fd), 10.0 * tolerance, label)
+            assert_derivative_close(self, float(tangent.sum()), fd, rel=3e-3, abs_tol=tolerance, label=label)
 
     def test_scene_accum_dfr_chain_backward_reaches_initial_recursive_and_material(self):
         verts = torch.tensor(
@@ -1900,6 +1968,42 @@ class MultipathTests(unittest.TestCase):
         ):
             self.assertIsNotNone(tensor.grad)
             self.assertTrue(bool(torch.isfinite(tensor.grad).all().item()))
+        # The finite gradients must also be the right ones, Keller lanes included: one central difference along a
+        # seeded direction over every differentiable initial, recursive and material input of the same loss.
+        initial_leaves = {
+            "edge_pos": edge_pos,
+            "edge_dir": edge_dir,
+            "edge_t_min": edge_t_min,
+            "edge_t_max": edge_t_max,
+            "exterior_angle": exterior_angle,
+            "src": src,
+            "src_power": src_power,
+        }
+        recursive_leaves = {
+            "edge_pos": rec_edge_pos,
+            "edge_dir": rec_edge_dir,
+            "edge_t_min": rec_edge_t_min,
+            "edge_t_max": rec_edge_t_max,
+            "exterior_angle": rec_exterior_angle,
+        }
+        leaves = {**initial_leaves, **{"rec_" + name: leaf for name, leaf in recursive_leaves.items()}, "gain": gain}
+
+        def loss_at(values):
+            fd_out = scene.accum_dfr(
+                initial_states=replace(initial, **{name: values[name] for name in initial_leaves}),
+                recursive_states=replace(recursive, **{name: values["rec_" + name] for name in recursive_leaves}),
+                grid=grid,
+                material=replace(material, gain=values["gain"]),
+                wavelength=0.125,
+                seed=17,
+                direct_samples=64,
+                keller_samples=64,
+                max_order=2,
+            )
+            return fd_out.power.sum() + fd_out.field_x_re.sum()
+
+        result = torch_grad_along_direction(leaves, loss_at, step=2e-3, seed=0)
+        assert_directional(self, result, label="accum_dfr backward over initial, recursive and material")
 
     def test_scene_accum_dfr_chain_jvp_reaches_power_and_field_x_re(self):
         verts = torch.tensor(
@@ -1993,3 +2097,31 @@ class MultipathTests(unittest.TestCase):
         self.assertIsNotNone(tangent_field_x_re)
         self.assertTrue(bool(torch.isfinite(tangent_power).all().item()))
         self.assertTrue(bool(torch.isfinite(tangent_field_x_re).all().item()))
+        # The tangents must also match a central difference along the same edge_pos direction, Keller lanes
+        # included; the step is in units of the 0.01 tangent, so it moves the edge by about 3.5e-3.
+        direction = torch.ones_like(edge_pos) * 0.01
+        step = 0.2
+
+        def outputs_at(scale):
+            fd_out = scene.accum_dfr(
+                initial_states=replace(initial, edge_pos=edge_pos + scale * direction),
+                recursive_states=recursive,
+                grid=grid,
+                material=material,
+                wavelength=0.125,
+                seed=17,
+                direct_samples=64,
+                keller_samples=64,
+                max_order=2,
+            )
+            return float(fd_out.power.sum()), float(fd_out.field_x_re.sum())
+
+        (power_plus, field_plus), (power_minus, field_minus) = outputs_at(step), outputs_at(-step)
+        for label, tangent, plus, minus in (
+            ("power", tangent_power, power_plus, power_minus),
+            ("field_x_re", tangent_field_x_re, field_plus, field_minus),
+        ):
+            fd = (plus - minus) / (2.0 * step)
+            tolerance = fd_tolerance(max(abs(plus), abs(minus)), step, rel=0.0, floor=1e-10)
+            self.assertGreater(abs(fd), 10.0 * tolerance, label)
+            assert_derivative_close(self, float(tangent.sum()), fd, rel=3e-3, abs_tol=tolerance, label=label)

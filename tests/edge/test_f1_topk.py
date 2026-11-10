@@ -6,6 +6,8 @@ import unittest
 import torch
 import rayd.torch as rt
 
+from tests.support.finite_difference import assert_derivative_close, central_difference, unit_direction
+
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA torch is required")
 class TorchTopKNearestEdgeTests(unittest.TestCase):
@@ -77,6 +79,19 @@ class TorchTopKNearestEdgeTests(unittest.TestCase):
         self.assertTrue(torch.isfinite(vertices.grad).all().item())
         self.assertTrue(torch.isfinite(point.grad).all().item())
 
+        # Every winner stays fixed for 1e-2 perturbations (the runner-up ties both clamp to the same vertex), so the
+        # VJP contracted with a unit direction must match a central difference; float32 rounding is ~1e-5 here.
+        direction = torch.tensor(unit_direction(point.numel(), 7), device="cuda").reshape(point.shape)
+
+        @torch.no_grad()
+        def objective(value):
+            moved = scene.nearest_edges(value, 2)
+            total = moved.distances.double().sum() + moved.edge_points.double().sum() + moved.points.double().sum()
+            return float(total)
+
+        numeric = central_difference(lambda s: objective(point.detach() + s * direction), 1.0e-2)
+        assert_derivative_close(self, float((point.grad * direction).sum()), numeric, label="top-k point VJP")
+
         detached_point = point.detach()
         tangent = torch.ones_like(detached_point)
 
@@ -87,6 +102,8 @@ class TorchTopKNearestEdgeTests(unittest.TestCase):
         self.assertEqual(primal.shape, (2, 2))
         self.assertEqual(jvp.shape, (2, 2))
         self.assertTrue(torch.isfinite(jvp).all().item())
+        numeric = central_difference(lambda s: float(query(detached_point + s * tangent).double().sum()), 1.0e-2)
+        assert_derivative_close(self, float(jvp.double().sum()), numeric, label="top-k point JVP")
 
     @staticmethod
     def make_two_mesh_scene(*, requires_grad=False):
