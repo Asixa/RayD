@@ -3,6 +3,7 @@
 
 #include <src/scene/cuda_multipath_gpu_jit.h>
 
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 
@@ -41,7 +42,7 @@ constexpr int kTraversalStackDepth = bvh::kBvhTraversalStackDepth;
 constexpr int kBlockSize = 256;
 
 int block_count(int count) {
-    return (count + kBlockSize - 1) / kBlockSize;
+    return static_cast<int>((static_cast<int64_t>(count) + kBlockSize - 1) / kBlockSize);
 }
 
 [[noreturn]] void throw_runtime_error_local(const std::string& message) {

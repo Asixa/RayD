@@ -47,6 +47,8 @@ class OptixLaunchPipeline {
     bool is_ready() const { return ready_; }
     /// Dr.Jit CUDA device the pipeline was built on, or -1 before build().
     int device() const { return device_; }
+    /// Continuation stack size set on the pipeline, from OptiX's per-program report.
+    unsigned int continuation_stack_size() const { return continuation_stack_size_; }
 
     template <typename Params> void launch(int raygen_index, const Params& params) const {
         launch_impl(raygen_index, &params, sizeof(Params), static_cast<unsigned int>(params.n_rays));
@@ -62,6 +64,7 @@ class OptixLaunchPipeline {
     int hitgroup_record_count_ = 0;
     size_t params_size_ = 0;
     size_t params_buffer_size_ = 0;
+    unsigned int continuation_stack_size_ = 0;
     OptixModule module_ = nullptr;
     OptixPipeline pipeline_ = nullptr;
     std::vector<OptixProgramGroup> pg_raygens_;

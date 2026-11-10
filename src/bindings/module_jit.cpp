@@ -87,7 +87,20 @@ template <typename T> nb::handle drjit_python_type() {
     return type;
 }
 
+/// True when \p src carries derivatives right now: drjit.grad_enabled() also honours drjit.suspend_grad().
+/// A failing query counts as grad-enabled so that a conversion is refused rather than silently detaching.
+bool drjit_grad_enabled(nb::handle src) noexcept {
+    try {
+        return nb::cast<bool>(nb::module_::import_("drjit").attr("grad_enabled")(src));
+    } catch (...) {
+        PyErr_Clear();
+        return true;
+    }
+}
+
 /// Load a Dr.Jit array \p T from a Python handle, optionally coercing other types; returns success.
+/// Converting a grad-enabled AD array into a detached \p T would drop its derivative without a trace, so that
+/// conversion fails: an AD overload is chosen instead when one exists, and the call is refused otherwise.
 template <typename T> bool drjit_try_load(nb::handle src, T& value, bool convert) {
     if (!src.is_valid())
         return false;
@@ -105,6 +118,10 @@ template <typename T> bool drjit_try_load(nb::handle src, T& value, bool convert
 
     if (!convert)
         return false;
+    if constexpr (!drjit::is_diff_v<T>) {
+        if (drjit_grad_enabled(src))
+            return false;
+    }
 
     try {
         nb::object converted = nb::steal<nb::object>(PyObject_CallOneArg(drjit_python_type<T>().ptr(), src.ptr()));
@@ -118,6 +135,37 @@ template <typename T> bool drjit_try_load(nb::handle src, T& value, bool convert
         PyErr_Clear();
         return false;
     }
+}
+
+/// Refuse a grad-enabled input of a forward-only operation instead of tracing it detached.
+void require_no_derivatives(nb::handle value, const char* operation, const char* input) {
+    if (drjit_grad_enabled(value)) {
+        throw std::runtime_error(std::string(operation) +
+                                 " is forward-only and does not support reverse-mode AD or "
+                                 "JVP: its " +
+                                 input +
+                                 " carries derivatives. Pass a detached value (drjit.detach) "
+                                 "or call it under drjit.suspend_grad().");
+    }
+}
+
+/// Refuse a forward-only operation on a scene whose geometry carries derivatives.
+void require_detached_scene_geometry(const Scene& scene, const char* operation) {
+    // Query through Python so that drjit.suspend_grad() scopes are honoured like for every other input.
+    if (drjit_grad_enabled(nb::cast(scene.global_geometry().vertices))) {
+        throw std::runtime_error(std::string(operation) +
+                                 " is forward-only and does not support reverse-mode AD or "
+                                 "JVP: the scene geometry carries derivatives. Build the scene from detached "
+                                 "vertices or call it under drjit.suspend_grad().");
+    }
+}
+
+/// Load an input of a query whose result is discrete. Such a query has no derivative, so a grad-enabled value is
+/// detached explicitly here rather than refused by the detached-array conversion.
+template <typename T> T cast_detached_query_input(nb::handle value) {
+    if (drjit_grad_enabled(value))
+        return nb::cast<T>(nb::module_::import_("drjit").attr("detach")(value));
+    return nb::cast<T>(value);
 }
 
 ReflEpcFieldOptionsAD refl_epc_field_options_ad_from_detached(const ReflEpcFieldOptions& options) {
@@ -1872,8 +1920,11 @@ NB_MODULE(_C, m) {
                 "image_source_tolerance"_a = 1e-5f, "active"_a = true, "symbolic"_a = true)
             .def(
                 "trace_refl_epc",
-                [](const Scene& scene, const Ray& ray, const Vector3f& receiver, int max_bounces,
-                   nb::object options_obj, rayd::Mask active) {
+                [](const Scene& scene, const Ray& ray, nb::handle receiver_obj, int max_bounces, nb::object options_obj,
+                   rayd::Mask active) {
+                    require_no_derivatives(receiver_obj, "Scene.trace_refl_epc()", "receiver");
+                    require_detached_scene_geometry(scene, "Scene.trace_refl_epc()");
+                    const Vector3f receiver = nb::cast<Vector3f>(receiver_obj);
                     ReflEpcOptions options;
                     if (!options_obj.is_none()) {
                         bool parsed_options = false;
@@ -1982,6 +2033,11 @@ NB_MODULE(_C, m) {
                    nb::handle material_obj, int max_bounces, const AccumOptions& options, nb::handle active_obj,
                    nb::handle tx_polarization_obj) -> nb::object {
                     if (nb::isinstance<Ray>(ray_obj)) {
+                        // A detached Ray selects the forward-only evaluation; differentiation needs a RayAD.
+                        require_no_derivatives(tx_position_obj, "Scene.accumulate_reflections() with a detached Ray",
+                                               "tx_position");
+                        require_no_derivatives(tx_polarization_obj,
+                                               "Scene.accumulate_reflections() with a detached Ray", "tx_polarization");
                         const Ray ray = nb::cast<Ray>(ray_obj);
                         const Vector3f tx_position = nb::cast<Vector3f>(tx_position_obj);
                         const Vector3f tx_polarization = nb::cast<Vector3f>(tx_polarization_obj);
@@ -2059,6 +2115,7 @@ NB_MODULE(_C, m) {
                 [](const Scene& scene, nb::handle edges_obj, nb::handle tx_position_obj, nb::handle material_obj,
                    const DfrCoherentOptions& options, nb::handle active_obj) -> nb::object {
                     if (nb::isinstance<DfrCoherentEdge>(edges_obj)) {
+                        require_no_derivatives(tx_position_obj, "Scene.build_dfr_coherent_tx_states()", "tx_position");
                         const DfrCoherentEdge edges = nb::cast<DfrCoherentEdge>(edges_obj);
                         const Vector3f tx_position = nb::cast<Vector3f>(tx_position_obj);
                         const DfrMaterial material = nb::cast<DfrMaterial>(material_obj);
@@ -2176,8 +2233,8 @@ NB_MODULE(_C, m) {
                     }
 
                     if (module_name == "drjit.cuda" && type_name == "Array3f") {
-                        Vector3f start = nb::cast<Vector3f>(start_obj);
-                        Vector3f end = nb::cast<Vector3f>(end_obj);
+                        const Vector3f start = cast_detached_query_input<Vector3f>(start_obj);
+                        const Vector3f end = cast_detached_query_input<Vector3f>(end_obj);
                         rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
                         return nb::cast(scene.visible<true>(start, end, ignore_prim_ids, active));
                     }
@@ -2200,9 +2257,9 @@ NB_MODULE(_C, m) {
                     }
 
                     if (module_name == "drjit.cuda" && type_name == "Array3f") {
-                        Vector3f start = nb::cast<Vector3f>(start_obj);
-                        Vector3f end_a = nb::cast<Vector3f>(end_a_obj);
-                        Vector3f end_b = nb::cast<Vector3f>(end_b_obj);
+                        const Vector3f start = cast_detached_query_input<Vector3f>(start_obj);
+                        const Vector3f end_a = cast_detached_query_input<Vector3f>(end_a_obj);
+                        const Vector3f end_b = cast_detached_query_input<Vector3f>(end_b_obj);
                         rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
                         return nb::cast(scene.visible_pair<true>(start, end_a, end_b, ignore_prim_ids, active));
                     }
@@ -2229,11 +2286,11 @@ NB_MODULE(_C, m) {
                     }
 
                     if (module_name == "drjit.cuda" && type_name == "Array3f") {
-                        Vector3f src = nb::cast<Vector3f>(src_obj);
-                        Vector3f edge_pos = nb::cast<Vector3f>(edge_pos_obj);
-                        Vector3f edge_dir = nb::cast<Vector3f>(edge_dir_obj);
-                        Float edge_t_min = nb::cast<Float>(edge_t_min_obj);
-                        Float edge_t_max = nb::cast<Float>(edge_t_max_obj);
+                        const Vector3f src = cast_detached_query_input<Vector3f>(src_obj);
+                        const Vector3f edge_pos = cast_detached_query_input<Vector3f>(edge_pos_obj);
+                        const Vector3f edge_dir = cast_detached_query_input<Vector3f>(edge_dir_obj);
+                        const Float edge_t_min = cast_detached_query_input<Float>(edge_t_min_obj);
+                        const Float edge_t_max = cast_detached_query_input<Float>(edge_t_max_obj);
                         rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
                         return nb::cast(scene.visible_edge<true>(src, edge_pos, edge_dir, edge_t_min, edge_t_max,
                                                                  sample_fractions, active));
@@ -2257,7 +2314,7 @@ NB_MODULE(_C, m) {
                     }
 
                     if (module_name == "drjit.cuda" && type_name == "Array3f") {
-                        Vector3f points = nb::cast<Vector3f>(points_obj);
+                        const Vector3f points = cast_detached_query_input<Vector3f>(points_obj);
                         rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
                         return nb::cast(
                             scene.visible_chain<true>(points, chain_length, ignore_prim_per_segment, active));

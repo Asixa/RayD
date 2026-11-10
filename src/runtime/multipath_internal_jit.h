@@ -88,7 +88,7 @@ ReflectionChainT<Detached> initialize_reflection_chain_result(int ray_count, int
     result.max_bounces = max_bounces;
     result.ray_count = ray_count;
 
-    const int slot_count = ray_count * max_bounces;
+    const int slot_count = checked_slot_count(ray_count, max_bounces, "Scene::trace_reflections()");
     const bool full_export = export_mode == RAYD_REFLECTION_EXPORT_FULL;
     const bool minimal_export = export_mode == RAYD_REFLECTION_EXPORT_MINIMAL;
     const bool slot_ids_export = full_export || minimal_export;

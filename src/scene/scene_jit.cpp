@@ -11,10 +11,185 @@
 #include <utility>
 #include <vector>
 
+#include <cuda_runtime_api.h>
+
 #include <rayd/jit/core.h>
 #include <rayd/jit/mesh.h>
+#include "scene_internal_jit.h"
 
 namespace rayd {
+
+namespace {
+
+/// Most faces one edge may join. Every unordered pair of an edge's incident faces becomes one wedge record, so this
+/// bounds the per-edge work and output at kMaxEdgeIncidentFaces * (kMaxEdgeIncidentFaces - 1) / 2 wedges.
+constexpr size_t kMaxEdgeIncidentFaces = 256;
+
+/// Per-mesh edge records (vertex0, vertex1, face0, face1, opposite vertex of face0) in ascending (vertex0, vertex1)
+/// order, or the reason the mesh has no usable edge topology.
+struct EdgeTopology {
+    std::array<std::vector<int>, 5> records;
+    int edge_count = 0;
+    std::string error;
+};
+
+/// Builds the edge topology of one mesh from its host face indices.
+///
+/// A face that repeats a vertex index (for example a [0, 0, 0] padding face) has no well-defined edges and
+/// contributes none. An edge with one incident face is a boundary record with face1 = -1. An edge with two or more
+/// incident faces emits one wedge per unordered pair of them, in ascending face-index order, each carrying the
+/// opposite vertex of its own face0; a manifold edge therefore yields exactly one wedge. An edge joined by more than
+/// kMaxEdgeIncidentFaces faces, or a mesh whose records would exceed the 32-bit index range, has no edge topology:
+/// the reason is returned instead and every later use of the mesh's edges reports it.
+EdgeTopology build_edge_topology(const std::array<std::vector<int>, 3>& face_indices, int face_count) {
+    EdgeTopology topology;
+    std::map<std::pair<int, int>, std::vector<std::pair<int, int>>> edge_map;
+    for (int face_index = 0; face_index < face_count; ++face_index) {
+        const int v0 = face_indices[0][static_cast<size_t>(face_index)];
+        const int v1 = face_indices[1][static_cast<size_t>(face_index)];
+        const int v2 = face_indices[2][static_cast<size_t>(face_index)];
+        if (v0 == v1 || v1 == v2 || v0 == v2) {
+            continue;
+        }
+        const std::array<int, 3> corners{v0, v1, v2};
+        for (size_t local_edge = 0; local_edge < 3; ++local_edge) {
+            const int start_vertex = corners[local_edge];
+            const int end_vertex = corners[(local_edge + 1) % 3];
+            const int opposite_vertex = corners[(local_edge + 2) % 3];
+            const auto edge_key = start_vertex < end_vertex ? std::make_pair(start_vertex, end_vertex)
+                                                            : std::make_pair(end_vertex, start_vertex);
+            edge_map[edge_key].emplace_back(face_index, opposite_vertex);
+        }
+    }
+
+    int64_t record_count = 0;
+    for (const auto& [edge_vertices, faces] : edge_map) {
+        if (faces.size() > kMaxEdgeIncidentFaces) {
+            topology.error = "Mesh: edge (" + std::to_string(edge_vertices.first) + ", " +
+                             std::to_string(edge_vertices.second) + ") is shared by " + std::to_string(faces.size()) +
+                             " non-degenerate faces; edge topology supports at most " +
+                             std::to_string(kMaxEdgeIncidentFaces) +
+                             " faces per edge because it emits one wedge per pair of incident faces. This usually "
+                             "means duplicated or coincident faces: remove them, or set mesh.edges_enabled = False "
+                             "before building.";
+            return topology;
+        }
+        const int64_t k = static_cast<int64_t>(faces.size());
+        record_count += k == 1 ? 1 : k * (k - 1) / 2;
+    }
+    if (record_count > std::numeric_limits<int32_t>::max()) {
+        topology.error = "Mesh: " + std::to_string(record_count) +
+                         " edge records exceed the 32-bit index range. Split the mesh, or set mesh.edges_enabled = "
+                         "False before building if edge queries are not needed.";
+        return topology;
+    }
+
+    for (auto& record : topology.records) {
+        record.reserve(static_cast<size_t>(record_count));
+    }
+    for (const auto& [edge_vertices, faces] : edge_map) {
+        if (faces.size() == 1) {
+            topology.records[0].push_back(edge_vertices.first);
+            topology.records[1].push_back(edge_vertices.second);
+            topology.records[2].push_back(faces[0].first);
+            topology.records[3].push_back(-1);
+            topology.records[4].push_back(faces[0].second);
+            continue;
+        }
+        for (size_t i = 0; i < faces.size(); ++i) {
+            for (size_t j = i + 1; j < faces.size(); ++j) {
+                topology.records[0].push_back(edge_vertices.first);
+                topology.records[1].push_back(edge_vertices.second);
+                topology.records[2].push_back(faces[i].first);
+                topology.records[3].push_back(faces[j].first);
+                topology.records[4].push_back(faces[i].second);
+            }
+        }
+    }
+    topology.edge_count = static_cast<int>(record_count);
+    return topology;
+}
+
+/// Rejects a face that references a vertex outside [0, vertex_count); every later gather trusts this range.
+void require_face_indices_in_range(const std::array<std::vector<int>, 3>& face_indices, int face_count,
+                                   int vertex_count) {
+    for (int face_index = 0; face_index < face_count; ++face_index) {
+        for (size_t corner = 0; corner < 3; ++corner) {
+            const int vertex = face_indices[corner][static_cast<size_t>(face_index)];
+            if (vertex < 0 || vertex >= vertex_count) {
+                throw std::runtime_error("Mesh: face " + std::to_string(face_index) + " references vertex " +
+                                         std::to_string(vertex) + ", outside the valid range [0, " +
+                                         std::to_string(vertex_count) + ").");
+            }
+        }
+    }
+}
+
+/// One device index buffer whose entries must lie in [0, bound).
+struct IndexRangeCheck {
+    Vector3i indices;
+    int bound;
+    const char* what;
+};
+
+/// Rejects an index buffer with an entry outside [0, bound); every device gather and scatter through it trusts this
+/// range, and Dr.Jit bounds-checks a gather only in debug mode or when its index is a literal. All buffers are reduced
+/// together and read back with one device-to-host copy.
+void require_index_ranges(const std::vector<IndexRangeCheck>& checks) {
+    std::vector<size_t> pending;
+    for (size_t index = 0; index < checks.size(); ++index) {
+        if (slices(checks[index].indices) != 0) {
+            pending.push_back(index);
+        }
+    }
+    if (pending.empty()) {
+        return;
+    }
+    Int packed = empty<Int>(static_cast<uint32_t>(2 * pending.size()));
+    for (size_t slot = 0; slot < pending.size(); ++slot) {
+        const Vector3i& indices = checks[pending[slot]].indices;
+        scatter(packed, drjit::min(minimum(minimum(indices.x(), indices.y()), indices.z())), Int(int(2 * slot)));
+        scatter(packed, drjit::max(maximum(maximum(indices.x(), indices.y()), indices.z())), Int(int(2 * slot + 1)));
+    }
+    std::vector<int> extremes(2 * pending.size());
+    drjit::store(extremes.data(), packed);
+    for (size_t slot = 0; slot < pending.size(); ++slot) {
+        const IndexRangeCheck& check = checks[pending[slot]];
+        const int lowest_index = extremes[2 * slot];
+        const int highest_index = extremes[2 * slot + 1];
+        if (lowest_index < 0 || highest_index >= check.bound) {
+            throw std::runtime_error(std::string(check.what) + " references index " +
+                                     std::to_string(lowest_index < 0 ? lowest_index : highest_index) +
+                                     ", outside the valid range [0, " + std::to_string(check.bound) + ").");
+        }
+    }
+}
+
+/// Index of the first vertex with a NaN or infinite coordinate, as an unevaluated one-element array (INT32_MAX when
+/// every vertex is finite), so that callers can evaluate it together with work they already wait for.
+Int first_non_finite_vertex(const Vector3f& positions) {
+    const int count = static_cast<int>(slices(positions));
+    if (count == 0) {
+        return Int(std::numeric_limits<int32_t>::max());
+    }
+    const Mask finite =
+        drjit::isfinite(positions.x()) && drjit::isfinite(positions.y()) && drjit::isfinite(positions.z());
+    return drjit::min(select(finite, Int(std::numeric_limits<int32_t>::max()), arange<Int>(count)));
+}
+
+/// Throw for an evaluated first_non_finite_vertex() result that names a vertex. Non-finite vertices are rejected
+/// rather than traced: OptiX drops every triangle of a GAS that holds one, so finite faces would stop being hit.
+void require_finite_vertex_result(const Int& first_bad, int mesh_id, const char* what) {
+    const int vertex = first_bad.entry(0);
+    if (vertex == std::numeric_limits<int32_t>::max()) {
+        return;
+    }
+    throw std::runtime_error(std::string(what) + ": mesh " + std::to_string(mesh_id) +
+                             " has a NaN or infinite world-space coordinate at vertex " + std::to_string(vertex) +
+                             "; vertex positions must be finite.");
+}
+
+} // namespace
 
 /// \brief Compute cached triangle geometry and area-weighted vertex normals for a mesh.
 ///
@@ -101,7 +276,9 @@ Mesh::Mesh(const Mesh& other)
       vertex_positions_object_(other.vertex_positions_object_), vertex_normals_object_(other.vertex_normals_object_),
       vertex_uv_(other.vertex_uv_), vertex_positions_world_(other.vertex_positions_world_),
       face_vertex_indices_(other.face_vertex_indices_), face_uv_indices_(other.face_uv_indices_),
-      edge_indices_(other.edge_indices_), world_positions_dirty_(other.world_positions_dirty_),
+      edge_indices_(other.edge_indices_), edge_topology_error_(other.edge_topology_error_),
+      edge_topology_dirty_(other.edge_topology_dirty_), face_indices_in_range_(other.face_indices_in_range_),
+      face_uv_indices_in_range_(other.face_uv_indices_in_range_), world_positions_dirty_(other.world_positions_dirty_),
       secondary_edge_info_dirty_(other.secondary_edge_info_dirty_),
       optix_face_buffer_dirty_(other.optix_face_buffer_dirty_), optix_vertex_buffer_(other.optix_vertex_buffer_),
       optix_face_buffer_(other.optix_face_buffer_) {
@@ -190,73 +367,13 @@ void Mesh::init(const Vector3f& vertex_positions, const Vector3i& face_indices, 
     copy_cuda_array(face_indices, face_indices_cpu);
     drjit::eval();
     drjit::sync_thread();
+    require_face_indices_in_range(face_indices_cpu, face_count_, vertex_count_);
+    face_indices_in_range_ = true;
+    // UV indices that default to the face indices address a UV array as long as the vertex array.
+    face_uv_indices_in_range_ = !has_uv_ || slices(face_uv_indices) == 0;
 
     const auto start_time = high_resolution_clock::now();
-    int edge_count = 0;
-    if (edges_enabled_) {
-        std::array<std::vector<int>, 5> edge_records;
-        for (auto& record : edge_records) {
-            record.reserve(3 * face_count_);
-        }
-
-        // Per edge, record every incident face together with its own opposite
-        // vertex (the corner of that face not on the edge). Storing the opposite
-        // vertex per face (rather than once per edge) is what lets non-manifold
-        // edges emit correct wedges below.
-        std::map<std::pair<int, int>, std::vector<std::pair<int, int>>> edge_map;
-        for (int face_index = 0; face_index < face_count_; ++face_index) {
-            for (int local_edge = 0; local_edge < 3; ++local_edge) {
-                const int start_corner = local_edge;
-                const int end_corner = (local_edge + 1) % 3;
-                const int opposite_corner = (local_edge + 2) % 3;
-
-                const int start_vertex = face_indices_cpu[start_corner][face_index];
-                const int end_vertex = face_indices_cpu[end_corner][face_index];
-                const int opposite_vertex = face_indices_cpu[opposite_corner][face_index];
-                const auto edge_key = start_vertex < end_vertex ? std::make_pair(start_vertex, end_vertex)
-                                                                : std::make_pair(end_vertex, start_vertex);
-
-                edge_map[edge_key].emplace_back(face_index, opposite_vertex);
-            }
-        }
-
-        for (const auto& [edge_vertices, faces] : edge_map) {
-            if (faces.size() == 1) {
-                // Boundary edge: a single incident face, no second wedge face.
-                edge_records[0].push_back(edge_vertices.first);
-                edge_records[1].push_back(edge_vertices.second);
-                edge_records[2].push_back(faces[0].first);
-                edge_records[3].push_back(-1);
-                edge_records[4].push_back(faces[0].second);
-                ++edge_count;
-                continue;
-            }
-            // Emit one wedge per unordered pair of incident faces. A manifold
-            // edge (2 faces) yields exactly the single (face0, face1) wedge,
-            // identical to before. Non-manifold edges (3+ faces) emit every
-            // face pair so no wedge or diffraction path is silently dropped;
-            // each wedge carries the opposite vertex of its own face0.
-            for (size_t i = 0; i < faces.size(); ++i) {
-                for (size_t j = i + 1; j < faces.size(); ++j) {
-                    edge_records[0].push_back(edge_vertices.first);
-                    edge_records[1].push_back(edge_vertices.second);
-                    edge_records[2].push_back(faces[i].first);
-                    edge_records[3].push_back(faces[j].first);
-                    edge_records[4].push_back(faces[i].second);
-                    ++edge_count;
-                }
-            }
-        }
-
-        edge_indices_ = VectoriT<5, true>(drjit::load<Int>(edge_records[0].data(), edge_count),
-                                          drjit::load<Int>(edge_records[1].data(), edge_count),
-                                          drjit::load<Int>(edge_records[2].data(), edge_count),
-                                          drjit::load<Int>(edge_records[3].data(), edge_count),
-                                          drjit::load<Int>(edge_records[4].data(), edge_count));
-    } else {
-        edge_indices_ = VectoriT<5, true>(Int(), Int(), Int(), Int(), Int());
-    }
-
+    const int edge_count = rebuild_edge_topology(face_indices_cpu);
     const auto end_time = high_resolution_clock::now();
     const double seconds = duration_cast<duration<double>>(end_time - start_time).count();
     if (verbose) {
@@ -268,9 +385,43 @@ void Mesh::init(const Vector3f& vertex_positions, const Vector3i& face_indices, 
     is_ready_ = false;
 }
 
+int Mesh::rebuild_edge_topology(const std::array<std::vector<int>, 3>& face_indices) {
+    EdgeTopology topology = build_edge_topology(face_indices, face_count_);
+    const int edge_count = topology.edge_count;
+    const std::array<std::vector<int>, 5>& records = topology.records;
+    edge_indices_ = VectoriT<5, true>(drjit::load<Int>(records[0].data(), edge_count),
+                                      drjit::load<Int>(records[1].data(), edge_count),
+                                      drjit::load<Int>(records[2].data(), edge_count),
+                                      drjit::load<Int>(records[3].data(), edge_count),
+                                      drjit::load<Int>(records[4].data(), edge_count));
+    edge_topology_error_ = std::move(topology.error);
+    edge_topology_dirty_ = false;
+    secondary_edge_info_dirty_ = true;
+    return edge_count;
+}
+
 void Mesh::build() {
     require(vertex_count_ > 0, "Mesh::build(): mesh has no vertices.");
     require(face_count_ > 0, "Mesh::build(): mesh has no faces.");
+    // Indices the host has not checked since they or the array they address changed are checked here, before any
+    // gather or scatter trusts them; Mesh::init() checks the common case on the host copy it already makes.
+    if (edge_topology_dirty_) {
+        std::array<std::vector<int>, 3> face_indices_cpu;
+        copy_cuda_array(detach<false>(face_vertex_indices_), face_indices_cpu);
+        require_face_indices_in_range(face_indices_cpu, face_count_, vertex_count_);
+        face_indices_in_range_ = true;
+        rebuild_edge_topology(face_indices_cpu);
+    }
+    std::vector<IndexRangeCheck> range_checks;
+    if (!face_indices_in_range_)
+        range_checks.push_back({detach<false>(face_vertex_indices_), vertex_count_, "Mesh::build(): face_indices"});
+    if (has_uv_ && !face_uv_indices_in_range_) {
+        range_checks.push_back(
+            {detach<false>(face_uv_indices_), static_cast<int>(slices(vertex_uv_)), "Mesh::build(): face_uv_indices"});
+    }
+    require_index_ranges(range_checks);
+    face_indices_in_range_ = true;
+    face_uv_indices_in_range_ = true;
 
     if (!triangle_info_object_) {
         triangle_info_object_ = std::make_unique<TriangleInfoAD>();
@@ -297,8 +448,11 @@ void Mesh::build() {
 
     is_ready_ = true;
     prepare_optix_buffers();
+    // The finiteness reduction is evaluated with the build's own work and read after its existing sync.
+    const Int first_bad = first_non_finite_vertex(detach<false>(vertex_positions_world()));
     drjit::eval();
     drjit::sync_thread();
+    require_finite_vertex_result(first_bad, mesh_id_, "Mesh::build()");
 }
 
 void Mesh::update_runtime_data(bool vertices_dirty, bool transform_dirty) {
@@ -350,6 +504,13 @@ void Mesh::update_secondary_edge_info() {
     ensure_world_positions_ready();
 
     if (!edges_enabled_) {
+        secondary_edge_info_.reset();
+        secondary_edge_info_dirty_ = false;
+        return;
+    }
+    require(edge_topology_error_.empty(), edge_topology_error_);
+    if (slices(edge_indices_[0]) == 0) {
+        // Only index-degenerate faces: there is no edge to describe.
         secondary_edge_info_.reset();
         secondary_edge_info_dirty_ = false;
         return;
@@ -407,7 +568,7 @@ void Mesh::prepare_optix_buffers() {
 }
 
 void Mesh::update_optix_vertex_buffer() {
-    const int scalar_count = vertex_count_ * 3;
+    const int scalar_count = checked_slot_count(vertex_count_, 3, "Mesh: OptiX vertex buffer");
     if (slices(optix_vertex_buffer_) != static_cast<size_t>(scalar_count)) {
         optix_vertex_buffer_ = empty<Float>(scalar_count);
     }
@@ -419,7 +580,7 @@ void Mesh::update_optix_vertex_buffer() {
 }
 
 void Mesh::ensure_optix_face_buffer_ready() {
-    const int scalar_count = face_count_ * 3;
+    const int scalar_count = checked_slot_count(face_count_, 3, "Mesh: OptiX face buffer");
     if (!optix_face_buffer_dirty_ && slices(optix_face_buffer_) == static_cast<size_t>(scalar_count)) {
         return;
     }
@@ -527,7 +688,10 @@ bool edge_backend_uses_optix_topk(EdgeBVHBackend backend) {
 TraceBackendKind resolve_trace_backend_kind(const std::string& value) {
     const std::string normalized = normalize_edge_backend_value(value);
     if (normalized.empty() || normalized == "auto") {
-        return optix_available() ? TraceBackendKind::Optix : TraceBackendKind::Cuda;
+        if (optix_available())
+            return TraceBackendKind::Optix;
+        warn_optix_auto_fallback_once();
+        return TraceBackendKind::Cuda;
     }
     if (normalized == "optix") {
         return TraceBackendKind::Optix;
@@ -634,6 +798,29 @@ Scene::Scene(const std::string& edge_bvh_backend, const std::string& trace_backe
       edge_optix_(std::make_unique<SceneEdgeOptix>()), edge_bvh_backend_(parse_edge_backend(edge_bvh_backend)) {}
 
 Scene::~Scene() = default;
+
+void require_jit_variable_on_current_device(uint32_t index, const char* context) {
+    if (index == 0 || jit_var_state(index) != VarState::Evaluated) {
+        return;
+    }
+    void* data = nullptr;
+    jit_var_dec_ref(jit_var_data(index, &data));
+    cudaPointerAttributes attributes = {};
+    if (cudaPointerGetAttributes(&attributes, data) != cudaSuccess) {
+        cudaGetLastError();
+        return;
+    }
+    const int current_device = jit_cuda_device_raw();
+    if (attributes.type == cudaMemoryTypeDevice && attributes.device != current_device) {
+        throw std::runtime_error(std::string(context) + ": an input array lives on CUDA device " +
+                                 std::to_string(attributes.device) +
+                                 ", but the scene and the current Dr.Jit device "
+                                 "are CUDA device " +
+                                 std::to_string(current_device) +
+                                 ". Dr.Jit arrays are not migrated between devices; create the inputs while the "
+                                 "scene's device is current.");
+    }
+}
 
 void Scene::require_build_device(const char* context) const {
     if (build_device_ < 0) {
@@ -935,9 +1122,12 @@ void Scene::build() {
         record.transform_dirty = false;
         record.edge_dirty = false;
 
-        vertex_offsets.push_back(vertex_offsets.back() + mesh.vertex_count());
-        face_offsets.push_back(face_offsets.back() + mesh.face_count());
-        edge_offsets.push_back(edge_offsets.back() + mesh_edge_count);
+        vertex_offsets.push_back(checked_slot_count(static_cast<int64_t>(vertex_offsets.back()) + mesh.vertex_count(),
+                                                    1, "Scene::build(): total vertex count"));
+        face_offsets.push_back(checked_slot_count(static_cast<int64_t>(face_offsets.back()) + mesh.face_count(), 1,
+                                                  "Scene::build(): total face count"));
+        edge_offsets.push_back(checked_slot_count(static_cast<int64_t>(edge_offsets.back()) + mesh_edge_count, 1,
+                                                  "Scene::build(): total edge count"));
         const SceneMeshRecord& owner = mesh_records_[static_cast<size_t>(record.geometry_owner_id)];
         mesh_descs.push_back({&mesh, record.dynamic, owner.dynamic, record.face_offset, static_cast<int>(mesh_index),
                               record.geometry_owner_id});
@@ -980,8 +1170,7 @@ void Scene::build() {
 
     for (const SceneMeshRecord& record : mesh_records_) {
         const Mesh& mesh = *record.mesh;
-        const auto& mesh_edge_indices = mesh.edge_indices();
-        const int mesh_edge_count = mesh.edges_enabled() ? static_cast<int>(slices(mesh_edge_indices)) : 0;
+        const int mesh_edge_count = mesh.edges_enabled() ? static_cast<int>(slices(mesh.edge_indices())) : 0;
         const Vector3i mesh_face_indices(detach<false>(mesh.face_indices()[0]), detach<false>(mesh.face_indices()[1]),
                                          detach<false>(mesh.face_indices()[2]));
         std::array<std::vector<int>, 3> mesh_face_cpu;
@@ -1000,7 +1189,7 @@ void Scene::build() {
         }
 
         std::array<std::vector<int>, 5> mesh_edge_cpu;
-        copy_cuda_array(mesh_edge_indices, mesh_edge_cpu);
+        copy_cuda_array(mesh.edge_indices(), mesh_edge_cpu);
 
         for (int local_edge_id = 0; local_edge_id < mesh_edge_count; ++local_edge_id) {
             const int v0 = mesh_edge_cpu[0][local_edge_id];
@@ -1167,7 +1356,7 @@ void Scene::build() {
 
 void Scene::update_mesh_vertices(int mesh_id, const Vector3fAD& positions) {
     require(is_ready(), "Scene::update_mesh_vertices(): scene is not built.");
-    require_build_device("Scene::update_mesh_vertices()");
+    require_inputs_on_build_device("Scene::update_mesh_vertices()", positions);
 
     SceneMeshRecord& record = mesh_record(mesh_id);
     require(record.geometry_owner_id == mesh_id,
@@ -1281,6 +1470,29 @@ void Scene::sync() {
         record.transform_dirty = false;
     }
     if (!updates.empty()) {
+        // Reject non-finite world-space vertices before they reach the scene-global arrays, the edge structures or
+        // the GAS. All updated meshes are reduced and read back together; on failure the updates stay pending.
+        std::vector<Int> first_bad;
+        first_bad.reserve(updates.size());
+        for (const OptixSceneMeshUpdate& update : updates) {
+            const Mesh& mesh = *mesh_records_[static_cast<size_t>(update.mesh_id)].mesh;
+            first_bad.push_back(first_non_finite_vertex(detach<false>(mesh.vertex_positions_world())));
+            drjit::schedule(first_bad.back());
+        }
+        drjit::eval();
+        for (size_t index = 0; index < updates.size(); ++index) {
+            try {
+                require_finite_vertex_result(first_bad[index], updates[index].mesh_id, "Scene::sync()");
+            } catch (...) {
+                for (const OptixSceneMeshUpdate& update : updates) {
+                    SceneMeshRecord& record = mesh_records_[static_cast<size_t>(update.mesh_id)];
+                    record.vertices_dirty = record.vertices_dirty || update.vertices_dirty;
+                    record.transform_dirty = record.transform_dirty || update.transform_dirty;
+                }
+                throw;
+            }
+        }
+
         const auto scatter_start = Clock::now();
 
         if (differentiable_geometry_active_) {
@@ -1556,7 +1768,7 @@ template <bool Detached>
 NearestPointEdgeT<Detached> Scene::nearest_edge(const Vector3fT<Detached>& point, MaskT<Detached> active) const {
     require(is_ready(), "Scene::nearest_edge(point): scene is not built.");
     require(!pending_updates_, "Scene::nearest_edge(point): scene has pending updates. Call Scene::sync() first.");
-    require_build_device("Scene::nearest_edge(point)");
+    require_inputs_on_build_device("Scene::nearest_edge(point)", point, active);
 
     const int query_count = static_cast<int>(slices(point));
     NearestPointEdgeT<Detached> result = initialize_nearest_point_edge_result<Detached>(query_count);
@@ -1647,7 +1859,7 @@ template <bool Detached>
 NearestRayEdgeT<Detached> Scene::nearest_edge(const RayT<Detached>& ray, MaskT<Detached> active) const {
     require(is_ready(), "Scene::nearest_edge(ray): scene is not built.");
     require(!pending_updates_, "Scene::nearest_edge(ray): scene has pending updates. Call Scene::sync() first.");
-    require_build_device("Scene::nearest_edge(ray)");
+    require_inputs_on_build_device("Scene::nearest_edge(ray)", ray, active);
 
     const int query_count = static_cast<int>(slices(ray.o));
     NearestRayEdgeT<Detached> result = initialize_nearest_ray_edge_result<Detached>(query_count);
@@ -1827,10 +2039,10 @@ NearestEdgesTopKT<Detached> Scene::nearest_edges(const Vector3fT<Detached>& poin
     require(!pending_updates_, "Scene::nearest_edges(point): scene has pending updates. Call Scene::sync() first.");
     require(k > 0, "Scene::nearest_edges(point): k must be positive.");
     require(k <= 16, "Scene::nearest_edges(point): k must be <= 16.");
-    require_build_device("Scene::nearest_edges(point)");
+    require_inputs_on_build_device("Scene::nearest_edges(point)", point, active);
 
     const int query_count = static_cast<int>(slices(point));
-    const int output_count = query_count * k;
+    const int output_count = checked_slot_count(query_count, k, "Scene::nearest_edges(point): queries x k");
     NearestEdgesTopKT<Detached> result;
     result.query_count = query_count;
     result.k = k;
@@ -1964,7 +2176,10 @@ IntersectionT<Detached> Scene::intersect(const RayT<Detached>& ray, MaskT<Detach
     require(is_ready(), "Scene::intersect(): scene is not built.");
     require(!pending_updates_, "Scene::intersect(): scene has pending updates. Call Scene::sync() first.");
 
+    require_inputs_on_build_device("Scene::intersect()", ray, active);
+
     const int ray_count = static_cast<int>(slices(ray.o));
+    require(ray_count > 0, "Scene::intersect(): empty ray batch.");
     const bool want_geo_n = has_flag(flags, RayFlags::Geometric);
     const bool want_shading = has_flag(flags, RayFlags::ShadingN);
     const bool want_uv = has_flag(flags, RayFlags::UV);
@@ -3422,7 +3637,7 @@ class DfrDirectAccumOp : public RaydCustomOp<DfrAccumAD, DfrDirectAccumOpInput> 
     }
 
     void forward() override {
-        const int grid_cell_count = grid_.resolution0 * grid_.resolution1;
+        const int grid_cell_count = checked_slot_count(grid_.resolution0, grid_.resolution1, "accum_dfr: grid cells");
         DfrAccum output = zero_dfr_accum_grad(grid_cell_count);
         if (m_tape_.launch_count <= 0) {
             set_dfr_accum_output_grad(this->registered_output, output);
@@ -3731,7 +3946,7 @@ class DfrChainAccumOp : public RaydCustomOp<DfrAccumAD, DfrChainAccumOpInput> {
     }
 
     void forward() override {
-        const int grid_cell_count = grid_.resolution0 * grid_.resolution1;
+        const int grid_cell_count = checked_slot_count(grid_.resolution0, grid_.resolution1, "accum_dfr: grid cells");
         DfrAccum output = zero_dfr_accum_grad(grid_cell_count);
         if (m_tape_.launch_count <= 0) {
             set_dfr_accum_output_grad(this->registered_output, output);

@@ -481,6 +481,10 @@ SegmentChainVisibilityT<Detached> trace_segment_chain_visibility_cuda(
 template <bool Detached> MaskT<Detached> Scene::shadow_test(const RayT<Detached>& ray, MaskT<Detached> active) const {
     require(is_ready(), "Scene::shadow_test(): scene is not built.");
     require(!pending_updates_, "Scene::shadow_test(): scene has pending updates. Call Scene::sync() first.");
+    require_inputs_on_build_device("Scene::shadow_test()", ray, active);
+    if (slices(ray.o) == 0) {
+        return MaskT<Detached>();
+    }
 
     if (triangle_kind_ == TraceBackendKind::Cuda) {
         require(!jit_flag(JitFlag::Recording),
@@ -505,6 +509,7 @@ SegmentVisibilityT<Detached> Scene::visible(const Vector3fT<Detached>& start, co
                                             const Int& ignore_prim_ids, MaskT<Detached> active) const {
     require(is_ready(), "Scene::visible(): scene is not built.");
     require(!pending_updates_, "Scene::visible(): scene has pending updates. Call Scene::sync() first.");
+    require_inputs_on_build_device("Scene::visible()", start, end, ignore_prim_ids, active);
 
     const int ray_count = static_cast<int>(slices(start));
     require(static_cast<int>(slices(end)) == ray_count, "Scene::visible(): start and end must have the same width.");
@@ -560,6 +565,7 @@ SegmentPairVisibilityT<Detached> Scene::visible_pair(const Vector3fT<Detached>& 
                                                      MaskT<Detached> active) const {
     require(is_ready(), "Scene::visible_pair(): scene is not built.");
     require(!pending_updates_, "Scene::visible_pair(): scene has pending updates. Call Scene::sync() first.");
+    require_inputs_on_build_device("Scene::visible_pair()", start, end_a, end_b, ignore_prim_ids, active);
 
     const int ray_count = static_cast<int>(slices(start));
     require(static_cast<int>(slices(end_a)) == ray_count && static_cast<int>(slices(end_b)) == ray_count,
@@ -699,6 +705,7 @@ SegmentChainVisibilityT<Detached> Scene::visible_chain(const Vector3fT<Detached>
                                                        MaskT<Detached> active) const {
     require(is_ready(), "Scene::visible_chain(): scene is not built.");
     require(!pending_updates_, "Scene::visible_chain(): scene has pending updates. Call Scene::sync() first.");
+    require_inputs_on_build_device("Scene::visible_chain()", points, chain_length, ignore_prim_per_segment, active);
 
     const int chain_count = static_cast<int>(slices(chain_length));
     const int point_count = static_cast<int>(slices(points));

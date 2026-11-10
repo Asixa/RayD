@@ -3,7 +3,10 @@
 
 #pragma once
 
+#include <array>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include <rayd/jit/core.h>
 #include <rayd/jit/edge.h>
@@ -91,6 +94,8 @@ class Mesh final {
     const Vector3fAD& vertex_positions() const { return vertex_positions_object_; }
     void set_vertex_positions(const Vector3fAD& positions) {
         vertex_positions_object_ = positions;
+        if (static_cast<int>(slices(positions)) != vertex_count_)
+            face_indices_in_range_ = false;
         vertex_count_ = static_cast<int>(slices(positions));
         world_positions_dirty_ = true;
         secondary_edge_info_dirty_ = true;
@@ -105,6 +110,7 @@ class Mesh final {
     const Vector2fAD& vertex_uv() const { return vertex_uv_; }
     void set_vertex_uv(const Vector2fAD& uv) {
         vertex_uv_ = uv;
+        face_uv_indices_in_range_ = false;
         has_uv_ = slices(uv) > 0;
         is_ready_ = false;
     }
@@ -113,19 +119,27 @@ class Mesh final {
     void set_face_indices(const Vector3iAD& indices) {
         face_vertex_indices_ = indices;
         face_count_ = static_cast<int>(slices(indices));
+        face_indices_in_range_ = false;
         optix_face_buffer_dirty_ = true;
+        edge_topology_dirty_ = true;
+        secondary_edge_info_dirty_ = true;
         is_ready_ = false;
     }
 
     const Vector3iAD& face_uv_indices() const { return face_uv_indices_; }
     void set_face_uv_indices(const Vector3iAD& indices) {
         face_uv_indices_ = indices;
+        face_uv_indices_in_range_ = false;
         is_ready_ = false;
     }
 
     /// Per-edge connectivity, packed as (vertex0, vertex1, face0, face1, opposite_vertex);
-    /// face1 is -1 for boundary edges.
-    const VectoriT<5, true>& edge_indices() const { return edge_indices_; }
+    /// face1 is -1 for boundary edges. Throws when the faces admit no supported edge topology.
+    const VectoriT<5, true>& edge_indices() const {
+        require(!edge_topology_dirty_, "Mesh::edge_indices(): face indices changed; call build() first.");
+        require(edge_topology_error_.empty(), edge_topology_error_);
+        return edge_indices_;
+    }
     /// World-space per-edge data used by edge queries; computed lazily.
     const SecondaryEdgeInfoAD* secondary_edge_info() const;
     /// World-space cached triangle geometry; null until build().
@@ -141,6 +155,8 @@ class Mesh final {
     std::string to_string() const;
 
   private:
+    /// Rebuild edge_indices_ from host face indices; returns the edge record count.
+    int rebuild_edge_topology(const std::array<std::vector<int>, 3>& face_indices);
     void update_world_triangle_info();
     void update_secondary_edge_info();
     void update_optix_vertex_buffer();
@@ -172,6 +188,14 @@ class Mesh final {
     Vector3iAD face_vertex_indices_;
     Vector3iAD face_uv_indices_;
     VectoriT<5, true> edge_indices_;
+    // Why the faces admit no supported edge topology; empty when edge_indices_ is valid.
+    std::string edge_topology_error_;
+    // Set when the face indices changed since edge_indices_ was built.
+    bool edge_topology_dirty_ = false;
+    // Whether the face (UV) indices were checked on the host against the current vertex (UV) count, so build()
+    // need not check them on the device.
+    bool face_indices_in_range_ = false;
+    bool face_uv_indices_in_range_ = false;
 
     std::unique_ptr<TriangleInfoAD> triangle_info_object_;
     std::unique_ptr<TriangleInfoAD> triangle_info_;

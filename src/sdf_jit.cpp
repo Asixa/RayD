@@ -3,6 +3,7 @@
 
 #include <rayd/jit/sdf.h>
 
+#include <src/scene/scene_internal_jit.h>
 #include <src/sdf_jit.h>
 
 #include <drjit-core/jit.h>
@@ -250,7 +251,7 @@ template <bool Detached> ReflectionChainT<Detached> initialize_sdf_chain(int ray
     ReflectionChainT<Detached> result;
     result.max_bounces = max_bounces;
     result.ray_count = ray_count;
-    const int slot_count = ray_count * max_bounces;
+    const int slot_count = checked_slot_count(ray_count, max_bounces, "SdfGrid::trace_reflections()");
     result.bounce_count = zeros<IntT<Detached>>(ray_count);
     result.discovery_count = zeros<IntT<Detached>>(ray_count);
     result.representative_ray_index = full<IntT<Detached>>(-1, ray_count);

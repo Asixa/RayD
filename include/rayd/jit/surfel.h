@@ -418,6 +418,10 @@ class SurfelScene {
   private:
     void build_triangle_buffers();
     void validate_trace_options(const char* context) const;
+    /// Reject a query issued while another Dr.Jit CUDA device is current, or with an evaluated input array that
+    /// lives on another device: the proxy geometry and OptiX resources belong to the device build() ran on.
+    template <typename... Inputs>
+    void require_inputs_on_build_device(const char* context, const Inputs&... inputs) const;
     void refresh_detached_appearance();
     int render_channel_count(const SurfelRenderOptions& render_options) const;
 
@@ -427,6 +431,7 @@ class SurfelScene {
     SurfelTraceOptions options_;
     bool ready_ = false;
     int build_count_ = 0;
+    int build_device_ = -1;
     int vertex_count_ = 0;
     int triangle_count_ = 0;
 

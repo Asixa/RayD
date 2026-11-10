@@ -491,6 +491,30 @@ enum class EdgeBVHBackend {
     Hybrid [[deprecated("use EdgeBVHBackend::OptixDrJit")]] = OptixDrJit
 };
 
+/// Throws when the evaluated Dr.Jit variable \p index is backed by memory of a CUDA device other than the current
+/// one. Literal, unevaluated, and symbolic variables have no buffer yet and pass.
+void require_jit_variable_on_current_device(uint32_t index, const char* context);
+
+/// require_jit_variable_on_current_device() for every leaf of a Dr.Jit array or ray.
+template <typename T> void require_array_on_current_device(const T& value, const char* context) {
+    if constexpr (drjit::depth_v<T> > 1) {
+        for (size_t i = 0; i < value.size(); ++i) {
+            require_array_on_current_device(value.entry(i), context);
+        }
+    } else if constexpr (drjit::depth_v<T> == 1) {
+        require_jit_variable_on_current_device(static_cast<uint32_t>(drjit::detach<false>(value).index()), context);
+    } else if constexpr (drjit::is_drjit_struct_v<T>) {
+        drjit::traverse_1(drjit::fields(value),
+                          [context](const auto& field) { require_array_on_current_device(field, context); });
+    }
+}
+
+template <typename Float_> void require_array_on_current_device(const RayData<Float_>& ray, const char* context) {
+    require_array_on_current_device(ray.o, context);
+    require_array_on_current_device(ray.d, context);
+    require_array_on_current_device(ray.tmax, context);
+}
+
 /// Collection of built meshes and the acceleration data required for intersection queries.
 class Scene final {
   public:
@@ -760,6 +784,15 @@ class Scene final {
     // the Dr.Jit CUDA device that ran build(); \p context names the failing
     // entry point in the error message.
     void require_build_device(const char* context) const;
+    /// require_build_device(), and also reject an evaluated input array that lives on another CUDA device: Dr.Jit
+    /// does not record an array's device, so a kernel that reads another device's buffer faults.
+    template <typename... Inputs>
+    void require_inputs_on_build_device(const char* context, const Inputs&... inputs) const {
+        require_build_device(context);
+        if (build_device_ >= 0) {
+            (require_array_on_current_device(inputs, context), ...);
+        }
+    }
     int mesh_count_ = 0;
     std::vector<SceneMeshRecord> mesh_records_;
 

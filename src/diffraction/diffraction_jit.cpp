@@ -115,6 +115,7 @@ DfrPathsT<Detached> Scene::trace_dfr_paths(const Vector3fT<Detached>& tx_positio
     ScopedNativeLaunchStage native_launch_stage(NativeLaunchStage::AccumDfr);
     require(is_ready(), "Scene::trace_dfr_paths(): scene is not built.");
     require(!pending_updates_, "Scene::trace_dfr_paths(): scene has pending updates. Call Scene::sync() first.");
+    require_inputs_on_build_device("Scene::trace_dfr_paths()", tx_positions, rx_positions, states, material, active);
     require(options.wavelength > 0.f, "Scene::trace_dfr_paths(): wavelength must be positive.");
     require(options.max_order == 1, "Scene::trace_dfr_paths(): only max_order == 1 is supported.");
     require(options.max_paths > 0, "Scene::trace_dfr_paths(): max_paths must be positive.");
@@ -617,6 +618,15 @@ int dfr_accum_launch_count(const DfrOptions& options) {
            dfr_accum_suffix_sample_count(options);
 }
 
+/// Lane count of one diffraction-accumulation launch: the direct, Keller, and suffix sample segments laid end to end.
+/// Each segment must be non-negative and the total must fit the 32-bit lane index.
+int checked_dfr_lane_count(int direct_samples, int keller_samples, int suffix_samples, std::string_view what) {
+    require(direct_samples >= 0 && keller_samples >= 0 && suffix_samples >= 0,
+            std::string(what) + ": sample counts must be non-negative.");
+    const int64_t total = static_cast<int64_t>(direct_samples) + keller_samples + suffix_samples;
+    return checked_slot_count(total, 1, std::string(what) + ": total diffraction samples");
+}
+
 } // namespace
 
 void Scene::ensure_dfr_order1_accumulation_pipeline() const {
@@ -652,6 +662,7 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(const DfrStatesT<Detached>& states, 
     ScopedNativeLaunchStage native_launch_stage(NativeLaunchStage::AccumDfr);
     require(is_ready(), "Scene::accum_dfr_direct(): scene is not built.");
     require(!pending_updates_, "Scene::accum_dfr_direct(): scene has pending updates. Call Scene::sync() first.");
+    require_inputs_on_build_device("Scene::accum_dfr_direct()", states, material, active);
     require(grid.axis >= 0 && grid.axis <= 2, "Scene::accum_dfr_direct(): grid.axis must be 0, 1, or 2.");
     require(grid.resolution0 > 0 && grid.resolution1 > 0,
             "Scene::accum_dfr_direct(): grid resolution must be positive.");
@@ -662,7 +673,8 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(const DfrStatesT<Detached>& states, 
     require(options.max_order == 1, "Scene::accum_dfr_direct(): only max_order == 1 is supported.");
 
     DfrAccumT<Detached> result;
-    const int grid_cell_count = grid.resolution0 * grid.resolution1;
+    const int grid_cell_count =
+        checked_slot_count(grid.resolution0, grid.resolution1, "Scene::accum_dfr_direct(): grid cells");
     result.grid_cell_count = grid_cell_count;
     if constexpr (!Detached) {
         require_dfr_direct_custom_ad_supported(options);
@@ -726,7 +738,8 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(const DfrStatesT<Detached>& states, 
                                        : 0;
         const int keller_samples = (options.strategy_mask & RAYD_DFR_KELLER) != 0 ? options.keller_samples : 0;
         const int suffix_samples = (options.strategy_mask & RAYD_DFR_SUFFIX_REFL) != 0 ? options.suffix_samples : 0;
-        const int launch_count = direct_samples + keller_samples + suffix_samples;
+        const int launch_count =
+            checked_dfr_lane_count(direct_samples, keller_samples, suffix_samples, "Scene::accum_dfr_direct()");
         if (launch_count <= 0) {
             return result;
         }
@@ -888,7 +901,8 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(const DfrStatesT<Detached>& states, 
                                        : 0;
         const int keller_samples = (options.strategy_mask & RAYD_DFR_KELLER) != 0 ? options.keller_samples : 0;
         const int suffix_samples = (options.strategy_mask & RAYD_DFR_SUFFIX_REFL) != 0 ? options.suffix_samples : 0;
-        const int launch_count = direct_samples + keller_samples + suffix_samples;
+        const int launch_count =
+            checked_dfr_lane_count(direct_samples, keller_samples, suffix_samples, "Scene::accum_dfr_direct()");
         if (launch_count <= 0) {
             return result;
         }
@@ -1128,6 +1142,7 @@ DfrAccumT<Detached> Scene::accum_dfr(const DfrStatesT<Detached>& initial_states,
     ScopedNativeLaunchStage native_launch_stage(NativeLaunchStage::AccumDfr);
     require(is_ready(), "Scene::accum_dfr(): scene is not built.");
     require(!pending_updates_, "Scene::accum_dfr(): scene has pending updates. Call Scene::sync() first.");
+    require_inputs_on_build_device("Scene::accum_dfr()", initial_states, recursive_states, material, active);
     require(grid.axis >= 0 && grid.axis <= 2, "Scene::accum_dfr(): grid.axis must be 0, 1, or 2.");
     require(grid.resolution0 > 0 && grid.resolution1 > 0, "Scene::accum_dfr(): grid resolution must be positive.");
     require(grid.coord0_min < grid.coord0_max && grid.coord1_min < grid.coord1_max,
@@ -1138,7 +1153,8 @@ DfrAccumT<Detached> Scene::accum_dfr(const DfrStatesT<Detached>& initial_states,
             "Scene::accum_dfr(): only max_order 2 or 3 is supported.");
 
     DfrAccumT<Detached> result;
-    const int grid_cell_count = grid.resolution0 * grid.resolution1;
+    const int grid_cell_count =
+        checked_slot_count(grid.resolution0, grid.resolution1, "Scene::accum_dfr(): grid cells");
     result.grid_cell_count = grid_cell_count;
     if constexpr (!Detached) {
         require_dfr_chain_custom_ad_supported(options);
@@ -1211,7 +1227,8 @@ DfrAccumT<Detached> Scene::accum_dfr(const DfrStatesT<Detached>& initial_states,
                                        : 0;
         const int keller_samples = (options.strategy_mask & RAYD_DFR_KELLER) != 0 ? options.keller_samples : 0;
         const int suffix_samples = (options.strategy_mask & RAYD_DFR_SUFFIX_REFL) != 0 ? options.suffix_samples : 0;
-        const int launch_count = direct_samples + keller_samples + suffix_samples;
+        const int launch_count =
+            checked_dfr_lane_count(direct_samples, keller_samples, suffix_samples, "Scene::accum_dfr()");
         if (launch_count <= 0) {
             return result;
         }
@@ -1463,7 +1480,8 @@ DfrAccumT<Detached> Scene::accum_dfr(const DfrStatesT<Detached>& initial_states,
                                        : 0;
         const int keller_samples = (options.strategy_mask & RAYD_DFR_KELLER) != 0 ? options.keller_samples : 0;
         const int suffix_samples = (options.strategy_mask & RAYD_DFR_SUFFIX_REFL) != 0 ? options.suffix_samples : 0;
-        const int launch_count = direct_samples + keller_samples + suffix_samples;
+        const int launch_count =
+            checked_dfr_lane_count(direct_samples, keller_samples, suffix_samples, "Scene::accum_dfr()");
         if (launch_count <= 0) {
             return result;
         }
@@ -1836,6 +1854,7 @@ DfrCoherentUtdStatesT<Detached> Scene::build_dfr_coherent_tx_states(const DfrCoh
     require(is_ready(), "Scene::build_dfr_coherent_tx_states(): scene is not built.");
     require(!pending_updates_,
             "Scene::build_dfr_coherent_tx_states(): scene has pending updates. Call Scene::sync() first.");
+    require_inputs_on_build_device("Scene::build_dfr_coherent_tx_states()", edges, tx_position, material, active);
     require(options.wavelength > 0.f, "Scene::build_dfr_coherent_tx_states(): wavelength must be positive.");
     require(options.k > 0.f, "Scene::build_dfr_coherent_tx_states(): k must be positive.");
     if constexpr (!Detached) {
@@ -1876,7 +1895,7 @@ DfrCoherentUtdStatesT<Detached> Scene::build_dfr_coherent_tx_states(const DfrCoh
             require(
                 ignore_k > 0,
                 "Scene::build_dfr_coherent_tx_states(): ignore_k must be positive when ignore_prim_ids is provided.");
-            require(ignore_count == edge_count * ignore_k,
+            require(static_cast<int64_t>(ignore_count) == static_cast<int64_t>(edge_count) * ignore_k,
                     "Scene::build_dfr_coherent_tx_states(): ignore_prim_ids width must equal edge count * ignore_k.");
         } else {
             ignore_k = 0;
@@ -2017,6 +2036,8 @@ DfrCoherentCandidatePairsT<Detached> Scene::build_dfr_coherent_higher_candidates
     require(is_ready(), "Scene::build_dfr_coherent_higher_candidates(): scene is not built.");
     require(!pending_updates_,
             "Scene::build_dfr_coherent_higher_candidates(): scene has pending updates. Call Scene::sync() first.");
+    require_inputs_on_build_device("Scene::build_dfr_coherent_higher_candidates()", prev_states, edges,
+                                   global_to_local_edge_index, active);
     require(options.higher_probe_radius_scale > 0.f,
             "Scene::build_dfr_coherent_higher_candidates(): probe radius scale must be positive.");
     require(options.higher_probe_radius_min >= 0.f &&
@@ -2060,7 +2081,8 @@ DfrCoherentCandidatePairsT<Detached> Scene::build_dfr_coherent_higher_candidates
 
         constexpr int probe_count = 18;
         constexpr int probe_grid_count = probe_count / 2;
-        const int probe_lane_count = prev_count * probe_count;
+        const int probe_lane_count =
+            checked_slot_count(prev_count, probe_count, "Scene::build_dfr_coherent_higher_candidates(): probe lanes");
         const UInt probe_idx = arange<UInt>(probe_lane_count);
         const UInt prev_idx_all = probe_idx / UInt(probe_count);
         const UInt probe_slot = probe_idx - prev_idx_all * UInt(probe_count);
@@ -2142,6 +2164,7 @@ DfrCoherentAccumT<Detached> Scene::accum_dfr_coherent_direct(const DfrCoherentUt
     require(is_ready(), "Scene::accum_dfr_coherent_direct(): scene is not built.");
     require(!pending_updates_,
             "Scene::accum_dfr_coherent_direct(): scene has pending updates. Call Scene::sync() first.");
+    require_inputs_on_build_device("Scene::accum_dfr_coherent_direct()", states, active);
     require(grid.axis >= 0 && grid.axis <= 2, "Scene::accum_dfr_coherent_direct(): grid.axis must be 0, 1, or 2.");
     require(grid.resolution0 > 0 && grid.resolution1 > 0,
             "Scene::accum_dfr_coherent_direct(): grid resolution must be positive.");
@@ -2206,8 +2229,10 @@ DfrCoherentAccumT<Detached> Scene::accum_dfr_coherent_direct(const DfrCoherentUt
                     static_cast<int>(slices(states.adjacent_face0)) >= state_count &&
                     static_cast<int>(slices(states.adjacent_face1)) >= state_count,
                 "Scene::accum_dfr_coherent_direct(): full UTD state fields must cover state count.");
-        const int grid_cell_count = grid.resolution0 * grid.resolution1;
-        const int launch_count = state_count * grid_cell_count;
+        const int grid_cell_count =
+            checked_slot_count(grid.resolution0, grid.resolution1, "Scene::accum_dfr_coherent_direct(): grid cells");
+        const int launch_count =
+            checked_slot_count(state_count, grid_cell_count, "Scene::accum_dfr_coherent_direct(): states x grid cells");
         require(launch_count > 0, "Scene::accum_dfr_coherent_direct(): invalid launch count.");
 
         Mask active_detached = active;
@@ -2442,6 +2467,7 @@ DfrCoherentAccumT<Detached> Scene::accum_dfr_coherent_direct(const DfrStatesT<De
     require(is_ready(), "Scene::accum_dfr_coherent_direct(): scene is not built.");
     require(!pending_updates_,
             "Scene::accum_dfr_coherent_direct(): scene has pending updates. Call Scene::sync() first.");
+    require_inputs_on_build_device("Scene::accum_dfr_coherent_direct()", states, material, active);
     require(grid.axis >= 0 && grid.axis <= 2, "Scene::accum_dfr_coherent_direct(): grid.axis must be 0, 1, or 2.");
     require(grid.resolution0 > 0 && grid.resolution1 > 0,
             "Scene::accum_dfr_coherent_direct(): grid resolution must be positive.");
@@ -2485,8 +2511,10 @@ DfrCoherentAccumT<Detached> Scene::accum_dfr_coherent_direct(const DfrStatesT<De
                 "Scene::accum_dfr_coherent_direct(): material payload fields must have matching widths.");
 
         DfrCoherentAccum result;
-        const int grid_cell_count = grid.resolution0 * grid.resolution1;
-        const int launch_count = state_count * grid_cell_count;
+        const int grid_cell_count =
+            checked_slot_count(grid.resolution0, grid.resolution1, "Scene::accum_dfr_coherent_direct(): grid cells");
+        const int launch_count =
+            checked_slot_count(state_count, grid_cell_count, "Scene::accum_dfr_coherent_direct(): states x grid cells");
         result.grid_cell_count = grid_cell_count;
         require(launch_count > 0, "Scene::accum_dfr_coherent_direct(): invalid launch count.");
 

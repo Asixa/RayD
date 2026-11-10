@@ -10,7 +10,9 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cstdint>
@@ -19,6 +21,9 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
+
+#include <cuda_runtime_api.h>
 
 #if defined(_WIN32)
 #define NOMINMAX
@@ -254,8 +259,16 @@ HMODULE probe_load_optix_module() {
     return optix_load_windows_dll_from_driver_store("nvoptix.dll");
 }
 #elif defined(__linux__) || defined(__APPLE__)
+// The loader's message for the last failed load, kept for the fallback warning.
+std::string optix_module_load_error;
+
 void* probe_load_optix_module() {
-    return dlopen("libnvoptix.so.1", RTLD_LAZY | RTLD_LOCAL);
+    void* module = dlopen("libnvoptix.so.1", RTLD_LAZY | RTLD_LOCAL);
+    if (module == nullptr) {
+        const char* error = dlerror();
+        optix_module_load_error = error != nullptr ? error : "";
+    }
+    return module;
 }
 #else
 void* probe_load_optix_module() {
@@ -288,8 +301,48 @@ using OptixDeviceContextDestroyFn = OptixResult (*)(OptixDeviceContext);
 constexpr OptixResult kOptixErrorNotCompatible = 7400;
 constexpr OptixResult kOptixErrorNotSupported = 7800;
 
+#if defined(_WIN32)
+constexpr const char* kOptixLibraryName = "nvoptix.dll";
+#else
+constexpr const char* kOptixLibraryName = "libnvoptix.so.1";
+#endif
+
 std::mutex optix_capability_mutex;
 std::map<std::pair<int, std::uintptr_t>, bool> optix_capability_cache;
+// Why optix_available() reported false, per cached device and context.
+std::map<std::pair<int, std::uintptr_t>, std::string> optix_unavailable_reasons;
+
+std::string optix_library_missing_reason() {
+    std::string reason = std::string("the driver's OptiX library (") + kOptixLibraryName +
+                         ") could not be loaded (OPTIX_ERROR_LIBRARY_NOT_FOUND";
+#if defined(__linux__) || defined(__APPLE__)
+    if (!optix_module_load_error.empty())
+        reason += ": " + optix_module_load_error;
+#endif
+    return reason + "); in a container, start it with NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility "
+                    "(or all), because the default compute,utility does not mount it";
+}
+
+std::string optix_driver_too_old_reason() {
+    int driver_version = 0;
+    const std::string driver = cudaDriverGetVersion(&driver_version) == cudaSuccess
+                                   ? "this driver supports CUDA " + std::to_string(driver_version / 1000) + "." +
+                                         std::to_string((driver_version % 1000) / 10)
+                                   : "the driver version is unknown";
+    // OptiX 8.1 (ABI 93), the release-wheel SDK, first shipped in driver R555.
+    const std::string minimum = RAYD_OPTIX_TARGET_ABI == 93
+                                    ? "R555 or newer"
+                                    : "one that ships OptiX ABI " + std::to_string(RAYD_OPTIX_TARGET_ABI);
+    return "the NVIDIA driver is older than the OptiX ABI " + std::to_string(RAYD_OPTIX_TARGET_ABI) +
+           " this build requests (OPTIX_ERROR_UNSUPPORTED_ABI_VERSION; " + driver + "); update it to " + minimum;
+}
+
+// Record that OptiX is unusable for this device and context, and why.
+bool cache_optix_unavailable(const std::pair<int, std::uintptr_t>& key, std::string reason) {
+    optix_capability_cache.emplace(key, false);
+    optix_unavailable_reasons.emplace(key, std::move(reason));
+    return false;
+}
 
 } // namespace
 
@@ -347,15 +400,13 @@ bool optix_available() {
     // Retain one process-lifetime driver-module reference. Repeated scene
     // construction must not accumulate dlopen reference counts on Linux.
     static auto module = probe_load_optix_module();
-    if (!module) {
-        optix_capability_cache.emplace(key, false);
-        return false;
-    }
+    if (!module)
+        return cache_optix_unavailable(key, optix_library_missing_reason());
 
     OptixQueryFunctionTableFn query_fn = optix_query_function_table(module);
     if (query_fn == nullptr) {
-        optix_capability_cache.emplace(key, false);
-        return false;
+        return cache_optix_unavailable(key, std::string("the driver's OptiX library (") + kOptixLibraryName +
+                                                ") does not export optixQueryFunctionTable");
     }
 
     // OptiX 8.1 ABI-93 contains exactly 50 pointer-sized entries. Query a
@@ -365,10 +416,8 @@ bool optix_available() {
     std::array<void*, 50> function_table = {};
     const OptixResult abi_probe =
         query_fn(RAYD_OPTIX_TARGET_ABI, 0, nullptr, nullptr, function_table.data(), sizeof(function_table));
-    if (abi_probe == 7801) {
-        optix_capability_cache.emplace(key, false);
-        return false;
-    }
+    if (abi_probe == 7801)
+        return cache_optix_unavailable(key, optix_driver_too_old_reason());
     if (abi_probe != 0) {
         throw std::runtime_error("OptiX ABI capability probe failed with error code " + std::to_string(abi_probe) +
                                  ".");
@@ -384,8 +433,10 @@ bool optix_available() {
     OptixDeviceContext temporary_context = nullptr;
     const OptixResult create_result = create_context(cuda_context, &options, &temporary_context);
     if (create_result == kOptixErrorNotSupported || create_result == kOptixErrorNotCompatible) {
-        optix_capability_cache.emplace(key, false);
-        return false;
+        return cache_optix_unavailable(key, create_result == kOptixErrorNotSupported
+                                                ? "OptiX does not support this device (OPTIX_ERROR_NOT_SUPPORTED)"
+                                                : "OptiX is not compatible with this device "
+                                                  "(OPTIX_ERROR_NOT_COMPATIBLE)");
     }
     if (create_result != 0) {
         throw std::runtime_error("OptiX device capability probe failed with error code " +
@@ -399,6 +450,31 @@ bool optix_available() {
     }
     optix_capability_cache.emplace(key, true);
     return true;
+}
+
+void warn_optix_auto_fallback_once() {
+    // RAYD_DISABLE_OPTIX is an explicit choice of the CUDA trace backend, so it stays silent.
+    if (env_disables_optix())
+        return;
+    const int device = jit_cuda_device();
+    const auto key = std::make_pair(device, reinterpret_cast<std::uintptr_t>(jit_cuda_context()));
+    std::string reason = "the OptiX capability probe reported it unusable";
+    {
+        std::lock_guard<std::mutex> lock(optix_capability_mutex);
+        const auto found = optix_unavailable_reasons.find(key);
+        if (found != optix_unavailable_reasons.end())
+            reason = found->second;
+    }
+    static std::atomic<bool> warned{false};
+    if (warned.exchange(true))
+        return;
+    // Written to stderr like the Torch backend's warning, so C++ callers see it too.
+    std::fprintf(stderr,
+                 "RayD: OptiX is unavailable on CUDA device %d, so trace_backend='auto' uses the slower CUDA trace "
+                 "backend: %s. Pass trace_backend='cuda' to choose it explicitly, set RAYD_DISABLE_OPTIX=1 to silence "
+                 "this, or run `python -m rayd.drjit.doctor` for a full report.\n",
+                 device, reason.c_str());
+    std::fflush(stderr);
 }
 
 void check_optix(OptixResult result, const char* message) {
@@ -755,6 +831,91 @@ void check_cuda(cudaError_t result, const char* message) {
     require(result == cudaSuccess, std::string(message) + ": " + cudaGetErrorString(result));
 }
 
+/// OptiX failed to compile the multipath module or to create or link its pipeline, as opposed to a resource, device,
+/// or usage error. shared_optix_launch_pipeline() retries only these.
+class OptixPipelineCompileError : public std::runtime_error {
+  public:
+    using std::runtime_error::runtime_error;
+};
+
+/// Throw OptixPipelineCompileError carrying the OptiX result code and compiler log when \p result is an error.
+void check_optix_compile(OptixResult result, const char* what, const char* log, size_t log_size, size_t log_capacity) {
+    if (result == 0) {
+        return;
+    }
+    std::string message = std::string("OptiX error in ") + what + ": code=" + std::to_string(result);
+    const size_t log_length = strnlen(log, std::min(log_size, log_capacity));
+    if (log_length > 0) {
+        message += " log=" + std::string(log, log_length);
+    }
+    throw OptixPipelineCompileError(message);
+}
+
+/// Layout of OptixStackSizes, unchanged across the OptiX ABIs RayD accepts.
+struct OptixProgramStackSizes {
+    unsigned int css_rg = 0;
+    unsigned int css_ms = 0;
+    unsigned int css_ch = 0;
+    unsigned int css_ah = 0;
+    unsigned int css_is = 0;
+    unsigned int css_cc = 0;
+    unsigned int dss_dc = 0;
+};
+
+/// Continuation stack a multipath pipeline needs: its program groups trace to depth one and use no callables, so
+/// this is optixUtilComputeStackSizes() with maxTraceDepth = 1 over OptiX's own per-program stack report.
+unsigned int multipath_continuation_stack_size(const std::vector<OptixProgramGroup>& groups, OptixPipeline pipeline) {
+    using GetStackSizeFn = OptixResult (*)(OptixProgramGroup, OptixProgramStackSizes*, OptixPipeline);
+    static const auto get_stack_size =
+        reinterpret_cast<GetStackSizeFn>(jit_optix_lookup("optixProgramGroupGetStackSize"));
+    OptixProgramStackSizes total;
+    for (OptixProgramGroup group : groups) {
+        OptixProgramStackSizes sizes;
+        check_optix(get_stack_size(group, &sizes, pipeline), "optixProgramGroupGetStackSize(multipath)");
+        total.css_rg = std::max(total.css_rg, sizes.css_rg);
+        total.css_ms = std::max(total.css_ms, sizes.css_ms);
+        total.css_ch = std::max(total.css_ch, sizes.css_ch);
+        total.css_ah = std::max(total.css_ah, sizes.css_ah);
+        total.css_is = std::max(total.css_is, sizes.css_is);
+    }
+    return total.css_rg + std::max(std::max(total.css_ch, total.css_ms), total.css_is + total.css_ah);
+}
+
+/// Enables or disables the OptiX disk cache of \p context for the guard's lifetime, restoring it afterwards.
+class OptixDiskCacheGuard {
+  public:
+    using GetFn = OptixResult (*)(OptixDeviceContext, int*);
+    using SetFn = OptixResult (*)(OptixDeviceContext, int);
+
+    explicit OptixDiskCacheGuard(OptixDeviceContext context) : context_(context) {
+        static const auto get_enabled = reinterpret_cast<GetFn>(jit_optix_lookup("optixDeviceContextGetCacheEnabled"));
+        int enabled = 0;
+        if (get_enabled(context_, &enabled) == 0 && enabled != 0) {
+            check_optix(set_enabled()(context_, 0), "optixDeviceContextSetCacheEnabled(0)");
+            disabled_ = true;
+        }
+    }
+    ~OptixDiskCacheGuard() {
+        if (disabled_) {
+            set_enabled()(context_, 1);
+        }
+    }
+    OptixDiskCacheGuard(const OptixDiskCacheGuard&) = delete;
+    OptixDiskCacheGuard& operator=(const OptixDiskCacheGuard&) = delete;
+
+    /// False when the cache was already off, so a build under this guard would repeat the failed one.
+    bool disabled() const { return disabled_; }
+
+  private:
+    static SetFn set_enabled() {
+        static const auto set = reinterpret_cast<SetFn>(jit_optix_lookup("optixDeviceContextSetCacheEnabled"));
+        return set;
+    }
+
+    OptixDeviceContext context_;
+    bool disabled_ = false;
+};
+
 int hitgroup_record_capacity(int hitgroup_record_count) {
     constexpr int kMinHitgroupRecordCapacity = 64;
     int capacity = kMinHitgroupRecordCapacity;
@@ -762,6 +923,38 @@ int hitgroup_record_capacity(int hitgroup_record_count) {
         capacity *= 2;
     }
     return capacity;
+}
+
+/// Drop the cached pipelines of \p context that no scene still holds; returns how many were released. Their last
+/// launches may still be queued, so the device is drained before any is destroyed.
+size_t release_idle_pipelines(std::map<PipelineCacheKey, std::shared_ptr<OptixLaunchPipeline>>& cache,
+                              OptixDeviceContext context) {
+    bool drained = false;
+    size_t released = 0;
+    for (auto entry = cache.begin(); entry != cache.end();) {
+        if (std::get<0>(entry->first) == context && entry->second.use_count() == 1) {
+            if (!drained) {
+                jit_sync_device();
+                drained = true;
+            }
+            entry = cache.erase(entry);
+            ++released;
+        } else {
+            ++entry;
+        }
+    }
+    return released;
+}
+
+/// Report, once per process, that a multipath pipeline only built on a retry, with the first failure.
+void warn_pipeline_retry_once(const std::string& first_failure, const std::string& outcome) {
+    static bool warned = false;
+    if (warned) {
+        return;
+    }
+    warned = true;
+    jit_log(LogLevel::Warn, "RayD: building a multipath OptiX pipeline failed (%s); the rebuild %s.",
+            first_failure.c_str(), outcome.c_str());
 }
 
 } // namespace
@@ -824,17 +1017,21 @@ void OptixLaunchPipeline::build(OptixDeviceContext context, int hitgroup_record_
     pipeline_options.usesPrimitiveTypeFlags = static_cast<unsigned>(OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE);
     pipeline_options.allowOpacityMicromaps = 0;
 
-    char log[2048];
+    char log[8192] = {};
     size_t log_size = sizeof(log);
-    check_optix(optixModuleCreate(context, &module_options, &pipeline_options, config.ptx, config.ptx_size, log,
-                                  &log_size, &module_),
-                "optixModuleCreate(multipath)");
+    check_optix_compile(optixModuleCreate(context, &module_options, &pipeline_options, config.ptx, config.ptx_size, log,
+                                          &log_size, &module_),
+                        "optixModuleCreate(multipath)", log, log_size, sizeof(log));
 
-    for (const char* entry : config.raygen_entries) {
-        pg_raygens_.push_back(make_raygen_group(context, module_, entry));
+    try {
+        for (const char* entry : config.raygen_entries) {
+            pg_raygens_.push_back(make_raygen_group(context, module_, entry));
+        }
+        pg_miss_ = make_miss_group(context, module_, config.miss_entry);
+        pg_hitgroup_ = make_hitgroup(context, module_, config.closesthit_entry, config.anyhit_entry, nullptr);
+    } catch (const std::runtime_error& error) {
+        throw OptixPipelineCompileError(error.what());
     }
-    pg_miss_ = make_miss_group(context, module_, config.miss_entry);
-    pg_hitgroup_ = make_hitgroup(context, module_, config.closesthit_entry, config.anyhit_entry, nullptr);
 
     std::vector<OptixProgramGroup> groups = pg_raygens_;
     groups.push_back(pg_miss_);
@@ -848,11 +1045,15 @@ void OptixLaunchPipeline::build(OptixDeviceContext context, int hitgroup_record_
     link_options.maxTraversableGraphDepth = 2;
 
     log_size = sizeof(log);
-    check_optix(optixPipelineCreate(context, &pipeline_options, &link_options, groups.data(),
-                                    static_cast<unsigned int>(groups.size()), log, &log_size, &pipeline_),
-                "optixPipelineCreate(multipath)");
+    check_optix_compile(optixPipelineCreate(context, &pipeline_options, &link_options, groups.data(),
+                                            static_cast<unsigned int>(groups.size()), log, &log_size, &pipeline_),
+                        "optixPipelineCreate(multipath)", log, log_size, sizeof(log));
 
-    check_optix(optixPipelineSetStackSize(pipeline_, 0, 0, 4096, 2), "optixPipelineSetStackSize(multipath)");
+    continuation_stack_size_ = multipath_continuation_stack_size(groups, pipeline_);
+    jit_log(LogLevel::Debug, "RayD: multipath pipeline %s continuation stack %u bytes.", config.raygen_entries.front(),
+            continuation_stack_size_);
+    check_optix(optixPipelineSetStackSize(pipeline_, 0, 0, continuation_stack_size_, 2),
+                "optixPipelineSetStackSize(multipath)");
 
     for (OptixProgramGroup pg : pg_raygens_) {
         sbt_raygen_records_.push_back(make_sbt_record(pg));
@@ -918,8 +1119,50 @@ std::shared_ptr<OptixLaunchPipeline> shared_optix_launch_pipeline(OptixDeviceCon
         return it->second;
     }
 
-    auto pipeline = std::make_shared<OptixLaunchPipeline>();
-    pipeline->build(context, hitgroup_capacity, config);
+    const auto build_pipeline = [&]() {
+        auto pipeline = std::make_shared<OptixLaunchPipeline>();
+        pipeline->build(context, hitgroup_capacity, config);
+        return pipeline;
+    };
+
+    std::shared_ptr<OptixLaunchPipeline> pipeline;
+    try {
+        pipeline = build_pipeline();
+    } catch (const OptixPipelineCompileError& first_failure) {
+        // optixPipelineCreate() can fail for a valid multipath pipeline: some drivers cannot hold several large
+        // multipath pipelines in one context, and a damaged OptiX disk cache can fail large modules. Each retry
+        // builds the same module with the same options, so a pipeline it produces is the one the first attempt
+        // would have produced. Any other error propagates unchanged, and a final compile failure reports every
+        // attempt.
+        std::string failures = first_failure.what();
+        const size_t released = release_idle_pipelines(cache, context);
+        if (released > 0) {
+            try {
+                pipeline = build_pipeline();
+                warn_pipeline_retry_once(failures, "succeeded after releasing " + std::to_string(released) +
+                                                       " idle multipath pipeline(s) of this OptiX context");
+            } catch (const OptixPipelineCompileError& retry_failure) {
+                failures +=
+                    "; after releasing " + std::to_string(released) + " idle pipeline(s): " + retry_failure.what();
+            }
+        }
+        if (!pipeline) {
+            OptixDiskCacheGuard cache_off(context);
+            if (!cache_off.disabled()) {
+                throw OptixPipelineCompileError(failures);
+            }
+            try {
+                pipeline = build_pipeline();
+            } catch (const OptixPipelineCompileError& uncached_failure) {
+                throw OptixPipelineCompileError(failures +
+                                                "; with the OptiX disk cache disabled: " + uncached_failure.what());
+            }
+            warn_pipeline_retry_once(failures, "succeeded only with the OptiX disk cache disabled; that cache "
+                                               "(optix7cache.db in Dr.Jit's ~/.drjit directory) is likely damaged, "
+                                               "and every process pays a full compile of this module until it is "
+                                               "deleted");
+        }
+    }
     cache[key] = pipeline;
     return pipeline;
 }

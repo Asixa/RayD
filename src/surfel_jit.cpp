@@ -9,6 +9,8 @@
 
 #include <rayd/jit/surfel.h>
 #include <rayd/jit/reflection.h>
+#include <rayd/jit/scene.h>
+#include <src/scene/scene_internal_jit.h>
 
 namespace rayd {
 
@@ -234,7 +236,7 @@ template <bool Detached> ReflectionChainT<Detached> initialize_surfel_chain(int 
     ReflectionChainT<Detached> result;
     result.max_bounces = max_bounces;
     result.ray_count = ray_count;
-    const int slot_count = ray_count * max_bounces;
+    const int slot_count = checked_slot_count(ray_count, max_bounces, "SurfelScene::trace_reflections()");
     result.bounce_count = zeros<IntT<Detached>>(ray_count);
     result.discovery_count = zeros<IntT<Detached>>(ray_count);
     result.representative_ray_index = full<IntT<Detached>>(-1, ray_count);
@@ -429,6 +431,27 @@ void SurfelScene::update_geometry(const SurfelGeometry& geometry) {
     ++build_count_;
 }
 
+template <typename... Inputs>
+void SurfelScene::require_inputs_on_build_device(const char* context, const Inputs&... inputs) const {
+    if (build_device_ < 0) {
+        return;
+    }
+    const int current_device = jit_cuda_device();
+    if (current_device != build_device_) {
+        throw std::runtime_error(std::string(context) +
+                                 " requires the Dr.Jit CUDA device the surfel scene was built "
+                                 "on (device " +
+                                 std::to_string(build_device_) +
+                                 "), but the current Dr.Jit CUDA "
+                                 "device is " +
+                                 std::to_string(current_device) + ". Call rayd.drjit.set_device(" +
+                                 std::to_string(build_device_) +
+                                 ") before querying, or rebuild the scene on the "
+                                 "current device.");
+    }
+    (require_array_on_current_device(inputs, context), ...);
+}
+
 void SurfelScene::build() {
     require(geometry_.surfel_count() > 0, "SurfelScene::build(): geometry is empty.");
     validate_trace_options("SurfelScene::build()");
@@ -443,6 +466,7 @@ void SurfelScene::build() {
     optix_scene_.build(optix_vertex_buffer_, optix_face_buffer_, vertex_count_, triangle_count_,
                        !options_.single_launch);
     ready_ = true;
+    build_device_ = jit_cuda_device();
     ++build_count_;
 }
 
@@ -452,8 +476,8 @@ void SurfelScene::build_triangle_buffers() {
     const bool use_quad = options_.primitive_mode == SurfelPrimitiveMode::QuadTriangles;
     const int vertices_per_surfel = use_icosahedron ? IcosahedronVertexCount : (use_quad ? 4 : 3);
     const int triangles_per_surfel = use_icosahedron ? IcosahedronFaceCount : (use_quad ? 2 : 1);
-    vertex_count_ = surfel_count * vertices_per_surfel;
-    triangle_count_ = surfel_count * triangles_per_surfel;
+    vertex_count_ = checked_slot_count(surfel_count, vertices_per_surfel, "SurfelScene::build(): proxy vertices");
+    triangle_count_ = checked_slot_count(surfel_count, triangles_per_surfel, "SurfelScene::build(): proxy triangles");
 
     Vector3fAD vertices_ad = empty<Vector3fAD>(vertex_count_);
     const IntAD base = arange<IntAD>(surfel_count) * vertices_per_surfel;
@@ -495,7 +519,7 @@ void SurfelScene::build_triangle_buffers() {
     }
 
     const Vector3f vertices = detach<false>(vertices_ad);
-    optix_vertex_buffer_ = empty<Float>(vertex_count_ * 3);
+    optix_vertex_buffer_ = empty<Float>(checked_slot_count(vertex_count_, 3, "SurfelScene::build(): vertex buffer"));
     const Int vertex_indices = arange<Int>(vertex_count_) * 3;
     for (int axis = 0; axis < 3; ++axis) {
         scatter(optix_vertex_buffer_, vertices[axis], vertex_indices + axis);
@@ -533,7 +557,7 @@ void SurfelScene::build_triangle_buffers() {
     }
 
     const Int face_index = triangle_id * 3;
-    optix_face_buffer_ = empty<Int>(triangle_count_ * 3);
+    optix_face_buffer_ = empty<Int>(checked_slot_count(triangle_count_, 3, "SurfelScene::build(): face buffer"));
     scatter(optix_face_buffer_, vertex_base + corner0, face_index + 0);
     scatter(optix_face_buffer_, vertex_base + corner1, face_index + 1);
     scatter(optix_face_buffer_, vertex_base + corner2, face_index + 2);
@@ -543,6 +567,7 @@ void SurfelScene::build_triangle_buffers() {
 template <bool Detached>
 SurfelIntersectionT<Detached> SurfelScene::intersect(const RayT<Detached>& ray, MaskT<Detached> active) const {
     require(ready_, "SurfelScene::intersect(): scene is not built.");
+    require_inputs_on_build_device("SurfelScene::intersect()", ray, active);
 
     const int ray_count = static_cast<int>(slices(ray.o));
     SurfelIntersectionT<Detached> result;
@@ -659,6 +684,8 @@ SurfelIntersectionT<Detached> SurfelScene::intersect(const RayT<Detached>& ray, 
 
 template <bool Detached>
 SurfelCompositeT<Detached> SurfelScene::composite_alpha(const RayT<Detached>& ray, MaskT<Detached> active) const {
+    require(ready_, "SurfelScene::composite_alpha(): scene is not built.");
+    require_inputs_on_build_device("SurfelScene::composite_alpha()", ray, active);
     if constexpr (!Detached) {
         if (options_.continue_after_full_buffer) {
             return composite_alpha_reference<Detached>(ray, active);
@@ -729,6 +756,7 @@ template <bool Detached>
 SurfelCompositeT<Detached> SurfelScene::composite_alpha_reference(const RayT<Detached>& ray,
                                                                   MaskT<Detached> active) const {
     require(ready_, "SurfelScene::composite_alpha_reference(): scene is not built.");
+    require_inputs_on_build_device("SurfelScene::composite_alpha_reference()", ray, active);
 
     const int ray_count = static_cast<int>(slices(ray.o));
     SurfelCompositeT<Detached> result;
@@ -828,6 +856,7 @@ template <bool Detached>
 SurfelRenderT<Detached> SurfelScene::render(const RayT<Detached>& ray, const SurfelRenderOptions& render_options,
                                             MaskT<Detached> active) const {
     require(ready_, "SurfelScene::render(): scene is not built.");
+    require_inputs_on_build_device("SurfelScene::render()", ray, active);
     const int ray_count = static_cast<int>(slices(ray.o));
     const int output_channels = render_channel_count(render_options);
     require(render_options.sh_degree >= 0 && render_options.sh_degree <= 3,
@@ -946,6 +975,8 @@ MaskT<Detached> SurfelScene::shadow_test(const RayT<Detached>& ray, MaskT<Detach
 template <bool Detached>
 MaskT<Detached> SurfelScene::visible(const Vector3fT<Detached>& start, const Vector3fT<Detached>& end,
                                      MaskT<Detached> active) const {
+    require(ready_, "SurfelScene::visible(): scene is not built.");
+    require_inputs_on_build_device("SurfelScene::visible()", start, end, active);
     const int ray_count = static_cast<int>(slices(start));
     const Vector3fT<Detached> delta = end - start;
     const FloatT<Detached> length_sq = squared_norm(delta);
@@ -964,6 +995,7 @@ template <bool Detached>
 ReflectionChainT<Detached> SurfelScene::trace_reflections(const RayT<Detached>& ray, int max_bounces,
                                                           MaskT<Detached> active) const {
     require(ready_, "SurfelScene::trace_reflections(): scene is not built.");
+    require_inputs_on_build_device("SurfelScene::trace_reflections()", ray, active);
     require(max_bounces >= 0, "SurfelScene::trace_reflections(): max_bounces must be non-negative.");
     const int ray_count = static_cast<int>(slices(ray.o));
     ReflectionChainT<Detached> result = initialize_surfel_chain<Detached>(ray_count, max_bounces);
@@ -1718,7 +1750,7 @@ SurfelOptixComposite SurfelOptixScene::composite_alpha(
     Mask valid = empty<Mask>(ray_count);
 
     const int k = max_candidate_hits;
-    const int scratch_count = ray_count * k;
+    const int scratch_count = checked_slot_count(ray_count, k, "SurfelOptixScene: rays x max_candidate_hits");
     Int scratch_surfel_id = empty<Int>(scratch_count);
     Float scratch_t = empty<Float>(scratch_count);
     Float scratch_alpha = empty<Float>(scratch_count);
@@ -1860,12 +1892,15 @@ SurfelOptixComposite SurfelOptixScene::render(
     Mask valid = empty<Mask>(ray_count);
 
     const int k = max_candidate_hits;
-    const int scratch_count = ray_count * k;
+    const int scratch_count = checked_slot_count(ray_count, k, "SurfelOptixScene: rays x max_candidate_hits");
     Int scratch_surfel_id = empty<Int>(scratch_count);
     Float scratch_t = empty<Float>(scratch_count);
     Float scratch_alpha = empty<Float>(scratch_count);
     Float scratch_value = empty<Float>(scratch_count);
-    composite.channels = render_channel_count > 0 ? empty<Float>(ray_count * render_channel_count) : Float();
+    composite.channels =
+        render_channel_count > 0
+            ? empty<Float>(checked_slot_count(ray_count, render_channel_count, "SurfelOptixScene::render(): channels"))
+            : Float();
     composite.normal = output_normal ? empty<Vector3f>(ray_count) : zeros<Vector3f>(ray_count);
     Int candidate_count = collect_candidate_stats ? empty<Int>(ray_count) : zeros<Int>(ray_count);
     Mask candidate_buffer_full = collect_candidate_stats ? empty<Mask>(ray_count) : full<Mask>(false, ray_count);

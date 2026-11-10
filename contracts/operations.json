@@ -537,6 +537,10 @@
       "result": "intersection",
       "id_spaces": {"shape_id": "scene-shape", "local_prim_id": "shape-local", "global_prim_id": "scene-global"},
       "ad": "fixed-winner forward/VJP/JVP for continuous geometry fields",
+      "non_finite_vertices": {
+        "rule": "A NaN or infinite world-space vertex coordinate is rejected: building the scene, or syncing a vertex or transform update, raises an error naming the mesh id and the first offending vertex index, and a failed sync leaves its updates pending. OptiX would otherwise drop every triangle of the affected GAS.",
+        "implemented_in": ["drjit", "torch"]
+      },
       "backend_overrides": {
         "drjit": {"ray_tmin": 1e-3},
         "torch": {"ray_tmin": 1e-6}

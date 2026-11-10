@@ -104,7 +104,7 @@ template <bool Detached> ReflectionTraceT<Detached> initialize_reflection_trace_
 ReflectionTraceRaw allocate_reflection_trace_raw(int ray_count, int max_bounces,
                                                  int export_mode = RAYD_REFLECTION_EXPORT_FULL,
                                                  bool return_trailing = true, bool include_shape_ids = true) {
-    const int slot_count = ray_count * max_bounces;
+    const int slot_count = checked_slot_count(ray_count, max_bounces, "Scene::trace_reflections()");
     const bool full_export = export_mode == RAYD_REFLECTION_EXPORT_FULL;
     const bool minimal_export = export_mode == RAYD_REFLECTION_EXPORT_MINIMAL;
     const bool slot_ids_export = full_export || minimal_export;
@@ -155,7 +155,7 @@ ReflectionTraceRaw allocate_reflection_trace_raw(int ray_count, int max_bounces,
 
 void initialize_reflection_trace_raw(ReflectionTraceRaw& raw, bool initialize_bounce_count = true) {
     const int ray_count = raw.ray_count;
-    const int slot_count = raw.ray_count * raw.max_bounces;
+    const int slot_count = checked_slot_count(raw.ray_count, raw.max_bounces, "Scene::trace_reflections()");
     const int zero_i = 0;
     const int minus_one_i = -1;
     const float zero_f = 0.f;
@@ -255,7 +255,7 @@ template <typename ArrayD> ArrayD concat_array_sequence(const std::vector<ArrayD
 }
 
 Int reflection_trace_ray_major_indices(int ray_count, int max_bounces) {
-    const Int slot = arange<Int>(ray_count * max_bounces);
+    const Int slot = arange<Int>(checked_slot_count(ray_count, max_bounces, "Scene::trace_reflections()"));
     const Int ray_index = slot / Int(max_bounces);
     const Int bounce_index = slot - ray_index * Int(max_bounces);
     return bounce_index * Int(ray_count) + ray_index;
@@ -276,6 +276,12 @@ Vector3f surface_spawn_step(const Scene& scene, const IntT<Detached>& global_pri
     }
     return surface_spawn_step_jit(scene.triangle_info_detached(), prim, normal, prim >= 0);
 }
+
+/// Bounces fused into one lazy kernel by trace_bounces_impl() before the carried state is evaluated.
+constexpr int kBounceEvalInterval = 8;
+
+/// Most bounces the per-bounce (symbolic) trace accepts: it holds a dozen Dr.Jit arrays for every bounce.
+constexpr int kMaxSymbolicBounces = 1 << 16;
 
 template <bool Detached>
 ReflectionTraceT<Detached> trace_bounces_impl(const Scene& scene, const RayT<Detached>& ray, int max_bounces,
@@ -342,6 +348,23 @@ ReflectionTraceT<Detached> trace_bounces_impl(const Scene& scene, const RayT<Det
         current_ray.tmax = select(bounce_hit, full<FloatT<Detached>>(Infinity, ray_count), current_ray.tmax);
         current_image_source = select(bounce_hit, reflected_image_source, current_image_source);
         current_active = bounce_hit;
+
+        // Every bounce appends a ray trace to one lazily fused kernel whose compile time grows steeply with its
+        // length (64 bounces took 18 s to compile). Outside a symbolic recording, materialize the carried state and
+        // the finished bounces every kBounceEvalInterval bounces, so long chains run as a few repeated kernels.
+        if ((bounce + 1) % kBounceEvalInterval == 0 && bounce + 1 < max_bounces && !jit_flag(JitFlag::Recording)) {
+            for (int done = bounce + 1 - kBounceEvalInterval; done <= bounce; ++done) {
+                drjit::schedule(result.bounces[static_cast<size_t>(done)]);
+            }
+            drjit::eval(current_ray, current_active, current_image_source, result.bounce_count);
+            // Once no ray is active every later bounce is a miss, so record those without tracing.
+            if (drjit::none(detach<false>(current_active))) {
+                for (int rest = bounce + 1; rest < max_bounces; ++rest) {
+                    result.bounces.push_back(initialize_reflection_bounce_result<Detached>(ray_count));
+                }
+                break;
+            }
+        }
     }
 
     result.dedup_keep_mask = result.bounce_count > 0;
@@ -372,6 +395,11 @@ ReflectionTraceT<Detached> Scene::trace_bounces(const RayT<Detached>& ray, int m
     require(is_ready(), "Scene::trace_reflections(): scene is not built.");
     require(!pending_updates_, "Scene::trace_reflections(): scene has pending updates. Call Scene::sync() first.");
     require(max_bounces > 0, "Scene::trace_reflections(): max_bounces must be positive.");
+    require_inputs_on_build_device("Scene::trace_reflections()", ray, active);
+    require(max_bounces <= kMaxSymbolicBounces,
+            "Scene::trace_reflections(): symbolic=True keeps one result per bounce and supports at most " +
+                std::to_string(kMaxSymbolicBounces) + " bounces; use symbolic=False for longer chains.");
+    checked_slot_count(static_cast<int64_t>(slices(ray.o)), max_bounces, "Scene::trace_reflections()");
     return trace_bounces_impl<Detached>(*this, ray, max_bounces, options, active);
 }
 
@@ -383,6 +411,7 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached>& ray, i
     require(is_ready(), "Scene::trace_reflections(): scene is not built.");
     require(!pending_updates_, "Scene::trace_reflections(): scene has pending updates. Call Scene::sync() first.");
     require(max_bounces > 0, "Scene::trace_reflections(): max_bounces must be positive.");
+    require_inputs_on_build_device("Scene::trace_reflections()", ray, active);
     require(options.export_mode == RAYD_REFLECTION_EXPORT_FULL ||
                 options.export_mode == RAYD_REFLECTION_EXPORT_MINIMAL ||
                 options.export_mode == RAYD_REFLECTION_EXPORT_COUNT_ONLY,
@@ -608,7 +637,7 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached>& ray, i
                                  compacted.representative_ray_index.data());
 
         trace_ray_count = n_unique;
-        const int unique_slot_count = trace_ray_count * max_bounces;
+        const int unique_slot_count = checked_slot_count(trace_ray_count, max_bounces, "Scene::trace_reflections()");
         trace_bounce_count = prefix_array(compacted.bounce_count, trace_ray_count);
         trace_discovery_count = prefix_array(compacted.discovery_count, trace_ray_count);
         trace_representative_ray_index = prefix_array(compacted.representative_ray_index, trace_ray_count);
@@ -942,6 +971,7 @@ AccumResultT<Detached> Scene::accumulate_reflections(const RayT<Detached>& ray, 
     require(is_ready(), "Scene::accumulate_reflections(): scene is not built.");
     require(!pending_updates_, "Scene::accumulate_reflections(): scene has pending updates. Call Scene::sync() first.");
     require(max_bounces > 0, "Scene::accumulate_reflections(): max_bounces must be positive.");
+    require_inputs_on_build_device("Scene::accumulate_reflections()", ray, tx_position, active, tx_polarization);
     require(grid.axis >= 0 && grid.axis <= 2, "Scene::accumulate_reflections(): grid.axis must be 0, 1, or 2.");
     require(grid.resolution0 > 0 && grid.resolution1 > 0,
             "Scene::accumulate_reflections(): grid resolution must be positive.");
@@ -955,7 +985,8 @@ AccumResultT<Detached> Scene::accumulate_reflections(const RayT<Detached>& ray, 
     require(options.wedge_sample_stride >= 1, "Scene::accumulate_reflections(): wedge_sample_stride must be >= 1.");
 
     const int ray_count = static_cast<int>(slices(ray.o));
-    const int grid_cell_count = grid.resolution0 * grid.resolution1;
+    const int grid_cell_count =
+        checked_slot_count(grid.resolution0, grid.resolution1, "Scene::accumulate_reflections(): grid cells");
     AccumResultT<Detached> result;
     result.ray_count = ray_count;
     result.max_bounces = max_bounces;
@@ -1633,7 +1664,7 @@ template <bool Detached> ReflEpcT<Detached> init_refl_epc(int ray_count, int max
     ReflEpcT<Detached> result;
     result.ray_count = ray_count;
     result.max_bounces = max_bounces;
-    const int slot_count = ray_count * max_bounces;
+    const int slot_count = checked_slot_count(ray_count, max_bounces, "Scene::trace_refl_epc()");
     result.valid = full<MaskT<Detached>>(false, ray_count);
     result.bounce_count = full<IntT<Detached>>(0, ray_count);
     result.path_length = full<FloatT<Detached>>(Infinity, ray_count);
@@ -1650,7 +1681,7 @@ template <bool Detached> ReflEpcT<Detached> init_refl_epc(int ray_count, int max
 }
 
 ReflEpcRaw alloc_refl_epc_raw(int ray_count, int max_bounces) {
-    const int slot_count = ray_count * max_bounces;
+    const int slot_count = checked_slot_count(ray_count, max_bounces, "Scene::trace_refl_epc()");
     ReflEpcRaw raw;
     raw.ray_count = ray_count;
     raw.max_bounces = max_bounces;
@@ -1678,7 +1709,7 @@ ReflEpcFieldT<Detached> init_refl_epc_field(int ray_count, int max_bounces,
     ReflEpcFieldT<Detached> result;
     result.ray_count = ray_count;
     result.max_bounces = max_bounces;
-    const int slot_count = ray_count * max_bounces;
+    const int slot_count = checked_slot_count(ray_count, max_bounces, "Scene::trace_refl_epc_field()");
     const bool return_geom = options.return_geom;
     const bool return_endpoints = options.return_endpoints;
     const bool return_hit_points = return_geom && options.return_hit_points;
@@ -1756,6 +1787,9 @@ ReflEpcT<Detached> Scene::trace_refl_epc(const RayT<Detached>& ray, const Vector
     ScopedNativeLaunchStage native_launch_stage(NativeLaunchStage::TraceReflections);
     require(is_ready(), "Scene::trace_refl_epc(): scene is not built.");
     require(!pending_updates_, "Scene::trace_refl_epc(): scene has pending updates. Call Scene::sync() first.");
+    require_inputs_on_build_device("Scene::trace_refl_epc()", ray, receiver, active, options.expected_prim_ids,
+                                   options.surface_group_id, options.surface_group_size, options.surface_group_members,
+                                   options.final_ignore_group_ids);
     require(max_bounces > 0, "Scene::trace_refl_epc(): max_bounces must be positive.");
     require(max_bounces <= ReflEpcMaxBounces, "Scene::trace_refl_epc(): max_bounces exceeds the native EPC limit.");
 
@@ -1776,7 +1810,7 @@ ReflEpcT<Detached> Scene::trace_refl_epc(const RayT<Detached>& ray, const Vector
         const ReflEpcVisibilityIgnoreMode visibility_ignore_mode =
             parse_refl_epc_vis_ignore(options.visibility_ignore_mode);
         const bool surface_group_ignore = visibility_ignore_mode == ReflEpcVisibilityIgnoreMode::SurfaceGroup;
-        const int slot_count = ray_count * max_bounces;
+        const int slot_count = checked_slot_count(ray_count, max_bounces, "Scene::trace_refl_epc()");
         const int expected_prim_count = static_cast<int>(slices(options.expected_prim_ids));
         const int surface_group_id_count = static_cast<int>(slices(options.surface_group_id));
         const int surface_group_count = static_cast<int>(slices(options.surface_group_size));
@@ -1797,7 +1831,8 @@ ReflEpcT<Detached> Scene::trace_refl_epc(const RayT<Detached>& ray, const Vector
             require(
                 options.surface_max_group_size > 0,
                 "Scene::trace_refl_epc(): surface_max_group_size must be positive when surface groups are provided.");
-            require(surface_group_member_count >= surface_group_count * options.surface_max_group_size,
+            require(static_cast<int64_t>(surface_group_member_count) >=
+                        static_cast<int64_t>(surface_group_count) * options.surface_max_group_size,
                     "Scene::trace_refl_epc(): surface_group_members must contain surface_group_size * "
                     "surface_max_group_size entries.");
         }
@@ -1939,6 +1974,11 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(const RayT<Detached>& ray, c
     ScopedNativeLaunchStage native_launch_stage(NativeLaunchStage::TraceReflections);
     require(is_ready(), "Scene::trace_refl_epc_field(): scene is not built.");
     require(!pending_updates_, "Scene::trace_refl_epc_field(): scene has pending updates. Call Scene::sync() first.");
+    require_inputs_on_build_device("Scene::trace_refl_epc_field()", ray, receiver, active, options.expected_prim_ids,
+                                   options.surface_group_id, options.surface_group_size, options.surface_group_members,
+                                   options.final_ignore_group_ids, options.slot_plane_point, options.slot_plane_normal,
+                                   options.slot_eta_r, options.slot_mu_r, options.slot_sigma, options.slot_gain,
+                                   options.tx_polarization);
     require(max_bounces > 0, "Scene::trace_refl_epc_field(): max_bounces must be positive.");
     require(max_bounces <= ReflEpcMaxBounces,
             "Scene::trace_refl_epc_field(): max_bounces exceeds the native EPC limit.");
@@ -1959,7 +1999,7 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(const RayT<Detached>& ray, c
         const int receiver_count = static_cast<int>(slices(receiver));
         require(receiver_count == 1 || receiver_count == ray_count,
                 "Scene::trace_refl_epc_field(): receiver width must be 1 or match ray count.");
-        const int slot_count = ray_count * max_bounces;
+        const int slot_count = checked_slot_count(ray_count, max_bounces, "Scene::trace_refl_epc_field()");
         require(static_cast<int>(slices(options.slot_plane_normal)) == slot_count,
                 "Scene::trace_refl_epc_field(): slot_plane_normal width must be n_rays * max_bounces.");
         require(static_cast<int>(slices(options.slot_eta_r)) == slot_count,
@@ -2067,6 +2107,11 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(const Vector3fT<Detached>& t
     ScopedNativeLaunchStage native_launch_stage(NativeLaunchStage::TraceReflections);
     require(is_ready(), "Scene::trace_refl_epc_field(): scene is not built.");
     require(!pending_updates_, "Scene::trace_refl_epc_field(): scene has pending updates. Call Scene::sync() first.");
+    require_inputs_on_build_device("Scene::trace_refl_epc_field()", tx_position, receiver, active,
+                                   options.expected_prim_ids, options.surface_group_id, options.surface_group_size,
+                                   options.surface_group_members, options.final_ignore_group_ids,
+                                   options.slot_plane_point, options.slot_plane_normal, options.slot_eta_r,
+                                   options.slot_mu_r, options.slot_sigma, options.slot_gain, options.tx_polarization);
     require(max_bounces > 0, "Scene::trace_refl_epc_field(): max_bounces must be positive.");
     require(max_bounces <= ReflEpcMaxBounces,
             "Scene::trace_refl_epc_field(): max_bounces exceeds the native EPC limit.");
@@ -2083,7 +2128,7 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(const Vector3fT<Detached>& t
         const int receiver_count = static_cast<int>(slices(receiver));
         require(receiver_count == 1 || receiver_count == ray_count,
                 "Scene::trace_refl_epc_field(): receiver width must be 1 or match transmitter count.");
-        const int slot_count = ray_count * max_bounces;
+        const int slot_count = checked_slot_count(ray_count, max_bounces, "Scene::trace_refl_epc_field()");
         const int expected_prim_count = static_cast<int>(slices(options.expected_prim_ids));
         require(expected_prim_count == slot_count,
                 "Scene::trace_refl_epc_field(): expected_prim_ids width must be n_rays * max_bounces.");
@@ -2343,7 +2388,7 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(const Vector3fT<Detached>& t
         const int receiver_count = static_cast<int>(slices(receiver));
         require(receiver_count == 1 || receiver_count == ray_count,
                 "Scene::trace_refl_epc_field(): receiver width must be 1 or match transmitter count.");
-        const int slot_count = ray_count * max_bounces;
+        const int slot_count = checked_slot_count(ray_count, max_bounces, "Scene::trace_refl_epc_field()");
         const int expected_prim_count = static_cast<int>(slices(options.expected_prim_ids));
         require(expected_prim_count == slot_count,
                 "Scene::trace_refl_epc_field(): expected_prim_ids width must be n_rays * max_bounces.");
@@ -2382,7 +2427,8 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(const Vector3fT<Detached>& t
                                              "surface groups are provided.");
             require(options.surface_max_group_size > 0, "Scene::trace_refl_epc_field(): surface_max_group_size must be "
                                                         "positive when surface groups are provided.");
-            require(surface_group_member_count >= surface_group_count * options.surface_max_group_size,
+            require(static_cast<int64_t>(surface_group_member_count) >=
+                        static_cast<int64_t>(surface_group_count) * options.surface_max_group_size,
                     "Scene::trace_refl_epc_field(): surface_group_members must contain surface_group_size * "
                     "surface_max_group_size entries.");
         }

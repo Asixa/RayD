@@ -15,6 +15,7 @@
 
 #include <src/bvh_host.h>
 #include <src/bvh_topology.h>
+#include <src/scene/scene_internal_jit.h>
 
 namespace rayd {
 
@@ -22,6 +23,19 @@ namespace {
 
 constexpr int kTraversalStackDepth = shared::bvh::kBvhTraversalStackDepth;
 constexpr int kLeafSize = shared::bvh::kBvhLeafSize;
+
+/// Per-ray traversal stack scratch (kTraversalStackDepth slots per ray). The kernels index it with 64-bit offsets,
+/// so the only bound is the Dr.Jit variable size, which is 32-bit: refuse a batch whose stack would not fit instead of
+/// letting the int product wrap into a smaller buffer than the kernel writes.
+Int traversal_stack_scratch(int ray_count, const char* caller) {
+    constexpr uint64_t kMaxJitArraySize = 0xFFFFFFFFull;
+    const uint64_t slots = static_cast<uint64_t>(kTraversalStackDepth) * static_cast<uint64_t>(ray_count);
+    require(slots <= kMaxJitArraySize,
+            std::string(caller) + ": " + std::to_string(ray_count) + " rays need " + std::to_string(slots) +
+                " traversal stack slots, more than a Dr.Jit array can hold (" + std::to_string(kMaxJitArraySize) +
+                "); split the batch or use trace_backend='optix'.");
+    return empty<Int>(static_cast<size_t>(slots));
+}
 
 Int load_ints(const std::vector<int>& values) {
     if (values.empty()) {
@@ -238,7 +252,7 @@ template <bool Detached>
 OptixIntersection CudaTraceBackend::intersect_impl(const RayT<Detached>& ray, MaskT<Detached>& active) const {
     ScopedNativeLaunchStage stage(NativeLaunchStage::Intersect);
     require(ready_, "CudaTraceBackend::intersect(): backend is not built.");
-    const int ray_count = static_cast<int>(slices(ray.o));
+    const int ray_count = checked_batch_width(slices(ray.o), "CudaTraceBackend::intersect()");
 
     OptixIntersection intersection;
     intersection.reserve(ray_count);
@@ -271,7 +285,7 @@ OptixIntersection CudaTraceBackend::intersect_impl(const RayT<Detached>& ray, Ma
     const Float t_max = select(drjit::isfinite(t_max_input), t_max_input, full<Float>(1e8f, ray_count));
     Int active_flags = select(active_detached, full<Int>(1, ray_count), zeros<Int>(ray_count));
 
-    Int stack_nodes = empty<Int>(kTraversalStackDepth * ray_count);
+    Int stack_nodes = traversal_stack_scratch(ray_count, "CudaTraceBackend::intersect()");
     Int overflow = empty<Int>(ray_count);
 
     drjit::eval(ox, oy, oz, dx, dy, dz, t_max, active_flags, tri_p0_, tri_e1_, tri_e2_, node_bbox_min_, node_bbox_max_,
@@ -328,7 +342,7 @@ template <bool Detached>
 MaskT<Detached> CudaTraceBackend::shadow_test_impl(const RayT<Detached>& ray, MaskT<Detached> active) const {
     ScopedNativeLaunchStage stage(NativeLaunchStage::Intersect);
     require(ready_, "CudaTraceBackend::shadow_test(): backend is not built.");
-    const int ray_count = static_cast<int>(slices(ray.o));
+    const int ray_count = checked_batch_width(slices(ray.o), "CudaTraceBackend::shadow_test()");
 
     MaskT<Detached> hit = full<MaskT<Detached>>(false, ray_count);
     if (ray_count == 0) {
@@ -359,7 +373,7 @@ MaskT<Detached> CudaTraceBackend::shadow_test_impl(const RayT<Detached>& ray, Ma
     Int active_flags = select(active_detached, full<Int>(1, ray_count), zeros<Int>(ray_count));
 
     Int out_hit = empty<Int>(ray_count);
-    Int stack_nodes = empty<Int>(kTraversalStackDepth * ray_count);
+    Int stack_nodes = traversal_stack_scratch(ray_count, "CudaTraceBackend::shadow_test()");
     Int overflow = empty<Int>(ray_count);
 
     drjit::eval(ox, oy, oz, dx, dy, dz, t_max, active_flags, tri_p0_, tri_e1_, tri_e2_, node_bbox_min_, node_bbox_max_,
@@ -407,7 +421,7 @@ std::vector<int> CudaTraceBackend::first_blocker_selftest(const Vector3f& origin
                                                           const std::vector<int>& ignore_prim_ids) const {
     ScopedNativeLaunchStage stage(NativeLaunchStage::Intersect);
     require(ready_, "CudaTraceBackend::first_blocker_selftest(): backend is not built.");
-    const int ray_count = static_cast<int>(slices(origin));
+    const int ray_count = checked_batch_width(slices(origin), "CudaTraceBackend::first_blocker_selftest()");
     if (ray_count == 0) {
         return {};
     }
@@ -420,7 +434,8 @@ std::vector<int> CudaTraceBackend::first_blocker_selftest(const Vector3f& origin
     const int ignore_stride = static_cast<int>(ignore_prim_ids.size());
     Int ignore;
     if (ignore_stride > 0) {
-        std::vector<int> tiled(static_cast<size_t>(ignore_stride) * ray_count);
+        std::vector<int> tiled(static_cast<size_t>(
+            checked_slot_count(ray_count, ignore_stride, "CudaTraceBackend::first_blocker_selftest()")));
         for (int r = 0; r < ray_count; ++r) {
             for (int i = 0; i < ignore_stride; ++i) {
                 tiled[static_cast<size_t>(r) * ignore_stride + i] = ignore_prim_ids[static_cast<size_t>(i)];
@@ -430,7 +445,7 @@ std::vector<int> CudaTraceBackend::first_blocker_selftest(const Vector3f& origin
     }
 
     Int out_global = empty<Int>(ray_count);
-    Int stack_nodes = empty<Int>(kTraversalStackDepth * ray_count);
+    Int stack_nodes = traversal_stack_scratch(ray_count, "CudaTraceBackend::first_blocker_selftest()");
     Int overflow = empty<Int>(ray_count);
 
     drjit::eval(ox, oy, oz, dx, dy, dz, t_max, tri_p0_, tri_e1_, tri_e2_, node_bbox_min_, node_bbox_max_, left_child_,
