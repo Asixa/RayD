@@ -56,6 +56,8 @@ struct OptixTriangleAccel {
     at::Tensor gas_buffer;
     at::Tensor gas_temp_buffer;
     OptixTraversableHandle traversable = 0;
+    // Refits of a dynamic GAS since it was last built from scratch; see update_triangle_accel().
+    int64_t refits_since_build = 0;
 };
 
 struct OptixEdgeAccel {

@@ -5,6 +5,7 @@
 #include <src/runtime/rt_internal.h>
 
 #include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDACachingAllocator.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <cudaTypedefs.h>
 #include <cuda_runtime_api.h>
@@ -213,14 +214,11 @@ int hitgroup_record_capacity(int hitgroup_record_count) {
 } // namespace
 
 OptixLaunchPipeline::~OptixLaunchPipeline() {
-    // Each event is recorded after this pipeline's optixLaunch, so waiting on all of them guarantees no launch
-    // still uses the pipeline when it is destroyed below (the cache evicts pipelines while the process runs).
-    for (cudaEvent_t& event : params_staging_events_) {
-        if (event != nullptr) {
-            cudaEventSynchronize(event);
-            cudaEventDestroy(event);
-            event = nullptr;
-        }
+    // The cache evicts idle pipelines while the process runs (a retry after a failed compile); a launch queued on
+    // any stream may still use this pipeline and its SBT records, so let the device drain before destroying them.
+    if (ready_) {
+        c10::cuda::CUDAGuard guard(device_index_);
+        cudaDeviceSynchronize();
     }
     if (pipeline_ != nullptr && optixPipelineDestroy != nullptr)
         optixPipelineDestroy(pipeline_);
@@ -332,16 +330,6 @@ void OptixLaunchPipeline::build(OptixDeviceContext context, int device_index, in
                "cudaMemcpyAsync(multipath hitgroup records)");
 
     params_size_ = config.params_size;
-    const int64_t params_capacity = static_cast<int64_t>(std::max<size_t>(params_size_, 1024));
-    for (int slot = 0; slot < kParamsStagingSlots; ++slot) {
-        params_buffers_[slot] =
-            at::empty({params_capacity},
-                      at::TensorOptions().device(at::Device(at::kCUDA, device_index)).dtype(at::kByte));
-        params_staging_[slot] =
-            at::empty({params_capacity}, at::TensorOptions().device(at::kCPU).dtype(at::kByte).pinned_memory(true));
-        cuda_check(cudaEventCreateWithFlags(&params_staging_events_[slot], cudaEventDisableTiming),
-                   "cudaEventCreateWithFlags(params staging)");
-    }
     // SBT records are immutable after construction and may immediately be
     // consumed on another CUDA stream after this shared pipeline is returned.
     cuda_check(cudaStreamSynchronize(stream), "cudaStreamSynchronize(SBT initialization)");
@@ -451,30 +439,24 @@ void OptixLaunchPipeline::launch_impl(int raygen_index, const void* params, size
     if (raygen_index < 0 || raygen_index >= static_cast<int>(raygen_records_.size()))
         throw std::runtime_error("OptixLaunchPipeline::launch(): raygen index out of range.");
     const size_t launch_params_size = (std::max)(params_size_, actual_params_size);
-    if (params_buffers_[0].numel() < static_cast<int64_t>(launch_params_size)) {
-        // This only occurs when a caller supplies a source-compatible extended
-        // launch structure. Retire every slot before replacing its storage.
-        const int64_t capacity = static_cast<int64_t>(launch_params_size);
-        for (int slot = 0; slot < kParamsStagingSlots; ++slot) {
-            cuda_check(cudaEventSynchronize(params_staging_events_[slot]),
-                       "cudaEventSynchronize(resize params buffer)");
-            params_buffers_[slot] =
-                at::empty({capacity},
-                          at::TensorOptions().device(at::Device(at::kCUDA, device_index_)).dtype(at::kByte));
-            params_staging_[slot] =
-                at::empty({capacity}, at::TensorOptions().device(at::kCPU).dtype(at::kByte).pinned_memory(true));
-        }
+    // Launch parameters live in a caching-allocator block on the launch stream, so a later launch on the same stream
+    // reuses it only after this one is ordered before it, and no other stream receives it while it is in use. The
+    // host struct is copied from pageable memory, which the driver stages before cudaMemcpyAsync returns, so the
+    // host never waits for an earlier launch to finish.
+    at::Tensor params_buffer =
+        at::empty({static_cast<int64_t>(launch_params_size)},
+                  at::TensorOptions().device(at::Device(at::kCUDA, device_index_)).dtype(at::kByte));
+    if (actual_params_size < launch_params_size) {
+        cuda_check(cudaMemsetAsync(params_buffer.data_ptr<uint8_t>() + actual_params_size, 0,
+                                   launch_params_size - actual_params_size, stream),
+                   "cudaMemsetAsync(multipath params tail)");
     }
-
-    const int slot = params_staging_cursor_;
-    params_staging_cursor_ = (params_staging_cursor_ + 1) % kParamsStagingSlots;
-    // Wait until the DMA that last read this pinned slot has finished before
-    // overwriting it; with the ring depth this is almost always a no-op.
-    cuda_check(cudaEventSynchronize(params_staging_events_[slot]), "cudaEventSynchronize(multipath params staging)");
-    std::memcpy(params_staging_[slot].data_ptr<uint8_t>(), params, launch_params_size);
-    cuda_check(cudaMemcpyAsync(params_buffers_[slot].data_ptr<uint8_t>(), params_staging_[slot].data_ptr<uint8_t>(),
-                               launch_params_size, cudaMemcpyHostToDevice, stream),
+    cuda_check(cudaMemcpyAsync(params_buffer.data_ptr<uint8_t>(), params, actual_params_size, cudaMemcpyHostToDevice,
+                               stream),
                "cudaMemcpyAsync(multipath params)");
+    const c10::cuda::CUDAStream launch_stream = c10::cuda::getStreamFromExternal(stream, device_index_);
+    if (launch_stream != c10::cuda::getCurrentCUDAStream(device_index_))
+        c10::cuda::CUDACachingAllocator::recordStream(params_buffer.storage().data_ptr(), launch_stream);
     OptixShaderBindingTable sbt = {};
     sbt.raygenRecord = reinterpret_cast<CUdeviceptr>(raygen_records_[raygen_index].data_ptr<uint8_t>());
     sbt.missRecordBase = reinterpret_cast<CUdeviceptr>(miss_record_.data_ptr<uint8_t>());
@@ -484,11 +466,8 @@ void OptixLaunchPipeline::launch_impl(int raygen_index, const void* params, size
     sbt.hitgroupRecordStrideInBytes = sizeof(EmptySbtRecord);
     sbt.hitgroupRecordCount = static_cast<unsigned int>(hitgroup_record_count_);
 
-    const OptixResult launch_result =
-        optixLaunch(pipeline_, stream, reinterpret_cast<CUdeviceptr>(params_buffers_[slot].data_ptr<uint8_t>()),
-                    launch_params_size, &sbt, n_rays, 1, 1);
-    cuda_check(cudaEventRecord(params_staging_events_[slot], stream), "cudaEventRecord(multipath launch params)");
-    rayd_torch_OPTIX_CHECK(launch_result);
+    const CUdeviceptr params_device = reinterpret_cast<CUdeviceptr>(params_buffer.data_ptr<uint8_t>());
+    rayd_torch_OPTIX_CHECK(optixLaunch(pipeline_, stream, params_device, launch_params_size, &sbt, n_rays, 1, 1));
 }
 
 } // namespace rayd::torch_backend

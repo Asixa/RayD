@@ -30,4 +30,10 @@ void sort_edge_bvh_morton_cuda(int64_t edge_count, const at::Tensor& morton_code
 void encode_raw_edge_bvh_cuda(int64_t primitive_count, at::Tensor& left_child, at::Tensor& right_child,
                               const at::Tensor& leaf_primitive, at::Tensor& leaf_primitives, cudaStream_t stream);
 
+// Encodes the binary radix tree for traversal like encode_raw_edge_bvh_cuda, but turns every maximal subtree with at
+// most kBvhLeafSize primitives into one leaf, so a query visits fewer nodes. Runs on `stream`, which must be the
+// current stream, without a host synchronization.
+void collapse_edge_bvh_leaves_cuda(int64_t primitive_count, at::Tensor& left_child, at::Tensor& right_child,
+                                   const at::Tensor& leaf_primitive, at::Tensor& leaf_primitives, cudaStream_t stream);
+
 } // namespace rayd::torch_backend

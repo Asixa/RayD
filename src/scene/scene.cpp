@@ -773,6 +773,14 @@ void refresh_global_geometry(SceneCache& scene) {
                               scene.tri_p0_packed, scene.tri_e1_packed, scene.tri_e2_packed, scene.tri_fn_packed);
 }
 
+// A refit keeps the BVH topology of the last full build, so its quality decays as a mesh deforms away from the shape
+// it was built for: deformations that scramble neighbouring triangles (random walks, crumpling) trace 1.3-2x slower
+// than a fresh build after a few dozen refits, while rigid motion, rolling and folding stay within a few percent.
+// Every kDynamicGasRefitsPerBuild-th commit therefore rebuilds the GAS in place. The period bounds the decay to that
+// many commits for 3-5% more sync() time at 131k triangles and 12-17% at 1M; the closest-hit distances do
+// not depend on the BVH, only the primitive reported for an exact tie between coincident triangles can.
+constexpr int64_t kDynamicGasRefitsPerBuild = 16;
+
 void update_triangle_accel(const MeshRecord& mesh, OptixTriangleAccel& accel, OptixDeviceContext optix_context,
                            cudaStream_t stream) {
     accel.vertex_buffer = mesh.vertices.contiguous();
@@ -795,18 +803,20 @@ void update_triangle_accel(const MeshRecord& mesh, OptixTriangleAccel& accel, Op
 
     OptixAccelBuildOptions accel_options = {};
     accel_options.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE | OPTIX_BUILD_FLAG_ALLOW_UPDATE;
-    accel_options.operation = OPTIX_BUILD_OPERATION_UPDATE;
+    const bool rebuild = accel.refits_since_build + 1 >= kDynamicGasRefitsPerBuild;
+    accel_options.operation = rebuild ? OPTIX_BUILD_OPERATION_BUILD : OPTIX_BUILD_OPERATION_UPDATE;
 
     OptixAccelBufferSizes buffer_sizes = {};
     rayd_torch_OPTIX_CHECK(optixAccelComputeMemoryUsage(optix_context, &accel_options, &build_input, 1, &buffer_sizes));
 
     at::TensorOptions byte_options = at::TensorOptions().device(mesh.vertices.device()).dtype(at::kByte);
-    size_t temp_bytes = buffer_sizes.tempUpdateSizeInBytes;
     if (accel.gas_buffer.numel() < static_cast<int64_t>(buffer_sizes.outputSizeInBytes)) {
         accel.gas_buffer = at::empty({static_cast<int64_t>(buffer_sizes.outputSizeInBytes)}, byte_options);
         accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
-        temp_bytes = buffer_sizes.tempSizeInBytes;
     }
+    const size_t temp_bytes = accel_options.operation == OPTIX_BUILD_OPERATION_BUILD
+                                  ? buffer_sizes.tempSizeInBytes
+                                  : buffer_sizes.tempUpdateSizeInBytes;
     if (accel.gas_temp_buffer.numel() < static_cast<int64_t>(temp_bytes))
         accel.gas_temp_buffer = at::empty({static_cast<int64_t>(temp_bytes)}, byte_options);
 
@@ -815,6 +825,8 @@ void update_triangle_accel(const MeshRecord& mesh, OptixTriangleAccel& accel, Op
                         reinterpret_cast<CUdeviceptr>(accel.gas_temp_buffer.data_ptr<uint8_t>()), temp_bytes,
                         reinterpret_cast<CUdeviceptr>(accel.gas_buffer.data_ptr<uint8_t>()),
                         static_cast<size_t>(accel.gas_buffer.numel()), &accel.traversable, nullptr, 0));
+    accel.refits_since_build =
+        accel_options.operation == OPTIX_BUILD_OPERATION_BUILD ? 0 : accel.refits_since_build + 1;
 }
 
 bool scene_has_dynamic_edges(const SceneCache& scene) {
@@ -1181,9 +1193,10 @@ std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes, T
     } else {
         scene->trace_backend = requested_trace_backend;
     }
-    scene->edge_backend = requested_edge_backend == EdgeBackend::Auto
-                              ? (scene->trace_backend == TraceBackend::Optix ? EdgeBackend::Optix : EdgeBackend::Cuda)
-                              : requested_edge_backend;
+    // The compact CUDA edge BVH answers point and ray nearest-edge queries with the same winners as the OptiX
+    // custom-AABB backend and is one to two orders of magnitude faster on every measured mesh and query size, so
+    // `auto` selects it whether or not OptiX traces the triangles. OptiX edge queries remain an explicit choice.
+    scene->edge_backend = requested_edge_backend == EdgeBackend::Auto ? EdgeBackend::Cuda : requested_edge_backend;
     OptixDeviceContextEntry* optix_entry = nullptr;
     if (scene->trace_backend == TraceBackend::Optix || scene->edge_backend == EdgeBackend::Optix)
         optix_entry = &get_optix_context(static_cast<int>(device_index));
@@ -2066,8 +2079,8 @@ void ensure_custom_edge_bvh(SceneCache& scene) {
                  torch_ctx.stream});
         }
     }
-    encode_raw_edge_bvh_cuda(primitive_count, bvh.left_child, bvh.right_child, bvh.leaf_primitive, bvh.leaf_primitives,
-                             torch_ctx.stream);
+    collapse_edge_bvh_leaves_cuda(primitive_count, bvh.left_child, bvh.right_child, bvh.leaf_primitive,
+                                  bvh.leaf_primitives, torch_ctx.stream);
     cuda_check(cudaGetLastError(), "ensure_custom_edge_bvh() kernel launch");
     // The cache may be consumed by a later dispatcher call on another Torch
     // stream. Publish it only after its persistent topology is fully built.

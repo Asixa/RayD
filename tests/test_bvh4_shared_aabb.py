@@ -50,10 +50,20 @@ class SharedEdgeAabbSourceTests(unittest.TestCase):
         self.assertIn("c10::cuda::CUDAGuard guard(out_aabbs.device());", source)
         self.assertIn("at::cuda::getCurrentCUDAStream(out_aabbs.get_device()).stream();", source)
         self.assertRegex(source, re.compile(r"launch_edge_aabb\([\s\S]+?stream\s*\);"))
-        # F1 keeps a Torch-only raw-BVH encoding kernel in this adapter.  The
-        # edge AABB implementation itself must remain exclusively shared.
+        # F1 keeps a Torch-only raw-BVH encoding kernel in this adapter, and the
+        # Torch edge BVH folds small subtrees into multi-edge leaves with three
+        # Torch-only kernels. The edge AABB implementation itself must remain
+        # exclusively shared.
         global_kernels = re.findall(r"__global__\s+void\s+(\w+)", source)
-        self.assertEqual(global_kernels, ["encode_raw_bvh_kernel"])
+        self.assertEqual(
+            global_kernels,
+            [
+                "encode_raw_bvh_kernel",
+                "count_small_subtrees_kernel",
+                "mark_collapsed_leaves_kernel",
+                "write_collapsed_leaves_kernel",
+            ],
+        )
         self.assertNotIn("compute_edge_aabbs_kernel", source)
         self.assertNotIn("compute_edge_optix_aabbs_gpu", header)
         self.assertIn("src/edge/edge_shared.cu", cmake)

@@ -57,8 +57,14 @@ class TypedAxialEdgeVisibilityGovernanceTests(unittest.TestCase):
         self.assertLess(body.index("state_count == 0"), body.index("->launch("))
 
     def test_parity_and_existing_staging_sync_are_explicit(self):
-        common_launch = (ROOT / "src/runtime/optix.cpp").read_text(encoding="utf-8")
-        self.assertIn("cudaEventSynchronize(params_staging_events_[slot])", common_launch)
+        # The separate optimization the ADR names has landed: the common launch path stages its parameters through
+        # a stream-ordered device block and never waits on the host for an earlier launch.
+        common = (ROOT / "src/runtime/optix.cpp").read_text(encoding="utf-8")
+        start = common.index("void OptixLaunchPipeline::launch_impl(")
+        common_launch = common[start : common.index("\n}\n", start)]
+        self.assertNotIn("cudaEventSynchronize", common_launch)
+        self.assertNotIn("cudaStreamSynchronize", common_launch)
+        self.assertIn("cudaMemcpyAsync(params_buffer.data_ptr<uint8_t>(), params, actual_params_size", common_launch)
         self.assertIn("reducing four public launch-parameter staging checks to one", self.adr)
         self.assertIn("separate Phase 12 optimization", self.adr)
         self.assertIn("random_count = 257", self.direct_test)

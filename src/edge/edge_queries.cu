@@ -1099,8 +1099,25 @@ __global__ void finalize_topk_kernel(
         return;
     const int64_t query = slot / k;
     const int edge = candidate_edge[slot];
-    if (query_active[query] == 0u || edge < 0 || edge >= edge_count)
+    const int64_t vector_slot = slot * 3;
+    if (query_active[query] == 0u || edge < 0 || edge >= edge_count) {
+        // Every output slot is written here, so the outputs need no separate fill.
+        is_valid[slot] = false;
+        distances[slot] = CUDART_INF_F;
+        edge_t[slot] = 0.0f;
+        shape_ids[slot] = -1;
+        edge_ids[slot] = -1;
+        global_edge_ids[slot] = -1;
+        is_boundary[slot] = false;
+        tape_edge_id[slot] = -1;
+        tape_s[slot] = 0.0f;
+        for (int axis = 0; axis < 3; ++axis) {
+            points[vector_slot + axis] = 0.0f;
+            edge_points[vector_slot + axis] = 0.0f;
+            tape_d[vector_slot + axis] = 0.0f;
+        }
         return;
+    }
 
     const float s = fminf(fmaxf(candidate_edge_t[slot], 0.0f), 1.0f);
     const float px = edge_p0_x[edge] + s * edge_e1_x[edge];
@@ -1120,7 +1137,6 @@ __global__ void finalize_topk_kernel(
     tape_edge_id[slot] = edge;
     tape_s[slot] = s;
 
-    const int64_t vector_slot = slot * 3;
     points[vector_slot + 0] = qx;
     points[vector_slot + 1] = qy;
     points[vector_slot + 2] = qz;
@@ -1148,20 +1164,25 @@ EdgeTopKForwardOutputs edge_topk_forward_cuda(const SceneCache& scene, const at:
     const auto bool_options = at::TensorOptions().device(point.device()).dtype(at::kBool);
     const auto byte_options = at::TensorOptions().device(point.device()).dtype(at::kByte);
 
+    // With work to do, the finalize kernel writes every output slot; otherwise the outputs hold the empty result.
+    const bool launch = query_count != 0 && edge_count != 0;
+    const auto make = [&](at::IntArrayRef shape, const at::TensorOptions& options, double fill) {
+        return launch ? at::empty(shape, options) : at::full(shape, fill, options);
+    };
     EdgeTopKForwardOutputs out;
-    out.is_valid = at::zeros({query_count, k}, bool_options);
-    out.distances = at::full({query_count, k}, std::numeric_limits<float>::infinity(), float_options);
-    out.points = at::zeros({query_count, k, 3}, float_options);
-    out.edge_t = at::zeros({query_count, k}, float_options);
-    out.edge_points = at::zeros({query_count, k, 3}, float_options);
-    out.shape_ids = at::full({query_count, k}, -1, int_options);
-    out.edge_ids = at::full({query_count, k}, -1, int_options);
-    out.global_edge_ids = at::full({query_count, k}, -1, int_options);
-    out.is_boundary = at::zeros({query_count, k}, bool_options);
-    out.tape_edge_id = at::full({query_count, k}, -1, int_options);
-    out.tape_s = at::zeros({query_count, k}, float_options);
-    out.tape_d = at::zeros({query_count, k, 3}, float_options);
-    if (query_count == 0 || edge_count == 0)
+    out.is_valid = make({query_count, k}, bool_options, 0.0);
+    out.distances = make({query_count, k}, float_options, std::numeric_limits<double>::infinity());
+    out.points = make({query_count, k, 3}, float_options, 0.0);
+    out.edge_t = make({query_count, k}, float_options, 0.0);
+    out.edge_points = make({query_count, k, 3}, float_options, 0.0);
+    out.shape_ids = make({query_count, k}, int_options, -1.0);
+    out.edge_ids = make({query_count, k}, int_options, -1.0);
+    out.global_edge_ids = make({query_count, k}, int_options, -1.0);
+    out.is_boundary = make({query_count, k}, bool_options, 0.0);
+    out.tape_edge_id = make({query_count, k}, int_options, -1.0);
+    out.tape_s = make({query_count, k}, float_options, 0.0);
+    out.tape_d = make({query_count, k, 3}, float_options, 0.0);
+    if (!launch)
         return out;
 
     cudaStream_t stream = at::cuda::getCurrentCUDAStream(point.get_device()).stream();

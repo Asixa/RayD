@@ -10,6 +10,31 @@ import rayd.torch as rt
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA torch is required")
 class EdgeQueryTests(unittest.TestCase):
+    def test_every_edge_stays_reachable_in_the_compact_edge_bvh(self):
+        # The CUDA edge BVH folds subtrees of up to four edges into one leaf. Each edge's midpoint lies on that edge
+        # alone, so a query there finds it at distance zero only if the folding kept every edge in some leaf; the sizes
+        # cover a lone leaf at the root, partial leaves, and the treelet-optimized range (at least 65536 edges).
+        from tests.support.geometry import grid_mesh
+
+        for cells in (1, 2, 3, 7, 150):
+            with self.subTest(cells=cells):
+                vertices, faces = grid_mesh(torch.device("cuda"), cells)
+                scene = rt.Scene()
+                scene.add_mesh(rt.Mesh(vertices, faces))
+                scene.build()
+                self.assertEqual(scene.edge_bvh_backend, "cuda")
+                pairs = torch.cat([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]]).long()
+                pairs = torch.unique(torch.sort(pairs, dim=1).values, dim=0)
+                midpoints = (0.5 * (vertices[pairs[:, 0]] + vertices[pairs[:, 1]])).contiguous()
+                result = scene.nearest_edge(midpoints)
+                self.assertEqual(int((result.global_edge_id < 0).sum()), 0)
+                self.assertLessEqual(float(result.distance.max()), 1e-6)
+                if pairs.shape[0] <= 16:
+                    top = scene.nearest_edges(midpoints[:1], 16)
+                    self.assertEqual(int(top.is_valid.sum()), pairs.shape[0])
+                    found = top.global_edge_ids[0][top.is_valid[0]]
+                    self.assertEqual(sorted(found.tolist()), list(range(pairs.shape[0])))
+
     def test_nearest_edge_point_forward_and_grad(self):
         verts = torch.tensor(
             [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device="cuda", dtype=torch.float32, requires_grad=True

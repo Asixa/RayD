@@ -7,7 +7,6 @@
 #include <cuda_runtime_api.h>
 #include <optix.h>
 
-#include <array>
 #include <cstddef>
 #include <memory>
 #include <mutex>
@@ -61,14 +60,6 @@ class OptixLaunchPipeline {
     std::vector<at::Tensor> raygen_records_;
     at::Tensor miss_record_;
     at::Tensor hitgroup_records_;
-    // Each slot owns both host staging and device launch storage. Its event is
-    // recorded after optixLaunch, so a second stream cannot overwrite params
-    // that an earlier launch has not consumed yet.
-    static constexpr int kParamsStagingSlots = 4;
-    std::array<at::Tensor, kParamsStagingSlots> params_buffers_;
-    std::array<at::Tensor, kParamsStagingSlots> params_staging_;
-    std::array<cudaEvent_t, kParamsStagingSlots> params_staging_events_ = {};
-    int params_staging_cursor_ = 0;
     std::mutex launch_mutex_;
 };
 
