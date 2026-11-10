@@ -325,14 +325,13 @@ RAYD_DEVICE void axial_edge_visibility_algo(const ::rayd::shared::optix::Segment
     }
     std::uint32_t any_visible = 0u;
 
-#if defined(__CUDA_ARCH__)
-#pragma unroll
-#endif
-    for (int i = 0; i < ::rayd::shared::optix::SegmentVisibilityMaxSamples; ++i) {
-        if (i < params.sample_count) {
-            const float t = line_min + params.sample_fractions[i] * span;
-            const Vec3f sample = math::add(edge_pos, math::scale(edge_dir, t));
-            any_visible |= trace_segment<Config>(params, source, sample, active, 0u, traverser, nullptr);
+    // The result is the OR over samples, so the first visible sample decides it and the rest need no trace.
+    for (int i = 0; i < ::rayd::shared::optix::SegmentVisibilityMaxSamples && i < params.sample_count; ++i) {
+        const float t = line_min + params.sample_fractions[i] * span;
+        const Vec3f sample = math::add(edge_pos, math::scale(edge_dir, t));
+        if (trace_segment<Config>(params, source, sample, active, 0u, traverser, nullptr) != 0u) {
+            any_visible = 1u;
+            break;
         }
     }
     params.out_visible[ray] = any_visible != 0u ? 1u : 0u;

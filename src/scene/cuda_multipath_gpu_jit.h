@@ -5,6 +5,8 @@
 
 #include <cstdint>
 
+#include <cuda_runtime_api.h>
+
 #include <src/diffraction/accumulation_params_jit.h>
 #include <src/diffraction/paths_params_jit.h>
 #include <src/reflection/accumulation_params_jit.h>
@@ -13,9 +15,9 @@
 
 // Host/device seam for CUDA fused multipath execution. These launchers run
 // shared traversal algorithms over the scene-level triangle BVH, one thread per
-// lane. Each owns its non-blocking stream and traversal scratch and synchronizes
-// before returning. Host-safe POD parameters keep the host and device launch
-// contracts identical.
+// lane. They launch asynchronously on the caller's stream into caller-owned
+// traversal scratch and allocate nothing. Host-safe POD parameters keep the host
+// and device launch contracts identical.
 
 namespace rayd {
 
@@ -49,29 +51,44 @@ struct CudaMultipathBvh {
     int leaf_primitive_count;
 };
 
+/// Caller-owned resources of one fused launch: the CUDA device and stream that order every kernel of the launch
+/// after the producers of its inputs, and per-lane traversal scratch on that device (`stack` holds
+/// lane_count * kBvhTraversalStackDepth ints, `overflow` lane_count ints). The scratch must stay allocated until
+/// the stream reaches the end of the launch.
+struct CudaMultipathLaunch {
+    int device;
+    cudaStream_t stream;
+    int* stack;
+    int* overflow;
+};
+
 /// Reflection-path trace (scene.trace_reflections symbolic=True native path).
 void launch_reflection_trace_cuda(const shared::optix::ReflectionTraceParams& params, const CudaMultipathBvh& bvh,
-                                  int lane_count);
+                                  int lane_count, const CudaMultipathLaunch& launch);
 
 /// Segment visibility family (scene.visible / visible_pair / visible_edge /
 /// visible_chain). `variant` selects the raygen body.
 enum class CudaSegmentVisibilityVariant : int { Single = 0, Pair = 1, AxialEdge = 2, Chain = 3 };
 
 void launch_segment_visibility_cuda(const shared::optix::SegmentVisibilityParams& params, const CudaMultipathBvh& bvh,
-                                    CudaSegmentVisibilityVariant variant, int lane_count);
+                                    CudaSegmentVisibilityVariant variant, int lane_count,
+                                    const CudaMultipathLaunch& launch);
 
 /// Reflection EPC discovery (scene.trace_refl_epc / trace_refl_epc_field).
 /// `direct_only` / `primary_visibility_only` mirror the two template axes of the
 /// OptiX raygen (run_reflection_epc_raygen<Policy, DirectOnly, PrimaryOnly>).
 void launch_reflection_epc_cuda(const shared::optix::ReflEpcParams& params, const CudaMultipathBvh& bvh,
-                                bool direct_only, bool primary_visibility_only, int lane_count);
+                                bool direct_only, bool primary_visibility_only, int lane_count,
+                                const CudaMultipathLaunch& launch);
 
 /// Reflection accumulation (scene.accumulate_reflections).
-void launch_reflection_accumulation_cuda(const AccumParams& params, const CudaMultipathBvh& bvh, int lane_count);
+void launch_reflection_accumulation_cuda(const AccumParams& params, const CudaMultipathBvh& bvh, int lane_count,
+                                         const CudaMultipathLaunch& launch);
 
 /// First-order diffraction compact path export (scene.trace_dfr_paths). Runs the
 /// single-scene two-phase export: source-visibility prepass then target export.
-void launch_dfr_paths_cuda(const DfrPathParams& params, const CudaMultipathBvh& bvh, int lane_count);
+void launch_dfr_paths_cuda(const DfrPathParams& params, const CudaMultipathBvh& bvh, int lane_count,
+                           const CudaMultipathLaunch& launch);
 
 /// First-order diffraction accumulation (scene.accum_dfr_direct). Runs the
 /// single-scene staged path: source-visibility prepass, then the no-suffix
@@ -79,20 +96,24 @@ void launch_dfr_paths_cuda(const DfrPathParams& params, const CudaMultipathBvh& 
 /// on one stream (mirrors the split_mode==0 OptiX dispatch). `params` is staged
 /// into the file-local __constant__ before each phase.
 void launch_dfr_accum_direct_cuda(const DfrAccumParams& params, const CudaMultipathBvh& bvh,
-                                  bool has_non_suffix_strategy, bool has_suffix_strategy, int lane_count);
+                                  bool has_non_suffix_strategy, bool has_suffix_strategy, int lane_count,
+                                  const CudaMultipathLaunch& launch);
 
 /// Coherent order-1 diffraction accumulation (scene.accum_dfr_coherent_direct,
 /// both the full-UTD and the simple-state overloads). Single primary-only launch.
-void launch_dfr_accum_coherent_cuda(const DfrAccumParams& params, const CudaMultipathBvh& bvh, int lane_count);
+void launch_dfr_accum_coherent_cuda(const DfrAccumParams& params, const CudaMultipathBvh& bvh, int lane_count,
+                                    const CudaMultipathLaunch& launch);
 
 /// Chain (order 2/3) diffraction accumulation (scene.accum_dfr). Single
 /// primary-only launch.
-void launch_dfr_accum_chain_cuda(const DfrAccumParams& params, const CudaMultipathBvh& bvh, int lane_count);
+void launch_dfr_accum_chain_cuda(const DfrAccumParams& params, const CudaMultipathBvh& bvh, int lane_count,
+                                 const CudaMultipathLaunch& launch);
 
 /// Combined 5-bool order-1 accumulation body. The single-scene CUDA backend
 /// always takes the staged path above; this exists so every OptiX raygen variant
 /// has a CUDA kernel and is wired defensively for a future split-scene CUDA arm.
 void launch_dfr_accum_combined_cuda(const DfrAccumParams& params, const CudaMultipathBvh& bvh,
-                                    bool has_non_suffix_strategy, bool has_suffix_strategy, int lane_count);
+                                    bool has_non_suffix_strategy, bool has_suffix_strategy, int lane_count,
+                                    const CudaMultipathLaunch& launch);
 
 } // namespace rayd

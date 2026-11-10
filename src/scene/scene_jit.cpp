@@ -629,11 +629,12 @@ std::string normalize_edge_backend_value(const std::string& value) {
     return normalized;
 }
 
-/// Resolve an edge backend name to a concrete EdgeBVHBackend.
+/// Resolve an edge backend name to a concrete EdgeBVHBackend. "auto" selects the native BVH traversal, which answers
+/// point, ray, and top-k queries faster than the OptiX custom-AABB backend at every measured edge and query count.
 EdgeBVHBackend parse_edge_backend(const std::string& value) {
     const std::string normalized = normalize_edge_backend_value(value);
     if (normalized.empty() || normalized == "auto") {
-        return optix_available() ? EdgeBVHBackend::Optix : EdgeBVHBackend::DrJit;
+        return EdgeBVHBackend::DrJit;
     }
     if (normalized == "optix" || normalized == "custom_aabb") {
         return EdgeBVHBackend::Optix;
@@ -1772,7 +1773,7 @@ NearestPointEdgeT<Detached> Scene::nearest_edge(const Vector3fT<Detached>& point
 
     const int query_count = static_cast<int>(slices(point));
     NearestPointEdgeT<Detached> result = initialize_nearest_point_edge_result<Detached>(query_count);
-    if (edge_count_ == 0) {
+    if (edge_count_ == 0 || query_count == 0) {
         return result;
     }
 
@@ -1791,9 +1792,8 @@ NearestPointEdgeT<Detached> Scene::nearest_edge(const Vector3fT<Detached>& point
         active = active_detached;
     }
 
-    if (drjit::none(active_detached)) {
-        return result;
-    }
+    // No host-side emptiness test here: it would synchronize the device on every call, and lanes without a winner
+    // keep the initialized defaults through the masked gathers and selects below.
 
     MaskT<Detached> query_mask = active;
     const bool use_optix_candidate = edge_backend_uses_optix_point(edge_bvh_backend_);
@@ -1801,9 +1801,6 @@ NearestPointEdgeT<Detached> Scene::nearest_edge(const Vector3fT<Detached>& point
                                          ? edge_optix_->template nearest_edge<Detached>(point, query_mask)
                                          : edge_bvh_->template nearest_edge<Detached>(point, query_mask);
     const Mask valid_detached = detach<false>(query_mask) && (candidate.global_edge_id >= 0);
-    if (drjit::none(valid_detached)) {
-        return result;
-    }
 
     const Int global_edge_id_detached = use_optix_candidate
                                             ? candidate.global_edge_id
@@ -1863,7 +1860,7 @@ NearestRayEdgeT<Detached> Scene::nearest_edge(const RayT<Detached>& ray, MaskT<D
 
     const int query_count = static_cast<int>(slices(ray.o));
     NearestRayEdgeT<Detached> result = initialize_nearest_ray_edge_result<Detached>(query_count);
-    if (edge_count_ == 0) {
+    if (edge_count_ == 0 || query_count == 0) {
         return result;
     }
 
@@ -1892,18 +1889,14 @@ NearestRayEdgeT<Detached> Scene::nearest_edge(const RayT<Detached>& ray, MaskT<D
         active = active_detached;
     }
 
-    if (drjit::none(active_detached)) {
-        return result;
-    }
+    // No host-side emptiness test here: it would synchronize the device on every call, and lanes without a winner
+    // keep the initialized defaults through the masked gathers and selects below.
 
     MaskT<Detached> query_mask = active;
     const bool use_optix_candidate = edge_backend_uses_optix_ray(edge_bvh_backend_);
     ClosestEdgeCandidate candidate = use_optix_candidate ? edge_optix_->template nearest_edge<Detached>(ray, query_mask)
                                                          : edge_bvh_->template nearest_edge<Detached>(ray, query_mask);
     const Mask valid_detached = detach<false>(query_mask) && (candidate.global_edge_id >= 0);
-    if (drjit::none(valid_detached)) {
-        return result;
-    }
 
     const Mask finite_tmax = drjit::isfinite(t_max_input);
     const Int global_edge_id_detached = use_optix_candidate
@@ -2073,9 +2066,8 @@ NearestEdgesTopKT<Detached> Scene::nearest_edges(const Vector3fT<Detached>& poin
         active = active_detached;
     }
 
-    if (drjit::none(active_detached)) {
-        return result;
-    }
+    // No host-side emptiness test here: it would synchronize the device on every call, and lanes without a winner
+    // keep the initialized defaults through the masked gathers and selects below.
 
     MaskT<Detached> query_mask = active;
     const bool use_optix_candidate = edge_backend_uses_optix_topk(edge_bvh_backend_);
@@ -2083,9 +2075,6 @@ NearestEdgesTopKT<Detached> Scene::nearest_edges(const Vector3fT<Detached>& poin
                                                    ? edge_optix_->template nearest_edges<Detached>(point, k, query_mask)
                                                    : edge_bvh_->template nearest_edges<Detached>(point, k, query_mask);
     const Mask valid_detached = candidate.is_valid;
-    if (drjit::none(valid_detached)) {
-        return result;
-    }
 
     const Int output_index = arange<Int>(output_count);
     const Int output_query = output_index / k;
@@ -2439,15 +2428,15 @@ unsigned optix_preference_build_flag(OptixAccelPreference preference) {
 
 /// Flatten the upper 3x4 of \p matrix into the row-major float[12] an OptixInstance expects.
 void fill_optix_transform(float out[12], const Matrix4fAD& matrix) {
-    Matrix4f detached = detach<false>(matrix);
-    drjit::eval(detached);
-    drjit::sync_thread();
-
+    // Gather the twelve entries into one array so a single device-to-host copy returns them.
+    const Matrix4f detached = detach<false>(matrix);
+    Float packed = empty<Float>(12);
     for (int row = 0; row < 3; ++row) {
         for (int col = 0; col < 4; ++col) {
-            drjit::store(&out[row * 4 + col], detached(row, col));
+            scatter(packed, detached(row, col), Int(row * 4 + col));
         }
     }
+    drjit::store(out, packed);
 }
 
 /// Per-mesh device buffers and bottom-level acceleration structure (GAS) handle.
@@ -2501,7 +2490,8 @@ struct OptixState {
     bool has_static_meshes = false;
     bool owns_trace_handles = true;
 
-    UInt64 handle;
+    UInt64 handle;                           ///< Opaque Dr.Jit copy of handle_value for traces.
+    OptixTraversableHandle handle_value = 0; ///< IAS handle that `handle` currently holds.
     UInt pipeline_handle;
     UInt sbt_handle;
 
@@ -2525,6 +2515,16 @@ struct OptixState {
     OptixAccelBuildOptions ias_options = {};
     OptixAccelBufferSizes ias_buffer_sizes = {};
 };
+
+/// The IAS handle as an opaque Dr.Jit variable. It is created again only when the handle changes, so a trace does
+/// not upload the same eight bytes every call.
+static const UInt64& opaque_ias_handle(OptixState* state) {
+    if (state->handle.index() == 0 || state->handle_value != state->ias_handle) {
+        state->handle = dr::opaque<UInt64>(state->ias_handle);
+        state->handle_value = state->ias_handle;
+    }
+    return state->handle;
+}
 
 static void retire_optix_jit_resources(OptixState* state) {
     if (state == nullptr) {
@@ -2750,9 +2750,10 @@ static void build_gas(OptixState* state, OptixMeshState& mesh_state, const Optix
 
 /// Refit an existing dynamic-mesh GAS in place after its vertices moved (no realloc).
 static void update_gas(OptixState* state, OptixMeshState& mesh_state, const Mesh& mesh) {
-    audit_jit_memcpy();
-    jit_memcpy(JitBackend::CUDA, mesh_state.vertex_buffer, mesh.vertex_buffer().data(),
-               sizeof(float) * mesh.vertex_count() * 3);
+    // The copy and the refit below are both ordered on Dr.Jit's stream, so the copy need not block the host.
+    audit_jit_memcpy_async();
+    jit_memcpy_async(JitBackend::CUDA, mesh_state.vertex_buffer, mesh.vertex_buffer().data(),
+                     sizeof(float) * mesh.vertex_count() * 3);
 
     OptixBuildInput build_input = {};
     build_input.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
@@ -3108,7 +3109,7 @@ OptixIntersection OptixScene::intersect(const RayT<Detached>& ray, MaskT<Detache
     UInt sbt_stride(1);
     UInt miss_sbt_index(0);
 
-    m_accel->handle = dr::opaque<UInt64>(m_accel->ias_handle);
+    opaque_ias_handle(m_accel);
     uint32_t trace_args[]{
         m_accel->handle.index(),
         ox.index(),
@@ -3205,7 +3206,7 @@ MaskT<Detached> OptixScene::shadow_test(const RayT<Detached>& ray, MaskT<Detache
     UInt sbt_stride(1);
     UInt miss_sbt_index(0);
 
-    m_accel->handle = dr::opaque<UInt64>(m_accel->ias_handle);
+    opaque_ias_handle(m_accel);
     uint32_t trace_args[]{
         m_accel->handle.index(),
         ox.index(),
@@ -3278,7 +3279,7 @@ OptixSegmentHit OptixScene::segment_hit(const Vector3fT<Detached>& start, const 
     const UInt miss_sbt_index(0);
     const Mask trace_active = active_detached && valid_segment;
 
-    m_accel->handle = dr::opaque<UInt64>(m_accel->ias_handle);
+    opaque_ias_handle(m_accel);
     uint32_t trace_args[]{
         m_accel->handle.index(), origin.x().index(),    origin.y().index(), origin.z().index(), direction.x().index(),
         direction.y().index(),   direction.z().index(), t_min.index(),      t_max.index(),      time.index(),

@@ -510,36 +510,31 @@ CudaMultipathBvh CudaTraceBackend::multipath_bvh() const {
     return bvh;
 }
 
-void CudaTraceBackend::materialize_for_fused_launch() const {
-    // The fused kernel runs on its own non-blocking stream; finish the Dr.Jit
-    // producers of the BVH buffers and drain the thread stream (which also drains
-    // the param fills the caller enqueued via .data()) before exposing pointers.
-    // eval() is a no-op for literal-backed arrays; the .data() touches below are
-    // the real enqueue points and must precede sync_thread (commit b7f7226).
-    drjit::eval(tri_p0_, tri_e1_, tri_e2_, node_bbox_min_, node_bbox_max_, left_child_, right_child_, leaf_primitives_,
-                shape_id_, local_prim_id_);
-    (void)tri_p0_[0].data();
-    (void)tri_p0_[1].data();
-    (void)tri_p0_[2].data();
-    (void)tri_e1_[0].data();
-    (void)tri_e1_[1].data();
-    (void)tri_e1_[2].data();
-    (void)tri_e2_[0].data();
-    (void)tri_e2_[1].data();
-    (void)tri_e2_[2].data();
-    (void)node_bbox_min_[0].data();
-    (void)node_bbox_min_[1].data();
-    (void)node_bbox_min_[2].data();
-    (void)node_bbox_max_[0].data();
-    (void)node_bbox_max_[1].data();
-    (void)node_bbox_max_[2].data();
-    (void)left_child_.data();
-    (void)right_child_.data();
-    (void)leaf_primitives_.data();
-    (void)shape_id_.data();
-    (void)local_prim_id_.data();
-    drjit::sync_thread();
+namespace {
+
+/// Traversal scratch of one fused launch on Dr.Jit's stream. The fused kernels read their inputs and the BVH through
+/// pointers whose producers were enqueued on that same stream, and Dr.Jit frees the scratch in stream order when this
+/// record is destroyed, so the launch needs neither a host synchronization nor its own allocation.
+struct FusedLaunch {
+    Int stack;
+    Int overflow;
+    CudaMultipathLaunch launch = {};
+};
+
+FusedLaunch fused_launch(int lane_count, const char* caller) {
+    FusedLaunch fused;
+    fused.launch.device = jit_cuda_device_raw();
+    fused.launch.stream = reinterpret_cast<cudaStream_t>(jit_cuda_stream());
+    if (lane_count > 0) {
+        fused.stack = traversal_stack_scratch(lane_count, caller);
+        fused.overflow = empty<Int>(lane_count);
+        fused.launch.stack = fused.stack.data();
+        fused.launch.overflow = fused.overflow.data();
+    }
+    return fused;
 }
+
+} // namespace
 
 void CudaTraceBackend::run_reflection_trace(shared::optix::ReflectionTraceParams params, int lane_count) const {
     ScopedNativeLaunchStage stage(NativeLaunchStage::TraceReflections);
@@ -547,8 +542,8 @@ void CudaTraceBackend::run_reflection_trace(shared::optix::ReflectionTraceParams
     params.split_mode = 0;
     params.primary_handle = 0;
     params.secondary_handle = 0;
-    materialize_for_fused_launch();
-    launch_reflection_trace_cuda(params, multipath_bvh(), lane_count);
+    const FusedLaunch fused = fused_launch(lane_count, "CudaTraceBackend::run_reflection_trace()");
+    launch_reflection_trace_cuda(params, multipath_bvh(), lane_count, fused.launch);
 }
 
 void CudaTraceBackend::run_segment_visibility(shared::optix::SegmentVisibilityParams params,
@@ -558,8 +553,8 @@ void CudaTraceBackend::run_segment_visibility(shared::optix::SegmentVisibilityPa
     // The CUDA triangle BVH is the scene; a non-zero handle sentinel satisfies the
     // algorithm's null-scene guard (segment_visibility_algo trace_segment).
     params.handle = 1ull;
-    materialize_for_fused_launch();
-    launch_segment_visibility_cuda(params, multipath_bvh(), variant, lane_count);
+    const FusedLaunch fused = fused_launch(lane_count, "CudaTraceBackend::run_segment_visibility()");
+    launch_segment_visibility_cuda(params, multipath_bvh(), variant, lane_count, fused.launch);
 }
 
 void CudaTraceBackend::run_reflection_accumulation(AccumParams params, int lane_count) const {
@@ -568,8 +563,8 @@ void CudaTraceBackend::run_reflection_accumulation(AccumParams params, int lane_
     params.split_mode = 0;
     params.primary_handle = 0;
     params.secondary_handle = 0;
-    materialize_for_fused_launch();
-    launch_reflection_accumulation_cuda(params, multipath_bvh(), lane_count);
+    const FusedLaunch fused = fused_launch(lane_count, "CudaTraceBackend::run_reflection_accumulation()");
+    launch_reflection_accumulation_cuda(params, multipath_bvh(), lane_count, fused.launch);
 }
 
 void CudaTraceBackend::run_reflection_epc(shared::optix::ReflEpcParams params, bool direct_only,
@@ -579,8 +574,8 @@ void CudaTraceBackend::run_reflection_epc(shared::optix::ReflEpcParams params, b
     params.split_mode = 0;
     params.primary_handle = 0;
     params.secondary_handle = 0;
-    materialize_for_fused_launch();
-    launch_reflection_epc_cuda(params, multipath_bvh(), direct_only, primary_visibility_only, lane_count);
+    const FusedLaunch fused = fused_launch(lane_count, "CudaTraceBackend::run_reflection_epc()");
+    launch_reflection_epc_cuda(params, multipath_bvh(), direct_only, primary_visibility_only, lane_count, fused.launch);
 }
 
 void CudaTraceBackend::run_dfr_paths(DfrPathParams params, int lane_count) const {
@@ -589,8 +584,8 @@ void CudaTraceBackend::run_dfr_paths(DfrPathParams params, int lane_count) const
     params.split_mode = 0;
     params.primary_handle = 0;
     params.secondary_handle = 0;
-    materialize_for_fused_launch();
-    launch_dfr_paths_cuda(params, multipath_bvh(), lane_count);
+    const FusedLaunch fused = fused_launch(lane_count, "CudaTraceBackend::run_dfr_paths()");
+    launch_dfr_paths_cuda(params, multipath_bvh(), lane_count, fused.launch);
 }
 
 void CudaTraceBackend::run_dfr_accum_direct(DfrAccumParams params, bool has_non_suffix_strategy,
@@ -600,8 +595,9 @@ void CudaTraceBackend::run_dfr_accum_direct(DfrAccumParams params, bool has_non_
     params.split_mode = 0;
     params.primary_handle = 0;
     params.secondary_handle = 0;
-    materialize_for_fused_launch();
-    launch_dfr_accum_direct_cuda(params, multipath_bvh(), has_non_suffix_strategy, has_suffix_strategy, lane_count);
+    const FusedLaunch fused = fused_launch(lane_count, "CudaTraceBackend::run_dfr_accum_direct()");
+    launch_dfr_accum_direct_cuda(params, multipath_bvh(), has_non_suffix_strategy, has_suffix_strategy, lane_count,
+                                 fused.launch);
 }
 
 void CudaTraceBackend::run_dfr_accum_coherent(DfrAccumParams params, int lane_count) const {
@@ -610,8 +606,8 @@ void CudaTraceBackend::run_dfr_accum_coherent(DfrAccumParams params, int lane_co
     params.split_mode = 0;
     params.primary_handle = 0;
     params.secondary_handle = 0;
-    materialize_for_fused_launch();
-    launch_dfr_accum_coherent_cuda(params, multipath_bvh(), lane_count);
+    const FusedLaunch fused = fused_launch(lane_count, "CudaTraceBackend::run_dfr_accum_coherent()");
+    launch_dfr_accum_coherent_cuda(params, multipath_bvh(), lane_count, fused.launch);
 }
 
 void CudaTraceBackend::run_dfr_accum_chain(DfrAccumParams params, int lane_count) const {
@@ -620,8 +616,8 @@ void CudaTraceBackend::run_dfr_accum_chain(DfrAccumParams params, int lane_count
     params.split_mode = 0;
     params.primary_handle = 0;
     params.secondary_handle = 0;
-    materialize_for_fused_launch();
-    launch_dfr_accum_chain_cuda(params, multipath_bvh(), lane_count);
+    const FusedLaunch fused = fused_launch(lane_count, "CudaTraceBackend::run_dfr_accum_chain()");
+    launch_dfr_accum_chain_cuda(params, multipath_bvh(), lane_count, fused.launch);
 }
 
 void CudaTraceBackend::run_dfr_accum_combined(DfrAccumParams params, bool has_non_suffix_strategy,
@@ -631,8 +627,9 @@ void CudaTraceBackend::run_dfr_accum_combined(DfrAccumParams params, bool has_no
     params.split_mode = 0;
     params.primary_handle = 0;
     params.secondary_handle = 0;
-    materialize_for_fused_launch();
-    launch_dfr_accum_combined_cuda(params, multipath_bvh(), has_non_suffix_strategy, has_suffix_strategy, lane_count);
+    const FusedLaunch fused = fused_launch(lane_count, "CudaTraceBackend::run_dfr_accum_combined()");
+    launch_dfr_accum_combined_cuda(params, multipath_bvh(), has_non_suffix_strategy, has_suffix_strategy, lane_count,
+                                   fused.launch);
 }
 
 template OptixIntersection CudaTraceBackend::intersect<true>(const Ray&, Mask&) const;

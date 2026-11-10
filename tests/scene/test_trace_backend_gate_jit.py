@@ -323,6 +323,23 @@ class TraceBackendGateAvailableTests(unittest.TestCase):
         data = _run_json('import json, rayd.drjit as rd; print(json.dumps({"optix_available": rd.optix_available()}))')
         self.assertIs(data["optix_available"], True)
 
+    def test_python_device_check_reads_the_kill_switch_like_the_native_library(self):
+        script = (
+            "import json, rayd.drjit as rd\n"
+            "from rayd._impl import device_support_jit as device_support\n"
+            'print(json.dumps([rd.optix_available(), device_support.optix_disabled("drjit")]))'
+        )
+        for value, disabled in (("1", True), ("TRUE", True), ("yes", False), ("on", False), (" 1", False)):
+            with self.subTest(value=value):
+                env = os.environ.copy()
+                env["PYTHONPATH"] = str(ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+                env["RAYD_DISABLE_OPTIX"] = value
+                result = subprocess.run(
+                    [sys.executable, "-c", script], cwd=str(ROOT), env=env, text=True, capture_output=True, timeout=300
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(json.loads(result.stdout.splitlines()[-1]), [not disabled, disabled])
+
     def test_default_scene_reports_optix_trace_backend(self):
         script = """
         import json
@@ -344,7 +361,8 @@ class TraceBackendGateAvailableTests(unittest.TestCase):
         self.assertIs(data["intersect"], True)
         self.assertEqual(data["integration"], ["jit_symbolic", "eager_native"])
         self.assertEqual(data["trace_backend_name"], "optix")
-        self.assertEqual(data["edge_bvh_backend"], "optix")
+        # The default edge backend is the native BVH traversal whether or not OptiX is available.
+        self.assertEqual(data["edge_bvh_backend"], "drjit")
 
     def test_trace_none_scene_answers_edges_but_not_triangles(self):
         script = """

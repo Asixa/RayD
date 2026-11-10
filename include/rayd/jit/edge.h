@@ -292,8 +292,10 @@ struct EdgeOptixQueryParams {
     const float* ray_dx = nullptr; ///< RayAD direction x (ray queries only).
     const float* ray_dy = nullptr;
     const float* ray_dz = nullptr;
-    const float* ray_tmax = nullptr;      ///< Per-ray max parameter (ray queries only).
-    const uint8_t* active_mask = nullptr; ///< Per-query active flag.
+    const float* ray_tmax = nullptr;        ///< Per-ray max parameter (ray queries only).
+    float clip_min[3] = {0.0f, 0.0f, 0.0f}; ///< Lower corner of the box holding every edge AABB of the GAS.
+    float clip_max[3] = {0.0f, 0.0f, 0.0f}; ///< Upper corner; infinite rays are clipped to this box.
+    const uint8_t* active_mask = nullptr;   ///< Per-query active flag.
     int query_count = 0;
     int k = 0; ///< Neighbors per query; results in query_count * k order.
 
@@ -348,7 +350,8 @@ struct SceneEdgeBVHStats {
     std::vector<int> leaf_size_histogram;    ///< Count of leaves by primitive count.
 };
 
-/// Custom Dr.Jit/CUDA BVH over scene-global edges; the default nearest-edge backend.
+/// Custom LBVH over scene-global edges, built and traversed by native CUDA kernels on Dr.Jit's stream; the default
+/// nearest-edge backend.
 class SceneEdge {
   public:
     SceneEdge() = default;
@@ -395,18 +398,12 @@ class SceneEdge {
     Int refit_leaf_nodes_from_primitive_indices(const SecondaryEdgeInfoAD& edge_info, const Int& primitive_indices);
     void refit_internal_nodes_full();
     void refit_internal_nodes_dirty(const std::vector<Int>& dirty_leaf_chunks);
-    ClosestEdgeCandidate nearest_edge_point_detached(const Vector3f& point, const Mask& active) const;
-    ClosestEdgeTopKCandidate nearest_edges_point_detached(const Vector3f& point, int k, const Mask& active) const;
-    ClosestEdgeCandidate nearest_edge_finite_ray_detached(const Vector3f& origin, const Vector3f& segment,
-                                                          const Mask& active) const;
-    ClosestEdgeCandidate nearest_edge_infinite_ray_detached(const Vector3f& origin, const Vector3f& direction,
-                                                            const Mask& active) const;
+    /// Detached broad phase: run the native compact-BVH traversal on Dr.Jit's stream and return \p k
+    /// (edge id, squared distance) slots per query, ordered by distance then edge id. Rays pass \p direction and
+    /// \p tmax (finite tmax means the segment [0, tmax]); points pass null for both.
+    void query_native(const Vector3f& origin, const Vector3f* direction, const Float* tmax, const Mask& active, int k,
+                      Int& edge_ids, Float& distance_sq) const;
     void scatter_node_bounds(const Int& node_indices, const Vector3f& bbox_min, const Vector3f& bbox_max);
-    Int gather_node_left_child(const Int& node_indices, const Mask& active) const;
-    Int gather_node_right_child(const Int& node_indices, const Mask& active) const;
-    Int gather_node_active_count(const Int& node_indices, const Mask& active) const;
-    Vector3f gather_node_bbox_min(const Int& node_indices, const Mask& active) const;
-    Vector3f gather_node_bbox_max(const Int& node_indices, const Mask& active) const;
 
     int primitive_count_ = 0;
     int node_count_ = 0;
@@ -426,6 +423,7 @@ class SceneEdge {
     Int primitive_leaf_node_;
     Int leaf_nodes_;
     Int primitive_active_flags_;
+    Mask primitive_active_mask_; ///< Per-edge query mask; empty while every edge is active.
     Int node_active_count_;
     Int node_subtree_primitive_count_;
     Int node_parent_;
@@ -480,13 +478,15 @@ class SceneEdgeOptix {
     void build_gases(bool update);
     void ensure_pipeline();
     void refresh_geometry(const SecondaryEdgeInfoAD& edge_info);
-    /// Per-edge OptiX AABB inflation radius, sized to bound the nearest-edge search.
-    std::vector<float> compute_search_radii(const SecondaryEdgeInfoAD& edge_info) const;
+    /// Per-edge OptiX AABB inflation radii, sized to bound the nearest-edge search. Also stores the edge
+    /// endpoint bounds (min xyz, max xyz) in \p scene_bounds.
+    std::vector<float> compute_search_radii(const SecondaryEdgeInfoAD& edge_info, float (&scene_bounds)[6]) const;
 
     EdgeOptixState* state_ = nullptr;
     int primitive_count_ = 0;
     bool ready_ = false;
     std::vector<float> search_radii_;
+    float scene_bounds_[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 
     Vector3f edge_p0_;
     Vector3f edge_e1_;

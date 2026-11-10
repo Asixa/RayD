@@ -322,6 +322,8 @@ rayd_cuda_object(
         "${RAYD_INCLUDE_DIR}/jit/edge.h"
         "${RAYD_SOURCE_DIR}/edge/edge_bvh_jit.h"
         "${RAYD_SOURCE_DIR}/edge/bvh_build.h"
+        "${RAYD_SOURCE_DIR}/edge/bvh_query.h"
+        "${RAYD_SOURCE_DIR}/edge/edge_distance.h"
         "${RAYD_SOURCE_DIR}/edge/bvh_types.h"
         "${RAYD_SOURCE_DIR}/bvh_build.h"
         "${RAYD_SOURCE_DIR}/bvh_topology.h"

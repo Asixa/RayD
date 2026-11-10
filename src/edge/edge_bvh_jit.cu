@@ -5,6 +5,7 @@
 #include <src/edge/edge_bvh_jit.h>
 #include <rayd/jit/native_launch_audit.h>
 #include <src/edge/bvh_build.h>
+#include <src/edge/bvh_query.h>
 #include <src/bvh_build.h>
 
 #include <algorithm>
@@ -331,6 +332,94 @@ HostTreeLevels build_host_tree_levels_from_topology(const std::vector<int>& left
 }
 
 } // namespace
+
+void query_edge_bvh_gpu(const EdgeBvhCudaContext& context, const EdgeBvhQueryView& bvh,
+                        const EdgeBvhQueryBatch& batch) {
+    require_local(batch.query_count >= 0, "query_edge_bvh_gpu(): query_count must be non-negative.");
+    require_local(batch.k >= 1 && batch.k <= shared::edge::kBvhTopKMax, "query_edge_bvh_gpu(): k is out of range.");
+    if (batch.query_count == 0 || bvh.primitive_count == 0) {
+        return;
+    }
+    require_local(bvh.node_count > 0 && bvh.left_child != nullptr && bvh.right_child != nullptr &&
+                      bvh.leaf_primitives != nullptr,
+                  "query_edge_bvh_gpu(): BVH topology is missing.");
+    require_local(batch.out_edge_ids != nullptr && batch.out_distance_sq != nullptr && batch.stack != nullptr,
+                  "query_edge_bvh_gpu(): output or traversal-stack pointer is null.");
+
+    const size_t query_count = static_cast<size_t>(batch.query_count);
+    const size_t k = static_cast<size_t>(batch.k);
+    const shared::edge::EdgeSoAView edges = {bvh.edge_p0[0],
+                                             bvh.edge_p0[1],
+                                             bvh.edge_p0[2],
+                                             bvh.edge_e1[0],
+                                             bvh.edge_e1[1],
+                                             bvh.edge_e1[2],
+                                             static_cast<size_t>(bvh.primitive_count)};
+    const shared::edge::AabbSoAView node_bounds = {bvh.node_bbox_min[0],
+                                                   bvh.node_bbox_min[1],
+                                                   bvh.node_bbox_min[2],
+                                                   bvh.node_bbox_max[0],
+                                                   bvh.node_bbox_max[1],
+                                                   bvh.node_bbox_max[2],
+                                                   static_cast<size_t>(bvh.node_count)};
+    const shared::edge::CompactBvhTopologyView topology = {bvh.left_child,
+                                                           bvh.right_child,
+                                                           bvh.leaf_primitives,
+                                                           bvh.node_active_count,
+                                                           static_cast<size_t>(bvh.node_count),
+                                                           static_cast<size_t>(bvh.primitive_count),
+                                                           static_cast<size_t>(bvh.leaf_primitive_count)};
+    const shared::edge::EdgeQueryOutputView output =
+        {batch.out_edge_ids, batch.out_distance_sq, nullptr, nullptr, query_count, k, k, query_count * k};
+    // The build rejects trees deeper than the stack, and traversal defers at most one node per level, so the
+    // overflow flag the shared kernel can raise is unreachable here and needs no buffer.
+    const shared::edge::BvhTraversalScratchView scratch = {batch.stack,
+                                                           nullptr,
+                                                           query_count,
+                                                           static_cast<size_t>(shared::edge::kBvhTraversalStackDepth),
+                                                           query_count * static_cast<size_t>(
+                                                                             shared::edge::kBvhTraversalStackDepth),
+                                                           0};
+
+    try {
+        const CudaDeviceGuard device_guard(context.device);
+        constexpr int block_size = 128;
+        const uint32_t block_count = static_cast<uint32_t>((query_count + block_size - 1) / block_size);
+        if (batch.direction[0] == nullptr) {
+            shared::edge::PointBvhQueryParams params = {};
+            params.edges = edges;
+            params.node_bounds = node_bounds;
+            params.topology = topology;
+            params.points = {batch.origin[0], batch.origin[1], batch.origin[2], query_count};
+            params.output = output;
+            params.scratch = scratch;
+            params.active_mask = batch.active;
+            params.edge_mask = bvh.edge_mask;
+            params.stream = context.stream;
+            shared::edge::launch_point_bvh_query_async(params);
+            audit_cuda_kernel_launch("point_bvh_query_kernel", block_count, 1, 1, block_size, 1, 1,
+                                     static_cast<uint64_t>(query_count));
+        } else {
+            shared::edge::RayBvhQueryParams params = {};
+            params.edges = edges;
+            params.node_bounds = node_bounds;
+            params.topology = topology;
+            params.rays = {batch.origin[0],    batch.origin[1],    batch.origin[2], batch.direction[0],
+                           batch.direction[1], batch.direction[2], batch.t_max,     query_count};
+            params.output = output;
+            params.scratch = scratch;
+            params.active_mask = batch.active;
+            params.edge_mask = bvh.edge_mask;
+            params.stream = context.stream;
+            shared::edge::launch_ray_bvh_query_async(params);
+            audit_cuda_kernel_launch("ray_bvh_query_kernel", block_count, 1, 1, block_size, 1, 1,
+                                     static_cast<uint64_t>(query_count));
+        }
+        check_cuda_last_error("query_edge_bvh_gpu(): failed to launch the BVH traversal");
+    } catch (const std::exception& e) {
+        throw_runtime_error_local(std::string("query_edge_bvh_gpu(): ") + e.what());
+    }
+}
 
 void compute_edge_optix_aabbs_gpu(const EdgeBvhCudaContext& context, int primitive_count, const float* edge_p0_x,
                                   const float* edge_p0_y, const float* edge_p0_z, const float* edge_e1_x,

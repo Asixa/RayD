@@ -464,6 +464,9 @@ DfrPathsT<Detached> Scene::trace_dfr_paths(const Vector3fT<Detached>& tx_positio
         params.out_p2_z = raw.p2.z().data();
 
         if (split_mode == 0) {
+            // The staged launches pass source visibility through this buffer. They run on Dr.Jit's stream and
+            // Dr.Jit releases the buffer in stream order when it goes out of scope, so no host synchronization is
+            // needed to keep it alive until they finish.
             Mask temp_visibility = full<Mask>(false, capacity);
             drjit::eval(temp_visibility);
             params.temp_visibility = reinterpret_cast<uint8_t*>(temp_visibility.data());
@@ -478,7 +481,6 @@ DfrPathsT<Detached> Scene::trace_dfr_paths(const Vector3fT<Detached>& tx_positio
                 ensure_pipeline(diffraction_paths_target_export_primary_pipeline_, primary_scene->context(),
                                 hitgroup_record_count, diffraction_paths_target_export_primary_pipeline_config());
                 diffraction_paths_target_export_primary_pipeline_->launch(0, params);
-                drjit::sync_thread();
             }
         } else {
             params.temp_visibility = nullptr;
@@ -1087,6 +1089,7 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(const DfrStatesT<Detached>& states, 
         }
 
         if (staged_primary) {
+            // Released in stream order after the staged launches below; see trace_dfr_paths().
             Mask temp_visibility = full<Mask>(false, launch_count);
             drjit::eval(temp_visibility);
             params.temp_visibility = reinterpret_cast<uint8_t*>(temp_visibility.data());
@@ -1111,7 +1114,6 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(const DfrStatesT<Detached>& states, 
                     diffraction_order1_suffix_first_visibility_primary_pipeline_->launch(0, params);
                     diffraction_order1_suffix_target_primary_pipeline_->launch(0, params);
                 }
-                drjit::sync_thread();
             }
         } else {
             // Split-scene (split_mode != 0) is OptiX-only; the CUDA backend is

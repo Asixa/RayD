@@ -26,8 +26,8 @@
 // CUDA fused multipath launchers run shared traversal algorithms with
 // CudaBvhTraverser over the scene-level triangle BVH, one thread per lane.
 // The CUDA backend uses one scene-level BVH, so every kernel selects the
-// single-scene traversal path. This translation unit owns traversal scratch and
-// the non-blocking stream and synchronizes before returning.
+// single-scene traversal path. The caller supplies the stream and the traversal
+// scratch; launches are asynchronous and allocate nothing.
 
 namespace rayd {
 
@@ -66,73 +66,27 @@ int current_cuda_device() {
     return device;
 }
 
-template <typename T> class CudaBuffer {
+/// Make the caller's device current for one launch and restore the previous device afterwards, so the kernels
+/// run in the context that owns the caller's stream and buffers.
+class CudaDeviceGuard {
   public:
-    CudaBuffer() = default;
-    explicit CudaBuffer(size_t count) { allocate(count); }
-    ~CudaBuffer() {
-        if (ptr_ != nullptr) {
-            cudaFree(ptr_);
+    explicit CudaDeviceGuard(int device) : previous_device_(current_cuda_device()) {
+        if (previous_device_ != device) {
+            check_cuda_call(cudaSetDevice(device), "cuda_multipath: failed to bind the launch device");
+            restore_ = true;
         }
     }
-    CudaBuffer(const CudaBuffer&) = delete;
-    CudaBuffer& operator=(const CudaBuffer&) = delete;
-
-    void allocate(size_t count) {
-        if (ptr_ != nullptr) {
-            cudaFree(ptr_);
-            ptr_ = nullptr;
+    ~CudaDeviceGuard() {
+        if (restore_) {
+            cudaSetDevice(previous_device_);
         }
-        device_ = -1;
-        if (count == 0) {
-            return;
-        }
-        // Device memory is only valid on the device it was allocated on. Record
-        // that device here and re-check it in get(), so scratch allocated under
-        // one current device can never be handed to a launch issued under
-        // another.
-        const int device = current_cuda_device();
-        check_cuda_call(cudaMalloc(reinterpret_cast<void**>(&ptr_), sizeof(T) * count),
-                        "cuda_multipath: CudaBuffer allocation failed");
-        device_ = device;
     }
-
-    T* get() {
-        if (ptr_ != nullptr) {
-            const int device = current_cuda_device();
-            if (device != device_) {
-                throw_runtime_error_local("cuda_multipath: CudaBuffer was allocated on CUDA device " +
-                                          std::to_string(device_) + " but device " + std::to_string(device) +
-                                          " is current.");
-            }
-        }
-        return ptr_;
-    }
-
-    int device() const { return device_; }
+    CudaDeviceGuard(const CudaDeviceGuard&) = delete;
+    CudaDeviceGuard& operator=(const CudaDeviceGuard&) = delete;
 
   private:
-    T* ptr_ = nullptr;
-    int device_ = -1;
-};
-
-class CudaStreamHandle {
-  public:
-    CudaStreamHandle() {
-        check_cuda_call(cudaStreamCreateWithFlags(&stream_, cudaStreamNonBlocking),
-                        "cuda_multipath: failed to create CUDA stream");
-    }
-    ~CudaStreamHandle() {
-        if (stream_ != nullptr) {
-            cudaStreamDestroy(stream_);
-        }
-    }
-    CudaStreamHandle(const CudaStreamHandle&) = delete;
-    CudaStreamHandle& operator=(const CudaStreamHandle&) = delete;
-    cudaStream_t get() const { return stream_; }
-
-  private:
-    cudaStream_t stream_ = nullptr;
+    int previous_device_ = 0;
+    bool restore_ = false;
 };
 
 __device__ __forceinline__ bvh::CudaBvhView make_view(const CudaMultipathBvh& b) {
@@ -726,93 +680,77 @@ __global__ void dfr_accum_phase_kernel(__grid_constant__ const DfrAccumParams pa
     }
 }
 
-/// Allocate the per-lane traversal-stack scratch on \p stream.
-struct ScratchBuffers {
-    CudaBuffer<int> stack;
-    CudaBuffer<int> overflow;
-    ScratchBuffers(int lane_count)
-        : stack(static_cast<size_t>(lane_count) * static_cast<size_t>(kTraversalStackDepth)),
-          overflow(static_cast<size_t>(lane_count)) {}
-};
-
 } // namespace
 
 void launch_reflection_trace_cuda(const shared::optix::ReflectionTraceParams& params, const CudaMultipathBvh& bvh,
-                                  int lane_count) {
+                                  int lane_count, const CudaMultipathLaunch& launch) {
     if (lane_count == 0) {
         return;
     }
     try {
-        CudaStreamHandle stream_handle;
-        ScratchBuffers scratch(lane_count);
-        reflection_trace_kernel<<<block_count(lane_count), kBlockSize, 0, stream_handle.get()>>>(params, bvh,
-                                                                                                 scratch.stack.get(),
-                                                                                                 scratch.overflow.get(),
-                                                                                                 lane_count);
+        const CudaDeviceGuard device_guard(launch.device);
+        reflection_trace_kernel<<<block_count(lane_count), kBlockSize, 0, launch.stream>>>(params, bvh, launch.stack,
+                                                                                           launch.overflow, lane_count);
         audit_cuda_kernel_launch("reflection_trace_cuda_kernel", static_cast<uint32_t>(block_count(lane_count)), 1, 1,
                                  kBlockSize, 1, 1, static_cast<uint64_t>(lane_count));
         check_cuda_last_error("launch_reflection_trace_cuda(): kernel launch failed");
-        audit_cuda_stream_synchronize();
-        check_cuda_call(cudaStreamSynchronize(stream_handle.get()),
-                        "launch_reflection_trace_cuda(): stream sync failed");
     } catch (const std::exception& error) {
         throw_runtime_error_local(std::string("launch_reflection_trace_cuda(): ") + error.what());
     }
 }
 
 void launch_segment_visibility_cuda(const shared::optix::SegmentVisibilityParams& params, const CudaMultipathBvh& bvh,
-                                    CudaSegmentVisibilityVariant variant, int lane_count) {
+                                    CudaSegmentVisibilityVariant variant, int lane_count,
+                                    const CudaMultipathLaunch& launch) {
     if (lane_count == 0) {
         return;
     }
     try {
-        CudaStreamHandle stream_handle;
-        ScratchBuffers scratch(lane_count);
-        segment_visibility_kernel<<<block_count(lane_count), kBlockSize, 0, stream_handle.get()>>>(
-            params, bvh, static_cast<int>(variant), scratch.stack.get(), scratch.overflow.get(), lane_count);
+        const CudaDeviceGuard device_guard(launch.device);
+        segment_visibility_kernel<<<block_count(lane_count), kBlockSize, 0, launch.stream>>>(params, bvh,
+                                                                                             static_cast<int>(variant),
+                                                                                             launch.stack,
+                                                                                             launch.overflow,
+                                                                                             lane_count);
         audit_cuda_kernel_launch("segment_visibility_cuda_kernel", static_cast<uint32_t>(block_count(lane_count)), 1, 1,
                                  kBlockSize, 1, 1, static_cast<uint64_t>(lane_count));
         check_cuda_last_error("launch_segment_visibility_cuda(): kernel launch failed");
-        audit_cuda_stream_synchronize();
-        check_cuda_call(cudaStreamSynchronize(stream_handle.get()),
-                        "launch_segment_visibility_cuda(): stream sync failed");
     } catch (const std::exception& error) {
         throw_runtime_error_local(std::string("launch_segment_visibility_cuda(): ") + error.what());
     }
 }
 
-void launch_reflection_accumulation_cuda(const AccumParams& params, const CudaMultipathBvh& bvh, int lane_count) {
+void launch_reflection_accumulation_cuda(const AccumParams& params, const CudaMultipathBvh& bvh, int lane_count,
+                                         const CudaMultipathLaunch& launch) {
     if (lane_count == 0) {
         return;
     }
     try {
-        CudaStreamHandle stream_handle;
-        ScratchBuffers scratch(lane_count);
-        reflection_accumulation_kernel<<<block_count(lane_count), kBlockSize, 0, stream_handle.get()>>>(
-            params, bvh, scratch.stack.get(), scratch.overflow.get(), lane_count);
+        const CudaDeviceGuard device_guard(launch.device);
+        reflection_accumulation_kernel<<<block_count(lane_count), kBlockSize, 0, launch.stream>>>(params, bvh,
+                                                                                                  launch.stack,
+                                                                                                  launch.overflow,
+                                                                                                  lane_count);
         audit_cuda_kernel_launch("reflection_accumulation_cuda_kernel", static_cast<uint32_t>(block_count(lane_count)),
                                  1, 1, kBlockSize, 1, 1, static_cast<uint64_t>(lane_count));
         check_cuda_last_error("launch_reflection_accumulation_cuda(): kernel launch failed");
-        audit_cuda_stream_synchronize();
-        check_cuda_call(cudaStreamSynchronize(stream_handle.get()),
-                        "launch_reflection_accumulation_cuda(): stream sync failed");
     } catch (const std::exception& error) {
         throw_runtime_error_local(std::string("launch_reflection_accumulation_cuda(): ") + error.what());
     }
 }
 
 void launch_reflection_epc_cuda(const shared::optix::ReflEpcParams& params, const CudaMultipathBvh& bvh,
-                                bool direct_only, bool primary_visibility_only, int lane_count) {
+                                bool direct_only, bool primary_visibility_only, int lane_count,
+                                const CudaMultipathLaunch& launch) {
     if (lane_count == 0) {
         return;
     }
     try {
-        CudaStreamHandle stream_handle;
-        ScratchBuffers scratch(lane_count);
+        const CudaDeviceGuard device_guard(launch.device);
         const int blocks = block_count(lane_count);
-        const cudaStream_t s = stream_handle.get();
-        int* stack = scratch.stack.get();
-        int* ovf = scratch.overflow.get();
+        const cudaStream_t s = launch.stream;
+        int* stack = launch.stack;
+        int* ovf = launch.overflow;
         // Instantiation matrix mirrors the OptiX raygen variants:
         // full (false,false), direct (true,false), direct_primary (true,true).
         if (direct_only && primary_visibility_only) {
@@ -825,24 +763,22 @@ void launch_reflection_epc_cuda(const shared::optix::ReflEpcParams& params, cons
         audit_cuda_kernel_launch("reflection_epc_cuda_kernel", static_cast<uint32_t>(blocks), 1, 1, kBlockSize, 1, 1,
                                  static_cast<uint64_t>(lane_count));
         check_cuda_last_error("launch_reflection_epc_cuda(): kernel launch failed");
-        audit_cuda_stream_synchronize();
-        check_cuda_call(cudaStreamSynchronize(s), "launch_reflection_epc_cuda(): stream sync failed");
     } catch (const std::exception& error) {
         throw_runtime_error_local(std::string("launch_reflection_epc_cuda(): ") + error.what());
     }
 }
 
-void launch_dfr_paths_cuda(const DfrPathParams& params, const CudaMultipathBvh& bvh, int lane_count) {
+void launch_dfr_paths_cuda(const DfrPathParams& params, const CudaMultipathBvh& bvh, int lane_count,
+                           const CudaMultipathLaunch& launch) {
     if (lane_count == 0) {
         return;
     }
     try {
-        CudaStreamHandle stream_handle;
-        ScratchBuffers scratch(lane_count);
+        const CudaDeviceGuard device_guard(launch.device);
         const int blocks = block_count(lane_count);
-        const cudaStream_t s = stream_handle.get();
-        int* stack = scratch.stack.get();
-        int* ovf = scratch.overflow.get();
+        const cudaStream_t s = launch.stream;
+        int* stack = launch.stack;
+        int* ovf = launch.overflow;
         // Single-scene two-phase export (mirrors the split_mode==0 OptiX path):
         // source-visibility prepass then target export, ordered on one stream.
         dfr_paths_source_visibility_kernel<<<blocks, kBlockSize, 0, s>>>(params, bvh, stack, ovf, lane_count);
@@ -853,8 +789,6 @@ void launch_dfr_paths_cuda(const DfrPathParams& params, const CudaMultipathBvh& 
         audit_cuda_kernel_launch("dfr_paths_target_export_cuda_kernel", static_cast<uint32_t>(blocks), 1, 1, kBlockSize,
                                  1, 1, static_cast<uint64_t>(lane_count));
         check_cuda_last_error("launch_dfr_paths_cuda(): target-export launch failed");
-        audit_cuda_stream_synchronize();
-        check_cuda_call(cudaStreamSynchronize(s), "launch_dfr_paths_cuda(): stream sync failed");
     } catch (const std::exception& error) {
         throw_runtime_error_local(std::string("launch_dfr_paths_cuda(): ") + error.what());
     }
@@ -875,16 +809,16 @@ void launch_dfr_accum_phase(const DfrAccumParams& params, DfrAccumPhase phase, c
 } // namespace
 
 void launch_dfr_accum_direct_cuda(const DfrAccumParams& params, const CudaMultipathBvh& bvh,
-                                  bool has_non_suffix_strategy, bool has_suffix_strategy, int lane_count) {
+                                  bool has_non_suffix_strategy, bool has_suffix_strategy, int lane_count,
+                                  const CudaMultipathLaunch& launch) {
     if (lane_count == 0) {
         return;
     }
     try {
-        CudaStreamHandle stream_handle;
-        ScratchBuffers scratch(lane_count);
-        const cudaStream_t s = stream_handle.get();
-        int* stack = scratch.stack.get();
-        int* ovf = scratch.overflow.get();
+        const CudaDeviceGuard device_guard(launch.device);
+        const cudaStream_t s = launch.stream;
+        int* stack = launch.stack;
+        int* ovf = launch.overflow;
         // Single-scene staged order (mirrors the split_mode==0 OptiX path): the
         // source-visibility prepass writes temp_visibility, then the target
         // phases read (and the suffix-first phase overwrites) it, all serialized
@@ -901,49 +835,44 @@ void launch_dfr_accum_direct_cuda(const DfrAccumParams& params, const CudaMultip
             launch_dfr_accum_phase(params, DfrAccumPhase::SuffixTarget, "dfr_accum_suffix_target_cuda_kernel", bvh,
                                    stack, ovf, lane_count, s);
         }
-        audit_cuda_stream_synchronize();
-        check_cuda_call(cudaStreamSynchronize(s), "launch_dfr_accum_direct_cuda(): stream sync failed");
     } catch (const std::exception& error) {
         throw_runtime_error_local(std::string("launch_dfr_accum_direct_cuda(): ") + error.what());
     }
 }
 
-void launch_dfr_accum_coherent_cuda(const DfrAccumParams& params, const CudaMultipathBvh& bvh, int lane_count) {
+void launch_dfr_accum_coherent_cuda(const DfrAccumParams& params, const CudaMultipathBvh& bvh, int lane_count,
+                                    const CudaMultipathLaunch& launch) {
     if (lane_count == 0) {
         return;
     }
     try {
-        CudaStreamHandle stream_handle;
-        ScratchBuffers scratch(lane_count);
-        const cudaStream_t s = stream_handle.get();
-        launch_dfr_accum_phase(params, DfrAccumPhase::Coherent, "dfr_accum_coherent_cuda_kernel", bvh,
-                               scratch.stack.get(), scratch.overflow.get(), lane_count, s);
-        audit_cuda_stream_synchronize();
-        check_cuda_call(cudaStreamSynchronize(s), "launch_dfr_accum_coherent_cuda(): stream sync failed");
+        const CudaDeviceGuard device_guard(launch.device);
+        const cudaStream_t s = launch.stream;
+        launch_dfr_accum_phase(params, DfrAccumPhase::Coherent, "dfr_accum_coherent_cuda_kernel", bvh, launch.stack,
+                               launch.overflow, lane_count, s);
     } catch (const std::exception& error) {
         throw_runtime_error_local(std::string("launch_dfr_accum_coherent_cuda(): ") + error.what());
     }
 }
 
-void launch_dfr_accum_chain_cuda(const DfrAccumParams& params, const CudaMultipathBvh& bvh, int lane_count) {
+void launch_dfr_accum_chain_cuda(const DfrAccumParams& params, const CudaMultipathBvh& bvh, int lane_count,
+                                 const CudaMultipathLaunch& launch) {
     if (lane_count == 0) {
         return;
     }
     try {
-        CudaStreamHandle stream_handle;
-        ScratchBuffers scratch(lane_count);
-        const cudaStream_t s = stream_handle.get();
-        launch_dfr_accum_phase(params, DfrAccumPhase::Chain, "dfr_accum_chain_cuda_kernel", bvh, scratch.stack.get(),
-                               scratch.overflow.get(), lane_count, s);
-        audit_cuda_stream_synchronize();
-        check_cuda_call(cudaStreamSynchronize(s), "launch_dfr_accum_chain_cuda(): stream sync failed");
+        const CudaDeviceGuard device_guard(launch.device);
+        const cudaStream_t s = launch.stream;
+        launch_dfr_accum_phase(params, DfrAccumPhase::Chain, "dfr_accum_chain_cuda_kernel", bvh, launch.stack,
+                               launch.overflow, lane_count, s);
     } catch (const std::exception& error) {
         throw_runtime_error_local(std::string("launch_dfr_accum_chain_cuda(): ") + error.what());
     }
 }
 
 void launch_dfr_accum_combined_cuda(const DfrAccumParams& params, const CudaMultipathBvh& bvh,
-                                    bool has_non_suffix_strategy, bool has_suffix_strategy, int lane_count) {
+                                    bool has_non_suffix_strategy, bool has_suffix_strategy, int lane_count,
+                                    const CudaMultipathLaunch& launch) {
     // Combined 5-bool accumulation body (run_diffraction_order1_accumulation_algo).
     // The single-scene CUDA backend always takes the staged path above, so this
     // is only reachable if a split-scene CUDA arm is ever added; it is
@@ -954,12 +883,11 @@ void launch_dfr_accum_combined_cuda(const DfrAccumParams& params, const CudaMult
         return;
     }
     try {
-        CudaStreamHandle stream_handle;
-        ScratchBuffers scratch(lane_count);
-        const cudaStream_t s = stream_handle.get();
+        const CudaDeviceGuard device_guard(launch.device);
+        const cudaStream_t s = launch.stream;
         const int blocks = block_count(lane_count);
-        int* stack = scratch.stack.get();
-        int* ovf = scratch.overflow.get();
+        int* stack = launch.stack;
+        int* ovf = launch.overflow;
         if (has_non_suffix_strategy && has_suffix_strategy) {
             dfr_accum_order1_kernel<true, false, true, true, true>
                 <<<blocks, kBlockSize, 0, s>>>(params, bvh, stack, ovf, lane_count);
@@ -973,8 +901,6 @@ void launch_dfr_accum_combined_cuda(const DfrAccumParams& params, const CudaMult
         audit_cuda_kernel_launch("dfr_accum_order1_cuda_kernel", static_cast<uint32_t>(blocks), 1, 1, kBlockSize, 1, 1,
                                  static_cast<uint64_t>(lane_count));
         check_cuda_last_error("launch_dfr_accum_combined_cuda(): kernel launch failed");
-        audit_cuda_stream_synchronize();
-        check_cuda_call(cudaStreamSynchronize(s), "launch_dfr_accum_combined_cuda(): stream sync failed");
     } catch (const std::exception& error) {
         throw_runtime_error_local(std::string("launch_dfr_accum_combined_cuda(): ") + error.what());
     }

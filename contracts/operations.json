@@ -402,9 +402,9 @@
   },
   "edge_topk_tie_break": {
     "contract": "(distance_squared, global_edge_id)",
-    "implemented_in": ["shared_bvh", "torch_topk"],
-    "not_implemented_in": ["drjit_optix", "drjit_native_bvh"],
-    "note": "drjit paths traversal-order-dependent on exact ties; unification deferred to >=P3"
+    "implemented_in": ["shared_bvh", "torch_topk", "drjit_native_bvh"],
+    "not_implemented_in": ["drjit_optix"],
+    "note": "drjit_native_bvh runs the shared compact-BVH traversal; the Dr.Jit OptiX point and top-k programs stay traversal-order-dependent on exact ties, while its ray program keeps the lower global id"
   },
   "tensor_contract": {
     "vectors": {"shape": "(..., 3)", "dtype": "float32", "layout": "row-major"},

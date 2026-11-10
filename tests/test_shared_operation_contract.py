@@ -184,8 +184,8 @@ class SharedOperationContractTests(unittest.TestCase):
     def test_edge_topk_tie_break_asymmetry_is_recorded(self):
         tie = CONTRACT["edge_topk_tie_break"]
         self.assertEqual(tie["contract"], "(distance_squared, global_edge_id)")
-        self.assertEqual(tie["implemented_in"], ["shared_bvh", "torch_topk"])
-        self.assertEqual(tie["not_implemented_in"], ["drjit_optix", "drjit_native_bvh"])
+        self.assertEqual(tie["implemented_in"], ["shared_bvh", "torch_topk", "drjit_native_bvh"])
+        self.assertEqual(tie["not_implemented_in"], ["drjit_optix"])
         self.assertTrue(tie["note"])
 
     def test_operation_integration_matrix(self):

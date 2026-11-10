@@ -357,11 +357,9 @@ class CudaTraceBackend final : public TraceBackend {
 
   private:
     /// Gather this backend's persistent BVH buffers into a raw-pointer view for
-    /// the fused kernels. Caller must have materialized the buffers first.
+    /// the fused kernels; reading the pointers evaluates the buffers on Dr.Jit's stream, which the fused kernels
+    /// share.
     CudaMultipathBvh multipath_bvh() const;
-    /// Materialize the persistent BVH buffers and drain the Dr.Jit stream so the
-    /// fused kernel (on its own stream) sees consistent inputs (b7f7226 protocol).
-    void materialize_for_fused_launch() const;
 
     void build_or_refit(const TriangleInfo& triangles, const Int& shape_id, const Int& local_prim_id, bool refit);
     template <bool Detached> OptixIntersection intersect_impl(const RayT<Detached>& ray, MaskT<Detached>& active) const;
@@ -485,8 +483,8 @@ struct SceneSyncProfile {
 
 /// Acceleration backend used for nearest-edge queries.
 enum class EdgeBVHBackend {
-    DrJit,      ///< Custom Dr.Jit/CUDA BVH.
-    Optix,      ///< OptiX custom-AABB backend (default).
+    DrJit,      ///< Custom LBVH with native CUDA traversal (default).
+    Optix,      ///< OptiX custom-AABB backend.
     OptixDrJit, ///< Dr.Jit point/top-k queries with OptiX ray queries.
     Hybrid [[deprecated("use EdgeBVHBackend::OptixDrJit")]] = OptixDrJit
 };
@@ -521,8 +519,8 @@ class Scene final {
     /// \brief Construct an empty scene.
     ///
     /// \param edge_bvh_backend Nearest-edge backend. "auto" resolves to
-    ///        "optix" when available and "drjit" otherwise; explicit choices
-    ///        are "drjit", "optix", and "optix_drjit" (see EdgeBVHBackend).
+    ///        "drjit"; explicit choices are "drjit", "optix", and
+    ///        "optix_drjit" (see EdgeBVHBackend).
     /// \param trace_backend Triangle trace backend: "auto" resolves to OptiX when
     ///        the driver is available and to CUDA otherwise; "optix" forces
     ///        OptiX (availability is enforced at build()), "cuda" forces the
