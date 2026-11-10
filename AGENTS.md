@@ -131,9 +131,10 @@ It is active: Channel calls all four of its entry points from
 `native/channel/rayd/geometry.cpp` at its RayD pin `c7a9997` (checked
 2026-11-09), as it calls the three ADR-0002 transmission-sequence entry points
 from `native/channel/binding/fields.cpp`. Every structurally active non-empty
-forward entry submits one OptiX launch, with the ordered `D + 1` capacity probe
-inside each raygen lane.
-`input_active_any=false` submits zero OptiX work and must validate the device
+forward entry submits one trace launch (OptiX, or one CUDA-BVH kernel on a CUDA
+scene), with the ordered `D + 1` capacity probe inside each lane; both tracers
+run the one march in `src/penetration/segment_penetration_march.cuh`.
+`input_active_any=false` submits zero trace work and must validate the device
 mask on the caller's stream. Results and tapes are fixed `[N,D]`, share the
 caller's CUDA int32 `[1]` failure transaction and single assigned bit, and are
 made completely inert after any failure; only the overflow diagnostic may be
@@ -143,6 +144,16 @@ comparison/normal/epsilon expressions, and family-local non-FTZ/precise-divide/
 precise-square-root compilation separate. Do not add a Python binding,
 dispatcher, host count read, partial result, or fallback. See
 `docs/adr/0033-batched-segment-penetration.md`.
+
+## Trace Backends
+
+Every typed scene operation runs on both triangle tracers, OptiX and the pure-CUDA
+BVH, with identical discrete results (ADR-0046). `create_scene(meshes,
+SceneOptions)` requests one (`Auto` picks OptiX when usable),
+`scene_trace_backend(scene)` reports the resolved one, and
+`optix_availability(device)` explains an unusable OptiX runtime. A new
+scene-tracing operation must ship both paths over one shared body and a case in
+`tests/native/trace_backend_parity_test.cpp`.
 
 ## OptiX Pipeline Guardrail
 
@@ -287,7 +298,8 @@ This exclusion does not prohibit low-level, solver-neutral RF scattering
 table/sample/integral primitives governed by ADR-0026.
 
 The typed axial-edge visibility primitive governed by ADR-0029 owns only its
-exact four-sample OptiX numerical primitive. Channel calls it
+exact four-sample numerical primitive; the OptiX program and the CUDA-BVH kernel
+share one lane in `src/visibility/axial_edge_visibility.cuh` (ADR-0046). Channel calls it
 (`axial_edge_visibility_forward` from `native/channel/rayd/diffraction.cpp` at
 its RayD pin `c7a9997`, checked 2026-11-09). Keep its Params/PTX/
 pipeline separate from legacy segment visibility, inherit the legacy OptiX
