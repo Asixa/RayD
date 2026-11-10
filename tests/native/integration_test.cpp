@@ -51,6 +51,18 @@ template <typename Fn> void require_throws(Fn&& fn, const std::string& message) 
     fail(message);
 }
 
+template <typename Fn> void require_throws_with(Fn&& fn, const std::string& expected, const std::string& message) {
+    try {
+        std::forward<Fn>(fn)();
+    } catch (const std::exception& error) {
+        const std::string what = error.what();
+        require(what.find(expected) != std::string::npos,
+                message + ": error \"" + what + "\" does not contain \"" + expected + "\"");
+        return;
+    }
+    fail(message);
+}
+
 void require_tensor_exact(const at::Tensor& actual, const at::Tensor& expected, const std::string& name) {
     require(actual.defined() == expected.defined(), name + ": defined state differs");
     if (!actual.defined())
@@ -803,6 +815,12 @@ void test_error_and_lifecycle_contracts() {
     bad_mesh.vertices = bad_mesh.vertices.to(at::kInt);
     require_throws([&] { (void)rayd::torch::create_scene({mesh_input(bad_mesh)}); },
                    "invalid mesh dtype must fail scene construction");
+
+    MeshFixture face_uv_without_uv = make_triangle();
+    face_uv_without_uv.face_uv = face_uv_without_uv.faces.clone();
+    require_throws_with([&] { (void)rayd::torch::create_scene({mesh_input(face_uv_without_uv)}); },
+                        "rayd::torch::create_scene: mesh 0 has face_uv indices but no uv coordinates",
+                        "typed scene UV validation must name its own entry point");
 
     MeshFixture mesh = make_triangle();
     auto scene = rayd::torch::create_scene({mesh_input(mesh)});

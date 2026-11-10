@@ -15,6 +15,7 @@
 #include <torch/extension.h>
 
 #include <string>
+#include <string_view>
 
 namespace rayd::torch_backend {
 
@@ -83,7 +84,7 @@ c10::intrusive_ptr<SceneHandle> create_scene_cache_from_flat(
         meshes.back().instance_transform = std::move(instance_transforms[i]);
         meshes.back().geometry_owner_id = geometry_owner_ids[i];
     }
-    auto owner = create_scene_cache(std::move(meshes), trace_backend, edge_backend);
+    auto owner = create_scene_cache(std::move(meshes), trace_backend, edge_backend, "Scene.build()");
     const int64_t handle = owner->handle;
     register_scene_cache(std::move(owner));
     return c10::make_intrusive<SceneHandle>(handle);
@@ -244,7 +245,7 @@ SceneResource create_scene(std::vector<MeshInput> meshes) {
                                                                  std::move(mesh.to_world_left),
                                                                  std::move(mesh.to_world_right), flags));
     }
-    auto owner = torch_backend::create_scene_cache(std::move(records));
+    auto owner = torch_backend::create_scene_cache(std::move(records), "rayd::torch::create_scene");
     return SceneResource(std::make_unique<SceneResource::Impl>(std::move(owner)));
 }
 
@@ -339,8 +340,8 @@ bool mesh_has_face_uv(const MeshRecord& mesh) {
 
 // A mesh's UVs are (U, 2) texture coordinates indexed per face corner by `face_uv`, or by the vertex indices when
 // `face_uv` is omitted (then U must equal the vertex count). Their index range is checked with the face indices.
-void require_mesh_uv(const MeshRecord& mesh, size_t mesh_index, int64_t device_index) {
-    const std::string prefix = "Scene.build(): mesh " + std::to_string(mesh_index) + " ";
+void require_mesh_uv(const MeshRecord& mesh, size_t mesh_index, int64_t device_index, std::string_view operation) {
+    const std::string prefix = std::string(operation) + ": mesh " + std::to_string(mesh_index) + " ";
     if (mesh_has_face_uv(mesh) && !mesh_has_uv(mesh))
         throw std::runtime_error(prefix + "has face_uv indices but no uv coordinates to index.");
     if (!mesh_has_uv(mesh))
@@ -398,7 +399,7 @@ int64_t first_non_finite_vertex(const at::Tensor& vertices) {
 // bounds checks, so an out-of-range index is either silent garbage or a sticky illegal address; the same holds for
 // face_uv and the UV gather. A NaN or infinite vertex coordinate would make the OptiX GAS bounds non-finite, which can
 // leave every other face of the mesh unhittable. One device reduction per tensor and a single host read cover all.
-void require_mesh_inputs_valid(const std::vector<MeshRecord>& meshes) {
+void require_mesh_inputs_valid(const std::vector<MeshRecord>& meshes, std::string_view operation) {
     enum class Check { Finite, Faces, FaceUv };
     struct Row {
         size_t mesh_index;
@@ -411,7 +412,7 @@ void require_mesh_inputs_valid(const std::vector<MeshRecord>& meshes) {
     for (size_t mesh_index = 0; mesh_index < meshes.size(); ++mesh_index) {
         const MeshRecord& mesh = meshes[mesh_index];
         if (mesh.vertices.size(0) == 0)
-            throw std::runtime_error("Scene.build(): mesh " + std::to_string(mesh_index) +
+            throw std::runtime_error(std::string(operation) + ": mesh " + std::to_string(mesh_index) +
                                      " has no vertices; every mesh needs at least one vertex.");
         const at::Tensor finite = all_finite_flag(mesh.vertices).to(at::kLong);
         bounds.push_back(at::stack({finite, finite}));
@@ -437,7 +438,7 @@ void require_mesh_inputs_valid(const std::vector<MeshRecord>& meshes) {
         const int64_t highest = values[2 * row + 1];
         if (rows[row].check == Check::Finite) {
             if (lowest == 0)
-                throw_non_finite_vertex("Scene.build()", rows[row].mesh_index, mesh.vertices);
+                throw_non_finite_vertex(std::string(operation), rows[row].mesh_index, mesh.vertices);
             continue;
         }
         const bool uv = rows[row].check == Check::FaceUv;
@@ -446,7 +447,7 @@ void require_mesh_inputs_valid(const std::vector<MeshRecord>& meshes) {
             const int64_t offending = lowest < 0 ? lowest : highest;
             const std::string kind = uv ? " has face_uv index " : " has face index ";
             const std::string target = uv ? " uv rows." : " vertices.";
-            throw std::runtime_error("Scene.build(): mesh " + std::to_string(rows[row].mesh_index) + kind +
+            throw std::runtime_error(std::string(operation) + ": mesh " + std::to_string(rows[row].mesh_index) + kind +
                                      std::to_string(offending) + " outside the valid range [0, " +
                                      std::to_string(count) + ") of its " + std::to_string(count) + target);
         }
@@ -705,7 +706,7 @@ void update_triangle_ias(SceneCache& scene, OptixDeviceContext optix_context, cu
                         nullptr, 0));
 }
 
-void refresh_global_geometry(SceneCache& scene) {
+void refresh_global_geometry(SceneCache& scene, std::string_view operation) {
     int64_t vertex_offset = 0;
     int64_t face_offset = 0;
     std::vector<int32_t> face_offsets;
@@ -714,7 +715,7 @@ void refresh_global_geometry(SceneCache& scene) {
         const MeshRecord& mesh = scene.meshes[mesh_id];
         if (vertex_offset > static_cast<int64_t>(std::numeric_limits<int32_t>::max()) ||
             face_offset > static_cast<int64_t>(std::numeric_limits<int32_t>::max())) {
-            throw std::runtime_error("Scene.build(): geometry exceeds int32 indexing limits.");
+            throw std::runtime_error(std::string(operation) + ": geometry exceeds int32 indexing limits.");
         }
         face_offsets.push_back(static_cast<int32_t>(face_offset));
         vertex_offset += mesh.vertices.size(0);
@@ -722,7 +723,7 @@ void refresh_global_geometry(SceneCache& scene) {
     }
     if (vertex_offset > static_cast<int64_t>(std::numeric_limits<int32_t>::max()) ||
         face_offset > static_cast<int64_t>(std::numeric_limits<int32_t>::max())) {
-        throw std::runtime_error("Scene.build(): geometry exceeds int32 indexing limits.");
+        throw std::runtime_error(std::string(operation) + ": geometry exceeds int32 indexing limits.");
     }
 
     at::TensorOptions fopts = scene.meshes[0].vertices.options();
@@ -837,7 +838,7 @@ bool scene_has_dynamic_edges(const SceneCache& scene) {
     return false;
 }
 
-void build_edge_topology(SceneCache& scene) {
+void build_edge_topology(SceneCache& scene, std::string_view operation) {
     std::vector<at::Tensor> edge_v0_parts;
     std::vector<at::Tensor> edge_v1_parts;
     std::vector<at::Tensor> edge_face0_parts;
@@ -857,7 +858,7 @@ void build_edge_topology(SceneCache& scene) {
     for (int32_t shape_id = 0; shape_id < static_cast<int32_t>(scene.meshes.size()); ++shape_id) {
         const MeshRecord& mesh = scene.meshes[shape_id];
         if (mesh.edges_enabled) {
-            EdgeTopology topology = build_edge_topology_cuda(mesh.faces, vertex_offset, shape_id);
+            EdgeTopology topology = build_edge_topology_cuda(mesh.faces, vertex_offset, shape_id, operation);
             if (topology.edge_v0.numel() > 0) {
                 edge_v0_parts.push_back(topology.edge_v0);
                 edge_v1_parts.push_back(topology.edge_v1);
@@ -1142,20 +1143,21 @@ SceneHandle::~SceneHandle() {
         destroy_scene(handle);
 }
 
-std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes) {
-    return create_scene_cache(std::move(meshes), TraceBackend::Auto, EdgeBackend::Auto);
+std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes, std::string_view operation) {
+    return create_scene_cache(std::move(meshes), TraceBackend::Auto, EdgeBackend::Auto, operation);
 }
 
 std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes, TraceBackend requested_trace_backend,
-                                               EdgeBackend requested_edge_backend) {
+                                               EdgeBackend requested_edge_backend, std::string_view operation) {
+    const std::string prefix = std::string(operation) + ": ";
     if (meshes.empty())
-        throw std::runtime_error("Scene.build(): at least one mesh is required.");
+        throw std::runtime_error(prefix + "at least one mesh is required.");
 
     const int64_t device_index = meshes[0].vertices.get_device();
     c10::cuda::CUDAGuard guard(static_cast<int>(device_index));
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     if (torch_ctx.device_index != device_index)
-        throw std::runtime_error("Scene.build(): current CUDA device does not match mesh tensors.");
+        throw std::runtime_error(prefix + "current CUDA device does not match mesh tensors.");
     for (size_t mesh_index = 0; mesh_index < meshes.size(); ++mesh_index) {
         MeshRecord& mesh = meshes[mesh_index];
         if (mesh.geometry_owner_id < 0)
@@ -1166,29 +1168,29 @@ std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes, T
         require_optional_matrix4(mesh.to_world_right, "mesh.to_world_right");
         require_optional_matrix4(mesh.instance_transform, "mesh.instance_transform");
         if (mesh.vertices.get_device() != device_index || mesh.faces.get_device() != device_index)
-            throw std::runtime_error("Scene.build(): all tensors must be on the same CUDA device.");
+            throw std::runtime_error(prefix + "all tensors must be on the same CUDA device.");
         if (mesh.to_world_left.get_device() != device_index || mesh.to_world_right.get_device() != device_index)
-            throw std::runtime_error("Scene.build(): transform tensors must be on the scene device.");
+            throw std::runtime_error(prefix + "transform tensors must be on the scene device.");
         if (mesh.instance_transform.get_device() != device_index)
-            throw std::runtime_error("Scene.build(): instance transforms must be on the scene device.");
+            throw std::runtime_error(prefix + "instance transforms must be on the scene device.");
         if (mesh.geometry_owner_id < 0 || mesh.geometry_owner_id > static_cast<int64_t>(mesh_index))
-            throw std::runtime_error("Scene.build(): geometry owner must be an existing mesh.");
+            throw std::runtime_error(prefix + "geometry owner must be an existing mesh.");
         const MeshRecord& owner = meshes[static_cast<size_t>(mesh.geometry_owner_id)];
         if (owner.geometry_owner_id >= 0 && owner.geometry_owner_id != mesh.geometry_owner_id)
-            throw std::runtime_error("Scene.build(): instance-of-instance geometry is not supported.");
+            throw std::runtime_error(prefix + "instance-of-instance geometry is not supported.");
         if (mesh.geometry_owner_id != static_cast<int64_t>(mesh_index)) {
             if (owner.dynamic)
-                throw std::runtime_error("Scene.build(): dynamic source geometry cannot be instanced.");
+                throw std::runtime_error(prefix + "dynamic source geometry cannot be instanced.");
             if (mesh.faces.sizes() != owner.faces.sizes() || mesh.vertices.sizes() != owner.vertices.sizes())
-                throw std::runtime_error("Scene.build(): instance geometry must match its owner.");
+                throw std::runtime_error(prefix + "instance geometry must match its owner.");
             if (mesh.instance_transform.numel() == 0)
-                throw std::runtime_error("Scene.build(): an instance requires a (4, 4) transform.");
+                throw std::runtime_error(prefix + "an instance requires a (4, 4) transform.");
         } else if (mesh.instance_transform.numel() != 0) {
-            throw std::runtime_error("Scene.build(): owner geometry cannot carry an instance transform.");
+            throw std::runtime_error(prefix + "owner geometry cannot carry an instance transform.");
         }
-        require_mesh_uv(mesh, mesh_index, device_index);
+        require_mesh_uv(mesh, mesh_index, device_index, operation);
     }
-    require_mesh_inputs_valid(meshes);
+    require_mesh_inputs_valid(meshes, operation);
 
     auto scene_unique = std::make_unique<SceneCache>();
     SceneCache* scene = scene_unique.get();
@@ -1208,7 +1210,7 @@ std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes, T
     if (scene->trace_backend == TraceBackend::Optix || scene->edge_backend == EdgeBackend::Optix)
         optix_entry = &get_optix_context(static_cast<int>(device_index));
     scene->meshes = std::move(meshes);
-    refresh_global_geometry(*scene);
+    refresh_global_geometry(*scene, operation);
     scene->triangle_uv = build_triangle_uv(scene->meshes, scene->global_vertices.options());
     if (scene->trace_backend == TraceBackend::Optix) {
         scene->triangle_accels.resize(scene->meshes.size());
@@ -1226,7 +1228,7 @@ std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes, T
     } else {
         ensure_custom_triangle_bvh(*scene);
     }
-    build_edge_topology(*scene);
+    build_edge_topology(*scene, operation);
     // The edge topology and its mask are fixed for the scene's lifetime; the edge SoA and acceleration structures
     // are derived on the first edge query (ensure_edge_soa and friends).
     const at::Device device(at::kCUDA, scene->device_index);
@@ -1237,7 +1239,7 @@ std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes, T
 }
 
 int64_t create_scene(std::vector<MeshRecord> meshes) {
-    auto scene = create_scene_cache(std::move(meshes));
+    auto scene = create_scene_cache(std::move(meshes), "Scene.build()");
     const int64_t handle = scene->handle;
     register_scene_cache(std::move(scene));
     return handle;
@@ -1770,7 +1772,7 @@ void sync_scene(int64_t handle) {
             ++gas_updates;
         }
     }
-    refresh_global_geometry(scene);
+    refresh_global_geometry(scene, "Scene.sync()");
     if (scene.trace_backend == TraceBackend::Optix) {
         // Refitting the IAS over refit GAS children and moved instances is enough; a GAS that was rebuilt into a new
         // buffer has a new handle, and then the IAS is built again.

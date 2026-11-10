@@ -418,7 +418,8 @@ void flag_non_finite_vertices_cuda(const std::vector<at::Tensor>& vertices, at::
     cuda_check(cudaGetLastError(), "flag_non_finite_kernel launch");
 }
 
-EdgeTopology build_edge_topology_cuda(const at::Tensor& faces, int32_t vertex_offset, int32_t shape_id) {
+EdgeTopology build_edge_topology_cuda(const at::Tensor& faces, int32_t vertex_offset, int32_t shape_id,
+                                      std::string_view operation) {
     at::Tensor faces_contiguous = faces.contiguous();
     const int64_t face_count = faces_contiguous.size(0);
     launch_require_count(face_count, "build_edge_topology_cuda(face_count)");
@@ -542,7 +543,7 @@ EdgeTopology build_edge_topology_cuda(const at::Tensor& faces, int32_t vertex_of
     cuda_check(cudaStreamSynchronize(stream), "cudaStreamSynchronize(edge topology output count)");
     if (highest_incidence > kMaxEdgeIncidentFaces) {
         throw std::runtime_error(
-            "Scene.build(): mesh " + std::to_string(shape_id) + " has an edge shared by " +
+            std::string(operation) + ": mesh " + std::to_string(shape_id) + " has an edge shared by " +
             std::to_string(highest_incidence) + " non-degenerate faces; edge topology supports at most " +
             std::to_string(kMaxEdgeIncidentFaces) +
             " faces per edge because it emits one wedge per pair of incident faces. This usually means duplicated "

@@ -77,9 +77,12 @@ All notable changes to RayD are documented in this file.
   `MeshInput.uv` and `MeshInput.face_uv`: `intersect_forward` reports the
   interpolated texture coordinates in `uv` (and its derivatives follow them)
   for meshes that carry UVs, where it used to report barycentric `(u, v)`, and
-  scene creation applies the same UV validation as `Scene.build()`. The
-  header and `kIntegrationApiVersion` (8) are unchanged; meshes without UVs
-  are unaffected.
+  scene creation rejects `face_uv` without `uv`, `face_uv` indices outside the
+  `uv` rows, and malformed UV tensors as `Scene.build()` does; its errors name
+  `rayd::torch::create_scene` instead of `Scene.build()`. Rejecting `uv` that
+  requires grad is a check of the Python `Scene.build()` only. The header and
+  `kIntegrationApiVersion` (8) are unchanged; meshes without UVs are
+  unaffected.
 - Torch scene commits are ordered on the GPU against queries on other CUDA
   streams: `sync()`, `set_edge_mask()` and the release of a scene (for
   example when `build()` replaces it) make their stream wait for the previous
