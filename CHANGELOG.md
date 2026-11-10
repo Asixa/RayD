@@ -2,7 +2,7 @@
 
 All notable changes to RayD are documented in this file.
 
-## [Unreleased]
+## [0.9.0] - 2026-11-10
 
 ### Behaviour changes
 
@@ -133,6 +133,13 @@ All notable changes to RayD are documented in this file.
   the framework version (and Torch's CUDA version) each build compiled against.
 - Added a `Governance` workflow that runs the formatting check and every
   GPU-free governance and packaging test on each push and pull request.
+- Added `RAYD_CUDA_ARCHS` source-build target selection for both backends, a
+  runtime check that fails early with build-from-source guidance on GPUs the
+  installed build cannot run (`UnsupportedDeviceError`), and the `sm_70`
+  support floor; the Torch OptiX PTX is compiled for `compute_70`.
+- Added an opt-in adversarial ray stress suite for both backends, a Building
+  from Source / older GPUs README section, and GPU-support documentation that
+  separates what a build contains from what was verified.
 
 ### Changed
 
@@ -164,7 +171,7 @@ All notable changes to RayD are documented in this file.
   ship under their own names.
 - Torch configure now fails with a clear message when `RAYD_CUDA_ARCHS` is
   combined with an explicit `CMAKE_CUDA_ARCHITECTURES` or
-  `TORCH_CUDA_ARCH_LIST` (as the Dr.Jit backend already did), when the default
+  `TORCH_CUDA_ARCH_LIST` (as the Dr.Jit backend does), when the default
   native architecture detection finds no GPU (asking for `RAYD_CUDA_ARCHS`),
   and when the build environment's torch is CPU-only.
 - Torch CMake seeds Caffe2's legacy FindCUDA from `find_package(CUDAToolkit)`,
@@ -174,10 +181,6 @@ All notable changes to RayD are documented in this file.
 - Dr.Jit symbolic `trace_reflections` accepts at most 65,536 bounces and
   evaluates every 8 bounces; `nearest_edge` and `shadow_test` return empty
   results for empty batches, while `intersect` raises for one.
-- The OptiX multipath pipeline retry in both backends now fires only for
-  compile, link, and disk-cache OptiX errors, and warns once with the first
-  failure. The Torch pipeline cache no longer holds its global lock during a
-  compile.
 - The README install section now leads with the backend-specific installs and
   the CUDA Torch index URL and explains what `pip install rayd` pulls in; it
   gained a Troubleshooting section.
@@ -255,26 +258,21 @@ All notable changes to RayD are documented in this file.
   very short and very long chains.
 - Near-normal wall-frame normalization no longer biases the transmission path
   gain (relative error 2e-4 to 5e-6 at tilts of 1e-6 to 1e-5).
-
-### Since 0.8.0, before this section
-
-- Added `RAYD_CUDA_ARCHS` source-build target selection for both backends, a
-  runtime check that fails early with build-from-source guidance on GPUs the
-  installed build cannot run (`UnsupportedDeviceError`), and the `sm_70`
-  support floor; compiled the Torch OptiX PTX for `compute_70`.
-- Kept Jetson and discrete-GPU cubins apart in the device check and described
+- The device check keeps Jetson and discrete-GPU cubins apart and describes
   what a build runs on instead of "and newer".
-- Kept rays off the surface they leave at any coordinate size (ADR-0045) and
-  ended diffraction visibility segments off the wedge on every path.
-- Gave Torch multipath OptiX pipelines their own exception flags, rebuilt a
-  failed multipath pipeline after releasing idle cached ones and then without
-  the OptiX disk cache, and kept the disk cache when pipelines take turns.
-- Rejected Torch reflection batches whose output index overflows `int32` and
-  EPC `max_bounces` beyond the native chain capacity.
-- Regenerated the Dr.Jit PTX so it no longer needs R575.
-- Added an opt-in adversarial ray stress suite for both backends, a Building
-  from Source / older GPUs README section, and GPU-support documentation that
-  separates what a build contains from what was verified.
+- Rays are kept off the surface they leave at any coordinate size (ADR-0045),
+  and diffraction visibility segments end off the wedge on every path (see
+  Behaviour changes).
+- `optixPipelineCreate(multipath)` failures: Torch multipath OptiX pipelines
+  have their own exception flags, and both backends rebuild a failed multipath
+  pipeline after releasing idle cached ones and then without the OptiX disk
+  cache, keeping the disk cache when pipelines take turns. Only compile, link,
+  and disk-cache OptiX errors are retried, and a build that succeeds only on a
+  retry warns once with the first failure. The Torch pipeline cache no longer
+  holds its global lock during a compile.
+- Torch reflection batches whose output index overflows `int32` and EPC
+  `max_bounces` beyond the native chain capacity are rejected with an error.
+- The Dr.Jit PTX is regenerated so it no longer needs an R575 driver.
 
 ## [0.8.0] - 2026-07-30
 
@@ -371,6 +369,7 @@ All notable changes to RayD are documented in this file.
   diffraction accumulation, EPC bindings, and native AD propagation across
   both backends.
 
+[0.9.0]: https://github.com/Asixa/RayD/releases/tag/v0.9.0
 [0.8.0]: https://github.com/Asixa/RayD/releases/tag/v0.8.0
 [0.7.0]: https://github.com/Asixa/RayD/releases/tag/v0.7.0
 [0.6.0]: https://github.com/Asixa/RayD/releases/tag/v0.6.0
