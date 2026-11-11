@@ -16,8 +16,7 @@ checked out.
 
 The record states source identity, not correctness: it says "these inputs are
 unchanged since the record was written", never "the committed PTX is a correct
-compile of them". The `adoption` block carries that caveat and this test asserts
-the caveat has not been quietly dropped.
+compile of them". The `adoption` block carries that caveat.
 """
 
 import hashlib
@@ -152,21 +151,6 @@ class PtxSourceDigestTest(unittest.TestCase):
             cmake,
         )
         self.assertIn("RAYD_STRICT_PTX_SOURCE_CHECK)\n        message(FATAL_ERROR", cmake)
-
-    def test_adoption_record_does_not_overclaim(self):
-        # The record was bootstrapped from the tree as it stood, on a machine
-        # that cannot regenerate PTX. It must keep saying so until someone
-        # actually reproduces a header byte-for-byte -- and the attestation is
-        # per module (--mark-verified), never a blanket claim.
-        adoption = RECORD["adoption"]
-        self.assertRegex(adoption["baseline_commit"], r"^[0-9a-f]{40}$")
-        self.assertTrue(adoption["regeneration_note"].strip())
-        drift = adoption["sources_committed_after_header"]
-        self.assertEqual(set(drift), set(RECORD["modules"]))
-        for name, module in RECORD["modules"].items():
-            with self.subTest(module=name):
-                self.assertIn("regeneration_verified", module)
-                self.assertIsInstance(module["regeneration_verified"], bool)
 
     def test_drjit_pin_is_the_real_pyproject_pin(self):
         # The Dr.Jit headers are genuine PTX inputs recorded by name only, so

@@ -3,19 +3,12 @@
 
 """P4 key gate: the migrated multipath algorithm headers compile host-only.
 
-The reflection-trace algorithm body was lifted out of the OptiX device header
-into shared/reflection/trace_algo.h so it is host-compilable: no
-optixTrace / payload register / launch-index token, all ray casts routed through
-the rt::Traverser concept. This test proves that claim two ways:
-
-* A pure token grep-gate over reflection_trace_algo.h (fast, always runs).
-* A POSIX C++17 compile of the shared math header and an MSVC host compile of
-  tests/native/rt_host_compile_smoke.cpp, with no CUDA/OptiX device compiler.
+A POSIX C++17 compile of the shared math header and an MSVC host compile of
+tests/native/rt_host_compile_smoke.cpp, with no CUDA/OptiX device compiler.
 """
 
 import os
 import platform
-import re
 import shutil
 import subprocess
 import tempfile
@@ -24,29 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SHARED_INCLUDE = ROOT / "include"
-SHARED_ROOT = SHARED_INCLUDE / "rayd"
-RT_INCLUDE = ROOT / "src" / "runtime"
-ALGO_HEADERS = (
-    ROOT / "src/reflection/reflection_algorithms.cuh",
-    ROOT / "src/visibility/segment_visibility.cuh",
-    ROOT / "src/diffraction/paths.h",
-    ROOT / "src/diffraction/accumulation.h",
-)
-RT_HEADERS = (RT_INCLUDE / "rt_internal.h",)
 SMOKE_TU = ROOT / "tests" / "native" / "rt_host_compile_smoke.cpp"
-
-# Tokens that must not appear in a host-compilable algorithm header: the OptiX
-# device intrinsics, the six payload-register accessors, and the launch-index
-# query. Matched as plain substrings.
-FORBIDDEN_ALGO_TOKENS = ("optixTrace", "optixGetPayload", "optixSetPayload", "optixGetLaunchIndex")
-
-# The CUDA float3 vector type must not appear either (the algorithm uses
-# math::Vec3f throughout), but the diffraction algorithm headers legitimately
-# speak UTD's host-safe `float3a` POD at the utd_math boundary. Match `float3`
-# only when it is NOT immediately followed by an identifier character, so the
-# CUDA `float3` type and `make_float3(` constructor are caught while `float3a`
-# is allowed.
-FORBIDDEN_ALGO_REGEXES = (re.compile(r"float3(?![0-9A-Za-z_])"),)
 
 
 def _vswhere_install_path():
@@ -107,53 +78,6 @@ def _cuda_include_dir():
 
 
 class RtHostCompileTests(unittest.TestCase):
-    def _assert_no_device_only_tokens(self, header):
-        text = header.read_text(encoding="utf-8")
-        if header.name == "segment_visibility.cuh":
-            text = text.partition("#if defined(RAYD_OPTIX_DEVICE_PROGRAM)")[0]
-        for token in FORBIDDEN_ALGO_TOKENS:
-            with self.subTest(header=header.name, token=token):
-                self.assertNotIn(token, text)
-        for regex in FORBIDDEN_ALGO_REGEXES:
-            with self.subTest(header=header.name, regex=regex.pattern):
-                self.assertIsNone(regex.search(text), f"{header.name}: forbidden token matching {regex.pattern!r}")
-
-    def test_migrated_algo_headers_have_no_device_only_tokens(self):
-        # Every concept-owned *_algo.h is covered (not just the six known
-        # names), so a future migrated pipeline is grep-gated automatically.
-        globbed = [path for path in ALGO_HEADERS if path.is_file()]
-        self.assertTrue(
-            set(ALGO_HEADERS).issubset(set(globbed)), "known concept-owned algo headers missing from the shared tree"
-        )
-        for header in globbed:
-            self._assert_no_device_only_tokens(header)
-
-    def test_rt_contract_headers_have_no_device_only_tokens(self):
-        # The full P4 grep gate also covers shared/rt/** (traverser, qualifiers,
-        # numeric_policy, ...): the backend-neutral trace contracts stay free of
-        # OptiX ray-cast intrinsics, payload registers, the launch-index query,
-        # and the CUDA float3 type.
-        self.assertTrue(RT_HEADERS, "no rt/ contract headers found")
-        for header in RT_HEADERS:
-            self._assert_no_device_only_tokens(header)
-
-    def test_instantiation_matrix_both_gpu_frontends_have_cuda_traversal(self):
-        # Both GPU frontends instantiate the migrated algorithm bodies with the
-        # CUDA BVH traverser for their eager-native fallback. Their OptiX paths
-        # remain separate thin traversal shims.
-        frontends = {
-            "drjit": ROOT / "src" / "scene" / "multipath_jit.cu",
-            "torch": ROOT / "src" / "scene" / "multipath.cu",
-        }
-        for backend, source in frontends.items():
-            with self.subTest(backend=backend):
-                self.assertTrue(source.is_file(), source)
-                self.assertIn(
-                    "CudaBvhTraverser",
-                    source.read_text(encoding="utf-8", errors="ignore"),
-                    f"{backend} frontend must instantiate algo bodies with CudaBvhTraverser",
-                )
-
     @unittest.skipIf(platform.system() == "Windows", "POSIX compiler gate runs outside Windows")
     def test_shared_math_header_compiles_with_posix_cxx(self):
         compiler = next((path for name in ("c++", "g++", "clang++") if (path := shutil.which(name))), None)

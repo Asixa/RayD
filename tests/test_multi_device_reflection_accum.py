@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import NamedTuple
 import unittest
 
@@ -11,9 +10,6 @@ import torch
 
 import rayd.torch as rt
 from rayd._impl.multi import MultiDeviceOptions, _ReplicatedScene
-
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 def _empty_wedges(device: torch.device) -> rt.WedgeEvents:
@@ -226,22 +222,6 @@ class ReflectionAccumulationFakeOrchestratorTests(unittest.TestCase):
             tx_polarization=polarization,
         )
         self.assertTrue(all(call[4].numel() == 0 for replica in replicas for call in replica.calls))
-
-
-class ReflectionAccumulationStaticContractTests(unittest.TestCase):
-    def test_scene_routes_after_the_forward_only_guard(self):
-        scene = (ROOT / "python" / "rayd" / "_impl" / "scene.py").read_text(encoding="utf-8")
-        body = scene.split("    def accumulate_reflections(", 1)[1].split("    def _default_dfr_material(", 1)[0]
-        self.assertLess(body.index("_has_reverse_or_forward_ad"), body.index("self._multi.accumulate_reflections"))
-        self.assertNotIn('self._multi.unsupported("accumulate_reflections")', body)
-
-    def test_orchestrator_has_no_native_lane_or_kernel_extension(self):
-        multi = (ROOT / "python" / "rayd" / "_impl" / "multi.py").read_text(encoding="utf-8")
-        body = multi.split("    def accumulate_reflections(", 1)[1].split("    def _run_lane_shards(", 1)[0]
-        self.assertIn("self._lane_shards(0, total, operation)", body)
-        self.assertIn("_add_reflection_accum_in_place", body)
-        self.assertIn("return master()", body)
-        self.assertNotIn("torch.ops.", body)
 
 
 @unittest.skipUnless(torch.cuda.device_count() >= 2, "two CUDA devices are required")

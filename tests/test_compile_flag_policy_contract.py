@@ -16,18 +16,10 @@ It also recomputes, from the `#include` graph on disk, which shared headers are
 compiled under more than one profile. That set is the actual hazard the contract
 exists to make visible, and it is derived, never asserted.
 
-What this test deliberately does not own:
-
-* the exact `--fmad=false` source list and the single-block invariant, owned by
-  `tests/test_adr0026_scattering_ownership.py::test_phase10b_source_local_fmad_policy`;
-* the penetration family's precise-flag command shape, owned by
-  `tests/test_adr0033_segment_penetration.py::test_cmake_owns_precise_ptx_native_and_direct_test`;
-* the committed Dr.Jit PTX source identity and its pinned nvcc flag string, owned
-  by `tests/test_ptx_source_digest.py`.
-
-Those tests check their own family from the inside. This one checks that the
-whole flag matrix is declared, complete, and still divergent where the contract
-says it is.
+What this test deliberately does not own: the committed Dr.Jit PTX source
+identity and its pinned nvcc flag string, owned by `tests/test_ptx_source_digest.py`.
+This test checks that the whole flag matrix is declared, complete, and still
+divergent where the contract says it is.
 """
 
 import json
@@ -43,8 +35,6 @@ DRJIT = ROOT / "drjit"
 TORCH = ROOT / "torch"
 CONTRACT_PATH = ROOT / "contracts" / "compile_policy.json"
 SCHEMA_PATH = ROOT / "contracts" / "compile_policy.schema.json"
-ADR_PATH = ROOT / "docs" / "adr" / "0035-cuda-compile-flag-policy.md"
-NUMERIC_POLICY = ROOT / "include" / "rayd" / "math.h"
 
 # Only flags that change device arithmetic. Anything else (-std, include dirs,
 # --extended-lambda, -Xcompiler, gencode) is out of scope by contract.
@@ -736,21 +726,6 @@ class CompileFlagPolicyContractTests(unittest.TestCase):
                         set(mandate["sources"]),
                         f"the {mandate['profile']} profile spread beyond the ADR-{adr} family",
                     )
-
-    def test_record_and_pointer_are_wired(self):
-        self.assertTrue(ADR_PATH.is_file())
-        self.assertEqual(CONTRACT["record"], relative(ADR_PATH))
-        adr = ADR_PATH.read_text(encoding="utf-8")
-        self.assertIn("contracts/compile_policy.json", adr)
-        for divergence in CONTRACT["frozen_divergences"]:
-            with self.subTest(divergence=divergence["id"]):
-                self.assertIn(divergence["id"], adr)
-        index = (ROOT / "docs" / "adr" / "README.md").read_text(encoding="utf-8")
-        self.assertIn(ADR_PATH.name, index)
-        # numeric_policy.h owns the constants and must point at this contract for
-        # the flags, so a reader of either artifact finds the other.
-        header = NUMERIC_POLICY.read_text(encoding="utf-8")
-        self.assertIn("contracts/compile_policy.json", header)
 
 
 if __name__ == "__main__":

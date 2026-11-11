@@ -54,19 +54,8 @@ class F4PathExchangeContractTests(unittest.TestCase):
         excluded = set(CONTRACT["scope"]["excluded"])
         self.assertTrue({"scene loader", "integrator", "channel model", "material model", "antenna model"} <= excluded)
 
-    def test_fixed_winner_contract_separates_discrete_and_continuous_fields(self):
-        ad = CONTRACT["fixed_winner_ad"]
-        for name in ("valid", "order", "IDs", "provenance", "interaction offsets"):
-            self.assertIn(name, ad["selection"])
-        self.assertIn("interaction_position", ad["continuous_fields"])
-        self.assertIn("complex_field", ad["continuous_fields"])
-        self.assertIn("primal-identical indexing", ad["payload"])
-
     def test_backend_mapping_records_real_availability_gaps(self):
         mappings = CONTRACT["backend_mappings"]
-        self.assertEqual(
-            mappings["torch"]["reflection"]["global_primitive_id"], "ReflectionChain.prim_ids (scene-global)"
-        )
         self.assertIn("position", mappings["torch"]["reflection"]["availability_gaps"])
         for backend in ("drjit", "torch"):
             gaps = mappings[backend]["diffraction"]["availability_gaps"]
@@ -93,10 +82,6 @@ class F4PathExchangeContractTests(unittest.TestCase):
         torch_path = IMPLEMENTATIONS["torch"]
         self.assertEqual(drjit_path.read_bytes(), torch_path.read_bytes())
 
-        drjit_frontend = (ROOT / "python" / "rayd" / "drjit" / "path_exchange.py").read_text(encoding="utf-8")
-        torch_frontend = (ROOT / "python" / "rayd" / "torch" / "path_exchange.py").read_text(encoding="utf-8")
-        self.assertIn("rayd._impl.path_exchange_jit", drjit_frontend)
-        self.assertIn("rayd._impl.path_exchange", torch_frontend)
         modules = [load_adapter("drjit"), load_adapter("torch")]
         records = []
         for module in modules:

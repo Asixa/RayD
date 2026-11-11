@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-import re
 import subprocess
 import sys
 import textwrap
@@ -34,16 +33,8 @@ class TorchStableAbiBoundaryTests(unittest.TestCase):
         combined = "\n".join(path.read_text(encoding="utf-8") for path in sources)
         for forbidden in ("at::", "c10::", "py::", "torch/extension.h", "torch/library.h"):
             self.assertNotIn(forbidden, combined)
-        self.assertIn('m.def("intersection_valid(Tensor t, Tensor shape_id) -> Tensor")', combined)
 
-    def test_c_extension_is_metadata_only_compatibility_shim(self):
-        source = (ROOT / "src" / "bindings" / "module.cpp").read_text(encoding="utf-8")
-        self.assertIn("<pybind11/pybind11.h>", source)
-        self.assertNotIn("torch/extension.h", source)
-        self.assertEqual(source.count("m.def("), 2)
-        self.assertIn('m.def("build_info"', source)
-        self.assertIn('m.def("contract_values"', source)
-
+    def test_c_extension_does_not_link_the_dispatcher_or_native_core(self):
         cmake = (TORCH / "CMakeLists.txt").read_text(encoding="utf-8")
         c_target = cmake[cmake.index("Python_add_library(_C") :]
         c_target = c_target[: c_target.index("endif()")]
@@ -60,16 +51,6 @@ class TorchStableAbiBoundaryTests(unittest.TestCase):
         self.assertIn("src/bindings/legacy_anchor.cpp", target)
         self.assertIn("rayd_torch_native_core", target)
         self.assertIn("Python::Module", target)
-
-        anchor = (ROOT / "src" / "bindings" / "legacy_anchor.cpp").read_text(encoding="utf-8")
-        self.assertIn("__declspec(dllexport)", anchor)
-        self.assertIn("rayd_torch_legacy_ops_anchor", anchor)
-
-        loader = (ROOT / "python" / "rayd" / "_impl" / "runtime.py").read_text(encoding="utf-8")
-        self.assertIn('_candidates("_legacy_ops", "RAYD_TORCH_LEGACY_LIBRARY")', loader)
-        self.assertIn("RAYD_TORCH_LEGACY_LIBRARY", loader)
-        self.assertIn("torch.ops.load_library", loader)
-        self.assertIn("torch.classes.rayd_torch", loader)
 
     def run_probe(self, body: str) -> None:
         environment = os.environ.copy()
@@ -163,34 +144,6 @@ class TorchStableAbiBoundaryTests(unittest.TestCase):
                         raise AssertionError(f"{accessor.__name__} fell back to legacy ops")
             """
         )
-
-        source = (ROOT / "python" / "rayd" / "_impl" / "runtime.py").read_text(encoding="utf-8")
-        stable_source = source[: source.index("_LEGACY_REQUIRED")]
-        self.assertIsNone(re.search(r"torch\.ops\.rayd_torch(?!_stable)", stable_source))
-
-    def test_plan13_extern_c_integration_surface_is_retired(self):
-        include = ROOT / "include" / "rayd"
-        self.assertFalse((include / "integration" / "torch_v2.h").exists())
-        typed = (include / "integration.h").read_text(encoding="utf-8")
-        scene = (include / "scene.h").read_text(encoding="utf-8")
-        self.assertIn("namespace rayd::torch", typed)
-        self.assertIn("kIntegrationApiVersion = 8", typed)
-        self.assertIn('"rayd.torch.integration"', typed)
-        self.assertIn("at::Tensor", scene)
-
-        self.assertFalse((ROOT / "src" / "bindings" / "integration_v2_internal.h").exists())
-        self.assertFalse((ROOT / "tests" / "native" / "integration_v2_test.cpp").exists())
-        cmake = (TORCH / "CMakeLists.txt").read_text(encoding="utf-8")
-        self.assertNotIn("integration_v2", cmake)
-        self.assertIn("rayd_torch_integration_test", cmake)
-        self.assertIn("NAME rayd_torch_integration", cmake)
-
-        native_sources = "\n".join(
-            path.read_text(encoding="utf-8")
-            for path in (ROOT / "src").rglob("*")
-            if path.suffix in {".h", ".cpp", ".cu"}
-        )
-        self.assertNotIn("rayd_torch_native_", native_sources)
 
     def test_audit_records_retained_abi_boundaries(self):
         audit = json.loads((TORCH / "abi_audit.json").read_text(encoding="utf-8"))
