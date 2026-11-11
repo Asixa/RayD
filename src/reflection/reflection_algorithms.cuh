@@ -1326,6 +1326,12 @@ constexpr float kTraceTMax = 1e8f;
 constexpr float kRayBias = rayd::shared::GeneralEpsilon;
 constexpr float kMinSegmentLength = 2e-5f;
 constexpr float kEpcTolerance = 1e-4f;
+// In-face containment slack of a reflection point, relative to the coordinate magnitude of the
+// triangle and the point: a few float roundings of the containment arithmetic. A point on an edge
+// shared by two coplanar triangles is accepted by at least one of them, and a point past a face's
+// boundary edge is rejected at every face size, so the reflection support ends where the edge's
+// reflection shadow boundary is and where the diffraction compensation switches.
+constexpr float kEpcContainmentRelative = 8.0f * ::rayd::shared::rt::kSurfaceToleranceRelative;
 
 static_assert(kTraceTMin == ::rayd::shared::rt::kMultipathTraceTMin);
 static_assert(kTraceTMax == ::rayd::shared::rt::kTraceTMaxFinite);
@@ -1452,7 +1458,14 @@ RAYD_HOST_DEVICE bool point_inside_triangle(const ReflEpcParams& params, int pri
     const float inv_denom = 1.0f / denom;
     const float u = (d11 * d20 - d01 * d21) * inv_denom;
     const float v = (d00 * d21 - d01 * d20) * inv_denom;
-    return u >= -kEpcTolerance && v >= -kEpcTolerance && u + v <= 1.0f + kEpcTolerance;
+    // The slack is a distance, not a barycentric fraction: the point may lie at most `slack` metres
+    // outside each edge line. A barycentric b is the distance to the opposite edge in units of that
+    // edge's altitude 2A / |edge|, so b >= -slack |edge| / 2A for each of the three edges.
+    const float twice_area = sqrtf(denom);
+    const float slack = kEpcContainmentRelative * fmaxf(::rayd::shared::rt::triangle_coordinate_magnitude(p0, e1, e2),
+                                                        ::rayd::shared::rt::coordinate_magnitude(point));
+    return u * twice_area >= -slack * sqrtf(d11) && v * twice_area >= -slack * sqrtf(d00) &&
+           (1.0f - u - v) * twice_area >= -slack * math::length_f32(math::subtract(e2, e1));
 }
 
 RAYD_HOST_DEVICE bool point_inside_surface_group(const ReflEpcParams& params, int group, Vec3f point,
