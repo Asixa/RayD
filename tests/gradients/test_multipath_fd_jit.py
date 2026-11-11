@@ -538,6 +538,7 @@ class DrJitMultipathDerivativeManifestTests(unittest.TestCase):
                 ("trace_refl_epc", "ray"),
                 ("trace_refl_epc", "receiver"),
                 ("trace_refl_epc", "plane_geometry"),
+                ("trace_refl_epc_field", "ray"),
                 ("accum_dfr_coherent_direct", "continuous_inputs"),
             },
         )
@@ -547,6 +548,12 @@ class DrJitMultipathDerivativeManifestTests(unittest.TestCase):
         receiver = DJ.cuda.Array3f([0.5], [0.0], [1.0])
         with self.assertRaises(TypeError):
             _epc_mirror(_epc_vertices()).trace_refl_epc(_epc_ray("ad"), receiver, 1)
+
+    def test_trace_refl_epc_field_rejects_differentiable_rays(self):
+        # The Ray overload of trace_refl_epc_field is a forward-only native path, so a RayAD must be refused.
+        receiver = DJ.cuda.Array3f([0.5], [0.0], [1.0])
+        with self.assertRaises(RuntimeError):
+            _epc_mirror(_epc_vertices()).trace_refl_epc_field(_epc_ray("ad"), receiver, 1, DJ.pj.ReflEpcFieldOptions())
 
     def test_accum_dfr_coherent_direct_rejects_differentiable_states_and_material(self):
         base = {name: drjit_array(DJ.ad, value) for name, value in DIFFRACTION_BASE.items()}
