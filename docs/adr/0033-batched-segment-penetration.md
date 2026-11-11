@@ -19,6 +19,32 @@
 > ADR-0045 exempted this family from its surface-leaving-ray change because it
 > was dormant; that exemption is an open decision now that the family is active.
 
+> **Amendment, 2026-11-10: per-row overflow policy.** The request gains two
+> additive fields with defaults that keep every existing caller bitwise
+> unchanged: `SegmentPenetrationOverflowPolicy overflow_policy = FailBatch` and
+> an optional CUDA `int32[1]` `dropped_row_count`. `FailBatch` is the decision
+> below. With `DropRow`, an accepted `D+1` hit does not OR `failure_bit`: the
+> lane returns its own row to the canonical inert state the initializer wrote
+> (all slots invalid, `t=-1`, ids `-1`, zero payload and tape,
+> `num_hits=0`, `reached_target=false`, zero distance and direction), keeps
+> `overflow=true`, and atomically adds one to `dropped_row_count` when given.
+> Every other row of the batch is valid and bitwise equal to the same rows
+> traced without the dropped one; without overflow `DropRow` is bitwise
+> `FailBatch`. Backward and JVP need no change: they already gate on
+> `reached_target`, so a dropped row has exact zero derivatives. Non-finite
+> segment geometry and the `input_active_any` contradiction still fail the
+> batch under both policies. `dropped_row_count` without `DropRow`, a counter
+> that is not contiguous CUDA `int32[1]` on the request device, and an unknown
+> policy are rejected before allocation. The march stays one launch per batch
+> and there is still no host read, synchronization, or partial result in
+> RayD: the dropped row is a complete, inert row, not truncated geometry.
+> Channel uses `DropRow` for both its callers because a segment with more wall
+> crossings than the requested depth is outside the requested path set, not a
+> capacity failure; a whole-batch failure there destroyed the caller's process
+> through its terminal trap (Channel audit finding S-1). The integration API
+> version stays 8: the change is source-compatible and the lock's header digest
+> already pins the exact header.
+
 ## Context
 
 Channel previously discovered straight transmission crossings through a Python

@@ -315,6 +315,27 @@ void test_segment_penetration_parity(const ScenePair& scenes) {
     require_equal(optix_small.capacity_failure_state, cuda_small.capacity_failure_state, "overflow failure state");
     require_penetration_result_parity(optix_overflow, cuda_overflow, "overflow");
 
+    // DropRow drops the same rows on both backends and leaves the rest of the batch valid.
+    for (const auto policy : {rayd::torch::SegmentPenetrationPolicy::EnumeratedFullDistance,
+                              rayd::torch::SegmentPenetrationPolicy::MonteCarloTargetInset}) {
+        auto optix_drop = penetration_request(scenes.optix, origins, targets, active, 1, policy);
+        auto cuda_drop = penetration_request(scenes.cuda, origins, targets, active, 1, policy);
+        optix_drop.overflow_policy = rayd::torch::SegmentPenetrationOverflowPolicy::DropRow;
+        cuda_drop.overflow_policy = rayd::torch::SegmentPenetrationOverflowPolicy::DropRow;
+        optix_drop.dropped_row_count = at::zeros({1}, ints());
+        cuda_drop.dropped_row_count = at::zeros({1}, ints());
+        const auto optix_dropped = rayd::torch::segment_penetration_forward(optix_drop);
+        const auto cuda_dropped = rayd::torch::segment_penetration_forward(cuda_drop);
+        require(optix_drop.capacity_failure_state.item<int>() == 0 && cuda_drop.capacity_failure_state.item<int>() == 0,
+                "DropRow must not fail the transaction");
+        require(optix_drop.dropped_row_count->item<int>() == optix_dropped.overflow.sum().item<int>() &&
+                    optix_drop.dropped_row_count->item<int>() > 0,
+                "DropRow count must equal the overflow rows");
+        require_equal(*optix_drop.dropped_row_count, *cuda_drop.dropped_row_count, "DropRow count");
+        require(optix_dropped.valid.any().item<bool>(), "DropRow fixture must keep valid rows");
+        require_penetration_result_parity(optix_dropped, cuda_dropped, "DropRow");
+    }
+
     // input_active_any=false submits no trace on either backend.
     auto inactive = penetration_request(scenes.cuda, origins, targets, at::zeros({segments}, bools()), 4,
                                         rayd::torch::SegmentPenetrationPolicy::EnumeratedFullDistance);

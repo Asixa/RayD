@@ -41,6 +41,11 @@ class Adr0033SegmentPenetrationTests(unittest.TestCase):
             "hit_capacity",
             "capacity_failure_state",
             "failure_bit",
+            "SegmentPenetrationOverflowPolicy",
+            "FailBatch",
+            "DropRow",
+            "overflow_policy",
+            "dropped_row_count",
         ):
             self.assertIn(name, header)
         family = header[header.index("enum class SegmentPenetrationPolicy") :]
@@ -64,6 +69,8 @@ class Adr0033SegmentPenetrationTests(unittest.TestCase):
         self.assertIn("probe <= params.hit_capacity", device)
         self.assertIn("probe == params.hit_capacity", device)
         self.assertIn("atomicOr(params.capacity_failure_state, params.failure_bit)", device)
+        self.assertIn("params.overflow_policy == SegmentPenetrationOverflowDropRow", device)
+        self.assertIn("atomicAdd(params.dropped_row_count, 1)", device)
         self.assertIn("hit_t < remaining", device)
         self.assertIn("hit_t > 0.0f && hit_t <= remaining", device)
         self.assertIn("nextafterf(remaining", device)
@@ -174,6 +181,14 @@ class Adr0033SegmentPenetrationTests(unittest.TestCase):
             "fixed-winner JVP/VJP duality",
             "penetration changed current stream",
             "optional zero JVP",
+            "DropRow set the failure bit",
+            "DropRow overflow diagnostic",
+            "DropRow changed a kept tape row",
+            "DropRow without overflow differs from FailBatch",
+            "dropped row produced a nonzero VJP",
+            "dropped row produced a nonzero JVP",
+            "dropped_row_count accepted without DropRow",
+            "invalid overflow policy accepted",
         ):
             self.assertIn(evidence, direct)
 

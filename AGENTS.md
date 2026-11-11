@@ -138,7 +138,9 @@ run the one march in `src/penetration/segment_penetration_march.cuh`.
 mask on the caller's stream. Results and tapes are fixed `[N,D]`, share the
 caller's CUDA int32 `[1]` failure transaction and single assigned bit, and are
 made completely inert after any failure; only the overflow diagnostic may be
-retained. Backward/JVP consume frozen primitive, barycentric, restart, tie, and
+retained. The request's `overflow_policy` (default `FailBatch`) may instead be
+`DropRow`: an overflowing row alone becomes inert, keeps `overflow`, is counted
+in the optional `dropped_row_count`, and sets no failure bit. Backward/JVP consume frozen primitive, barycentric, restart, tie, and
 denominator decisions and never retrace. Keep both policies, their exact
 comparison/normal/epsilon expressions, and family-local non-FTZ/precise-divide/
 precise-square-root compilation separate. Do not add a Python binding,

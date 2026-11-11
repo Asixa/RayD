@@ -111,6 +111,36 @@ __forceinline__ __device__ float monte_carlo_restart(const SegmentPenetrationPar
     return fmaxf(candidate, floor);
 }
 
+// Returns one overflowing lane to the canonical inert state the initializer wrote, so only `overflow` marks it,
+// and counts it. The lane owns all of its slots, so no other lane observes the partial march.
+__forceinline__ __device__ void drop_row(const SegmentPenetrationParams& params, unsigned int lane) {
+    params.num_hits[lane] = 0;
+    params.reached_target[lane] = 0u;
+    params.distance[lane] = 0.0f;
+    store3(params.direction, static_cast<int>(lane), make_float3(0.0f, 0.0f, 0.0f));
+    if (params.tape_direction_denominator_branch != nullptr)
+        params.tape_direction_denominator_branch[lane] = 0u;
+    for (int slot = 0; slot < params.hit_capacity; ++slot) {
+        const int row = static_cast<int>(lane) * params.hit_capacity + slot;
+        params.valid[row] = 0u;
+        params.t[row] = -1.0f;
+        params.global_primitive_id[row] = -1;
+        store3(params.position, row, make_float3(0.0f, 0.0f, 0.0f));
+        store3(params.normal, row, make_float3(0.0f, 0.0f, 0.0f));
+        store3(params.geometric_normal, row, make_float3(0.0f, 0.0f, 0.0f));
+        if (params.tape_primitive_id != nullptr) {
+            params.tape_primitive_id[row] = -1;
+            params.tape_barycentric[row * 2 + 0] = 0.0f;
+            params.tape_barycentric[row * 2 + 1] = 0.0f;
+            params.tape_restart_epsilon[row] = 0.0f;
+            params.tape_restart_branch[row] = SegmentPenetrationRestartConstant;
+            params.tape_restart_tie_mask[row] = 0u;
+        }
+    }
+    if (params.dropped_row_count != nullptr)
+        atomicAdd(params.dropped_row_count, 1);
+}
+
 // One segment lane: the ordered D + 1 probe march from origin toward target. `trace(origin, direction, tmin, tmax)`
 // returns the closest surface as a ProbeHit; it is the only backend-specific step.
 template <typename Trace>
@@ -188,6 +218,10 @@ __forceinline__ __device__ void march(const SegmentPenetrationParams& params, un
         }
         if (probe == params.hit_capacity) {
             params.overflow[lane] = 1u;
+            if (params.overflow_policy == SegmentPenetrationOverflowDropRow) {
+                drop_row(params, lane);
+                return;
+            }
             atomicOr(params.capacity_failure_state, params.failure_bit);
             return;
         }
