@@ -1,1 +1,6 @@
+# Check every text file out with LF so wheels built on Windows and Linux ship byte-identical sources and the same
+# source-bundle manifest; Windows batch files keep CRLF.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
 /include/rayd/integration.h text eol=lf
