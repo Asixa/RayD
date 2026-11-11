@@ -128,8 +128,10 @@ template <typename Policy, typename Traverser> struct DiffractionAccumulationAlg
         x ^= x >> 16;
         return x;
     }
+    // The lane is hashed before it meets the stream and seed words, so seeds closer together
+    // than the lane count draw unrelated values instead of permuting one set.
     RAYD_HOST_DEVICE static float uniform01(unsigned int lane, unsigned int stream, unsigned int seed) {
-        const unsigned int h = hash_u32(lane ^ (stream * 0x9e3779b9u) ^ seed);
+        const unsigned int h = hash_u32(hash_u32(lane) ^ (stream * 0x9e3779b9u) ^ seed);
         return static_cast<float>(h & 0x00ffffffu) * (1.f / 16777216.f);
     }
 
@@ -661,7 +663,7 @@ template <typename Policy, typename Traverser> struct DiffractionAccumulationAlg
             return false;
         }
         const unsigned int candidate_hash =
-            hash_u32(lane ^ (stream * 0x9e3779b9u) ^ static_cast<unsigned int>(Policy::params().seed));
+            hash_u32(hash_u32(lane) ^ (stream * 0x9e3779b9u) ^ static_cast<unsigned int>(Policy::params().seed));
         const int slot = static_cast<int>(candidate_hash % static_cast<unsigned int>(count));
         if (face0_valid && slot == 0) {
             prim = face0_prim;
@@ -1413,7 +1415,7 @@ template <typename Policy, typename Traverser> struct DiffractionAccumulationAlg
         if (first_idx < 0)
             return;
         const unsigned int second_hash =
-            hash_u32(lane ^ (static_cast<unsigned int>(Policy::params().seed) * 0x9e3779b9u) ^ 0x51ed270bu);
+            hash_u32(hash_u32(lane) ^ (static_cast<unsigned int>(Policy::params().seed) * 0x9e3779b9u) ^ 0x51ed270bu);
         const int second_idx =
             static_cast<int>(second_hash % static_cast<unsigned int>(Policy::params().recursive_state_count));
         int third_idx = -1;
@@ -1424,8 +1426,8 @@ template <typename Policy, typename Traverser> struct DiffractionAccumulationAlg
             return;
         }
         if (Policy::params().max_order == 3) {
-            const unsigned int third_hash =
-                hash_u32(lane ^ (static_cast<unsigned int>(Policy::params().seed) * 0x85ebca6bu) ^ 0xc2b2ae35u);
+            const unsigned int third_hash = hash_u32(
+                hash_u32(lane) ^ (static_cast<unsigned int>(Policy::params().seed) * 0x85ebca6bu) ^ 0xc2b2ae35u);
             third_idx =
                 static_cast<int>(third_hash % static_cast<unsigned int>(Policy::params().recursive_state_count));
             if (!Policy::recursive_active_state(third_idx)) {
