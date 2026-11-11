@@ -98,6 +98,8 @@ struct DfrPathParams {
     int state_src_stride1;
     const float* state_src_power;
     int state_src_power_stride;
+    // Optional per-state transmitter index (contiguous int32); null means the lane transmitter.
+    const int* state_source_index;
 
     const float* material_eta_r;
     int material_eta_r_stride;

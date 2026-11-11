@@ -118,7 +118,12 @@ Diffraction accumulation and coherent-accumulation configs retain their existing
 contracts. See `docs/adr/0031-required-diffraction-path-validity.md`.
 
 The typed order-1 diffraction exporter supports `Compact` and `SourceLane`
-storage under ADR-0032. `Compact` remains the default for existing consumers.
+storage under ADR-0032. `Compact` remains the default for existing consumers. An optional
+`DiffractionPathConfig::state_source_index` (int32 `[state_limit]`) makes every state carry its own transmitter:
+the launch spans `rx_count * state_limit` lanes, the incident polarization is `tx_pol[index]`, the exported
+`tx_id` is the index, and an index outside the `tx_pol` rows exports nothing. The axial edge visibility request
+likewise takes an optional per-state `state_source`. Both tracers implement both, and omitting them is bitwise the
+single-transmitter launch.
 `SourceLane` writes a successful logical lane only to
 `((tx * rx_count + rx) * state_limit) + state`, leaves rejected lanes inert,
 and retains the device count only as actual-count metadata. Both layouts share
