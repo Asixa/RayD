@@ -237,6 +237,7 @@ from .geometry import (
     SegmentPairVisibility,
     WedgeEvents,
     _ReducedIntersection,
+    _resolve_dfr_max_paths,
 )
 
 
@@ -380,6 +381,7 @@ class DeviceCalibration:
 
     @property
     def rows_per_second(self) -> tuple[float, ...]:
+        """Probe rows per second on each device, from ``seconds``."""
         return tuple(self.rows / value if value > 0.0 else 0.0 for value in self.seconds)
 
     def describe(self) -> str:
@@ -1171,7 +1173,14 @@ class _PipeStreams(NamedTuple):
 
 
 class _ReplicatedScene:
-    """One ordinary single-device `Scene` per device, plus the batch sharder."""
+    """One ordinary single-device `Scene` per device, plus the batch sharder.
+
+    This is the replicated implementation of the `Scene` executor interface
+    (`scene._Executor`); `scene._LocalExecutor` is the single-device one.
+    """
+
+    # A multi-device path export keeps every row's global identity.
+    default_dfr_path_layout = DfrPathLayout.SourceLane
 
     __slots__ = (
         "devices",
@@ -1398,6 +1407,66 @@ class _ReplicatedScene:
             f"it needs the explicit per-shard contract of {_PHASE_2C}. Build the "
             "Scene without devices=[...] to run it on one device."
         )
+
+    def require_supported(self, operation: str) -> None:
+        """Refuse a `Scene` call this layer has no multi-device semantics for."""
+        if operation == "add_instance":
+            raise NotImplementedError("Scene.add_instance() does not yet support Scene(devices=...) orchestration.")
+        if operation in _UNSUPPORTED_OPERATIONS:
+            self.unsupported(operation)
+
+    # -- executor lifecycle on the owning Scene ----------------------------
+    #
+    # A broadcast that fails part-way leaves replicas that may disagree, so
+    # each of these marks the owning scene not ready, with updates pending,
+    # until a complete `build()` succeeds.
+
+    def build_scene(self, scene) -> None:
+        # One ordinary single-device Scene per device; the master replica's
+        # native scene answers the owning scene's metadata.
+        try:
+            self.build(scene._meshes)
+            scene._native_scene = self.master_native_scene()
+            scene._native_handle = int(scene._native_scene.handle())
+        except BaseException:
+            # Do not leave stale master metadata looking usable when only
+            # part of a replica rebuild completed.
+            scene._native_scene = None
+            scene._native_handle = 0
+            scene._ready = False
+            scene._pending_updates = True
+            raise
+        scene._ready = True
+        scene._pending_updates = False
+
+    def _broadcast_from(self, scene, mutation, *arguments) -> None:
+        try:
+            mutation(*arguments)
+        except BaseException:
+            scene._ready = False
+            scene._pending_updates = True
+            raise
+
+    def update_scene_vertices(self, scene, mesh_id: int, mesh, vertices: torch.Tensor) -> None:
+        # Every replica takes its own copy of the new positions, including the
+        # master, whose native scene the owning scene reads.
+        self._broadcast_from(scene, self.update_mesh_vertices, int(mesh_id), vertices)
+        # Commit the public mesh only after every replica accepted the
+        # broadcast. A failed broadcast is recovered by build(), and that
+        # rebuild must use the last caller-visible committed geometry.
+        mesh.vertices = vertices
+        scene._pending_updates = True
+
+    def sync_scene(self, scene) -> None:
+        self._broadcast_from(scene, self.sync)
+
+    def set_scene_edge_mask(self, scene, mask: torch.Tensor) -> None:
+        self._broadcast_from(scene, self.set_edge_mask, mask)
+
+    def device_weights_for(self, operation: str) -> tuple[float, ...]:
+        if not isinstance(operation, str) or not operation:
+            raise TypeError("Scene.device_weights_for() expects a non-empty operation name.")
+        return self.weights_for(operation)
 
     # -- sharding ----------------------------------------------------------
 
@@ -2290,250 +2359,155 @@ class _ReplicatedScene:
 
         return probe
 
+    # -- spec-driven drivers ------------------------------------------------
+
+    def _spec_shard(self, arguments: Sequence[_Arg], values: Sequence[Any], total: int):
+        """The `shard(device, start, stop)` callable for one call's arguments, in call order."""
+
+        def shard(device, start, stop):
+            return tuple(
+                _shard_argument(self, argument, value, total, start, stop, device)
+                for argument, value in zip(arguments, values)
+            )
+
+        return shard
+
+    def _run_per_ray(self, spec: _PerRaySpec, values: Sequence[Any]):
+        """Shard, run and gather one `per_ray` operation from its spec.
+
+        Every shard calls the replica's own public method with its slice of
+        the batch, so a shard runs exactly the single-device path, and the
+        master fallback is that same method called with the caller's
+        arguments.
+        """
+        named = _named(spec, values)
+        total = _batch_rows(spec.arguments[0], values[0])
+        method = spec.method
+
+        def call(replica, arguments):
+            return getattr(replica, method)(*arguments)
+
+        return self._dispatch(
+            _spec_value(spec.operation, named),
+            total,
+            _spec_value(spec.row_bytes, named),
+            self._spec_shard(spec.arguments, values, total),
+            call,
+            spec.fields,
+            lambda rows, columns: spec.assemble(self, rows, columns, named),
+            lambda: getattr(self.master(), method)(*values),
+            transfer_row_bytes=_spec_value(spec.transfer_row_bytes, named),
+        )
+
+    def _run_lane_spec(self, spec: _LaneSpec, values: Sequence[Any]):
+        """Shard one lane-windowed `grid_reduce` operation from its spec.
+
+        Each device receives one copy of the whole-batch inputs and runs the
+        replica's own public method over its window of the lane space; the
+        options argument is the only one rewritten per launch.
+        """
+        named = _named(spec, values)
+        options = next(value for argument, value in zip(spec.arguments, values) if argument.role == _LANE_WINDOW)
+        grid_cell_count = spec.grid_cell_count(named)
+        requires_grad = spec.differentiable and any(
+            _requires_grad_by_role[argument.role](value)
+            for argument, value in zip(spec.arguments, values)
+            if argument.role in _requires_grad_by_role
+        )
+        fixed_input_bytes = sum(
+            _bytes_by_role[argument.role](value)
+            for argument, value in zip(spec.arguments, values)
+            if argument.role in _bytes_by_role
+        )
+        method = spec.method
+
+        def scatter(device):
+            return tuple(_scatter_argument(argument, value, device) for argument, value in zip(spec.arguments, values))
+
+        def call(replica, moved, begin, count):
+            arguments = [
+                replace(value, lane_offset=begin, lane_count=count) if argument.role == _LANE_WINDOW else value
+                for argument, value in zip(spec.arguments, moved)
+            ]
+            return getattr(replica, method)(*arguments)
+
+        merge = spec.merge
+        return self._run_lane_shards(
+            method,
+            spec.lane_space(named),
+            int(options.lane_offset),
+            int(options.lane_count),
+            scatter,
+            call,
+            requires_grad=requires_grad,
+            grid_cell_count=grid_cell_count,
+            fixed_input_bytes=fixed_input_bytes,
+            add_result=merge.add,
+            add_result_in_place=merge.add_in_place,
+            move_result=merge.move,
+            result_requires_grad=merge.requires_grad,
+            grid_payload_bytes=None if spec.grid_payload_bytes is None else spec.grid_payload_bytes(named),
+            lane_row_bytes=spec.lane_row_bytes,
+        )
+
     # -- per_ray operations ------------------------------------------------
 
     def intersect(self, ray: Ray, active, flags: int):
-        total = int(ray.o.shape[0])
-
-        def shard(device, start, stop):
-            return (
-                self._shard_ray(ray, start, stop, device),
-                self._slice_rows(active, "active", total, start, stop, device),
-                flags,
-            )
-
-        def call(replica, arguments):
-            return replica.intersect(*arguments)
-
-        def master():
-            return self.master().intersect(ray, active, flags)
-
-        if flags == 0:
-            # The single-device path answers `flags=0` with the reduced result
-            # whose remaining fields are the scene's empty tensors; rebuilding
-            # it on the master keeps both the type and that laziness.
-            return self._dispatch(
-                "intersect_reduced",
-                total,
-                _INTERSECT_REDUCED_ROW_BYTES,
-                shard,
-                call,
-                lambda result: (result.t,),
-                lambda rows, columns: _ReducedIntersection(self.master_native_scene(), columns[0]),
-                master,
-                transfer_row_bytes=28,
-            )
-        return self._dispatch(
-            "intersect_full",
-            total,
-            _INTERSECT_FULL_ROW_BYTES,
-            shard,
-            call,
-            _intersection_fields,
-            lambda rows, columns: Intersection(*columns),
-            master,
-            transfer_row_bytes=100,
-        )
+        flags = int(flags)
+        # `flags=0` is the reduced result, whose remaining fields are the
+        # scene's empty tensors; it is rebuilt on the master to keep both the
+        # type and that laziness.
+        spec = _INTERSECT_REDUCED if flags == 0 else _INTERSECT_FULL
+        return self._run_per_ray(spec, (ray, active, flags))
 
     def nearest_edge(self, query, active):
-        if isinstance(query, Ray):
-            total = int(query.o.shape[0])
-
-            def shard_ray(device, start, stop):
-                return (
-                    self._shard_ray(query, start, stop, device),
-                    self._slice_rows(active, "active", total, start, stop, device),
-                )
-
-            def call_ray(replica, arguments):
-                return replica.nearest_edge(*arguments)
-
-            return self._dispatch(
-                "nearest_edge_ray",
-                total,
-                _NEAREST_RAY_EDGE_ROW_BYTES,
-                shard_ray,
-                call_ray,
-                _field_reader(_NEAREST_RAY_EDGE_FIELDS),
-                lambda rows, columns: NearestRayEdge(*columns),
-                lambda: self.master().nearest_edge(query, active),
-                transfer_row_bytes=76,
-            )
-
-        total = int(query.shape[0])
-
-        def shard(device, start, stop):
-            return (
-                self._slice(query, start, stop, device),
-                self._slice_rows(active, "active", total, start, stop, device),
-            )
-
-        def call(replica, arguments):
-            return replica.nearest_edge(*arguments)
-
-        return self._dispatch(
-            "nearest_edge",
-            total,
-            _NEAREST_POINT_EDGE_ROW_BYTES,
-            shard,
-            call,
-            _field_reader(_NEAREST_POINT_EDGE_FIELDS),
-            lambda rows, columns: NearestPointEdge(*columns),
-            lambda: self.master().nearest_edge(query, active),
-            transfer_row_bytes=44,
-        )
+        spec = _NEAREST_EDGE_RAY if isinstance(query, Ray) else _NEAREST_EDGE_POINT
+        return self._run_per_ray(spec, (query, active))
 
     def nearest_edges(self, point: torch.Tensor, k: int, active):
-        total = int(point.shape[0])
-
-        def shard(device, start, stop):
-            return (
-                self._slice(point, start, stop, device),
-                k,
-                self._slice_rows(active, "active", total, start, stop, device),
-            )
-
-        def call(replica, arguments):
-            return replica.nearest_edges(*arguments)
-
-        return self._dispatch(
-            f"nearest_edges:{int(k)}",
-            total,
-            _NEAREST_EDGES_ROW_BYTES_PER_K * max(int(k), 1),
-            shard,
-            call,
-            _field_reader(_NEAREST_EDGES_TOPK_FIELDS),
-            lambda rows, columns: NearestEdgesTopK(rows, int(k), *columns),
-            lambda: self.master().nearest_edges(point, k, active),
-            transfer_row_bytes=13 + _NEAREST_EDGES_ROW_BYTES_PER_K * max(int(k), 1),
-        )
+        return self._run_per_ray(_NEAREST_EDGES, (point, int(k), active))
 
     def visible(self, start_points: torch.Tensor, end_points: torch.Tensor, active):
-        total = int(start_points.shape[0])
-
-        def shard(device, start, stop):
-            return (
-                self._slice(start_points, start, stop, device),
-                self._slice(end_points, start, stop, device),
-                self._slice_rows(active, "active", total, start, stop, device),
-            )
-
-        def call(replica, arguments):
-            return replica.visible(*arguments)
-
-        return self._dispatch(
-            "visible",
-            total,
-            _VISIBLE_ROW_BYTES,
-            shard,
-            call,
-            lambda result: (result,),
-            lambda rows, columns: columns[0],
-            lambda: self.master().visible(start_points, end_points, active),
-            transfer_row_bytes=26,
-        )
+        return self._run_per_ray(_VISIBLE, (start_points, end_points, active))
 
     def visible_pair(self, start_points, end_a, end_b, ignore_prim_ids, active):
-        total = int(start_points.shape[0])
-
-        def shard(device, start, stop):
-            return (
-                self._slice(start_points, start, stop, device),
-                self._slice(end_a, start, stop, device),
-                self._slice(end_b, start, stop, device),
-                self._slice_rows(ignore_prim_ids, "ignore_prim_ids", total, start, stop, device),
-                self._slice_rows(active, "active", total, start, stop, device),
-            )
-
-        def call(replica, arguments):
-            return replica.visible_pair(*arguments)
-
-        return self._dispatch(
-            "visible_pair",
-            total,
-            _VISIBLE_PAIR_ROW_BYTES,
-            shard,
-            call,
-            _field_reader(_SEGMENT_PAIR_FIELDS),
-            lambda rows, columns: SegmentPairVisibility(rows, *columns),
-            lambda: self.master().visible_pair(start_points, end_a, end_b, ignore_prim_ids, active),
-            transfer_row_bytes=47,
-        )
+        return self._run_per_ray(_VISIBLE_PAIR, (start_points, end_a, end_b, ignore_prim_ids, active))
 
     def visible_edge(self, source, edge_position, edge_direction, edge_t_min, edge_t_max, sample_fractions, active):
-        total = int(source.shape[0])
-
-        def shard(device, start, stop):
-            return (
-                self._slice(source, start, stop, device),
-                self._slice(edge_position, start, stop, device),
-                self._slice(edge_direction, start, stop, device),
-                self._slice(edge_t_min, start, stop, device),
-                self._slice(edge_t_max, start, stop, device),
-                sample_fractions,
-                self._slice_rows(active, "active", total, start, stop, device),
-            )
-
-        def call(replica, arguments):
-            return replica.visible_edge(*arguments)
-
-        return self._dispatch(
-            "visible_edge",
-            total,
-            _VISIBLE_EDGE_ROW_BYTES,
-            shard,
-            call,
-            _field_reader(_AXIAL_EDGE_FIELDS),
-            lambda rows, columns: AxialEdgeVisibility(rows, *columns),
-            lambda: self.master().visible_edge(
-                source, edge_position, edge_direction, edge_t_min, edge_t_max, sample_fractions, active
-            ),
-            transfer_row_bytes=46,
+        return self._run_per_ray(
+            _VISIBLE_EDGE, (source, edge_position, edge_direction, edge_t_min, edge_t_max, sample_fractions, active)
         )
 
     def visible_chain(self, points, chain_length, ignore_prim_per_segment, active):
-        total = int(points.shape[0])
-        segments = int(points.shape[1]) - 1
+        return self._run_per_ray(_VISIBLE_CHAIN, (points, chain_length, ignore_prim_per_segment, active))
 
-        def shard(device, start, stop):
-            return (
-                self._slice(points, start, stop, device),
-                self._slice(chain_length, start, stop, device),
-                self._slice_rows(ignore_prim_per_segment, "ignore_prim_per_segment", total, start, stop, device),
-                self._slice_rows(active, "active", total, start, stop, device),
-            )
+    def trace_refl_epc_field(self, source, receiver, max_bounces: int, options, active):
+        return self._run_per_ray(_TRACE_REFL_EPC_FIELD, (source, receiver, int(max_bounces), options, active))
 
-        def call(replica, arguments):
-            return replica.visible_chain(*arguments)
-
-        return self._dispatch(
-            "visible_chain",
-            total,
-            _VISIBLE_CHAIN_ROW_BYTES,
-            shard,
-            call,
-            _field_reader(_SEGMENT_CHAIN_FIELDS),
-            lambda rows, columns: SegmentChainVisibility(rows, segments, *columns),
-            lambda: self.master().visible_chain(points, chain_length, ignore_prim_per_segment, active),
-            transfer_row_bytes=(segments + 1) * 12 + 5 + segments * 4 + 9,
-        )
+    def trace_refl_epc(self, source, receiver, max_bounces: int, options, active):
+        self.unsupported("trace_refl_epc")
 
     def trace_reflections(self, ray: Ray, max_bounces: int, active):
-        total = int(ray.o.shape[0])
-        operation = f"trace_reflections:{int(max_bounces)}"
-        row_bytes = max_bounces * (_REFLECTION_TAPE_BYTES_PER_RAY_BOUNCE + _REFLECTION_OUTPUT_BYTES_PER_RAY_BOUNCE)
+        """Shard reflection tracing while keeping the chain lazy.
 
-        def shard(device, start, stop):
-            return (
-                self._shard_ray(ray, start, stop, device),
-                max_bounces,
-                self._slice_rows(active, "active", total, start, stop, device),
-            )
+        The generic `per_ray` driver would materialize every field. A
+        `ReflectionChain` is lazy on one device -- the reduced trace and the
+        image-source trace are separate launches -- so the pipelined and the
+        sharded paths return a lazy chain too, and only the memory-bounded
+        chunked path materializes it.
+        """
+        spec = _TRACE_REFLECTIONS
+        values = (ray, max_bounces, active)
+        named = _named(spec, values)
+        total = _batch_rows(spec.arguments[0], ray)
+        operation = _spec_value(spec.operation, named)
+        row_bytes = _spec_value(spec.row_bytes, named)
+        shard = self._spec_shard(spec.arguments, values, total)
 
         def call(replica, arguments):
             return replica.trace_reflections(*arguments)
 
-        transfer_row_bytes = 28 + max_bounces * _REFLECTION_OUTPUT_BYTES_PER_RAY_BOUNCE
+        transfer_row_bytes = _spec_value(spec.transfer_row_bytes, named)
         memory_row_bytes = row_bytes + 28
         mode = self._dispatch_mode(operation, total, transfer_row_bytes)
         self.last_dispatch = mode
@@ -2551,8 +2525,8 @@ class _ReplicatedScene:
                 memory_row_bytes,
                 shard,
                 call,
-                _reflection_fields,
-                lambda rows, columns: ReflectionChain(*columns),
+                spec.fields,
+                lambda rows, columns: spec.assemble(self, rows, columns, named),
                 result_row_bytes=max_bounces * _REFLECTION_OUTPUT_BYTES_PER_RAY_BOUNCE,
             )
         if mode == "pipelined":
@@ -2562,11 +2536,9 @@ class _ReplicatedScene:
             remote_rows, master_rows = self._pipeline_rows(operation, total)
 
             def load(full: bool):
-                # `ReflectionChain` is lazy on one device -- the reduced trace
-                # and the image-source trace are separate launches -- and stays
-                # lazy here, so a caller who never reads `image_sources` never
-                # pays for it on any device. Upgrading a reduced chain re-runs
-                # the trace, which is what the single-device loader does too.
+                # A caller who never reads `image_sources` never pays for it on
+                # any device. Upgrading a reduced chain re-runs the trace, which
+                # is what the single-device loader does too.
                 columns = self._run_chunked(
                     operation,
                     total,
@@ -2604,52 +2576,6 @@ class _ReplicatedScene:
 
         return ReflectionChain(loader=load)
 
-    def trace_refl_epc_field(self, source, receiver, max_bounces: int, options, active):
-        is_ray = isinstance(source, Ray)
-        total = int(source.o.shape[0] if is_ray else source.shape[0])
-
-        def shard_options(device, start, stop):
-            # The per-slot material rows follow their ray; one polarization row is shared by every shard.
-            if options is None:
-                return None
-            polarization = options.tx_polarization
-            if polarization is not None and polarization.shape[0] == 1 and total != 1:
-                polarization = self._retain(polarization.to(device, non_blocking=True))
-            else:
-                polarization = self._slice_rows(polarization, "tx_polarization", total, start, stop, device)
-            return replace(
-                options,
-                slot_eta_r=self._slice_rows(options.slot_eta_r, "slot_eta_r", total, start, stop, device),
-                slot_mu_r=self._slice_rows(options.slot_mu_r, "slot_mu_r", total, start, stop, device),
-                slot_sigma=self._slice_rows(options.slot_sigma, "slot_sigma", total, start, stop, device),
-                slot_gain=self._slice_rows(options.slot_gain, "slot_gain", total, start, stop, device),
-                tx_polarization=polarization,
-            )
-
-        def shard(device, start, stop):
-            return (
-                self._shard_ray(source, start, stop, device) if is_ray else self._slice(source, start, stop, device),
-                self._slice(receiver, start, stop, device),
-                max_bounces,
-                shard_options(device, start, stop),
-                self._slice_rows(active, "active", total, start, stop, device),
-            )
-
-        def call(replica, arguments):
-            return replica.trace_refl_epc_field(*arguments)
-
-        return self._dispatch(
-            f"trace_refl_epc_field:{int(max_bounces)}",
-            total,
-            _REFL_EPC_FIELD_ROW_BYTES + 4 * max_bounces,
-            shard,
-            call,
-            _field_reader(_REFL_EPC_FIELD_FIELDS),
-            lambda rows, columns: ReflEpcField(*columns),
-            lambda: self.master().trace_refl_epc_field(source, receiver, max_bounces, options, active),
-            transfer_row_bytes=38 + 4 * max_bounces,
-        )
-
     # -- grid_reduce operations --------------------------------------------
 
     def accum_refl(
@@ -2664,8 +2590,14 @@ class _ReplicatedScene:
         active: torch.Tensor | None,
         tx_polarization: torch.Tensor | None,
     ) -> AccumResult:
-        """Shard the ray batch and merge partial reflection grids on the master."""
+        """Shard the ray batch and merge partial reflection grids on the master.
 
+        Not spec-driven: it shards rays like a `per_ray` operation but merges
+        grids like a lane-windowed one, has its own transfer-aware fallback,
+        and keeps wedge collection on one master launch.
+        """
+
+        max_bounces = int(max_bounces)
         self.require_healthy()
         operation = "accum_refl"
         total = int(ray.o.shape[0])
@@ -2968,6 +2900,8 @@ class _ReplicatedScene:
         options: DfrPathOptions,
         *,
         active: torch.Tensor,
+        max_paths: int | None = None,
+        layout: DfrPathLayout | None = None,
     ) -> DfrPaths:
         """Export fixed source-lane rows from transmitter-aligned shards.
 
@@ -2975,13 +2909,24 @@ class _ReplicatedScene:
         rows are one contiguous block of the global
         ``((tx * rx_count + rx) * state_limit) + state`` layout. Concatenating
         those blocks is therefore a placement operation, not compaction.
+        `max_paths` and `layout` are the values `Scene` resolved from
+        `options`; any layout but `SourceLane` is refused.
         """
 
+        if layout is not None and layout is not DfrPathLayout.SourceLane:
+            raise ValueError(
+                "Scene.trace_dfr_paths() on a multi-device scene requires DfrPathLayout.SourceLane "
+                "so every output row retains its global (tx, rx, state) identity."
+            )
+        options = replace(
+            options,
+            max_paths=_resolve_dfr_max_paths(options.max_paths if max_paths is None else max_paths, states.state_count),
+            layout=DfrPathLayout.SourceLane,
+        )
         self.require_healthy()
         operation = "trace_dfr_paths"
         tx_count = int(tx_positions.shape[0])
         rx_count = int(rx_positions.shape[0])
-        options = replace(options, layout=DfrPathLayout.SourceLane)
         state_limit = min(states.state_count, int(options.max_paths))
         if state_limit < 0:
             raise RuntimeError("state_limit must be non-negative.")
@@ -3038,56 +2983,12 @@ class _ReplicatedScene:
         return _merge_source_lane_paths(results, capacity=capacity, master=self.master_device)
 
     def accum_dfr_direct(self, states: DfrStates, grid, material: DfrMaterial, options: DfrOptions, active) -> DfrAccum:
-        def scatter(device):
-            return (_states_to(states, device), _material_to(material, device), _to(active, device))
-
-        def call(replica, moved, begin, count):
-            shard_states, shard_material, shard_active = moved
-            window = replace(options, lane_offset=begin, lane_count=count)
-            return replica.accum_dfr_direct(shard_states, grid, shard_material, window, shard_active)
-
-        return self._run_lane_shards(
-            "accum_dfr_direct",
-            int(options.direct_samples) + int(options.keller_samples) + int(options.suffix_samples),
-            int(options.lane_offset),
-            int(options.lane_count),
-            scatter,
-            call,
-            requires_grad=_states_require_grad(states) or _material_requires_grad(material),
-            grid_cell_count=int(grid.resolution0) * int(grid.resolution1),
-            fixed_input_bytes=_states_bytes(states) + _material_bytes(material) + _tensor_bytes(active),
-        )
+        return self._run_lane_spec(_ACCUM_DFR_DIRECT, (states, grid, material, options, active))
 
     def accum_dfr_coherent_direct(
         self, states: DfrStates, grid, material: DfrMaterial, options: DfrCoherentOptions, active
     ) -> DfrCoherentAccum:
-        """Shard the deterministic `(state, grid-cell)` lane space."""
-
-        def scatter(device):
-            return (_states_to(states, device), _material_to(material, device), _to(active, device))
-
-        def call(replica, moved, begin, count):
-            shard_states, shard_material, shard_active = moved
-            window = replace(options, lane_offset=begin, lane_count=count)
-            return replica.accum_dfr_coherent_direct(shard_states, grid, shard_material, window, shard_active)
-
-        grid_cell_count = int(grid.resolution0) * int(grid.resolution1)
-        return self._run_lane_shards(
-            "accum_dfr_coherent_direct",
-            int(states.state_count) * grid_cell_count,
-            int(options.lane_offset),
-            int(options.lane_count),
-            scatter,
-            call,
-            grid_cell_count=grid_cell_count,
-            fixed_input_bytes=_states_bytes(states) + _material_bytes(material) + _tensor_bytes(active),
-            add_result=_add_coherent_accum,
-            add_result_in_place=_add_coherent_accum_in_place,
-            move_result=_coherent_accum_to,
-            result_requires_grad=lambda _result: False,
-            grid_payload_bytes=grid_cell_count * len(_DFR_COHERENT_ACCUM_FIELDS) * 4,
-            lane_row_bytes=_DFR_COHERENT_STAGED_LANE_BYTES,
-        )
+        return self._run_lane_spec(_ACCUM_DFR_COHERENT_DIRECT, (states, grid, material, options, active))
 
     def accum_dfr(
         self,
@@ -3099,36 +3000,8 @@ class _ReplicatedScene:
         active,
         recursive_active,
     ) -> DfrAccum:
-        def scatter(device):
-            return (
-                _states_to(initial_states, device),
-                _states_to(recursive_states, device),
-                _material_to(material, device),
-                _to(active, device),
-                _to(recursive_active, device),
-            )
-
-        def call(replica, moved, begin, count):
-            initial, recursive, shard_material, shard_active, shard_recursive = moved
-            window = replace(options, lane_offset=begin, lane_count=count)
-            return replica.accum_dfr(initial, recursive, grid, shard_material, window, shard_active, shard_recursive)
-
-        return self._run_lane_shards(
-            "accum_dfr",
-            int(options.direct_samples) + int(options.keller_samples) + int(options.suffix_samples),
-            int(options.lane_offset),
-            int(options.lane_count),
-            scatter,
-            call,
-            requires_grad=_states_require_grad(initial_states)
-            or _states_require_grad(recursive_states)
-            or _material_requires_grad(material),
-            grid_cell_count=int(grid.resolution0) * int(grid.resolution1),
-            fixed_input_bytes=_states_bytes(initial_states)
-            + _states_bytes(recursive_states)
-            + _material_bytes(material)
-            + _tensor_bytes(active)
-            + _tensor_bytes(recursive_active),
+        return self._run_lane_spec(
+            _ACCUM_DFR, (initial_states, recursive_states, grid, material, options, active, recursive_active)
         )
 
 
@@ -3273,3 +3146,419 @@ _DFR_COHERENT_ACCUM_FIELDS = (
     "vis_rejects",
     "utd_rejects",
 )
+
+
+# -- operation specs ------------------------------------------------------
+#
+# Each wrapped `Scene` operation is declared once below: how each of its
+# arguments reaches a shard, how big a row or a lane is for the dispatch and
+# memory policy, and how the per-shard results merge. `_run_per_ray` and
+# `_run_lane_spec` above run them. `contract` names the operation (and its
+# variant) in `contracts/operations.json`, and `shardability` repeats the class
+# declared there, which `tests/scene/test_multi_device_policy.py` checks.
+#
+# Three operations keep explicit code instead, because a generic spec would hide
+# a real difference: `trace_reflections` returns a lazy chain, `accum_refl`
+# shards rays but merges grids and keeps wedge collection on one master launch,
+# and `trace_dfr_paths` places transmitter-aligned `SourceLane` blocks.
+# `trace_refl_epc` is refused.
+
+# Argument roles. A `per_ray` shard slices row-carrying arguments to its
+# `[start, stop)` window; a lane shard copies the whole-batch inputs to its
+# device once and rewrites only the lane window of its options.
+_ROWS = "rows"  # tensor whose first axis is the batch, sliced without a shape check
+_OPTIONAL_ROWS = "optional_rows"  # optional tensor that must carry the batch axis when given
+_RAY = "ray"  # `Ray`: origin and direction sliced, an empty `tmax` copied whole
+_RAY_OR_ROWS = "ray_or_rows"  # a `Ray` or a row tensor, by type
+_REPLICATED = "replicated"  # passed to every shard unchanged
+_EPC_FIELD_OPTIONS = "epc_field_options"  # per-slot material rows follow their ray; see below
+_STATES = "states"  # `DfrStates` copied to each device
+_MATERIAL = "material"  # `DfrMaterial` copied to each device
+_TENSOR = "tensor"  # optional tensor copied to each device
+_LANE_WINDOW = "lane_window"  # options whose `lane_offset`/`lane_count` each launch rewrites
+
+_UNSUPPORTED_OPERATIONS = frozenset({"trace_refl_epc"})
+
+
+class _Arg(NamedTuple):
+    name: str
+    role: str
+
+
+def _named(spec, values: Sequence[Any]) -> dict[str, Any]:
+    return dict(zip((argument.name for argument in spec.arguments), values))
+
+
+def _spec_value(value, named: Mapping[str, Any]):
+    return value(named) if callable(value) else value
+
+
+def _batch_rows(argument: _Arg, value) -> int:
+    """Row count of the batch-carrying argument, which is a spec's first argument."""
+    if argument.role == _RAY or (argument.role == _RAY_OR_ROWS and isinstance(value, Ray)):
+        return int(value.o.shape[0])
+    return int(value.shape[0])
+
+
+def _shard_epc_field_options(layer, options, total: int, start: int, stop: int, device):
+    # The per-slot material rows follow their ray; one polarization row is shared by every shard.
+    if options is None:
+        return None
+    polarization = options.tx_polarization
+    if polarization is not None and polarization.shape[0] == 1 and total != 1:
+        polarization = layer._retain(polarization.to(device, non_blocking=True))
+    else:
+        polarization = layer._slice_rows(polarization, "tx_polarization", total, start, stop, device)
+    return replace(
+        options,
+        slot_eta_r=layer._slice_rows(options.slot_eta_r, "slot_eta_r", total, start, stop, device),
+        slot_mu_r=layer._slice_rows(options.slot_mu_r, "slot_mu_r", total, start, stop, device),
+        slot_sigma=layer._slice_rows(options.slot_sigma, "slot_sigma", total, start, stop, device),
+        slot_gain=layer._slice_rows(options.slot_gain, "slot_gain", total, start, stop, device),
+        tx_polarization=polarization,
+    )
+
+
+def _shard_argument(layer, argument: _Arg, value, total: int, start: int, stop: int, device):
+    """One `per_ray` argument as the shard `[start, stop)` on `device` receives it."""
+    role = argument.role
+    if role == _ROWS:
+        return layer._slice(value, start, stop, device)
+    if role == _OPTIONAL_ROWS:
+        return layer._slice_rows(value, argument.name, total, start, stop, device)
+    if role == _RAY:
+        return layer._shard_ray(value, start, stop, device)
+    if role == _RAY_OR_ROWS:
+        if isinstance(value, Ray):
+            return layer._shard_ray(value, start, stop, device)
+        return layer._slice(value, start, stop, device)
+    if role == _EPC_FIELD_OPTIONS:
+        return _shard_epc_field_options(layer, value, total, start, stop, device)
+    if role == _REPLICATED:
+        return value
+    raise AssertionError(f"unknown per_ray argument role {role!r}")
+
+
+def _scatter_argument(argument: _Arg, value, device):
+    """One lane-sharded argument as a device receives it, before its lane window is set."""
+    role = argument.role
+    if role == _STATES:
+        return _states_to(value, device)
+    if role == _MATERIAL:
+        return _material_to(value, device)
+    if role == _TENSOR:
+        return _to(value, device)
+    if role in (_REPLICATED, _LANE_WINDOW):
+        return value
+    raise AssertionError(f"unknown lane argument role {role!r}")
+
+
+_requires_grad_by_role = {_STATES: _states_require_grad, _MATERIAL: _material_requires_grad}
+_bytes_by_role = {_STATES: _states_bytes, _MATERIAL: _material_bytes, _TENSOR: _tensor_bytes}
+
+
+@dataclass(frozen=True)
+class _PerRaySpec:
+    """A `per_ray` operation: rows shard, every shard runs the replica's own method, fields concatenate.
+
+    `operation` keys the weights and calibration; it and the byte counts may be
+    callables of the named arguments. `row_bytes` is the native output and tape
+    per row, `transfer_row_bytes` the copied inputs plus the returned output.
+    `fields` reads one shard's result into a fixed field order, and
+    `assemble(layer, rows, columns, named)` rebuilds the public record from the
+    gathered fields.
+    """
+
+    method: str
+    contract: str
+    arguments: tuple[_Arg, ...]
+    operation: str | Callable[[Mapping[str, Any]], str]
+    row_bytes: int | Callable[[Mapping[str, Any]], int]
+    transfer_row_bytes: int | Callable[[Mapping[str, Any]], int]
+    fields: Callable[[Any], tuple]
+    assemble: Callable[[Any, int, list, Mapping[str, Any]], Any]
+    shardability: str = "per_ray"
+
+
+class _GridMerge(NamedTuple):
+    """How partial grids add up: out of place (autograd), in place, moved to the master."""
+
+    add: Callable
+    add_in_place: Callable
+    move: Callable
+    requires_grad: Callable
+
+
+@dataclass(frozen=True)
+class _LaneSpec:
+    """A `grid_reduce` operation sharded over its lane window and summed on the master.
+
+    `lane_space` is the full lane count the window indexes. `differentiable`
+    says whether a states or material gradient makes the merge out of place;
+    the copied inputs' size comes from the argument roles.
+    """
+
+    method: str
+    contract: str
+    arguments: tuple[_Arg, ...]
+    lane_space: Callable[[Mapping[str, Any]], int]
+    grid_cell_count: Callable[[Mapping[str, Any]], int]
+    differentiable: bool
+    merge: _GridMerge
+    grid_payload_bytes: Callable[[Mapping[str, Any]], int] | None = None
+    lane_row_bytes: int = _DFR_ACCUM_LANE_BYTES
+    shardability: str = "grid_reduce"
+
+
+def _record(record_type):
+    return lambda layer, rows, columns, named: record_type(*columns)
+
+
+def _counted_record(record_type):
+    return lambda layer, rows, columns, named: record_type(rows, *columns)
+
+
+_INTERSECT_ARGUMENTS = (_Arg("ray", _RAY), _Arg("active", _OPTIONAL_ROWS), _Arg("flags", _REPLICATED))
+
+_INTERSECT_REDUCED = _PerRaySpec(
+    method="intersect",
+    contract="intersect",
+    arguments=_INTERSECT_ARGUMENTS,
+    operation="intersect_reduced",
+    row_bytes=_INTERSECT_REDUCED_ROW_BYTES,
+    transfer_row_bytes=28,
+    fields=lambda result: (result.t,),
+    assemble=lambda layer, rows, columns, named: _ReducedIntersection(layer.master_native_scene(), columns[0]),
+)
+
+_INTERSECT_FULL = _PerRaySpec(
+    method="intersect",
+    contract="intersect",
+    arguments=_INTERSECT_ARGUMENTS,
+    operation="intersect_full",
+    row_bytes=_INTERSECT_FULL_ROW_BYTES,
+    transfer_row_bytes=100,
+    fields=_intersection_fields,
+    assemble=_record(Intersection),
+)
+
+_NEAREST_EDGE_RAY = _PerRaySpec(
+    method="nearest_edge",
+    contract="nearest_edge_ray",
+    arguments=(_Arg("query", _RAY), _Arg("active", _OPTIONAL_ROWS)),
+    operation="nearest_edge_ray",
+    row_bytes=_NEAREST_RAY_EDGE_ROW_BYTES,
+    transfer_row_bytes=76,
+    fields=_field_reader(_NEAREST_RAY_EDGE_FIELDS),
+    assemble=_record(NearestRayEdge),
+)
+
+_NEAREST_EDGE_POINT = _PerRaySpec(
+    method="nearest_edge",
+    contract="nearest_edge_point",
+    arguments=(_Arg("query", _ROWS), _Arg("active", _OPTIONAL_ROWS)),
+    operation="nearest_edge",
+    row_bytes=_NEAREST_POINT_EDGE_ROW_BYTES,
+    transfer_row_bytes=44,
+    fields=_field_reader(_NEAREST_POINT_EDGE_FIELDS),
+    assemble=_record(NearestPointEdge),
+)
+
+_NEAREST_EDGES = _PerRaySpec(
+    method="nearest_edges",
+    contract="nearest_edges_topk",
+    arguments=(_Arg("point", _ROWS), _Arg("k", _REPLICATED), _Arg("active", _OPTIONAL_ROWS)),
+    operation=lambda named: f"nearest_edges:{int(named['k'])}",
+    row_bytes=lambda named: _NEAREST_EDGES_ROW_BYTES_PER_K * max(int(named["k"]), 1),
+    transfer_row_bytes=lambda named: 13 + _NEAREST_EDGES_ROW_BYTES_PER_K * max(int(named["k"]), 1),
+    fields=_field_reader(_NEAREST_EDGES_TOPK_FIELDS),
+    assemble=lambda layer, rows, columns, named: NearestEdgesTopK(rows, int(named["k"]), *columns),
+)
+
+_VISIBLE = _PerRaySpec(
+    method="visible",
+    contract="visibility",
+    arguments=(_Arg("start", _ROWS), _Arg("end", _ROWS), _Arg("active", _OPTIONAL_ROWS)),
+    operation="visible",
+    row_bytes=_VISIBLE_ROW_BYTES,
+    transfer_row_bytes=26,
+    fields=lambda result: (result,),
+    assemble=lambda layer, rows, columns, named: columns[0],
+)
+
+_VISIBLE_PAIR = _PerRaySpec(
+    method="visible_pair",
+    contract="visibility_pair",
+    arguments=(
+        _Arg("start", _ROWS),
+        _Arg("end_a", _ROWS),
+        _Arg("end_b", _ROWS),
+        _Arg("ignore_prim_ids", _OPTIONAL_ROWS),
+        _Arg("active", _OPTIONAL_ROWS),
+    ),
+    operation="visible_pair",
+    row_bytes=_VISIBLE_PAIR_ROW_BYTES,
+    transfer_row_bytes=47,
+    fields=_field_reader(_SEGMENT_PAIR_FIELDS),
+    assemble=_counted_record(SegmentPairVisibility),
+)
+
+_VISIBLE_EDGE = _PerRaySpec(
+    method="visible_edge",
+    contract="visibility_edge",
+    arguments=(
+        _Arg("source", _ROWS),
+        _Arg("edge_position", _ROWS),
+        _Arg("edge_direction", _ROWS),
+        _Arg("edge_t_min", _ROWS),
+        _Arg("edge_t_max", _ROWS),
+        _Arg("sample_fractions", _REPLICATED),
+        _Arg("active", _OPTIONAL_ROWS),
+    ),
+    operation="visible_edge",
+    row_bytes=_VISIBLE_EDGE_ROW_BYTES,
+    transfer_row_bytes=46,
+    fields=_field_reader(_AXIAL_EDGE_FIELDS),
+    assemble=_counted_record(AxialEdgeVisibility),
+)
+
+
+def _chain_segments(named: Mapping[str, Any]) -> int:
+    return int(named["points"].shape[1]) - 1
+
+
+_VISIBLE_CHAIN = _PerRaySpec(
+    method="visible_chain",
+    contract="visibility_chain",
+    arguments=(
+        _Arg("points", _ROWS),
+        _Arg("chain_length", _ROWS),
+        _Arg("ignore_prim_per_segment", _OPTIONAL_ROWS),
+        _Arg("active", _OPTIONAL_ROWS),
+    ),
+    operation="visible_chain",
+    row_bytes=_VISIBLE_CHAIN_ROW_BYTES,
+    transfer_row_bytes=lambda named: (_chain_segments(named) + 1) * 12 + 5 + _chain_segments(named) * 4 + 9,
+    fields=_field_reader(_SEGMENT_CHAIN_FIELDS),
+    assemble=lambda layer, rows, columns, named: SegmentChainVisibility(rows, _chain_segments(named), *columns),
+)
+
+_TRACE_REFL_EPC_FIELD = _PerRaySpec(
+    method="trace_refl_epc_field",
+    contract="reflection_trace:trace_refl_epc_field",
+    arguments=(
+        _Arg("source", _RAY_OR_ROWS),
+        _Arg("receiver", _ROWS),
+        _Arg("max_bounces", _REPLICATED),
+        _Arg("options", _EPC_FIELD_OPTIONS),
+        _Arg("active", _OPTIONAL_ROWS),
+    ),
+    operation=lambda named: f"trace_refl_epc_field:{int(named['max_bounces'])}",
+    row_bytes=lambda named: _REFL_EPC_FIELD_ROW_BYTES + 4 * named["max_bounces"],
+    transfer_row_bytes=lambda named: 38 + 4 * named["max_bounces"],
+    fields=_field_reader(_REFL_EPC_FIELD_FIELDS),
+    assemble=_record(ReflEpcField),
+)
+
+# Run by `trace_reflections` itself, which keeps the chain lazy; see there.
+_TRACE_REFLECTIONS = _PerRaySpec(
+    method="trace_reflections",
+    contract="reflection_trace:trace_reflections",
+    arguments=(_Arg("ray", _RAY), _Arg("max_bounces", _REPLICATED), _Arg("active", _OPTIONAL_ROWS)),
+    operation=lambda named: f"trace_reflections:{int(named['max_bounces'])}",
+    row_bytes=lambda named: named["max_bounces"]
+    * (_REFLECTION_TAPE_BYTES_PER_RAY_BOUNCE + _REFLECTION_OUTPUT_BYTES_PER_RAY_BOUNCE),
+    transfer_row_bytes=lambda named: 28 + named["max_bounces"] * _REFLECTION_OUTPUT_BYTES_PER_RAY_BOUNCE,
+    fields=_reflection_fields,
+    assemble=_record(ReflectionChain),
+)
+
+
+def _sample_lane_space(named: Mapping[str, Any]) -> int:
+    options = named["options"]
+    return int(options.direct_samples) + int(options.keller_samples) + int(options.suffix_samples)
+
+
+def _grid_cells(named: Mapping[str, Any]) -> int:
+    grid = named["grid"]
+    return int(grid.resolution0) * int(grid.resolution1)
+
+
+_DFR_ACCUM_MERGE = _GridMerge(_add_accum, _add_accum_in_place, _accum_to, _accum_requires_grad)
+# Coherent accumulation is forward-only, so its merge never needs to keep a graph.
+_DFR_COHERENT_MERGE = _GridMerge(
+    _add_coherent_accum, _add_coherent_accum_in_place, _coherent_accum_to, lambda _result: False
+)
+
+_ACCUM_DFR_DIRECT = _LaneSpec(
+    method="accum_dfr_direct",
+    contract="diffraction_direct:accum_dfr_direct",
+    arguments=(
+        _Arg("states", _STATES),
+        _Arg("grid", _REPLICATED),
+        _Arg("material", _MATERIAL),
+        _Arg("options", _LANE_WINDOW),
+        _Arg("active", _TENSOR),
+    ),
+    lane_space=_sample_lane_space,
+    grid_cell_count=_grid_cells,
+    differentiable=True,
+    merge=_DFR_ACCUM_MERGE,
+)
+
+_ACCUM_DFR = _LaneSpec(
+    method="accum_dfr",
+    contract="diffraction_chain",
+    arguments=(
+        _Arg("initial_states", _STATES),
+        _Arg("recursive_states", _STATES),
+        _Arg("grid", _REPLICATED),
+        _Arg("material", _MATERIAL),
+        _Arg("options", _LANE_WINDOW),
+        _Arg("active", _TENSOR),
+        _Arg("recursive_active", _TENSOR),
+    ),
+    lane_space=_sample_lane_space,
+    grid_cell_count=_grid_cells,
+    differentiable=True,
+    merge=_DFR_ACCUM_MERGE,
+)
+
+# The deterministic `(state, grid-cell)` lane space of coherent accumulation.
+_ACCUM_DFR_COHERENT_DIRECT = _LaneSpec(
+    method="accum_dfr_coherent_direct",
+    contract="diffraction_direct:accum_dfr_coherent_direct",
+    arguments=(
+        _Arg("states", _STATES),
+        _Arg("grid", _REPLICATED),
+        _Arg("material", _MATERIAL),
+        _Arg("options", _LANE_WINDOW),
+        _Arg("active", _TENSOR),
+    ),
+    lane_space=lambda named: int(named["states"].state_count) * _grid_cells(named),
+    grid_cell_count=_grid_cells,
+    differentiable=False,
+    merge=_DFR_COHERENT_MERGE,
+    grid_payload_bytes=lambda named: _grid_cells(named) * len(_DFR_COHERENT_ACCUM_FIELDS) * 4,
+    lane_row_bytes=_DFR_COHERENT_STAGED_LANE_BYTES,
+)
+
+# Every replicated `Scene` operation, with the shardability class
+# `contracts/operations.json` declares for it and how this layer runs it.
+_OPERATION_SHARDABILITY = {
+    "intersect": ("per_ray", "spec"),
+    "nearest_edge": ("per_ray", "spec"),
+    "nearest_edges": ("per_ray", "spec"),
+    "visible": ("per_ray", "spec"),
+    "visible_pair": ("per_ray", "spec"),
+    "visible_edge": ("per_ray", "spec"),
+    "visible_chain": ("per_ray", "spec"),
+    "trace_refl_epc_field": ("per_ray", "spec"),
+    "trace_reflections": ("per_ray", "explicit"),
+    "trace_refl_epc": ("per_ray", "unsupported"),
+    "accum_refl": ("grid_reduce", "explicit"),
+    "accum_dfr_direct": ("grid_reduce", "spec"),
+    "accum_dfr": ("grid_reduce", "spec"),
+    "accum_dfr_coherent_direct": ("grid_reduce", "spec"),
+    "trace_dfr_paths": ("source_lane", "explicit"),
+}

@@ -3,8 +3,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, overload
+import weakref
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Protocol, overload
 
 import torch
 
@@ -43,6 +44,7 @@ from .geometry import (
     TraceBackend,
     _LazyIntersection,
     _ReducedIntersection,
+    _resolve_dfr_max_paths,
 )
 
 if TYPE_CHECKING:
@@ -107,6 +109,24 @@ def _transform_vertices(vertices: torch.Tensor, transform: torch.Tensor) -> torc
 
 @dataclass
 class Mesh:
+    """Triangle mesh with optional UVs and a world transform.
+
+    Input geometry for ``Scene.add_mesh()`` and ``MixedScene.add_mesh()``. Every tensor is a contiguous CUDA tensor on
+    one device; the constructor checks dtype, rank, and shape and raises ``TypeError`` or ``ValueError``. Vertices that
+    require grad, or carry a forward-mode tangent, make the scene queries differentiable with respect to them.
+
+    Attributes:
+        vertices: Vertex positions, ``float32`` ``(V, 3)``.
+        faces: Vertex indices of each triangle, ``int32`` ``(F, 3)``.
+        uv: Optional texture coordinates, ``float32`` ``(T, 2)``, indexed by ``face_uv`` when given and by vertex
+            otherwise. Not differentiable.
+        face_uv: Optional UV indices of each triangle, ``int32`` ``(F, 3)``.
+        use_face_normals: Use the geometric face normal as the shading normal.
+        edges_enabled: Include this mesh's edges in the scene edge set used by edge queries.
+        to_world_left: Optional ``(4, 4)`` left factor of the world transform.
+        to_world_right: Optional ``(4, 4)`` right factor of the world transform.
+    """
+
     vertices: torch.Tensor
     faces: torch.Tensor
     uv: torch.Tensor | None = None
@@ -185,11 +205,482 @@ def _has_forward_ad(*values: torch.Tensor) -> bool:
     return False
 
 
-class Scene:
-    """Triangle-mesh scene with OptiX/CUDA acceleration structures.
+_NO_SHARD_SPLIT = (
+    "Scene.calibrate_devices() needs a scene with more than one device; "
+    "build the Scene with devices=[...] first. There is no shard split "
+    "to measure on one device."
+)
 
-    Under ``MultiDeviceOptions(offload=...)`` the per-ray queries stream their
-    chunks to the offload hook and return ``None``; their annotations say so.
+
+class _Executor(Protocol):
+    """How a `Scene` runs its operations.
+
+    `_LocalExecutor` below is the single-device path and `multi._ReplicatedScene`
+    the replicated one; `Scene` picks one at construction and calls it without
+    asking which. Operations take the public method's parameters in the same
+    order, already validated and defaulted, and the public methods carry their
+    types. Lifecycle methods receive the owning `Scene`, because each executor
+    commits the scene's ready and pending state its own way: the local path
+    leaves it untouched on failure, while a failed replica broadcast marks the
+    scene unusable until the next `build()`.
+    """
+
+    devices: tuple[torch.device, ...]
+    weights: tuple[float, ...] | None
+    default_dfr_path_layout: DfrPathLayout
+
+    @property
+    def is_poisoned(self) -> bool: ...
+
+    # Lifecycle.
+    def require_healthy(self) -> None: ...
+    def require_supported(self, operation: str) -> None: ...
+    def discard(self) -> None: ...
+    def build_scene(self, scene: Scene) -> None: ...
+    def update_scene_vertices(self, scene: Scene, mesh_id: int, mesh: Mesh, vertices: torch.Tensor) -> None: ...
+    def sync_scene(self, scene: Scene) -> None: ...
+    def set_scene_edge_mask(self, scene: Scene, mask: torch.Tensor) -> None: ...
+    def calibrate(self, **kwargs: Any) -> _multi.DeviceCalibration: ...
+    def device_weights_for(self, operation: str) -> tuple[float, ...] | None: ...
+
+    # Operations.
+    def intersect(self, ray, active, flags) -> Any: ...
+    def nearest_edge(self, query, active) -> Any: ...
+    def nearest_edges(self, point, k, active) -> Any: ...
+    def visible(self, start, end, active) -> Any: ...
+    def visible_pair(self, start, end_a, end_b, ignore_prim_ids, active) -> Any: ...
+    def visible_edge(
+        self, source, edge_position, edge_direction, edge_t_min, edge_t_max, sample_fractions, active
+    ) -> Any: ...
+    def visible_chain(self, points, chain_length, ignore_prim_per_segment, active) -> Any: ...
+    def trace_reflections(self, ray, max_bounces, active) -> Any: ...
+    def trace_refl_epc_field(self, source, receiver, max_bounces, options, active) -> Any: ...
+    def trace_refl_epc(self, source, receiver, max_bounces, options, active) -> Any: ...
+    def accum_refl(self, *, ray, tx_position, grid, material, max_bounces, options, active, tx_polarization) -> Any: ...
+    def trace_dfr_paths(
+        self, tx_positions, rx_positions, states, material, options, *, active, max_paths=None, layout=None
+    ) -> Any: ...
+    def accum_dfr_direct(self, states, grid, material, options, active) -> Any: ...
+    def accum_dfr(self, initial_states, recursive_states, grid, material, options, active, recursive_active) -> Any: ...
+    def accum_dfr_coherent_direct(self, states, grid, material, options, active) -> Any: ...
+
+
+class _LocalExecutor:
+    """The single-device path: every operation is one native call on the scene's own device.
+
+    It holds its scene weakly. A strong reference would form a cycle through
+    `Scene._executor`, and then the native scene and its acceleration
+    structures would be freed by the cycle collector instead of when the last
+    caller reference goes away.
+    """
+
+    __slots__ = ("_owner",)
+
+    devices: tuple[torch.device, ...] = ()
+    weights = None
+    is_poisoned = False
+    default_dfr_path_layout = DfrPathLayout.Compact
+
+    def __init__(self, scene: Scene) -> None:
+        self._owner = weakref.ref(scene)
+
+    # -- lifecycle ----------------------------------------------------------
+
+    def require_healthy(self) -> None:
+        pass
+
+    def require_supported(self, operation: str) -> None:
+        pass
+
+    def discard(self) -> None:
+        pass
+
+    def build_scene(self, scene: Scene) -> None:
+        _require_native_dispatcher()
+        for mesh, _dynamic in scene._meshes:
+            _runtime.require_supported_device(mesh.vertices.device)
+        specs = [scene._mesh_spec(mesh_id, mesh, dynamic) for mesh_id, (mesh, dynamic) in enumerate(scene._meshes)]
+        mesh_flags = []
+        for mesh, dynamic in scene._meshes:
+            flags = 0
+            if mesh.use_face_normals:
+                flags |= 1
+            if mesh.edges_enabled:
+                flags |= 2
+            if dynamic:
+                flags |= 4
+            mesh_flags.append(flags)
+        if mesh_flags:
+            mesh_flags[0] |= scene._trace_backend_code << 8
+            mesh_flags[0] |= scene._edge_backend_code << 10
+        with torch._C._DisableFuncTorch():
+            native_scene = torch.classes.rayd_torch.Scene(
+                [spec["vertices"] for spec in specs],
+                [spec["faces"] for spec in specs],
+                [spec["uv"] for spec in specs],
+                [spec["face_uv"] for spec in specs],
+                [spec["to_world_left"] for spec in specs],
+                [spec["to_world_right"] for spec in specs],
+                [spec["instance_transform"] for spec in specs],
+                mesh_flags,
+                [spec["geometry_owner_id"] for spec in specs],
+            )
+        scene._native_scene = native_scene
+        scene._native_handle = int(native_scene.handle())
+        scene._ready = True
+        scene._pending_updates = False
+
+    def update_scene_vertices(self, scene: Scene, mesh_id: int, mesh: Mesh, vertices: torch.Tensor) -> None:
+        mesh.vertices = vertices
+        with torch._C._DisableFuncTorch():
+            scene._native_scene.update_vertices(int(mesh_id), _native_scene_tensor(mesh.vertices))
+        scene._pending_updates = True
+
+    def sync_scene(self, scene: Scene) -> None:
+        with torch._C._DisableFuncTorch():
+            scene._native_scene.sync()
+
+    def set_scene_edge_mask(self, scene: Scene, mask: torch.Tensor) -> None:
+        scene._native_scene.set_edge_mask(mask)
+
+    def calibrate(self, **kwargs: Any) -> _multi.DeviceCalibration:
+        raise RuntimeError(_NO_SHARD_SPLIT)
+
+    def device_weights_for(self, operation: str) -> tuple[float, ...] | None:
+        return None
+
+    # -- operations ---------------------------------------------------------
+
+    def intersect(self, ray: Ray, active: torch.Tensor | None, flags: int) -> Intersection:
+        owner = self._owner()
+        scene = owner._require_native_scene()
+        flags_value = int(flags)
+        meshes = owner._meshes
+        if len(meshes) == 1 and torch.autograd.forward_ad._current_level < 0:
+            vertices = meshes[0][0].vertices
+            if not (vertices.requires_grad or ray.o.requires_grad or ray.d.requires_grad or ray.tmax.requires_grad):
+                return _forward_intersection(scene, ray, active, flags_value)
+            if (
+                torch.compiler.is_compiling()
+                and flags_value == 0
+                and active is None
+                and vertices.requires_grad
+                and not (ray.o.requires_grad or ray.d.requires_grad or ray.tmax.requires_grad)
+            ):
+                t, _tape_prim, _geometry_version = torch.ops.rayd_torch.intersect_forward_tape_h(
+                    owner._native_handle, vertices, ray.o, ray.d, ray.tmax
+                )
+                return _ReducedIntersection(scene, t)
+            if flags_value != 0:
+                return _lazy_intersection(scene, vertices, ray, active, flags_value)
+            t = torch.ops.rayd_torch.intersect_ad_t(scene, vertices, ray.o, ray.d, ray.tmax, active)
+            return _ReducedIntersection(scene, t)
+        mesh_vertices = owner._mesh_vertex_tensors()
+        if not _has_reverse_or_forward_ad(*mesh_vertices, ray.o, ray.d, ray.tmax):
+            return _forward_intersection(scene, ray, active, flags_value)
+        if len(mesh_vertices) == 1:
+            vertices = mesh_vertices[0]
+            if not _has_forward_ad(vertices, ray.o, ray.d, ray.tmax):
+                if flags_value != 0:
+                    return _lazy_intersection(scene, vertices, ray, active, flags_value)
+                t = torch.ops.rayd_torch.intersect_ad_t(scene, vertices, ray.o, ray.d, ray.tmax, active)
+                return _ReducedIntersection(scene, t)
+            return _intersect(scene, vertices, ray.o, ray.d, ray.tmax, active, flags_value)
+        return _intersect(
+            scene, mesh_vertices[0], ray.o, ray.d, ray.tmax, active, flags_value, mesh_vertices=mesh_vertices
+        )
+
+    def nearest_edge(self, query: torch.Tensor | Ray, active: torch.Tensor | None) -> NearestPointEdge | NearestRayEdge:
+        owner = self._owner()
+        scene = owner._require_native_scene()
+        mesh_vertices = owner._mesh_vertex_tensors()
+        if isinstance(query, Ray):
+            return _nearest_edge_ray(
+                scene, mesh_vertices[0], query.o, query.d, query.tmax, active, mesh_vertices=mesh_vertices
+            )
+        return _nearest_edge(scene, mesh_vertices[0], query, active, mesh_vertices=mesh_vertices)
+
+    def nearest_edges(self, point: torch.Tensor, k: int, active: torch.Tensor | None) -> NearestEdgesTopK:
+        from .multipath import nearest_edges as _nearest_edges
+
+        owner = self._owner()
+        scene = owner._require_native_scene()
+        mesh_vertices = owner._mesh_vertex_tensors()
+        return _nearest_edges(scene, mesh_vertices[0], point, int(k), active, mesh_vertices=mesh_vertices)
+
+    def visible(self, start: torch.Tensor, end: torch.Tensor, active: torch.Tensor | None) -> torch.Tensor:
+        scene = self._owner()._require_native_scene()
+        return _visible(scene, start, end, active)
+
+    def visible_pair(
+        self,
+        start: torch.Tensor,
+        end_a: torch.Tensor,
+        end_b: torch.Tensor,
+        ignore_prim_ids: torch.Tensor | None,
+        active: torch.Tensor | None,
+    ) -> SegmentPairVisibility:
+        from .geometry import SegmentPairVisibility
+
+        scene = self._owner()._require_native_scene()
+        values = torch.ops.rayd_torch.visible_pair_forward(scene, start, end_a, end_b, ignore_prim_ids, active)
+        return SegmentPairVisibility(int(start.shape[0]), *values)
+
+    def visible_edge(
+        self,
+        source: torch.Tensor,
+        edge_position: torch.Tensor,
+        edge_direction: torch.Tensor,
+        edge_t_min: torch.Tensor,
+        edge_t_max: torch.Tensor,
+        sample_fractions: Iterable[float],
+        active: torch.Tensor | None,
+    ) -> AxialEdgeVisibility:
+        from .geometry import AxialEdgeVisibility
+
+        scene = self._owner()._require_native_scene()
+        values = torch.ops.rayd_torch.visible_edge_forward(
+            scene,
+            source,
+            edge_position,
+            edge_direction,
+            edge_t_min,
+            edge_t_max,
+            [float(value) for value in sample_fractions],
+            active,
+        )
+        return AxialEdgeVisibility(int(source.shape[0]), *values)
+
+    def visible_chain(
+        self,
+        points: torch.Tensor,
+        chain_length: torch.Tensor,
+        ignore_prim_per_segment: torch.Tensor | None,
+        active: torch.Tensor | None,
+    ) -> SegmentChainVisibility:
+        from .geometry import SegmentChainVisibility
+
+        scene = self._owner()._require_native_scene()
+        values = torch.ops.rayd_torch.visible_chain_forward(
+            scene, points, chain_length, ignore_prim_per_segment, active
+        )
+        return SegmentChainVisibility(int(points.shape[0]), int(points.shape[1]) - 1, *values)
+
+    def trace_reflections(self, ray: Ray, max_bounces: int, active: torch.Tensor | None) -> ReflectionChain:
+        owner = self._owner()
+        scene = owner._require_native_scene()
+        mesh_vertices = owner._mesh_vertex_tensors()
+        return _trace_reflections(
+            scene, mesh_vertices[0], ray.o, ray.d, ray.tmax, active, max_bounces, mesh_vertices=mesh_vertices
+        )
+
+    def trace_refl_epc_field(
+        self,
+        source: torch.Tensor | Ray,
+        receiver: torch.Tensor,
+        max_bounces: int,
+        options: ReflEpcFieldOptions | None,
+        active: torch.Tensor | None,
+    ) -> ReflEpcField:
+        owner = self._owner()
+        scene = owner._require_native_scene()
+        mesh_vertices = owner._mesh_vertex_tensors()
+        return _trace_refl_epc_field(
+            scene,
+            mesh_vertices[0],
+            source,
+            receiver,
+            active,
+            int(max_bounces),
+            mesh_vertices=mesh_vertices,
+            options=options,
+        )
+
+    def trace_refl_epc(
+        self,
+        source: torch.Tensor | Ray,
+        receiver: torch.Tensor,
+        max_bounces: int,
+        options: ReflEpcOptions,
+        active: torch.Tensor | None,
+    ) -> ReflEpc:
+        owner = self._owner()
+        scene = owner._require_native_scene()
+        mesh_vertices = owner._mesh_vertex_tensors()
+        if _has_reverse_or_forward_ad(*mesh_vertices):
+            raise RuntimeError("Scene.trace_refl_epc() is forward-only and does not support reverse-mode AD or JVP.")
+        return _trace_refl_epc(scene, source, receiver, max_bounces=int(max_bounces), options=options, active=active)
+
+    def accum_refl(
+        self,
+        *,
+        ray: Ray,
+        tx_position: torch.Tensor,
+        grid: AccumGrid,
+        material: ReflMaterial,
+        max_bounces: int,
+        options: AccumOptions,
+        active: torch.Tensor | None,
+        tx_polarization: torch.Tensor | None,
+    ) -> AccumResult:
+        scene = self._owner()._require_native_scene()
+        return _accum_refl(
+            scene,
+            ray.o,
+            ray.d,
+            ray.tmax,
+            tx_position,
+            grid,
+            material,
+            max_bounces=int(max_bounces),
+            options=options,
+            active=active,
+            tx_polarization=tx_polarization,
+        )
+
+    def trace_dfr_paths(
+        self,
+        tx_positions: torch.Tensor,
+        rx_positions: torch.Tensor,
+        states: DfrStates,
+        material: DfrMaterial,
+        options: DfrPathOptions,
+        *,
+        active: torch.Tensor,
+        max_paths: int | None = None,
+        layout: DfrPathLayout | None = None,
+    ) -> DfrPaths:
+        scene = self._owner()._require_native_scene()
+        return _trace_dfr_paths(
+            scene,
+            tx_positions,
+            rx_positions,
+            states,
+            material,
+            active=active,
+            max_paths=states.state_count if max_paths is None else max_paths,
+            wavelength=float(options.wavelength),
+            layout=self.default_dfr_path_layout if layout is None else layout,
+        )
+
+    def accum_dfr_direct(
+        self, states: DfrStates, grid: DfrGrid, material: DfrMaterial, options: DfrOptions, active: torch.Tensor | None
+    ) -> DfrAccum:
+        scene = self._owner()._require_native_scene()
+        return _accum_dfr_direct(
+            scene,
+            states,
+            grid,
+            material,
+            active=active,
+            wavelength=float(options.wavelength),
+            direct_samples=int(options.direct_samples),
+            keller_samples=int(options.keller_samples),
+            suffix_samples=int(options.suffix_samples),
+            seed=int(options.seed),
+            lane_offset=int(options.lane_offset),
+            lane_count=int(options.lane_count),
+        )
+
+    def accum_dfr(
+        self,
+        initial_states: DfrStates,
+        recursive_states: DfrStates,
+        grid: DfrGrid,
+        material: DfrMaterial,
+        options: DfrOptions,
+        active: torch.Tensor | None,
+        recursive_active: torch.Tensor | None,
+    ) -> DfrAccum:
+        scene = self._owner()._require_native_scene()
+        return _accum_dfr_chain(
+            scene,
+            initial_states,
+            recursive_states,
+            grid,
+            material,
+            active=active,
+            recursive_active=recursive_active,
+            wavelength=float(options.wavelength),
+            direct_samples=int(options.direct_samples),
+            keller_samples=int(options.keller_samples),
+            suffix_samples=int(options.suffix_samples),
+            seed=int(options.seed),
+            max_order=int(options.max_order),
+            lane_offset=int(options.lane_offset),
+            lane_count=int(options.lane_count),
+        )
+
+    def accum_dfr_coherent_direct(
+        self,
+        states: DfrStates,
+        grid: DfrGrid,
+        material: DfrMaterial,
+        options: DfrCoherentOptions,
+        active: torch.Tensor | None,
+    ) -> DfrCoherentAccum:
+        scene = self._owner()._require_native_scene()
+        return _accum_dfr_coherent_direct(
+            scene,
+            states,
+            grid,
+            material,
+            active=active,
+            wavelength=float(options.wavelength),
+            select_diffraction_point=bool(options.select_diffraction_point),
+            prefilter_visibility=bool(options.prefilter_visibility),
+            lane_offset=int(options.lane_offset),
+            lane_count=int(options.lane_count),
+        )
+
+
+def _forward_intersection(scene, ray: Ray, active, flags: int) -> Intersection:
+    if flags == 0:
+        t = torch.ops.rayd_torch.intersect_forward_t(scene, ray.o, ray.d, ray.tmax, active)
+        # The lazy `Intersection` subclasses answer the field surface without
+        # materializing the fields nobody asked for.
+        return _ReducedIntersection(scene, t)
+    values = torch.ops.rayd_torch.intersect_forward_flags(scene, ray.o, ray.d, ray.tmax, active, flags)
+    return Intersection(*values)
+
+
+def _lazy_intersection(scene, vertices, ray: Ray, active, flags: int) -> Intersection:
+    require_geometry = _lazy_geometry_guard(scene)
+    geometry_version = int(scene.geometry_version())
+    # The t-only trace keeps its raw hit record, so a later request for any other field completes the result
+    # with the post-pass alone instead of tracing a second time.
+    staged: list[torch.Tensor] = []
+
+    def load_t():
+        require_geometry()
+        staged[:] = torch.ops.rayd_torch.intersect_ad_t_staged(scene, vertices, ray.o, ray.d, ray.tmax, active)
+        return staged[0]
+
+    def load_full():
+        require_geometry()
+        if staged:
+            t = staged[0]
+            fields = torch.ops.rayd_torch.intersect_ad_complete(
+                scene, vertices, ray.o, ray.d, ray.tmax, active, flags, geometry_version, *staged
+            )
+            staged.clear()
+            return Intersection(t, *fields)
+        values = torch.ops.rayd_torch.intersect_ad_flags(scene, vertices, ray.o, ray.d, ray.tmax, active, flags)
+        return Intersection(*values)
+
+    return _LazyIntersection(load_t, load_full)
+
+
+class Scene:
+    """Triangle-mesh scene with its ray-tracing and edge acceleration structures.
+
+    Add meshes with ``add_mesh()`` or ``add_instance()``, call ``build()``, then run queries. Dynamic meshes can be
+    edited with ``update_mesh_vertices()`` or ``set_instance_transform()`` and refitted with ``sync()``. Every query
+    tensor must be a CUDA tensor on the scene's device.
+
+    With ``devices=[...]`` the scene keeps one replica per device and shards each batch across them; results and
+    gradients are returned on the first device. Under ``MultiDeviceOptions(offload=...)`` the per-ray queries stream
+    their chunks to the offload hook and return ``None``; their annotations say so.
     """
 
     def __init__(
@@ -200,6 +691,20 @@ class Scene:
         devices: Sequence[int | str | torch.device] | None = None,
         options: _multi.MultiDeviceOptions | None = None,
     ) -> None:
+        """Create an empty scene.
+
+        Args:
+            trace_backend: Triangle trace backend, a ``TraceBackend`` or its string value. ``"auto"`` selects OptiX when
+                it is available and the CUDA BVH otherwise.
+            edge_bvh_backend: Nearest-edge backend, an ``EdgeBVHBackend`` or its string value. ``"auto"`` selects the
+                compact CUDA BVH.
+            devices: Devices to replicate the scene on; the first one owns every input, result, and gradient. ``None``
+                keeps an ordinary single-device scene.
+            options: ``MultiDeviceOptions`` for the replicated scene; requires ``devices``.
+
+        Backend strings match exactly; any other value raises ``ValueError``. Invalid ``devices`` or ``options`` raise
+        ``TypeError``, ``ValueError``, or ``RuntimeError`` (for example, devices without peer access).
+        """
         trace_backend = _resolve_backend(trace_backend, TraceBackend, "trace_backend")
         edge_bvh_backend = _resolve_backend(edge_bvh_backend, EdgeBVHBackend, "edge_bvh_backend")
         self._trace_backend_code = _BACKEND_CODES[trace_backend]
@@ -211,31 +716,40 @@ class Scene:
         self._native_handle = 0
         self._ready = False
         self._pending_updates = False
-        # `None` for every scene that did not ask for several devices or for
-        # chunked execution, which is what every op checks before dispatching.
-        # `rayd._impl.multi` is imported only when `devices=` is passed, and it
-        # still returns `None` for a one-device scene that wants nothing from
-        # the chunked executor, so the single-device path is untouched (D9).
-        # Deliberately `Any` and not `_multi._ReplicatedScene | None`: the
-        # orchestrator's per-op methods answer `X | None`, because the `offload`
-        # hook streams chunks instead of returning them, so naming the real type
-        # here would only trade this one annotation for a `# type: ignore` on
-        # every `return self._multi.<op>(...)` below without adding precision.
-        self._multi: Any = None
+        # `rayd._impl.multi` is imported only when `devices=` or `options=` is
+        # passed, and its planner still declines a one-device scene that wants
+        # nothing from the chunked executor, so such a scene keeps the local
+        # executor and never loads the orchestration layer.
+        replicated = None
         if devices is not None or options is not None:
             from .multi import plan as _plan_multi_device
 
-            self._multi = _plan_multi_device(
+            replicated = _plan_multi_device(
                 devices, options, trace_backend=trace_backend, edge_bvh_backend=edge_bvh_backend
             )
+        self._executor: _Executor = _LocalExecutor(self) if replicated is None else replicated
+
+    @property
+    def _multi(self) -> Any:
+        """The replicated executor, or ``None`` on the single-device path.
+
+        A read-only debug handle for tests and benchmarks that inspect the
+        dispatch record; no operation reads it.
+        """
+        executor = self._executor
+        return None if isinstance(executor, _LocalExecutor) else executor
 
     def add_mesh(self, mesh: Mesh, dynamic: bool = False) -> int:
+        """Add ``mesh`` and return its mesh id.
+
+        Adding a mesh invalidates a previous ``build()``. Pass ``dynamic=True`` to allow later
+        ``update_mesh_vertices()`` calls applied by ``sync()``. A non-``Mesh`` argument raises ``TypeError``.
+        """
         if not isinstance(mesh, Mesh):
             raise TypeError("Scene.add_mesh() expects rayd.torch.Mesh.")
         if self._native_scene is not None:
             self._native_scene = None
-        if self._multi is not None:
-            self._multi.discard()
+        self._executor.discard()
         self._meshes.append((mesh, bool(dynamic)))
         mesh_id = len(self._meshes) - 1
         self._geometry_owner_ids.append(mesh_id)
@@ -245,10 +759,15 @@ class Scene:
         return mesh_id
 
     def add_instance(self, geometry_id: int, transform: torch.Tensor, dynamic: bool = True) -> int:
-        """Add a transformed instance that shares an existing static mesh GAS."""
+        """Add a transformed instance of an existing static mesh and return its instance id.
 
-        if self._multi is not None:
-            raise NotImplementedError("Scene.add_instance() does not yet support Scene(devices=...) orchestration.")
+        The instance shares the acceleration structure of mesh ``geometry_id`` but has its own ``(4, 4)`` row-major
+        ``transform`` and its own scene-global primitive range. A dynamic instance can be moved with
+        ``set_instance_transform()`` followed by ``sync()``. Instancing a dynamic mesh or another instance raises
+        ``ValueError``; a replicated scene raises ``NotImplementedError``.
+        """
+
+        self._executor.require_supported("add_instance")
         if isinstance(geometry_id, bool) or not isinstance(geometry_id, int):
             raise TypeError("Scene.add_instance() expects an integer geometry_id.")
         if geometry_id < 0 or geometry_id >= len(self._meshes):
@@ -303,61 +822,14 @@ class Scene:
         }
 
     def build(self) -> None:
-        if self._multi is not None:
-            # One ordinary single-device Scene per device; the master replica's
-            # native scene answers this object's scene-level metadata.
-            try:
-                self._multi.build(self._meshes)
-                self._native_scene = self._multi.master_native_scene()
-                self._native_handle = int(self._native_scene.handle())
-            except BaseException:
-                # Do not leave stale master metadata looking usable when only
-                # part of a replica rebuild completed.
-                self._native_scene = None
-                self._native_handle = 0
-                self._ready = False
-                self._pending_updates = True
-                raise
-            self._ready = True
-            self._pending_updates = False
-            return
-        _require_native_dispatcher()
-        for mesh, _dynamic in self._meshes:
-            _runtime.require_supported_device(mesh.vertices.device)
-        specs = [self._mesh_spec(mesh_id, mesh, dynamic) for mesh_id, (mesh, dynamic) in enumerate(self._meshes)]
-        mesh_flags = []
-        for mesh, dynamic in self._meshes:
-            flags = 0
-            if mesh.use_face_normals:
-                flags |= 1
-            if mesh.edges_enabled:
-                flags |= 2
-            if dynamic:
-                flags |= 4
-            mesh_flags.append(flags)
-        if mesh_flags:
-            mesh_flags[0] |= self._trace_backend_code << 8
-            mesh_flags[0] |= self._edge_backend_code << 10
-        with torch._C._DisableFuncTorch():
-            native_scene = torch.classes.rayd_torch.Scene(
-                [spec["vertices"] for spec in specs],
-                [spec["faces"] for spec in specs],
-                [spec["uv"] for spec in specs],
-                [spec["face_uv"] for spec in specs],
-                [spec["to_world_left"] for spec in specs],
-                [spec["to_world_right"] for spec in specs],
-                [spec["instance_transform"] for spec in specs],
-                mesh_flags,
-                [spec["geometry_owner_id"] for spec in specs],
-            )
-        self._native_scene = native_scene
-        self._native_handle = int(native_scene.handle())
-        self._ready = True
-        self._pending_updates = False
+        """Build the triangle and edge acceleration structures. Call it before any query.
+
+        A failed build of a replicated scene leaves it unusable until ``build()`` succeeds.
+        """
+        self._executor.build_scene(self)
 
     def _require_native_scene(self):
-        if self._multi is not None:
-            self._multi.require_healthy()
+        self._executor.require_healthy()
         if not self._ready or self._native_scene is None:
             raise RuntimeError("Scene is not ready. Call build() before querying.")
         return self._native_scene
@@ -388,40 +860,34 @@ class Scene:
         warm_up: int = 1,
         refine: bool = True,
     ) -> _multi.DeviceCalibration:
-        """Measure this scene's devices and set the shard split from what it sees.
+        """Time this scene's devices and set the shard split for one operation.
 
-        Only a scene built with more than one device has a split to set;
-        anything else raises, because silently doing nothing -- or answering a
-        one-device scene with the `(1.0,)` it already had -- would look like a
-        calibration. That includes a one-device `Scene(devices=[d],
-        options=MultiDeviceOptions(chunk_rays=...))`, which is orchestrated
-        (the chunked executor is a per-device memory story, D7) but has nothing
-        to shard. Every replica first runs the same probe on its own device with resident
-        inputs, so what is measured is the device rather than the interconnect,
-        and the weights come out inversely proportional to the times. The
-        refinement stage then times the real multi-device dispatch of the same
-        probe at a ladder of remote shares down to zero and keeps the fastest,
-        which is what catches an operation that moves more bytes per row than
-        it spends compute on. The returned record (also kept on the scene)
-        carries the per-device seconds, the ladder, and the weights they
-        produced, so a caller can log exactly what it is running.
+        Each replica first runs the same probe on its own device, and the weights come out inversely proportional to the
+        times. With ``refine=True`` the real multi-device dispatch is then timed at a ladder of smaller remote shares,
+        down to the master alone, and the fastest rung within tolerance is kept. Calibration only chooses weights; it is
+        a noisy measurement, not a performance guarantee.
 
-        The default probe is `rays` rays drawn from a fixed seed inside this
-        scene's bounding box, put through full `intersect` -- or through
-        `trace_reflections` when `max_bounces` is set. It is an op *shape*, not
-        a workload: pass both `operation="..."` and `probe(scene, device)` to
-        time another call. The chosen split is stored only for that exact
-        operation; use `device_weights_for()` to inspect it. Calibration only
-        chooses weights, and is a noisy measurement rather than a performance
-        guarantee.
+        Args:
+            operation: Operation key the weights apply to. The default probe measures ``"intersect_full"``, or
+                ``"trace_reflections:<max_bounces>"`` when ``max_bounces`` is set.
+            rays: Probe batch size for the default probe.
+            max_bounces: Probe ``trace_reflections`` with this many bounces instead of ``intersect``.
+            probe: Custom ``probe(scene, device)`` to time; it needs ``operation``. It receives a replica and its
+                device, and then the replicated scene itself and the first device, so it should build its inputs on the
+                device it is given and call the operation positionally.
+            repeats: Timed runs per candidate; the minimum is kept.
+            warm_up: Untimed runs before timing.
+            refine: Run the share ladder after the throughput stage.
+
+        Returns:
+            The ``DeviceCalibration`` record, which also stays on the scene.
+
+        Raises ``RuntimeError`` on a scene with fewer than two devices, and ``ValueError`` for a custom probe without
+        ``operation`` or an ``operation`` the default probe does not measure.
         """
-        if self._multi is None or len(self._multi.devices) < 2:
-            raise RuntimeError(
-                "Scene.calibrate_devices() needs a scene with more than one device; "
-                "build the Scene with devices=[...] first. There is no shard split "
-                "to measure on one device."
-            )
-        return self._multi.calibrate(
+        if len(self._executor.devices) < 2:
+            raise RuntimeError(_NO_SHARD_SPLIT)
+        return self._executor.calibrate(
             operation=operation,
             rows=int(rays),
             max_bounces=int(max_bounces),
@@ -433,134 +899,87 @@ class Scene:
 
     @property
     def device_weights(self) -> tuple[float, ...] | None:
-        """The latest calibrated/base split, or `None` when nothing orchestrates.
+        """The most recently calibrated or configured split, or ``None`` on a single-device scene.
 
-        A one-device scene that engaged the chunked executor answers `(1.0,)`:
-        it has a (degenerate) split, it just has no way to change it.
-        Prefer `device_weights_for(operation)` when operation-local weights or
-        more than one calibration are in use.
+        A one-device chunked scene answers ``(1.0,)``. Prefer ``device_weights_for()`` when weights differ by operation.
         """
-        if self._multi is None:
-            return None
-        return self._multi.weights
+        return self._executor.weights
 
     def device_weights_for(self, operation: str) -> tuple[float, ...] | None:
-        """Effective split for one operation, including operation-local calibration."""
-        if self._multi is None:
-            return None
-        if not isinstance(operation, str) or not operation:
-            raise TypeError("Scene.device_weights_for() expects a non-empty operation name.")
-        return self._multi.weights_for(operation)
+        """Return the effective split for ``operation``, or ``None`` on a single-device scene.
+
+        On a replicated scene an empty or non-string name raises ``TypeError``.
+        """
+        return self._executor.device_weights_for(operation)
 
     def _mesh_vertex_tensors(self) -> tuple[torch.Tensor, ...]:
         return tuple(mesh.vertices for mesh, _dynamic in self._meshes)
 
-    @staticmethod
-    def _forward_intersection(scene, ray: Ray, active, flags: int) -> Intersection:
-        if flags == 0:
-            t = torch.ops.rayd_torch.intersect_forward_t(scene, ray.o, ray.d, ray.tmax, active)
-            # The lazy `Intersection` subclasses answer the field surface without
-            # materializing the fields nobody asked for.
-            return _ReducedIntersection(scene, t)
-        values = torch.ops.rayd_torch.intersect_forward_flags(scene, ray.o, ray.d, ray.tmax, active, flags)
-        return Intersection(*values)
-
-    @staticmethod
-    def _lazy_intersection(scene, vertices, ray: Ray, active, flags: int) -> Intersection:
-        require_geometry = _lazy_geometry_guard(scene)
-        geometry_version = int(scene.geometry_version())
-        # The t-only trace keeps its raw hit record, so a later request for any other field completes the result
-        # with the post-pass alone instead of tracing a second time.
-        staged: list[torch.Tensor] = []
-
-        def load_t():
-            require_geometry()
-            staged[:] = torch.ops.rayd_torch.intersect_ad_t_staged(scene, vertices, ray.o, ray.d, ray.tmax, active)
-            return staged[0]
-
-        def load_full():
-            require_geometry()
-            if staged:
-                t = staged[0]
-                fields = torch.ops.rayd_torch.intersect_ad_complete(
-                    scene, vertices, ray.o, ray.d, ray.tmax, active, flags, geometry_version, *staged
-                )
-                staged.clear()
-                return Intersection(t, *fields)
-            values = torch.ops.rayd_torch.intersect_ad_flags(scene, vertices, ray.o, ray.d, ray.tmax, active, flags)
-            return Intersection(*values)
-
-        return _LazyIntersection(load_t, load_full)
-
     def is_ready(self) -> bool:
-        return self._ready and (self._multi is None or not self._multi.is_poisoned)
+        """Return True once the scene is built and needs no rebuild."""
+        return self._ready and not self._executor.is_poisoned
 
     @property
     def trace_backend(self) -> str:
+        """Canonical name of the resolved triangle trace backend (``"optix"`` or ``"cuda"``).
+
+        Raises ``RuntimeError`` if the scene is not built.
+        """
         return str(self._require_native_scene().trace_backend())
 
     @property
     def edge_bvh_backend(self) -> str:
+        """Resolved edge backend name (``"cuda"`` or ``"optix"``).
+
+        Raises ``RuntimeError`` if the scene is not built.
+        """
         return str(self._require_native_scene().edge_backend())
 
     @property
     def num_meshes(self) -> int:
+        """Number of meshes and instances. Raises ``RuntimeError`` if the scene is not built."""
         scene = self._require_native_scene()
         return int(scene.num_meshes())
 
     @property
     def num_geometries(self) -> int:
-        """Number of distinct GAS-owning mesh geometries."""
+        """Number of distinct meshes that own an acceleration structure; instances share their owner's.
+
+        Raises ``RuntimeError`` if the scene is not built.
+        """
 
         scene = self._require_native_scene()
         return int(scene.num_geometries())
 
     @property
     def version(self) -> int:
+        """Counter that increases whenever the scene geometry changes.
+
+        Raises ``RuntimeError`` if the scene is not built.
+        """
         scene = self._require_native_scene()
         return int(scene.version())
 
     def intersect(
         self, ray: Ray, active: torch.Tensor | None = None, flags: RayFlags = RayFlags.All
     ) -> Intersection | None:
+        """Find the closest triangle hit of each ray.
+
+        Args:
+            ray: ``Ray`` batch of ``N`` rays.
+            active: Optional ``bool`` ``(N,)`` mask; inactive rays return a miss.
+            flags: ``RayFlags`` selecting which hit fields to compute. ``t`` and the ids are always filled;
+                ``RayFlags.Empty`` computes ``t`` alone and the other fields on first access.
+
+        Returns:
+            An ``Intersection``. Missed rays have ``t = inf`` and ids ``-1``.
+
+        Differentiable: the hit fields carry derivatives (VJP and JVP) with respect to the ray and the mesh vertices,
+        with the hit triangle fixed by the forward pass. Raises ``RuntimeError`` if the scene is not built or has
+        pending updates (call sync() first).
+        """
         self._require_synced("intersect")
-        if self._multi is not None:
-            return self._multi.intersect(ray, active, int(flags))
-        scene = self._require_native_scene()
-        flags_value = int(flags)
-        if len(self._meshes) == 1 and torch.autograd.forward_ad._current_level < 0:
-            vertices = self._meshes[0][0].vertices
-            if not (vertices.requires_grad or ray.o.requires_grad or ray.d.requires_grad or ray.tmax.requires_grad):
-                return self._forward_intersection(scene, ray, active, flags_value)
-            if (
-                torch.compiler.is_compiling()
-                and flags_value == 0
-                and active is None
-                and vertices.requires_grad
-                and not (ray.o.requires_grad or ray.d.requires_grad or ray.tmax.requires_grad)
-            ):
-                t, _tape_prim, _geometry_version = torch.ops.rayd_torch.intersect_forward_tape_h(
-                    self._native_handle, vertices, ray.o, ray.d, ray.tmax
-                )
-                return _ReducedIntersection(scene, t)
-            if flags_value != 0:
-                return self._lazy_intersection(scene, vertices, ray, active, flags_value)
-            t = torch.ops.rayd_torch.intersect_ad_t(scene, vertices, ray.o, ray.d, ray.tmax, active)
-            return _ReducedIntersection(scene, t)
-        mesh_vertices = self._mesh_vertex_tensors()
-        if not _has_reverse_or_forward_ad(*mesh_vertices, ray.o, ray.d, ray.tmax):
-            return self._forward_intersection(scene, ray, active, flags_value)
-        if len(mesh_vertices) == 1:
-            vertices = mesh_vertices[0]
-            if not _has_forward_ad(vertices, ray.o, ray.d, ray.tmax):
-                if flags_value != 0:
-                    return self._lazy_intersection(scene, vertices, ray, active, flags_value)
-                t = torch.ops.rayd_torch.intersect_ad_t(scene, vertices, ray.o, ray.d, ray.tmax, active)
-                return _ReducedIntersection(scene, t)
-            return _intersect(scene, vertices, ray.o, ray.d, ray.tmax, active, flags_value)
-        return _intersect(
-            scene, mesh_vertices[0], ray.o, ray.d, ray.tmax, active, flags_value, mesh_vertices=mesh_vertices
-        )
+        return self._executor.intersect(ray, active, flags)
 
     @overload
     def nearest_edge(self, query: torch.Tensor, active: torch.Tensor | None = None) -> NearestPointEdge | None: ...
@@ -571,45 +990,50 @@ class Scene:
     def nearest_edge(
         self, query: torch.Tensor | Ray, active: torch.Tensor | None = None
     ) -> NearestPointEdge | NearestRayEdge | None:
-        """Nearest scene edge to each query point, or along each query ray.
+        """Find the nearest scene edge to each query point or ray.
 
-        ``active`` masks rows exactly as in ``nearest_edges``: an inactive row
-        returns the miss sentinels.
+        ``query`` is a ``float32`` ``(N, 3)`` point batch, which returns ``NearestPointEdge``, or a ``Ray``, which
+        returns ``NearestRayEdge``. A ray searches the segment ``[0, tmax]`` when ``tmax`` is finite and the half-line
+        otherwise; rows with a non-finite origin, a zero or non-finite direction, or a non-positive ``tmax`` return the
+        miss values. ``active`` is an optional ``bool`` ``(N,)`` mask, and an inactive row also returns the miss values
+        (distance ``inf``, ids ``-1``). Edges disabled by ``set_edge_mask()`` are skipped.
+
+        Differentiable: distance and closest points carry derivatives (VJP and JVP) with respect to the query and the
+        mesh vertices, with the winning edge fixed by the forward pass. Raises ``RuntimeError`` if the scene is not
+        built or has pending updates (call sync() first).
         """
         self._require_synced("nearest_edge")
-        if self._multi is not None:
-            return self._multi.nearest_edge(query, active)
-        scene = self._require_native_scene()
-        mesh_vertices = self._mesh_vertex_tensors()
-        if isinstance(query, Ray):
-            return _nearest_edge_ray(
-                scene, mesh_vertices[0], query.o, query.d, query.tmax, active, mesh_vertices=mesh_vertices
-            )
-        return _nearest_edge(scene, mesh_vertices[0], query, active, mesh_vertices=mesh_vertices)
+        return self._executor.nearest_edge(query, active)
 
     def visible(
         self, start: torch.Tensor, end: torch.Tensor, active: torch.Tensor | None = None
     ) -> torch.Tensor | None:
+        """Test whether the segment from ``start`` to ``end`` is unoccluded.
+
+        ``start`` and ``end`` are ``float32`` ``(N, 3)``; ``active`` is an optional ``bool`` ``(N,)`` mask. Returns a
+        ``bool`` ``(N,)`` tensor. The result is discrete and has no derivative. Raises ``RuntimeError`` if the scene is
+        not built or has pending updates (call sync() first).
+        """
         self._require_synced("visible")
-        if self._multi is not None:
-            return self._multi.visible(start, end, active)
-        scene = self._require_native_scene()
-        return _visible(scene, start, end, active)
+        return self._executor.visible(start, end, active)
 
     def trace_reflections(
         self, ray: Ray, max_bounces: int, active: torch.Tensor | None = None
     ) -> ReflectionChain | None:
+        """Trace specular reflection paths for up to ``max_bounces`` bounces per ray.
+
+        ``active`` is an optional ``bool`` ``(N,)`` mask. Returns a lazy ``ReflectionChain``: the image sources are
+        traced only when first read.
+
+        Differentiable: the path geometry carries derivatives (VJP and JVP) with respect to the ray and the mesh
+        vertices, with the reflector sequence fixed by the forward pass. A ``max_bounces`` below 1 raises
+        ``ValueError``. Raises ``RuntimeError`` if the scene is not built or has pending updates (call sync() first).
+        """
         self._require_synced("trace_reflections")
         if isinstance(max_bounces, bool) or int(max_bounces) < 1:
             # The chain is computed lazily, so reject the count here instead of on first field access.
             raise ValueError(f"Scene.trace_reflections(): max_bounces must be at least 1, got {max_bounces}.")
-        if self._multi is not None:
-            return self._multi.trace_reflections(ray, int(max_bounces), active)
-        scene = self._require_native_scene()
-        mesh_vertices = self._mesh_vertex_tensors()
-        return _trace_reflections(
-            scene, mesh_vertices[0], ray.o, ray.d, ray.tmax, active, int(max_bounces), mesh_vertices=mesh_vertices
-        )
+        return self._executor.trace_reflections(ray, int(max_bounces), active)
 
     @overload
     def trace_refl_epc_field(
@@ -639,13 +1063,22 @@ class Scene:
         options: ReflEpcFieldOptions | None = None,
         active: torch.Tensor | None = None,
     ) -> ReflEpcField | None:
-        """Equivalent-path-corrected reflected field toward each receiver.
+        """Trace corrected reflection paths to each receiver and evaluate the reflected field there.
 
-        ``source`` is a ``(N, 3)`` source-position tensor, traced toward its
-        receiver and no further, or a ``Ray``, traced along its direction up to
-        its ``tmax`` as in Dr.Jit. ``options`` sets the per-slot material, the
-        source polarization, ``omega``, and ``wavelength``; ``None`` keeps the
-        fixed material of earlier releases. The call is forward-only.
+        Args:
+            source: Source positions, ``float32`` ``(N, 3)``, traced toward their receiver and no further, or a ``Ray``,
+                traced along its direction up to its ``tmax``.
+            receiver: Receiver positions, ``float32`` ``(N, 3)``.
+            max_bounces: Maximum number of reflections.
+            options: ``ReflEpcFieldOptions`` with the per-slot material, the source polarization, ``omega``, and
+                ``wavelength``; ``None`` keeps the fixed default material.
+            active: Optional ``bool`` ``(N,)`` mask.
+
+        Returns:
+            ``ReflEpcField``; ``field_re``/``field_im`` are the x component of the field.
+
+        Forward-only: a geometry, source, receiver, or option tensor that requires grad or carries a tangent raises
+        ``RuntimeError``. Raises ``RuntimeError`` if the scene is not built or has pending updates (call sync() first).
         """
         self._require_synced("trace_refl_epc_field")
         if options is not None and not isinstance(options, ReflEpcFieldOptions):
@@ -657,19 +1090,7 @@ class Scene:
             raise RuntimeError(
                 "Scene.trace_refl_epc_field() is forward-only and does not support reverse-mode AD or JVP."
             )
-        if self._multi is not None:
-            return self._multi.trace_refl_epc_field(source, receiver, int(max_bounces), options, active)
-        scene = self._require_native_scene()
-        return _trace_refl_epc_field(
-            scene,
-            mesh_vertices[0],
-            source,
-            receiver,
-            active,
-            int(max_bounces),
-            mesh_vertices=mesh_vertices,
-            options=options,
-        )
+        return self._executor.trace_refl_epc_field(source, receiver, max_bounces, options, active)
 
     @overload
     def trace_refl_epc(
@@ -699,25 +1120,31 @@ class Scene:
         options: ReflEpcOptions | None = None,
         active: torch.Tensor | None = None,
     ) -> ReflEpc:
-        """Equivalent-path-corrected reflection paths toward each receiver.
+        """Trace reflection paths and correct them into paths that end exactly at each receiver.
 
-        With a ``(N, 3)`` source-position tensor the path reflects the source
-        across the planes in ``options``, which then needs every plane and
-        surface-group table. With a ``Ray`` the path follows the ray, as in
-        Dr.Jit, and ``options`` may be ``None``. The call is forward-only.
+        Args:
+            source: Source positions, ``float32`` ``(N, 3)``, reflected across the planes in ``options``, which then
+                needs ``expected_prim_ids``, the direct planes, and the surface-group tables. Or a ``Ray``, whose path
+                follows the ray; ``options`` may then be ``None``.
+            receiver: Receiver positions, ``float32`` ``(N, 3)``.
+            max_bounces: Maximum number of reflections.
+            options: ``ReflEpcOptions`` or ``None``.
+            active: Optional ``bool`` ``(N,)`` mask.
+
+        Returns:
+            ``ReflEpc``.
+
+        Forward-only: grad-enabled or dual inputs, including the mesh vertices, raise ``RuntimeError``. A wrong
+        ``options`` type raises ``TypeError``; a replicated scene raises ``NotImplementedError``. Raises
+        ``RuntimeError`` if the scene is not built or has pending updates (call sync() first).
         """
         self._require_synced("trace_refl_epc")
-        if self._multi is not None:
-            self._multi.unsupported("trace_refl_epc")
+        self._executor.require_supported("trace_refl_epc")
         if options is None:
             options = ReflEpcOptions()
         if not isinstance(options, ReflEpcOptions):
             raise TypeError("Scene.trace_refl_epc() expects rayd.torch.ReflEpcOptions or None as options.")
-        scene = self._require_native_scene()
-        mesh_vertices = self._mesh_vertex_tensors()
-        if _has_reverse_or_forward_ad(*mesh_vertices):
-            raise RuntimeError("Scene.trace_refl_epc() is forward-only and does not support reverse-mode AD or JVP.")
-        return _trace_refl_epc(scene, source, receiver, max_bounces=int(max_bounces), options=options, active=active)
+        return self._executor.trace_refl_epc(source, receiver, max_bounces, options, active)
 
     def accum_refl(
         self,
@@ -730,6 +1157,25 @@ class Scene:
         active: torch.Tensor | None = None,
         tx_polarization: torch.Tensor | None = None,
     ) -> AccumResult:
+        """Trace reflection paths and accumulate the reflected field and power on a grid.
+
+        Args:
+            ray: ``Ray`` batch of ``N`` rays leaving the transmitter.
+            tx_position: Transmitter position of each ray, ``float32`` ``(N, 3)``.
+            grid: ``AccumGrid`` receiving plane.
+            material: ``ReflMaterial`` with one entry per scene-global triangle.
+            max_bounces: Maximum number of reflections.
+            options: ``AccumOptions``; ``None`` uses the defaults.
+            active: Optional ``bool`` ``(N,)`` mask.
+            tx_polarization: Optional transmitter polarization of each ray, ``float32`` ``(N, 3)``.
+
+        Returns:
+            ``AccumResult``.
+
+        Forward-only: a grad-enabled or dual ray, transmitter, material, mask, polarization, or mesh vertex raises
+        ``RuntimeError``. Wrong record types raise ``TypeError``. Raises ``RuntimeError`` if the scene is not built or
+        has pending updates (call sync() first).
+        """
         self._require_synced("accum_refl")
         if not isinstance(grid, AccumGrid):
             raise TypeError("Scene.accum_refl() expects rayd.torch.AccumGrid.")
@@ -754,27 +1200,12 @@ class Scene:
         ad_inputs.extend(value for value in (active, tx_polarization) if value is not None)
         if _has_reverse_or_forward_ad(*ad_inputs):
             raise RuntimeError("Scene.accum_refl() is forward-only and does not support reverse-mode AD or JVP.")
-        if self._multi is not None:
-            return self._multi.accum_refl(
-                ray=ray,
-                tx_position=tx_position,
-                grid=grid,
-                material=material,
-                max_bounces=int(max_bounces),
-                options=resolved_options,
-                active=active,
-                tx_polarization=tx_polarization,
-            )
-        scene = self._require_native_scene()
-        return _accum_refl(
-            scene,
-            ray.o,
-            ray.d,
-            ray.tmax,
-            tx_position,
-            grid,
-            material,
-            max_bounces=int(max_bounces),
+        return self._executor.accum_refl(
+            ray=ray,
+            tx_position=tx_position,
+            grid=grid,
+            material=material,
+            max_bounces=max_bounces,
             options=resolved_options,
             active=active,
             tx_polarization=tx_polarization,
@@ -794,19 +1225,32 @@ class Scene:
         *,
         active: torch.Tensor,
     ) -> DfrPaths:
-        """Export first-order diffraction paths for every (tx, rx, state) lane.
+        """Export first-order diffraction paths for every (transmitter, receiver, state) triple.
 
-        ``active`` is required (ADR-0031): a contiguous CUDA bool tensor with one
-        entry per exported state.
+        Args:
+            tx_positions: Transmitter positions, ``float32`` ``(T, 3)``.
+            rx_positions: Receiver positions, ``float32`` ``(R, 3)``.
+            states: ``DfrStates``.
+            material: ``DfrMaterial``; ``None`` selects the default per-face material.
+            options: ``DfrPathOptions``. ``max_paths`` ``None`` or ``0`` exports every state; ``layout`` defaults to
+                ``Compact`` on one device and ``SourceLane`` on a replicated scene.
+            active: Required contiguous CUDA ``bool`` mask with one entry per exported state.
+
+        Returns:
+            ``DfrPaths`` with capacity ``T * R * min(state_count, max_paths)``.
+
+        Forward-only: a grad-enabled or dual input raises ``RuntimeError``. A negative ``max_paths`` or an unknown
+        layout raises ``ValueError``, as does a layout other than ``SourceLane`` on a replicated scene. Raises
+        ``RuntimeError`` if the scene is not built or has pending updates (call sync() first).
         """
         self._require_synced("trace_dfr_paths")
         options = DfrPathOptions() if options is None else options
         _require_options(options, DfrPathOptions, "trace_dfr_paths")
         if material is None:
             material = self._default_dfr_material(like=states.edge_pos)
-        max_paths = states.state_count if options.max_paths is None else int(options.max_paths)
+        max_paths = _resolve_dfr_max_paths(options.max_paths, states.state_count)
         if options.layout is None:
-            resolved_layout = DfrPathLayout.SourceLane if self._multi is not None else DfrPathLayout.Compact
+            resolved_layout = self._executor.default_dfr_path_layout
         else:
             try:
                 resolved_layout = DfrPathLayout(options.layout)
@@ -821,24 +1265,14 @@ class Scene:
             rx_positions,
             *_dfr_input_tensors(states, material),
         )
-        if self._multi is not None:
-            if resolved_layout is not DfrPathLayout.SourceLane:
-                raise ValueError(
-                    "Scene.trace_dfr_paths() on a multi-device scene requires DfrPathLayout.SourceLane "
-                    "so every output row retains its global (tx, rx, state) identity."
-                )
-            resolved = replace(options, max_paths=max_paths, layout=resolved_layout)
-            return self._multi.trace_dfr_paths(tx_positions, rx_positions, states, material, resolved, active=active)
-        scene = self._require_native_scene()
-        return _trace_dfr_paths(
-            scene,
+        return self._executor.trace_dfr_paths(
             tx_positions,
             rx_positions,
             states,
             material,
+            options,
             active=active,
             max_paths=max_paths,
-            wavelength=float(options.wavelength),
             layout=resolved_layout,
         )
 
@@ -850,30 +1284,30 @@ class Scene:
         options: DfrOptions | None = None,
         active: torch.Tensor | None = None,
     ) -> DfrAccum:
+        """Accumulate first-order edge diffraction from sampled states on a grid by Monte-Carlo sampling.
+
+        Args:
+            states: ``DfrStates`` to sample.
+            grid: ``DfrGrid`` receiving plane.
+            material: ``DfrMaterial``; ``None`` selects the default per-face material.
+            options: ``DfrOptions``; its ``lane_offset``/``lane_count`` select the Monte-Carlo lane window.
+            active: Optional ``bool`` mask with one entry per state.
+
+        Returns:
+            ``DfrAccum``.
+
+        Differentiable: VJP and JVP with respect to the continuous state fields (``edge_pos``, ``edge_dir``,
+        ``edge_t_min``, ``edge_t_max``, ``exterior_angle``, ``src``, ``src_power``, ``wi``) and ``material.gain``. A
+        wrong ``options`` type raises ``TypeError``. Raises ``RuntimeError`` if the scene is not built or has pending
+        updates (call sync() first).
+        """
         self._require_synced("accum_dfr_direct")
-        scene = self._require_native_scene()
+        self._require_native_scene()
         options = DfrOptions() if options is None else options
         _require_options(options, DfrOptions, "accum_dfr_direct")
         if material is None:
             material = self._default_dfr_material(like=states.edge_pos)
-        if self._multi is not None:
-            # Sharded over the Monte-Carlo lane space, not over a batch axis:
-            # every device runs the same states over its own sample window.
-            return self._multi.accum_dfr_direct(states, grid, material, options, active)
-        return _accum_dfr_direct(
-            scene,
-            states,
-            grid,
-            material,
-            active=active,
-            wavelength=float(options.wavelength),
-            direct_samples=int(options.direct_samples),
-            keller_samples=int(options.keller_samples),
-            suffix_samples=int(options.suffix_samples),
-            seed=int(options.seed),
-            lane_offset=int(options.lane_offset),
-            lane_count=int(options.lane_count),
-        )
+        return self._executor.accum_dfr_direct(states, grid, material, options, active)
 
     def accum_dfr(
         self,
@@ -885,32 +1319,33 @@ class Scene:
         active: torch.Tensor | None = None,
         recursive_active: torch.Tensor | None = None,
     ) -> DfrAccum:
+        """Accumulate second- or third-order edge-diffraction chains on a grid by Monte-Carlo sampling.
+
+        Args:
+            initial_states: ``DfrStates`` of the first diffraction event.
+            recursive_states: ``DfrStates`` drawn for each further event.
+            grid: ``DfrGrid`` receiving plane.
+            material: ``DfrMaterial``; ``None`` selects the default per-face material.
+            options: ``DfrOptions``; ``max_order`` must be 2 or 3.
+            active: Optional ``bool`` mask with one entry per initial state.
+            recursive_active: Optional ``bool`` mask with one entry per recursive state.
+
+        Returns:
+            ``DfrAccum``.
+
+        Differentiable: VJP and JVP with respect to the continuous fields of both state sets (``edge_pos``,
+        ``edge_dir``, ``edge_t_min``, ``edge_t_max``, ``exterior_angle``, and the initial ``src`` and ``src_power``) and
+        ``material.gain``. A wrong ``options`` type raises ``TypeError``. Raises ``RuntimeError`` if the scene is not
+        built or has pending updates (call sync() first).
+        """
         self._require_synced("accum_dfr")
-        scene = self._require_native_scene()
+        self._require_native_scene()
         options = DfrOptions() if options is None else options
         _require_options(options, DfrOptions, "accum_dfr")
         if material is None:
             material = self._default_dfr_material(like=initial_states.edge_pos)
-        if self._multi is not None:
-            return self._multi.accum_dfr(
-                initial_states, recursive_states, grid, material, options, active, recursive_active
-            )
-        return _accum_dfr_chain(
-            scene,
-            initial_states,
-            recursive_states,
-            grid,
-            material,
-            active=active,
-            recursive_active=recursive_active,
-            wavelength=float(options.wavelength),
-            direct_samples=int(options.direct_samples),
-            keller_samples=int(options.keller_samples),
-            suffix_samples=int(options.suffix_samples),
-            seed=int(options.seed),
-            max_order=int(options.max_order),
-            lane_offset=int(options.lane_offset),
-            lane_count=int(options.lane_count),
+        return self._executor.accum_dfr(
+            initial_states, recursive_states, grid, material, options, active, recursive_active
         )
 
     def accum_dfr_coherent_direct(
@@ -921,6 +1356,22 @@ class Scene:
         options: DfrCoherentOptions | None = None,
         active: torch.Tensor | None = None,
     ) -> DfrCoherentAccum:
+        """Accumulate the first-order diffracted field on a grid deterministically, one lane per (state, cell).
+
+        Args:
+            states: ``DfrStates``.
+            grid: ``DfrGrid`` receiving plane.
+            material: ``DfrMaterial``; ``None`` selects the default per-face material.
+            options: ``DfrCoherentOptions``.
+            active: Optional ``bool`` mask with one entry per state.
+
+        Returns:
+            ``DfrCoherentAccum``.
+
+        Forward-only: a grad-enabled or dual state, material, or mesh vertex raises ``RuntimeError``. A wrong
+        ``options`` type raises ``TypeError``. Raises ``RuntimeError`` if the scene is not built or has pending updates
+        (call sync() first).
+        """
         self._require_synced("accum_dfr_coherent_direct")
         options = DfrCoherentOptions() if options is None else options
         _require_options(options, DfrCoherentOptions, "accum_dfr_coherent_direct")
@@ -929,24 +1380,16 @@ class Scene:
         _reject_forward_only_ad(
             "Scene.accum_dfr_coherent_direct()", *self._mesh_vertex_tensors(), *_dfr_input_tensors(states, material)
         )
-        if self._multi is not None:
-            return self._multi.accum_dfr_coherent_direct(states, grid, material, options, active)
-        scene = self._require_native_scene()
-        return _accum_dfr_coherent_direct(
-            scene,
-            states,
-            grid,
-            material,
-            active=active,
-            wavelength=float(options.wavelength),
-            select_diffraction_point=bool(options.select_diffraction_point),
-            prefilter_visibility=bool(options.prefilter_visibility),
-            lane_offset=int(options.lane_offset),
-            lane_count=int(options.lane_count),
-        )
+        return self._executor.accum_dfr_coherent_direct(states, grid, material, options, active)
 
     def update_mesh_vertices(self, mesh_id: int, positions: torch.Tensor) -> None:
-        scene = self._require_native_scene()
+        """Queue new vertex positions for dynamic mesh ``mesh_id``; ``sync()`` applies them.
+
+        ``positions`` is ``float32`` ``(V, 3)`` for the mesh's ``V`` vertices. Queries refuse to run until ``sync()``.
+        Raises ``RuntimeError`` if the scene is not built, the mesh is not dynamic, or the id names an instance; an
+        invalid id raises ``TypeError`` or ``ValueError``.
+        """
+        self._require_native_scene()
         if isinstance(mesh_id, bool) or not isinstance(mesh_id, int):
             raise TypeError("Scene.update_mesh_vertices() expects an integer mesh_id.")
         if mesh_id < 0 or mesh_id >= len(self._meshes):
@@ -958,29 +1401,15 @@ class Scene:
             raise RuntimeError("Scene.update_mesh_vertices(): target mesh is not dynamic.")
         if self._geometry_owner_ids[mesh_id] != mesh_id:
             raise RuntimeError("Scene.update_mesh_vertices(): instance vertices are owned by source geometry.")
-        updated_vertices = positions.contiguous()
-        if self._multi is not None:
-            # Broadcast: every replica takes its own copy of the new positions,
-            # including the master, whose native scene this object reads.
-            try:
-                self._multi.update_mesh_vertices(int(mesh_id), updated_vertices)
-            except BaseException:
-                self._ready = False
-                self._pending_updates = True
-                raise
-            # Commit the public mesh only after every replica accepted the
-            # broadcast.  A failed broadcast is recovered by build(), and that
-            # rebuild must use the last caller-visible committed geometry.
-            mesh.vertices = updated_vertices
-            self._pending_updates = True
-            return
-        mesh.vertices = updated_vertices
-        with torch._C._DisableFuncTorch():
-            scene.update_vertices(int(mesh_id), _native_scene_tensor(mesh.vertices))
-        self._pending_updates = True
+        self._executor.update_scene_vertices(self, mesh_id, mesh, positions.contiguous())
 
     def set_instance_transform(self, instance_id: int, transform: torch.Tensor) -> None:
-        """Queue a backend-specific instance refresh without rebuilding the OptiX owner GAS."""
+        """Queue a new ``(4, 4)`` transform for dynamic instance ``instance_id``; ``sync()`` applies it.
+
+        The OptiX trace backend refreshes only the instance's IAS entry; the CUDA backend refreshes the instance's
+        world-space caches. Raises ``RuntimeError`` if the scene is not built or the instance is not dynamic, and
+        ``ValueError`` if the id is not an instance or the transform has the wrong shape or device.
+        """
 
         scene = self._require_native_scene()
         if instance_id < 0 or instance_id >= len(self._meshes):
@@ -1007,51 +1436,55 @@ class Scene:
         self._pending_updates = True
 
     def sync(self) -> None:
-        if self._multi is not None:
-            self._require_native_scene()
-            try:
-                self._multi.sync()
-            except BaseException:
-                self._ready = False
-                self._pending_updates = True
-                raise
-            self._pending_updates = False
-            return
-        scene = self._require_native_scene()
-        with torch._C._DisableFuncTorch():
-            scene.sync()
+        """Apply the queued edits and refit the acceleration structures in place.
+
+        Raises ``RuntimeError`` if the scene is not built. A failed sync keeps its updates pending; on a replicated
+        scene it leaves the scene unusable until ``build()``.
+        """
+        self._require_native_scene()
+        self._executor.sync_scene(self)
         self._pending_updates = False
 
     def has_pending_updates(self) -> bool:
-        return bool(self._pending_updates or (self._multi is not None and self._multi.is_poisoned))
+        """Return True when edits are queued that ``sync()`` has not applied yet."""
+        return bool(self._pending_updates or self._executor.is_poisoned)
 
     def nearest_edges(self, point: torch.Tensor, k: int, active: torch.Tensor | None = None) -> NearestEdgesTopK | None:
-        self._require_synced("nearest_edges")
-        if self._multi is not None:
-            return self._multi.nearest_edges(point, int(k), active)
-        from .multipath import nearest_edges as _nearest_edges
+        """Find the ``k`` nearest scene edges to each query point, nearest first, for ``1 <= k <= 16``.
 
-        scene = self._require_native_scene()
-        mesh_vertices = self._mesh_vertex_tensors()
-        return _nearest_edges(scene, mesh_vertices[0], point, int(k), active, mesh_vertices=mesh_vertices)
+        ``point`` is ``float32`` ``(N, 3)`` and ``active`` an optional ``bool`` ``(N,)`` mask. Returns
+        ``NearestEdgesTopK``; ties are broken toward the lower global edge id.
+
+        Differentiable: distances and closest points carry derivatives (VJP and JVP) with respect to the points and the
+        mesh vertices, with the selected edges fixed by the forward pass. A ``k`` outside ``[1, 16]`` raises
+        ``ValueError``. Raises ``RuntimeError`` if the scene is not built or has pending updates (call sync() first).
+        """
+        self._require_synced("nearest_edges")
+        return self._executor.nearest_edges(point, k, active)
 
     def edge_mask(self) -> torch.Tensor:
+        """Return the per-edge ``bool`` mask set by ``set_edge_mask()``, one entry per scene-global edge.
+
+        Raises ``RuntimeError`` if the scene is not built.
+        """
         scene = self._require_native_scene()
         return scene.edge_mask()
 
     def set_edge_mask(self, mask: torch.Tensor) -> None:
-        scene = self._require_native_scene()
-        if self._multi is not None:
-            try:
-                self._multi.set_edge_mask(mask)
-            except BaseException:
-                self._ready = False
-                self._pending_updates = True
-                raise
-            return
-        scene.set_edge_mask(mask)
+        """Restrict the edge queries to the edges where ``mask`` is True.
+
+        ``mask`` is a CUDA ``bool`` tensor with one entry per scene-global edge. Raises ``RuntimeError`` if the scene is
+        not built or the size does not match.
+        """
+        self._require_native_scene()
+        self._executor.set_scene_edge_mask(self, mask)
 
     def global_geometry(self) -> SceneGeometry:
+        """Return the vertices, faces, normals, and ids of all meshes in one scene-global index space.
+
+        Returns ``SceneGeometry``. Raises ``RuntimeError`` if the scene is not built or has pending updates (call sync()
+        first).
+        """
         self._require_synced("global_geometry")
         from .geometry import SceneGeometry
 
@@ -1066,14 +1499,15 @@ class Scene:
         ignore_prim_ids: torch.Tensor | None = None,
         active: torch.Tensor | None = None,
     ) -> SegmentPairVisibility | None:
-        self._require_synced("visible_pair")
-        if self._multi is not None:
-            return self._multi.visible_pair(start, end_a, end_b, ignore_prim_ids, active)
-        from .geometry import SegmentPairVisibility
+        """Test the visibility of two endpoints from each start point in one pass.
 
-        scene = self._require_native_scene()
-        values = torch.ops.rayd_torch.visible_pair_forward(scene, start, end_a, end_b, ignore_prim_ids, active)
-        return SegmentPairVisibility(int(start.shape[0]), *values)
+        ``start``, ``end_a``, and ``end_b`` are ``float32`` ``(N, 3)``. ``ignore_prim_ids`` optionally lists
+        scene-global primitives to treat as transparent, ``int32`` ``(N, K)``, and ``active`` is an optional ``bool``
+        ``(N,)`` mask. Returns ``SegmentPairVisibility``. The result is discrete and has no derivative. Raises
+        ``RuntimeError`` if the scene is not built or has pending updates (call sync() first).
+        """
+        self._require_synced("visible_pair")
+        return self._executor.visible_pair(start, end_a, end_b, ignore_prim_ids, active)
 
     def visible_edge(
         self,
@@ -1085,25 +1519,24 @@ class Scene:
         sample_fractions: Iterable[float] = (0.0, 0.25, 0.5, 0.75, 1.0),
         active: torch.Tensor | None = None,
     ) -> AxialEdgeVisibility | None:
-        self._require_synced("visible_edge")
-        if self._multi is not None:
-            return self._multi.visible_edge(
-                source, edge_position, edge_direction, edge_t_min, edge_t_max, sample_fractions, active
-            )
-        from .geometry import AxialEdgeVisibility
+        """Test whether each source sees any sampled point of an edge segment.
 
-        scene = self._require_native_scene()
-        values = torch.ops.rayd_torch.visible_edge_forward(
-            scene,
-            source,
-            edge_position,
-            edge_direction,
-            edge_t_min,
-            edge_t_max,
-            [float(value) for value in sample_fractions],
-            active,
+        Args:
+            source: Source points, ``float32`` ``(N, 3)``.
+            edge_position: Edge origins, ``float32`` ``(N, 3)``.
+            edge_direction: Edge directions, ``float32`` ``(N, 3)``.
+            edge_t_min, edge_t_max: Edge extent along ``edge_direction`` from ``edge_position``, ``float32`` ``(N,)``.
+            sample_fractions: 1 to 16 fractions of ``[edge_t_min, edge_t_max]`` to sample.
+            active: Optional ``bool`` ``(N,)`` mask.
+
+        Returns:
+            ``AxialEdgeVisibility``. The result is discrete and has no derivative. Raises ``RuntimeError`` if the scene
+            is not built or has pending updates (call sync() first).
+        """
+        self._require_synced("visible_edge")
+        return self._executor.visible_edge(
+            source, edge_position, edge_direction, edge_t_min, edge_t_max, sample_fractions, active
         )
-        return AxialEdgeVisibility(int(source.shape[0]), *values)
 
     def visible_chain(
         self,
@@ -1112,13 +1545,18 @@ class Scene:
         ignore_prim_per_segment: torch.Tensor | None = None,
         active: torch.Tensor | None = None,
     ) -> SegmentChainVisibility | None:
-        self._require_synced("visible_chain")
-        if self._multi is not None:
-            return self._multi.visible_chain(points, chain_length, ignore_prim_per_segment, active)
-        from .geometry import SegmentChainVisibility
+        """Test every segment of each polyline chain for occlusion.
 
-        scene = self._require_native_scene()
-        values = torch.ops.rayd_torch.visible_chain_forward(
-            scene, points, chain_length, ignore_prim_per_segment, active
-        )
-        return SegmentChainVisibility(int(points.shape[0]), int(points.shape[1]) - 1, *values)
+        Args:
+            points: Chain vertices, ``float32`` ``(N, P, 3)`` with ``P >= 2``.
+            chain_length: Number of used points in each chain, ``int32`` ``(N,)``.
+            ignore_prim_per_segment: Optional scene-global primitive ids to ignore, ``int32`` ``(N, P - 1, K)``.
+            active: Optional ``bool`` ``(N,)`` mask.
+
+        Returns:
+            ``SegmentChainVisibility`` with the first blocked segment and primitive of each chain. The result is
+            discrete and has no derivative. Raises ``RuntimeError`` if the scene is not built or has pending updates
+            (call sync() first).
+        """
+        self._require_synced("visible_chain")
+        return self._executor.visible_chain(points, chain_length, ignore_prim_per_segment, active)

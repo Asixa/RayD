@@ -42,6 +42,7 @@ def _resolve_backends(report: diagnostics.Report, optix: diagnostics.OptixProbe,
 
 
 def main() -> int:
+    """Print the installation report and return the exit status: 0 when every check passes, 1 otherwise."""
     report = diagnostics.Report("rayd-torch")
     diagnostics.add_system(report)
 

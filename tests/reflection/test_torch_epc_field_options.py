@@ -123,10 +123,7 @@ class TorchEpcFieldOptionsTests(unittest.TestCase):
             )
         with self.assertRaisesRegex(RuntimeError, "tx_polarization"):
             self.scene.trace_refl_epc_field(
-                self.source,
-                self.receiver,
-                2,
-                rt.ReflEpcFieldOptions(tx_polarization=torch.ones((2, 3), device="cuda")),
+                self.source, self.receiver, 2, rt.ReflEpcFieldOptions(tx_polarization=torch.ones((2, 3), device="cuda"))
             )
         with self.assertRaisesRegex(RuntimeError, "wavelength"):
             self.scene.trace_refl_epc_field(self.source, self.receiver, 2, rt.ReflEpcFieldOptions(wavelength=0.0))

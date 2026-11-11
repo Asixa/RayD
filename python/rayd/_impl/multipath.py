@@ -447,6 +447,11 @@ def intersect(
     flags: int = _RAY_FLAG_ALL,
     mesh_vertices: tuple[torch.Tensor, ...] | None = None,
 ) -> Intersection:
+    """Run the differentiable triangle intersection for ``Scene.intersect()``.
+
+    The Scene method validates and defaults its arguments; this function takes them resolved. ``mesh_vertices`` lists
+    every mesh's vertices when the scene has several.
+    """
     tracked_vertices = (vertices,) if mesh_vertices is None else tuple(mesh_vertices)
     if len(tracked_vertices) > 1:
         values = _IntersectMeshesFunction.apply(
@@ -698,6 +703,10 @@ def nearest_edge(
     active: torch.Tensor | None = None,
     mesh_vertices: tuple[torch.Tensor, ...] | None = None,
 ) -> NearestPointEdge:
+    """Run the point nearest-edge query for ``Scene.nearest_edge()``, differentiable when an input needs it.
+
+    The Scene method validates and defaults its arguments; this function takes them resolved.
+    """
     _require_native_dispatcher()
     tracked_vertices = (vertices,) if mesh_vertices is None else tuple(mesh_vertices)
     if not _needs_nearest_edge_ad(point, *tracked_vertices):
@@ -856,6 +865,11 @@ def nearest_edges(
     active: torch.Tensor | None,
     mesh_vertices: tuple[torch.Tensor, ...] | None = None,
 ) -> NearestEdgesTopK:
+    """Run the top-``k`` nearest-edge query for ``Scene.nearest_edges()``.
+
+    The Scene method validates and defaults its arguments; this function takes them resolved. A ``k`` outside ``[1,
+    16]`` raises ``ValueError``.
+    """
     _require_native_dispatcher()
     if not 1 <= int(k) <= 16:
         raise ValueError("k must be in [1, 16].")
@@ -985,6 +999,10 @@ def nearest_edge_ray(
     active: torch.Tensor | None,
     mesh_vertices: tuple[torch.Tensor, ...] | None = None,
 ) -> NearestRayEdge:
+    """Run the ray nearest-edge query for ``Scene.nearest_edge()`` with a ``Ray``.
+
+    The Scene method validates and defaults its arguments; this function takes them resolved.
+    """
     active_arg = _active_ctx_tensor(active, ray_o)
     tracked_vertices = (vertices,) if mesh_vertices is None else tuple(mesh_vertices)
     if len(tracked_vertices) > 1:
@@ -997,6 +1015,7 @@ def nearest_edge_ray(
 
 
 def visible(scene_handle: int, start: torch.Tensor, end: torch.Tensor, active: torch.Tensor | None) -> torch.Tensor:
+    """Run the segment visibility query for ``Scene.visible()``; returns ``bool`` ``(N,)``."""
     _require_native_dispatcher()
     values = torch.ops.rayd_torch.visibility_forward(scene_handle, start, end, active)
     return values[0]
@@ -1175,6 +1194,10 @@ def trace_reflections(
     max_bounces: int,
     mesh_vertices: tuple[torch.Tensor, ...] | None = None,
 ) -> ReflectionChain:
+    """Return the lazy ``ReflectionChain`` of ``Scene.trace_reflections()``.
+
+    The Scene method validates and defaults its arguments; this function takes them resolved.
+    """
     _require_native_dispatcher()
     tracked_vertices = (vertices,) if mesh_vertices is None else tuple(mesh_vertices)
     if not _needs_trace_reflection_ad(*tracked_vertices, ray_o, ray_d, ray_tmax):
@@ -1403,6 +1426,10 @@ def trace_refl_epc_field(
     mesh_vertices: tuple[torch.Tensor, ...] | None = None,
     options: ReflEpcFieldOptions | None = None,
 ) -> ReflEpcField:
+    """Run the forward-only reflected-field trace of ``Scene.trace_refl_epc_field()``.
+
+    The Scene method validates and defaults its arguments; this function takes them resolved.
+    """
     ray_d = ray_tmax = None
     if isinstance(source, Ray):
         active = _sanitized_ray_active(source, active, "Scene.trace_refl_epc_field()")
@@ -1450,6 +1477,10 @@ def trace_refl_epc_native(
     options: ReflEpcOptions,
     active: torch.Tensor | None,
 ) -> ReflEpc:
+    """Run the forward-only corrected reflection trace of ``Scene.trace_refl_epc()``.
+
+    The Scene method validates and defaults its arguments; this function takes them resolved.
+    """
     _require_native_dispatcher()
     ray = source if isinstance(source, Ray) else None
     if _needs_reverse_or_forward_ad(
@@ -1522,6 +1553,10 @@ def accum_refl_native(
     active: torch.Tensor | None,
     tx_polarization: torch.Tensor | None,
 ) -> AccumResult:
+    """Run the forward-only reflection accumulation of ``Scene.accum_refl()``.
+
+    The Scene method validates and defaults its arguments; this function takes them resolved.
+    """
     _require_native_dispatcher()
     if _needs_reverse_or_forward_ad(
         ray_o,
@@ -1594,6 +1629,11 @@ def trace_dfr_paths_order1_native(
     tx_polarization: torch.Tensor | None = None,
     layout: DfrPathLayout = DfrPathLayout.Compact,
 ) -> DfrPaths:
+    """Run the forward-only first-order diffraction path export of ``Scene.trace_dfr_paths()``.
+
+    The Scene method validates and defaults its arguments; this function takes them resolved. ``max_paths`` is the
+    resolved per-pair state limit.
+    """
     _require_native_dispatcher()
     _reject_forward_only_ad(
         "Scene.trace_dfr_paths()", tx_positions, rx_positions, tx_polarization, *_dfr_input_tensors(states, material)
@@ -1910,6 +1950,11 @@ def accum_dfr_direct_native(
     lane_offset: int = 0,
     lane_count: int = -1,
 ) -> DfrAccum:
+    """Run the first-order diffraction accumulation of ``Scene.accum_dfr_direct()``.
+
+    The Scene method validates and defaults its arguments; this function takes them resolved. Differentiable with
+    respect to the continuous state fields and ``material.gain``.
+    """
     active_arg = active
     if not _needs_reverse_or_forward_ad(
         states.edge_pos,
@@ -2330,6 +2375,11 @@ def accum_dfr_chain_native(
     lane_offset: int = 0,
     lane_count: int = -1,
 ) -> DfrAccum:
+    """Run the diffraction chain accumulation of ``Scene.accum_dfr()``.
+
+    The Scene method validates and defaults its arguments; this function takes them resolved. Differentiable with
+    respect to the continuous state fields and ``material.gain``.
+    """
     _require_native_dispatcher()
     active_arg = active
     recursive_active_arg = recursive_active
@@ -2477,6 +2527,10 @@ def accum_dfr_coherent_direct_native(
     lane_offset: int = 0,
     lane_count: int = -1,
 ) -> DfrCoherentAccum:
+    """Run the forward-only coherent diffraction accumulation of ``Scene.accum_dfr_coherent_direct()``.
+
+    The Scene method validates and defaults its arguments; this function takes them resolved.
+    """
     _require_native_dispatcher()
     _reject_forward_only_ad("Scene.accum_dfr_coherent_direct()", *_dfr_input_tensors(states, material))
     active_arg = active
@@ -2524,4 +2578,6 @@ def accum_dfr_coherent_direct_native(
 
 
 class NativeOpUnavailable(RuntimeError):
+    """Error type for a native operation missing from the loaded Torch extension; nothing raises it today."""
+
     pass

@@ -31,12 +31,12 @@ class TorchReflectionApiContractTests(unittest.TestCase):
             self.assertIsNone(parameters["options"].default)
 
     def test_multi_device_epc_paths_fail_loudly(self):
-        class MultiStub:
-            def unsupported(self, operation):
+        class ReplicatedExecutorStub:
+            def require_supported(self, operation):
                 raise NotImplementedError(operation)
 
         scene = object.__new__(rt.Scene)
-        scene._multi = MultiStub()
+        scene._executor = ReplicatedExecutorStub()
         placeholder = torch.empty((0,))
         with self.assertRaisesRegex(NotImplementedError, "trace_refl_epc"):
             scene.trace_refl_epc(placeholder, placeholder, 1, object())

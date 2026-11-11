@@ -44,7 +44,19 @@ def _require_active(active: torch.Tensor | None, count: int, device: torch.devic
 
 @dataclass(frozen=True, slots=True)
 class SurfelTraceOptions:
-    """Controls the Gaussian acceptance domain and bounded candidate work."""
+    """Options for surfel tracing and alpha compositing.
+
+    Options record for ``SurfelScene`` and ``MixedScene.add_surfel()``. Invalid values raise ``ValueError``.
+
+    Attributes:
+        alpha_min: Minimum Gaussian alpha a surfel contributes; must lie in (0, 1).
+        cutoff: Cap on the proxy radius in local Gaussian units; ``inf`` disables it.
+        alpha_cap: Upper bound on a surfel's alpha; must lie in (0, 1].
+        max_candidate_hits: Candidate surfels examined per ray; must be positive.
+        face_forward: Flip each surfel normal to face the incoming ray.
+        opacity_aware_proxy_bounds: Size each proxy from the surfel's opacity.
+        transmittance_min: Transmittance at which compositing stops; must lie in [0, 1).
+    """
 
     alpha_min: float = 1.0 / 255.0
     cutoff: float = float("inf")
@@ -69,7 +81,19 @@ class SurfelTraceOptions:
 
 @dataclass(frozen=True, slots=True)
 class SurfelCloud:
-    """Stores one center, two Gaussian tangent axes, opacity, and scalar value per surfel."""
+    """Surfel geometry with one opacity and one scalar value per surfel.
+
+    Input record for ``SurfelScene`` and ``MixedScene.add_surfel()``. Each surfel is a 2D Gaussian centered at
+    ``center`` whose local axes are ``tangent_u`` and ``tangent_v``. Every tensor is a CUDA ``float32`` tensor on one
+    device with ``M >= 1`` rows; wrong shapes raise ``ValueError``.
+
+    Attributes:
+        center: Surfel centers, ``(M, 3)``.
+        tangent_u: First tangent axis; its length is the Gaussian scale along it, ``(M, 3)``.
+        tangent_v: Second tangent axis; its length is the Gaussian scale along it, ``(M, 3)``.
+        opacity: Per-surfel opacity, ``(M,)``; ones when omitted.
+        value: Per-surfel scalar value, ``(M,)``; ones when omitted.
+    """
 
     center: torch.Tensor
     tangent_u: torch.Tensor
@@ -102,11 +126,31 @@ class SurfelCloud:
 
     @property
     def surfel_count(self) -> int:
+        """Number of surfels ``M``."""
         return int(self.center.shape[0])
 
 
 @dataclass(frozen=True, slots=True, repr=False)
 class SurfelIntersection(_Record):
+    """Closest accepted surfel hit per ray.
+
+    Result record of ``SurfelScene.intersect()``. Missed rays have ``t = inf``, ``surfel_id = -1``, and zero elsewhere.
+    The continuous fields are recomputed from the cloud and the ray, so they carry autograd derivatives with respect to
+    both; the hit surfel is fixed by the search.
+
+    Attributes:
+        t: Hit distance, ``float32`` ``(N,)``.
+        p: Hit point, ``float32`` ``(N, 3)``.
+        n: Surfel normal, ``float32`` ``(N, 3)``.
+        local_uv: Hit position in the surfel's tangent frame, ``float32`` ``(N, 2)``.
+        gaussian_weight: Gaussian falloff at the hit, ``float32`` ``(N,)``.
+        opacity: Surfel opacity, ``float32`` ``(N,)``.
+        alpha: Capped alpha at the hit, ``float32`` ``(N,)``.
+        value: Surfel scalar value, ``float32`` ``(N,)``.
+        surfel_id: Surfel index, or ``-1``, ``int32`` ``(N,)``.
+        triangle_id: Proxy triangle that found the hit, ``int32`` ``(N,)``.
+    """
+
     t: torch.Tensor
     p: torch.Tensor
     n: torch.Tensor
@@ -125,11 +169,25 @@ class SurfelIntersection(_Record):
         return self.is_valid()
 
     def is_valid(self) -> torch.Tensor:
+        """Return the per-ray hit mask, ``bool`` ``(N,)``."""
         return self.surfel_id >= 0
 
 
 @dataclass(frozen=True, slots=True, repr=False)
 class SurfelComposite(_Record):
+    """Front-to-back alpha composite of the surfels along each ray.
+
+    Result record of ``SurfelScene.composite_alpha()``. Every field has shape ``(N,)``.
+
+    Attributes:
+        intensity: Alpha-weighted sum of the surfel values, ``float32``.
+        alpha: Accumulated alpha, ``float32``.
+        transmittance: Remaining transmittance, ``float32``; 1 for inactive rays.
+        depth: Alpha-weighted mean hit distance, or ``inf``, ``float32``.
+        candidate_count: Candidates found, capped at ``max_candidate_hits``, ``int32``.
+        candidate_buffer_full: Whether more candidates existed than the buffer holds, ``bool``.
+    """
+
     intensity: torch.Tensor
     alpha: torch.Tensor
     transmittance: torch.Tensor
@@ -144,13 +202,23 @@ class SurfelComposite(_Record):
         return self.is_valid()
 
     def is_valid(self) -> torch.Tensor:
+        """Return the per-ray mask of a non-zero composite alpha, ``bool`` ``(N,)``."""
         return self.alpha > 0.0
 
 
 class SurfelScene:
-    """Accelerates surfel LOS/reflection and evaluates differentiable Gaussian hits."""
+    """Ray-tracing scene of 2D Gaussian surfels, traced through two proxy triangles per surfel.
+
+    Build it with ``build()`` before querying; a query before that raises ``RuntimeError``. The proxies only find
+    candidates: every accepted hit is recomputed from the cloud, so the results are differentiable with respect to the
+    cloud tensors and the ray.
+    """
 
     def __init__(self, cloud: SurfelCloud, options: SurfelTraceOptions | None = None) -> None:
+        """Create a surfel scene from ``cloud`` with ``options`` (``None`` uses the defaults).
+
+        A wrong argument type raises ``TypeError``.
+        """
         if not isinstance(cloud, SurfelCloud):
             raise TypeError("SurfelScene() expects rayd.torch.SurfelCloud.")
         self.cloud = cloud
@@ -162,21 +230,28 @@ class SurfelScene:
 
     @property
     def surfel_count(self) -> int:
+        """Number of surfels."""
         return self.cloud.surfel_count
 
     @property
     def triangle_count(self) -> int:
+        """Number of proxy triangles, two per surfel."""
         return 2 * self.surfel_count
 
     @property
     def build_count(self) -> int:
+        """Number of builds so far."""
         return self._build_count
 
     def is_ready(self) -> bool:
+        """Return True once ``build()`` has run."""
         return self._proxy is not None and self._proxy.is_ready()
 
     def build(self) -> None:
-        """Build a detached quad proxy; accepted hits are always recomputed from the cloud."""
+        """Build the proxy triangles and their acceleration structure from the current cloud.
+
+        The proxy geometry is detached; accepted hits are always recomputed from the cloud.
+        """
         cloud = self.cloud
         options = self.options
         with torch.no_grad():
@@ -274,7 +349,11 @@ class SurfelScene:
         return plane_t, point, normal, torch.stack((local_u, local_v), dim=1), gaussian, opacity, alpha, value, valid
 
     def intersect(self, ray: Ray, active: torch.Tensor | None = None) -> SurfelIntersection:
-        """Return the nearest accepted Gaussian surfel hit."""
+        """Return the closest accepted surfel hit per ray as a ``SurfelIntersection``.
+
+        ``active`` is an optional ``bool`` ``(N,)`` mask. At most ``max_candidate_hits`` candidates are examined per
+        ray. Differentiable with respect to the ray and the cloud, with the hit surfel fixed by the search.
+        """
         if not isinstance(ray, Ray):
             raise TypeError("SurfelScene.intersect() expects rayd.torch.Ray.")
         proxy = self._require_ready()
@@ -346,7 +425,10 @@ class SurfelScene:
         )
 
     def visible(self, start: torch.Tensor, end: torch.Tensor, active: torch.Tensor | None = None) -> torch.Tensor:
-        """Return LOS blocked only by accepted surfels."""
+        """Return a ``bool`` ``(N,)`` mask that is True where no accepted surfel blocks the segment.
+
+        ``start`` and ``end`` are ``float32`` ``(N, 3)``. The result is discrete and has no derivative.
+        """
         _require_float_cuda(start, "start", 2, 3)
         _require_float_cuda(end, "end", 2, 3)
         if start.shape != end.shape or start.device != self.cloud.center.device or end.device != start.device:
@@ -366,7 +448,10 @@ class SurfelScene:
         return lane_active & valid_segment & ~hit.is_valid()
 
     def trace_reflections(self, ray: Ray, max_bounces: int, active: torch.Tensor | None = None) -> ReflectionChain:
-        """Trace specular surfel reflections without creating diffraction paths."""
+        """Trace specular reflections off the surfels for up to ``max_bounces`` bounces.
+
+        Returns a ``ReflectionChain``. ``max_bounces`` must be non-negative.
+        """
         if not isinstance(ray, Ray):
             raise TypeError("SurfelScene.trace_reflections() expects rayd.torch.Ray.")
         if max_bounces < 0:
@@ -412,7 +497,11 @@ class SurfelScene:
         )
 
     def composite_alpha(self, ray: Ray, active: torch.Tensor | None = None) -> SurfelComposite:
-        """Front-to-back scalar alpha composition; its final transmittance is the surfel transmission."""
+        """Alpha-composite the surfels along each ray, front to back, and return a ``SurfelComposite``.
+
+        Compositing stops once the transmittance falls below ``transmittance_min``. Differentiable with respect to the
+        ray and the cloud.
+        """
         if not isinstance(ray, Ray):
             raise TypeError("SurfelScene.composite_alpha() expects rayd.torch.Ray.")
         self._require_ready()
@@ -480,5 +569,8 @@ class SurfelScene:
         )
 
     def transmittance(self, ray: Ray, active: torch.Tensor | None = None) -> torch.Tensor:
-        """Return the surfel-only transmitted fraction along each ray."""
+        """Return the surfel-only transmittance along each ray, ``float32`` ``(N,)``.
+
+        This is ``composite_alpha(ray, active).transmittance``.
+        """
         return self.composite_alpha(ray, active).transmittance

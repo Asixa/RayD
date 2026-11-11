@@ -24,7 +24,16 @@ _RAY_EPSILON = 1.0e-3
 
 @dataclass(frozen=True, slots=True)
 class SdfTraceOptions:
-    """Controls bounded sphere tracing inside an SDF grid's oriented bounding box."""
+    """Sphere-tracing options for SDF grid queries.
+
+    Options record for ``SdfGrid.intersect()``, ``visible()``, ``trace_reflections()``, ``SdfGridBatch.intersect()``,
+    and ``MixedScene.add_sdf()``. Invalid values raise ``ValueError``.
+
+    Attributes:
+        max_steps: Maximum sphere-tracing steps; must be at least 1.
+        relaxation: Step relaxation factor in (0, 1].
+        eps_hit: Hit threshold in world units; ``None`` selects 1e-3 of the smallest voxel size.
+    """
 
     max_steps: int = DEFAULT_MAX_STEPS
     relaxation: float = DEFAULT_RELAXATION
@@ -78,7 +87,20 @@ def _require_active(active: torch.Tensor | None, count: int, device: torch.devic
 
 @dataclass(frozen=True)
 class SdfGrid:
-    """Provides the standalone differentiable SDF intersection API."""
+    """Signed distance field sampled on a regular grid inside an oriented box.
+
+    Standalone geometry for ray queries; it can also be added to a ``MixedScene``. Every tensor is a contiguous CUDA
+    ``float32`` tensor on one device; wrong devices or dtypes raise ``TypeError`` and wrong shapes ``ValueError``.
+    Queries are differentiable (VJP and JVP) with respect to the values, the placement, and the ray, with the hit fixed
+    by the forward pass.
+
+    Attributes:
+        values: Vertex-centered signed distances in world units, negative inside, ``(Nx, Ny, Nz)`` with at least 2
+            samples per axis.
+        position: World-space center of the box, ``(3,)``.
+        rotation: Box rotation as a unit quaternion in (w, x, y, z) order, ``(4,)``.
+        scale: Full side lengths of the box, ``(3,)``.
+    """
 
     values: torch.Tensor
     position: torch.Tensor
@@ -122,7 +144,12 @@ class SdfGrid:
     def intersect(
         self, ray: Ray, options: SdfTraceOptions | None = None, active: torch.Tensor | None = None
     ) -> SdfIntersection:
-        """Trace a ray batch against this grid, honoring per-lane ``Ray.tmax`` and ``active``."""
+        """Sphere-trace each ray against the zero level set and return an ``SdfIntersection``.
+
+        Tracing is limited to the oriented box and ``ray.tmax``. ``options`` is an ``SdfTraceOptions`` (``None`` uses
+        the defaults) and ``active`` an optional ``bool`` ``(N,)`` mask. The result is differentiable with respect to
+        the ray, the values, and the placement. A wrong argument type raises ``TypeError``.
+        """
         if not isinstance(ray, Ray):
             raise TypeError("SdfGrid.intersect() expects rayd.torch.Ray.")
         options = _trace_options(options, "SdfGrid.intersect()")
@@ -150,7 +177,10 @@ class SdfGrid:
         options: SdfTraceOptions | None = None,
         active: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """Return segment LOS; only SDF intersections can block the segment."""
+        """Return a ``bool`` ``(N,)`` mask that is True where the SDF surface does not block the segment.
+
+        ``start`` and ``end`` are ``float32`` ``(N, 3)``. The result is discrete and has no derivative.
+        """
         options = _trace_options(options, "SdfGrid.visible()")
         _require_ray_batch(start, "start")
         _require_ray_batch(end, "end")
@@ -173,7 +203,10 @@ class SdfGrid:
     def trace_reflections(
         self, ray: Ray, max_bounces: int, options: SdfTraceOptions | None = None, active: torch.Tensor | None = None
     ) -> ReflectionChain:
-        """Trace specular SDF reflections without adding any diffraction path."""
+        """Trace specular reflections off the SDF surface for up to ``max_bounces`` bounces.
+
+        Returns a ``ReflectionChain``. ``max_bounces`` must be non-negative.
+        """
         if not isinstance(ray, Ray):
             raise TypeError("SdfGrid.trace_reflections() expects rayd.torch.Ray.")
         options = _trace_options(options, "SdfGrid.trace_reflections()")
@@ -234,11 +267,16 @@ class SdfGrid:
 
 @dataclass(frozen=True)
 class SdfGridBatch:
-    """A caller-owned packed group of shape-compatible dense SDF grids.
+    """Several SDF grids of the same sample shape, packed along a leading grid axis.
 
-    The leading dimension is the grid owner dimension. Untracked queries use
-    one native CUDA launch; AD queries retain the existing per-grid frozen-tape
-    implementation.
+    Untracked queries run one native launch for every grid; differentiable queries trace each grid on its own. Wrong
+    devices or dtypes raise ``TypeError`` and wrong shapes ``ValueError``.
+
+    Attributes:
+        values: Signed distances, ``float32`` ``(G, Nx, Ny, Nz)`` with ``G >= 2`` and at least 2 samples per axis.
+        position: Box centers, ``float32`` ``(G, 3)``.
+        rotation: Box rotations as (w, x, y, z) quaternions, ``float32`` ``(G, 4)``.
+        scale: Box side lengths, ``float32`` ``(G, 3)``.
     """
 
     values: torch.Tensor
@@ -266,9 +304,11 @@ class SdfGridBatch:
 
     @property
     def grid_count(self) -> int:
+        """Number of grids ``G``."""
         return int(self.values.shape[0])
 
     def grid(self, index: int) -> SdfGrid:
+        """Return grid ``index`` as an ``SdfGrid`` view. An index out of range raises ``IndexError``."""
         if index < 0 or index >= self.grid_count:
             raise IndexError("SdfGridBatch grid index is out of range.")
         return SdfGrid(self.values[index], self.position[index], self.rotation[index], self.scale[index])
@@ -276,6 +316,10 @@ class SdfGridBatch:
     def intersect(
         self, ray: Ray, options: SdfTraceOptions | None = None, active: torch.Tensor | None = None
     ) -> tuple[SdfIntersection, ...]:
+        """Intersect each ray with every grid and return one ``SdfIntersection`` per grid.
+
+        Arguments and differentiability are those of ``SdfGrid.intersect()``.
+        """
         _require_native_dispatcher()
         if not isinstance(ray, Ray):
             raise TypeError("SdfGridBatch.intersect() expects rayd.torch.Ray.")
@@ -325,7 +369,22 @@ def sdf_intersect(
     relaxation: float = DEFAULT_RELAXATION,
     eps_hit: float | None = None,
 ) -> SdfIntersection:
-    """Provides the standalone differentiable SDF intersection API."""
+    """Sphere-trace a ray batch against one ``SdfGrid``; the low-level form of ``SdfGrid.intersect()``.
+
+    Args:
+        grid: The ``SdfGrid``.
+        origins: Ray origins, ``float32`` ``(N, 3)`` on the grid's device.
+        directions: Ray directions, ``float32`` ``(N, 3)``.
+        tmax: Maximum ray distance for every ray; must be positive.
+        max_steps: Maximum sphere-tracing steps; must be at least 1.
+        relaxation: Step relaxation factor in (0, 1].
+        eps_hit: Hit threshold in world units; ``None`` selects 1e-3 of the smallest voxel size.
+
+    Returns:
+        ``SdfIntersection``, differentiable (VJP and JVP) with respect to the rays, the values, and the placement.
+
+    Invalid values raise ``ValueError`` and wrong tensor types ``TypeError``.
+    """
     _require_native_dispatcher()
     _require_ray_batch(origins, "origins")
     _require_ray_batch(directions, "directions")

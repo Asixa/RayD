@@ -149,11 +149,11 @@ class _MixedIntersection(_DeferredIntersection):
 
 
 class MixedScene:
-    """Owns mesh, bounded SDF, and surfel geometry under one query surface.
+    """Scene that combines triangle meshes, SDF grids, and surfel clouds.
 
-    Queries stay on the current CUDA stream. The closest accepted hit is selected
-    on the device and derivatives flow only through that fixed winner. A mesh-only
-    instance forwards directly to ``Scene``. Diffraction is intentionally absent.
+    Supports ``intersect()``, ``visible()``, ``trace_reflections()``, and ``transmittance()``; diffraction stays on
+    ``Scene``. Ids number meshes first, then SDF grids, then surfel clouds. Everything added must be on one CUDA device.
+    A mesh-only scene forwards to ``Scene`` unchanged.
     """
 
     def __init__(
@@ -162,6 +162,11 @@ class MixedScene:
         trace_backend: TraceBackend | str = TraceBackend.AUTO,
         edge_bvh_backend: EdgeBVHBackend | str = EdgeBVHBackend.AUTO,
     ) -> None:
+        """Create an empty mixed scene.
+
+        ``trace_backend`` and ``edge_bvh_backend`` configure its triangle ``Scene`` and take the same values as in
+        ``Scene()``; an unknown value raises ``ValueError``.
+        """
         self._mesh_scene = Scene(trace_backend=trace_backend, edge_bvh_backend=edge_bvh_backend)
         self._mesh_count = 0
         self._mesh_face_count = 0
@@ -179,6 +184,11 @@ class MixedScene:
             raise ValueError(f"{context} must use the mixed scene's CUDA device ({device} != {self._device}).")
 
     def add_mesh(self, mesh: Mesh, dynamic: bool = False) -> int:
+        """Add ``mesh`` and return its mesh id.
+
+        Pass ``dynamic=True`` as in ``Scene.add_mesh()``. A wrong type raises ``TypeError`` and another device
+        ``ValueError``.
+        """
         if not isinstance(mesh, Mesh):
             raise TypeError("MixedScene.add_mesh() expects rayd.torch.Mesh.")
         self._accept_device(mesh.vertices.device, "mesh")
@@ -189,6 +199,10 @@ class MixedScene:
         return mesh_id
 
     def add_sdf(self, grid: SdfGrid, options: SdfTraceOptions | None = None) -> int:
+        """Add an ``SdfGrid`` traced with ``options`` and return its index among the SDF grids.
+
+        A wrong type raises ``TypeError`` and another device ``ValueError``.
+        """
         if not isinstance(grid, SdfGrid):
             raise TypeError("MixedScene.add_sdf() expects rayd.torch.SdfGrid.")
         trace_options = SdfTraceOptions() if options is None else options
@@ -214,6 +228,11 @@ class MixedScene:
         return first
 
     def add_surfel(self, surfel: SurfelCloud | SurfelScene, options: SurfelTraceOptions | None = None) -> int:
+        """Add a ``SurfelCloud``, or a ready ``SurfelScene``, and return its index among the surfel scenes.
+
+        ``options`` applies to a cloud and must be omitted for a ``SurfelScene`` (``ValueError``). A wrong type raises
+        ``TypeError`` and another device ``ValueError``.
+        """
         if isinstance(surfel, SurfelCloud):
             scene = SurfelScene(surfel, options)
         elif isinstance(surfel, SurfelScene):
@@ -228,6 +247,7 @@ class MixedScene:
         return len(self._surfels) - 1
 
     def build(self) -> None:
+        """Build every mesh and surfel acceleration structure. Call it before any query."""
         if self._mesh_count:
             self._mesh_scene.build()
         prefix = 0
@@ -240,6 +260,7 @@ class MixedScene:
         self._ready = True
 
     def is_ready(self) -> bool:
+        """Return True once ``build()`` has run and nothing was added since."""
         return (
             self._ready
             and (self._mesh_count == 0 or self._mesh_scene.is_ready())
@@ -248,14 +269,17 @@ class MixedScene:
 
     @property
     def num_meshes(self) -> int:
+        """Number of meshes."""
         return self._mesh_count
 
     @property
     def num_sdfs(self) -> int:
+        """Number of SDF grids, counting each grid of a batch."""
         return len(self._sdfs)
 
     @property
     def num_surfel_scenes(self) -> int:
+        """Number of surfel scenes."""
         return len(self._surfels)
 
     def _require_ready(self, ray: Ray | None = None) -> None:
@@ -328,6 +352,16 @@ class MixedScene:
         return hit.t, load_full
 
     def intersect(self, ray: Ray, active: torch.Tensor | None = None, flags: RayFlags = RayFlags.All) -> Intersection:
+        """Find the closest mesh, SDF, or surfel hit of each ray.
+
+        ``active`` is an optional ``bool`` ``(N,)`` mask and ``flags`` selects the hit fields as in
+        ``Scene.intersect()``. Returns an ``Intersection``: ``shape_id`` counts meshes, then SDF grids, then surfel
+        scenes; ``global_prim_id`` counts mesh faces, then one id per SDF grid, then surfels.
+
+        Differentiable: the selected hit's continuous fields carry derivatives (VJP and JVP) with respect to the ray and
+        the selected geometry, with the winner fixed by the forward pass. Raises ``RuntimeError`` if the scene is not
+        built, ``TypeError`` for a non-``Ray``, and ``ValueError`` for a ray on another device.
+        """
         if not isinstance(ray, Ray):
             raise TypeError("MixedScene.intersect() expects rayd.torch.Ray.")
         self._require_ready(ray)
@@ -380,6 +414,11 @@ class MixedScene:
         return _MixedIntersection(candidate_t, load_full)
 
     def visible(self, start: torch.Tensor, end: torch.Tensor, active: torch.Tensor | None = None) -> torch.Tensor:
+        """Test whether the segment from ``start`` to ``end`` is unoccluded by any mesh, SDF, or surfel.
+
+        ``start`` and ``end`` are ``float32`` ``(N, 3)``. Returns a ``bool`` ``(N,)`` tensor; the result is discrete and
+        has no derivative. Raises ``RuntimeError`` if the scene is not built.
+        """
         _require_float_cuda_tensor(start, "start", 3)
         _require_float_cuda_tensor(end, "end", 3)
         if end.shape != start.shape:
@@ -398,7 +437,12 @@ class MixedScene:
         return result
 
     def transmittance(self, ray: Ray, active: torch.Tensor | None = None) -> torch.Tensor:
-        """Return surfel alpha transmission with mesh hits opaque and SDFs ignored."""
+        """Return the transmittance along each ray, ``float32`` ``(N,)``.
+
+        A mesh hit makes the ray opaque (0), surfel alpha attenuates it multiplicatively, and SDF grids are ignored.
+        Inactive rays return 1. Differentiable: VJP and JVP with respect to the ray and the surfel fields. Raises
+        ``RuntimeError`` if the scene is not built.
+        """
         if not isinstance(ray, Ray):
             raise TypeError("MixedScene.transmittance() expects rayd.torch.Ray.")
         self._require_ready(ray)
@@ -418,6 +462,11 @@ class MixedScene:
         return bias
 
     def trace_reflections(self, ray: Ray, max_bounces: int, active: torch.Tensor | None = None) -> ReflectionChain:
+        """Trace specular reflections off meshes, SDFs, and surfels for up to ``max_bounces`` bounces.
+
+        Returns a ``ReflectionChain``. ``max_bounces`` must be non-negative (``ValueError``). Raises ``RuntimeError`` if
+        the scene is not built.
+        """
         if not isinstance(ray, Ray):
             raise TypeError("MixedScene.trace_reflections() expects rayd.torch.Ray.")
         if max_bounces < 0:

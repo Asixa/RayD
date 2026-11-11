@@ -104,3 +104,41 @@ class MultiDeviceDiffractionPathTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DfrPathMaxPathsTests(unittest.TestCase):
+    """`DfrPathOptions.max_paths`: `None` or `0` exports every state, a negative value is refused."""
+
+    def test_zero_and_none_mean_every_state_and_negative_raises(self) -> None:
+        from rayd._impl.geometry import _resolve_dfr_max_paths
+
+        self.assertEqual(_resolve_dfr_max_paths(None, 5), 5)
+        self.assertEqual(_resolve_dfr_max_paths(0, 5), 5)
+        self.assertEqual(_resolve_dfr_max_paths(3, 5), 3)
+        with self.assertRaisesRegex(ValueError, "max_paths must be None or non-negative"):
+            _resolve_dfr_max_paths(-1, 5)
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA torch is required")
+    def test_scene_export_capacity_follows_the_resolved_limit(self) -> None:
+        from tests.scene.test_multi_device_scene import _accum_scene, _dfr_material, _dfr_states
+
+        device = torch.device("cuda", 0)
+        scene = _accum_scene(device)
+        states = _dfr_states(device)
+        active = torch.ones(states.state_count, dtype=torch.bool, device=device)
+        tx = torch.tensor([[0.0, -1.0, 0.25]], device=device)
+        rx = torch.tensor([[0.0, 1.0, 0.25], [0.1, 1.0, 0.25]], device=device)
+
+        def trace(max_paths, mask=active):
+            options = rt.DfrPathOptions(max_paths=max_paths)
+            return scene.trace_dfr_paths(tx, rx, states, _dfr_material(device), options, active=mask)
+
+        every = trace(None)
+        zero = trace(0)
+        self.assertEqual(every.capacity, 2 * states.state_count)
+        self.assertEqual(zero.capacity, every.capacity)
+        self.assertTrue(torch.equal(zero.count, every.count))
+        # `active` has one entry per exported state.
+        self.assertEqual(trace(1, active[:1].contiguous()).capacity, 2)
+        with self.assertRaisesRegex(ValueError, "max_paths must be None or non-negative"):
+            trace(-1)

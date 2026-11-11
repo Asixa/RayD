@@ -14,6 +14,18 @@ from .geometry import Ray
 
 @dataclass(frozen=True)
 class Camera:
+    """Pinhole camera at the origin looking down +z, for primary-ray generation.
+
+    Samples are image coordinates in ``[0, 1]^2`` with ``u`` to the right and ``v`` down. Every method takes contiguous
+    CUDA ``float32`` tensors and is differentiable with respect to its tensor input. A non-positive size or a ``fov_x``
+    outside (0, 180) raises ``ValueError``.
+
+    Attributes:
+        width: Image width in pixels.
+        height: Image height in pixels.
+        fov_x: Horizontal field of view in degrees.
+    """
+
     width: int
     height: int
     fov_x: float
@@ -26,6 +38,7 @@ class Camera:
 
     @property
     def aspect(self) -> float:
+        """Width divided by height."""
         return float(self.width) / float(self.height)
 
     def _require_sample(self, sample: torch.Tensor) -> torch.Tensor:
@@ -51,16 +64,22 @@ class Camera:
         return tan_x, tan_x / self.aspect
 
     def sample_to_world(self, sample: torch.Tensor, depth: float = 1.0) -> torch.Tensor:
+        """Map samples ``(N, 2)`` to camera-space points ``(N, 3)`` at z = ``depth``."""
         sample = self._require_sample(sample)
         tan_x, tan_y = self._tan_xy()
         return _CameraSampleToWorldFunction.apply(sample, tan_x, tan_y, float(depth))
 
     def world_to_sample(self, point: torch.Tensor) -> torch.Tensor:
+        """Project camera-space points ``(N, 3)`` to samples ``(N, 2)``."""
         point = self._require_point(point)
         tan_x, tan_y = self._tan_xy()
         return _CameraWorldToSampleFunction.apply(point, tan_x, tan_y)
 
     def sample_ray(self, sample: torch.Tensor) -> Ray:
+        """Return a ``Ray`` from the origin through each sample ``(N, 2)``, with unit directions.
+
+        Gradients reach the samples through the directions.
+        """
         sample = self._require_sample(sample)
         tan_x, tan_y = self._tan_xy()
         origin, direction = _CameraSampleRayFunction.apply(sample, tan_x, tan_y)

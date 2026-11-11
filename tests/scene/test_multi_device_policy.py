@@ -378,3 +378,66 @@ class CudaPeakMemoryBudgetTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExecutorSpecContractTests(unittest.TestCase):
+    """The executor interface and the replicated operation specs agree with `Scene` and the contract."""
+
+    @staticmethod
+    def _protocol_members() -> set[str]:
+        from rayd._impl.scene import _Executor
+
+        return {
+            name
+            for name, value in vars(_Executor).items()
+            if not name.startswith("_") and (callable(value) or isinstance(value, property))
+        } | set(_Executor.__annotations__)
+
+    def test_both_executors_implement_the_whole_interface(self) -> None:
+        from rayd._impl.scene import _LocalExecutor
+
+        for executor in (_LocalExecutor, _ReplicatedScene):
+            with self.subTest(executor=executor.__name__):
+                missing = sorted(name for name in self._protocol_members() if not hasattr(executor, name))
+                self.assertEqual(missing, [])
+
+    def test_specs_name_the_public_parameters_in_order(self) -> None:
+        # Shards call the replica's public method positionally, so a spec's
+        # argument order has to be the public parameter order.
+        from rayd._impl import multi
+
+        specs = [value for value in vars(multi).values() if isinstance(value, (multi._PerRaySpec, multi._LaneSpec))]
+        self.assertGreaterEqual(len(specs), 14)
+        for spec in specs:
+            with self.subTest(spec=spec.method, contract=spec.contract):
+                parameters = list(inspect.signature(getattr(rt.Scene, spec.method)).parameters)[1:]
+                self.assertEqual([argument.name for argument in spec.arguments], parameters)
+
+    def test_specs_and_dispositions_match_the_operation_contract(self) -> None:
+        import json
+        from pathlib import Path
+
+        from rayd._impl import multi
+
+        contract = json.loads(
+            (Path(__file__).resolve().parents[2] / "contracts" / "operations.json").read_text(encoding="utf-8")
+        )["operations"]
+
+        def declared(key: str) -> dict:
+            operation, _, variant = key.partition(":")
+            entry = contract[operation]["shardability"]
+            return entry["variant_shardability"][variant] if variant else entry
+
+        specs = [value for value in vars(multi).values() if isinstance(value, (multi._PerRaySpec, multi._LaneSpec))]
+        for spec in specs:
+            with self.subTest(spec=spec.contract):
+                self.assertEqual(spec.shardability, declared(spec.contract)["class"])
+                self.assertEqual(declared(spec.contract)["torch_multi_device"], "sharded")
+                self.assertEqual(multi._OPERATION_SHARDABILITY[spec.method][0], spec.shardability)
+
+        operations = {name for name in self._protocol_members() if hasattr(rt.Scene, name)}
+        operations -= {"discard", "calibrate", "device_weights_for"}
+        self.assertEqual(set(multi._OPERATION_SHARDABILITY), operations)
+        for name in multi._UNSUPPORTED_OPERATIONS:
+            self.assertEqual(multi._OPERATION_SHARDABILITY[name][1], "unsupported")
+            self.assertEqual(declared(f"reflection_trace:{name}")["torch_multi_device"], "unsupported")
