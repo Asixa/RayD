@@ -1494,8 +1494,8 @@ constexpr float kContainmentProbeRelative = 1e-4f;
 template <typename Config>
 RAYD_DEVICE bool point_inside_surface_group_probe(const ReflEpcParams& params,
                                                   const typename Config::Traverser& primary,
-                                                  const typename Config::Traverser& secondary, int group,
-                                                  Vec3f point, Vec3f unit_normal, int& resolved_prim);
+                                                  const typename Config::Traverser& secondary, int group, Vec3f point,
+                                                  Vec3f unit_normal, int& resolved_prim);
 
 // Segment-plane intersection with the discovery kernel's guards. Retained from the
 // device header (parallel tolerance 1e-7, segment tolerance kEpcTolerance) so
@@ -1541,18 +1541,18 @@ RAYD_DEVICE ::rayd::shared::rt::TriangleHit trace_scene(const ReflEpcParams& par
 template <typename Config>
 RAYD_DEVICE bool point_inside_surface_group_probe(const ReflEpcParams& params,
                                                   const typename Config::Traverser& primary,
-                                                  const typename Config::Traverser& secondary, int group,
-                                                  Vec3f point, Vec3f unit_normal, int& resolved_prim) {
+                                                  const typename Config::Traverser& secondary, int group, Vec3f point,
+                                                  Vec3f unit_normal, int& resolved_prim) {
     resolved_prim = -1;
     if (!has_surface_groups(params) || group < 0 || group >= params.surface_group_count) {
         return false;
     }
-    const float half_length =
-        kContainmentProbeRelative * fmaxf(::rayd::shared::rt::coordinate_magnitude(point), 1.0f);
+    const float half_length = kContainmentProbeRelative * fmaxf(::rayd::shared::rt::coordinate_magnitude(point), 1.0f);
     if (math::length_f32(unit_normal) > 0.0f) {
         const Vec3f origin = math::add(point, math::scale(unit_normal, half_length));
-        const ::rayd::shared::rt::TriangleHit hit = trace_scene<Config>(
-            params, primary, secondary, origin, math::scale(unit_normal, -1.0f), 2.0f * half_length);
+        const ::rayd::shared::rt::TriangleHit hit =
+            trace_scene<Config>(params, primary, secondary, origin, math::scale(unit_normal, -1.0f),
+                                2.0f * half_length);
         if (hit.hit != 0u) {
             const int prim = global_primitive_id(hit.instance, hit.prim, params.face_offsets, params.n_meshes);
             if (surface_group_for_prim(params, prim) == group && point_inside_triangle(params, prim, point)) {

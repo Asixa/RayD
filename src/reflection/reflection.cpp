@@ -1899,8 +1899,8 @@ ReflectionEpcResult reflection_epc_paths_forward(const SceneResource& scene, con
                                                                 request.direct_plane_normals, request.surface_group_id,
                                                                 request.surface_group_size,
                                                                 request.surface_group_members, request.max_bounces,
-                                                                request.visibility_ignore_mode,
-                                                                request.plane_tolerance, request.min_segment_length);
+                                                                request.visibility_ignore_mode, request.plane_tolerance,
+                                                                request.min_segment_length);
     require_output_count<6>(values, "rayd::torch::reflection_epc_paths_forward");
     return {values[0], values[1], values[2], values[3], values[4], values[5]};
 }
