@@ -1298,16 +1298,6 @@ UTD_DINLINE void fresnel_reflection_face(T cosTheta, T etaR, T muR, T sigma, T o
     rTM = cplx_div(cplx_sub(cplx_mul_real(eta, ct), a), cplx_add(cplx_mul_real(eta, ct), a));
 }
 
-// Perpendicular (s) axis of a face reflection, normal x direction. Along the normal that cross product is rounding
-// noise and its direction meaningless; below kFaceAxisTolerance the caller's fallback transverse axis is used, which
-// is the limit of the s axis there because normal-incidence reflection is isotropic (r_TM = -r_TE).
-constexpr float kFaceAxisTolerance = 1.0e-4f;
-
-template <typename T> UTD_DINLINE Vec3T<T> face_s_axis(Vec3T<T> normal, Vec3T<T> direction, Vec3T<T> fallback) {
-    Vec3T<T> raw = f3_cross(normal, direction);
-    return scalar_value(safe_length(raw)) > kFaceAxisTolerance ? raw : fallback;
-}
-
 // Angle-of-incidence cosines of the two face reflection coefficients in the finite-conductivity wedge coefficient.
 // Luebbers takes face 0 at the incidence angle phi' and face n at the observation angle n pi - phi; that choice is
 // neither reciprocal (phi <-> phi') nor invariant under relabelling the faces. The mean of the incidence and
@@ -1320,24 +1310,35 @@ template <typename T> UTD_DINLINE void reciprocal_face_cosines(T phi, T phiP, T 
     face1Cos = fminf(fmaxf(T(0.5f) * (fabsf(sinf(npi - phi)) + fabsf(sinf(npi - phiP))), T(1.0e-6f)), T(1.f));
 }
 
+// Reflection operator of one wedge face in the edge-fixed bases (Luebbers): the hard (phi-hat, u) component takes
+// the parallel coefficient R_h = r_TM and the soft (beta-hat, v) component the perpendicular R_s = r_TE. The pair
+// assembles -direct + face * op, so op = -R (a perfect conductor gives op = diag(-1, +1), i.e. D_h = d12 + d34 and
+// D_s = d12 - d34). The edge bases already carry the in/out ray geometry, so the operator is diagonal there and
+// needs no face-local s/p frame, whose orientation is undefined when the two rays are not a specular pair.
+// reciprocal_face_cosines for a source-edge pair and a target. phi and phi' do not depend on the axial position
+// along a straight edge, so any point of the edge line gives them; both are folded into the wedge domain the way
+// the pair coefficient folds them.
 template <typename T>
-UTD_DINLINE JonesOperatorT<T> face_reflection_operator(FaceMaterialParamsT<T> fm, T cosTheta, Vec3T<T> normal,
-                                                       Vec3T<T> inHat, Vec3T<T> outHat, Basis3T<T> inEdgeBasis,
-                                                       Basis3T<T> outEdgeBasis, T omega) {
+UTD_DINLINE void pair_face_cosines(PairInputsT<T> state, Vec3T<T> targetPos, T& face0Cos, T& face1Cos) {
+    T phi, phiP, s, sP, sb;
+    compute_edge_geometry_3d(state.sourcePos, state.edgePos, state.edgeDir, state.n0, targetPos, phi, phiP, s, sP, sb);
+    const T npi = state.wedgeN * UTD_PI;
+    if (phi > npi)
+        phi = (phi - npi < 2.f * UTD_PI - phi) ? npi : T(0);
+    if (phiP > npi)
+        phiP = (phiP - npi < 2.f * UTD_PI - phiP) ? npi : T(0);
+    reciprocal_face_cosines(phi, phiP, state.wedgeN, face0Cos, face1Cos);
+}
+
+template <typename T>
+UTD_DINLINE JonesOperatorT<T> face_reflection_operator(FaceMaterialParamsT<T> fm, T cosTheta, T omega) {
     ComplexT<T> gain = cplx(fm.gain, T(0));
-    bool useFr = fm.useFresnel > 0.5f;
+    if (!(fm.useFresnel > 0.5f))
+        return JonesOperatorT<T>{cplx(fm.gain, T(0)), cplx_zero<T>(), cplx_zero<T>(), cplx(fm.gain, T(0))};
     ComplexT<T> rTE, rTM;
     fresnel_reflection_face(cosTheta, fm.etaR, fm.muR, fm.sigma, omega, rTE, rTM);
-    JonesOperatorT<T> diagOp =
-        useFr ? JonesOperatorT<T>{cplx_mul(gain, rTE), cplx_zero<T>(), cplx_zero<T>(), cplx_mul(gain, rTM)}
-              : JonesOperatorT<T>{cplx(-fm.gain, T(0)), cplx_zero<T>(), cplx_zero<T>(), cplx(-fm.gain, T(0))};
-    Vec3T<T> faceSIn = face_s_axis(normal, inHat, inEdgeBasis.v);
-    Vec3T<T> fallbackOut = stable_perp_basis(outHat, faceSIn);
-    Vec3T<T> faceSOutRaw = face_s_axis(normal, outHat, fallbackOut);
-    Vec3T<T> faceSOut = f3_dot(faceSOutRaw, fallbackOut) < 0.0f ? f3_neg(faceSOutRaw) : faceSOutRaw;
-    Basis3T<T> fIn = basis_from_first_vector(inHat, faceSIn, stable_perp_basis(inHat, v3_const<T>(0, 0, 1)));
-    Basis3T<T> fOut = basis_from_first_vector(outHat, faceSOut, fallbackOut);
-    return jop_in_basis(diagOp, fIn, fOut, inEdgeBasis, outEdgeBasis);
+    return JonesOperatorT<T>{cplx_mul_real(cplx_mul(gain, rTM), T(-1.f)), cplx_zero<T>(), cplx_zero<T>(),
+                             cplx_mul_real(cplx_mul(gain, rTE), T(-1.f))};
 }
 
 template <typename T>
@@ -1797,14 +1798,12 @@ UTD_DINLINE Complex3T<T> compute_pair_vector_at_angles(
 
     T face0Cos, face1Cos;
     reciprocal_face_cosines(phi, phiP, state.wedgeN, face0Cos, face1Cos);
-    JonesOperatorT<T> f0Op =
-        (f0HasMat && !useStoredFaceOps)
-            ? face_reflection_operator(state.face0Material, face0Cos, state.n0, inEB.k, outEB.k, inEB, outEB, mat.omega)
-            : fallback_face_operator(state.face0Operator, state.n0, inEB.k, outEB.k, inEB, outEB);
-    JonesOperatorT<T> f1Op =
-        (f1HasMat && !useStoredFaceOps)
-            ? face_reflection_operator(state.face1Material, face1Cos, state.nn, inEB.k, outEB.k, inEB, outEB, mat.omega)
-            : fallback_face_operator(state.face1Operator, state.nn, inEB.k, outEB.k, inEB, outEB);
+    JonesOperatorT<T> f0Op = (f0HasMat && !useStoredFaceOps)
+                                 ? face_reflection_operator(state.face0Material, face0Cos, mat.omega)
+                                 : fallback_face_operator(state.face0Operator, state.n0, inEB.k, outEB.k, inEB, outEB);
+    JonesOperatorT<T> f1Op = (f1HasMat && !useStoredFaceOps)
+                                 ? face_reflection_operator(state.face1Material, face1Cos, mat.omega)
+                                 : fallback_face_operator(state.face1Operator, state.nn, inEB.k, outEB.k, inEB, outEB);
 
     DiffractionOperatorTermsT<T> terms = useFace ? compute_op_terms_3d(phi, phiP, state.wedgeN, k, s, sP, sb, gammaOdd,
                                                                        truncEven, T(state.isbTaperWidthScale))
