@@ -197,7 +197,7 @@ def _torch_forward_performance(
     updated_rays = _torch_ray(updated_ray_data)
     base_positions, _ = _torch_mesh(mesh_data)
     updated_positions, _ = _torch_mesh(updated_mesh_data)
-    flags_none = getattr(rt.RayFlags, "None")
+    flags_none = rt.RayFlags.Empty
 
     def make_run(mode: str):
         use_updated = False
@@ -252,7 +252,7 @@ def _torch_backward_performance(
     updated_rays = _torch_ray(updated_ray_data)
     weights = torch.linspace(0.5, 1.5, rays.o.shape[0], device="cuda", dtype=torch.float32)
     updated_weights = torch.linspace(1.5, 0.5, updated_rays.o.shape[0], device="cuda", dtype=torch.float32)
-    flags_none = getattr(rt.RayFlags, "None")
+    flags_none = rt.RayFlags.Empty
 
     def make_run(mode: str):
         use_updated = False
@@ -332,7 +332,7 @@ def _rayd_forward_performance(
     updated_rays = _rayd_ray(rayd, cuda, updated_ray_data)
     base_positions = cuda.Array3f(mesh_data["x"], mesh_data["y"], mesh_data["z"])
     updated_positions = cuda.Array3f(updated_mesh_data["x"], updated_mesh_data["y"], updated_mesh_data["z"])
-    flags_none = getattr(rayd.RayFlags, "None")
+    flags_none = rayd.RayFlags.Empty
 
     def make_run(mode: str):
         use_updated = False
@@ -407,7 +407,7 @@ def _rayd_backward_performance(
     weights = 0.5 + cuda.Float(weight_index) / max(1, len(ray_data["ox"]) - 1)
     updated_weight_index = dr.arange(cuda.UInt, len(updated_ray_data["ox"]))
     updated_weights = 1.5 - cuda.Float(updated_weight_index) / max(1, len(updated_ray_data["ox"]) - 1)
-    flags_none = getattr(rayd.RayFlags, "None")
+    flags_none = rayd.RayFlags.Empty
 
     def make_run(mode: str):
         use_updated = False
@@ -503,7 +503,7 @@ def _rayd_torch_loss_backward_performance(
     updated_rays = _rayd_ray_ad(rayd, ad, updated_ray_data)
     weights = torch.linspace(0.5, 1.5, len(ray_data["ox"]), device="cuda", dtype=torch.float32)
     updated_weights = torch.linspace(1.5, 0.5, len(updated_ray_data["ox"]), device="cuda", dtype=torch.float32)
-    flags_none = getattr(rayd.RayFlags, "None")
+    flags_none = rayd.RayFlags.Empty
 
     def make_wrapped(current_rays: Any, flags: Any):
         @dr.wrap(source="torch", target="drjit")
@@ -1069,10 +1069,10 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
             "edges_enabled_for_rayd": args.edges,
             "forward_modes": {
                 "full": "RayD Torch/RayD RayFlags.All materialized fields; Mitsuba ray_intersect fields.",
-                "reduced": "RayD Torch/RayD RayFlags.None t-only; Mitsuba ray_intersect RayFlags.Minimal t-only.",
+                "reduced": "RayD Torch/RayD RayFlags.Empty t-only; Mitsuba ray_intersect RayFlags.Minimal t-only.",
                 "preliminary": "Mitsuba-only ray_intersect_preliminary t-only when --mitsuba-preliminary is set.",
                 "vjp_full": "AD forward plus vector-Jacobian product for intersection.t, using full public intersection outputs.",
-                "vjp_reduced": "AD forward plus vector-Jacobian product for intersection.t, using RayFlags.None t-only public outputs where available.",
+                "vjp_reduced": "AD forward plus vector-Jacobian product for intersection.t, using RayFlags.Empty t-only public outputs where available.",
             },
             "backward_torch_loss": args.torch_loss_backward,
             "materialize_full_vjp": args.materialize_full_vjp,

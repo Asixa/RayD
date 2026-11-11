@@ -7,7 +7,7 @@ from copy import deepcopy
 from typing import Any
 
 _SCHEMA_VERSION = 3
-_SCHEMA_SHA256 = "a9f179cf24656ef33f5cda4725f1f8609337d5a8238649fba2b735ca7d86dcf9"
+_SCHEMA_SHA256 = "64e71d2ee3f27a844db2c893a891d154b4e78acc30a3aa0854295f31e8a9274f"
 _BACKEND = "drjit"
 _TYPING = "complete"
 
@@ -61,19 +61,6 @@ _API_CLASSIFICATION = {
     "forward_ad": ("core", "provisional"),
     "torch_compile": ("experimental", "provisional"),
     "multi_device_replicated": ("core", "provisional"),
-}
-
-_ALIASES = {
-    "edge_bvh_backend": {
-        "hybrid": {
-            "canonical": "optix_drjit",
-            "stability": "deprecated",
-            "summary": "Compatibility alias only; unrelated to the removed HLBVH experiment.",
-        },
-        "mixed": {"canonical": "optix_drjit", "stability": "deprecated", "summary": "Legacy compatibility alias."},
-        "optix_ray": {"canonical": "optix_drjit", "stability": "deprecated", "summary": "Legacy compatibility alias."},
-        "ray_optix": {"canonical": "optix_drjit", "stability": "deprecated", "summary": "Legacy compatibility alias."},
-    }
 }
 
 _DERIVATIVE_STATUSES = {
@@ -145,7 +132,7 @@ _DERIVATIVE_CONTRACT = {
         },
     },
     "reflection_accumulation": {
-        "accumulate_reflections": {
+        "accum_refl": {
             "domains": {"geometry": _DRJIT_ONLY, "source_receiver": _DRJIT_ONLY, "material": _DRJIT_ONLY},
             "backend_notes": {"torch": "The Torch high-level accumulation path is forward-only."},
         }
@@ -215,7 +202,7 @@ def backend_capabilities() -> dict[str, bool | str]:
 
 
 def api_manifest() -> dict[str, Any]:
-    """Return classified public API, stability, alias, and typing metadata."""
+    """Return classified public API, stability, and typing metadata."""
     return {
         "version": _SCHEMA_VERSION,
         "schema_sha256": _SCHEMA_SHA256,
@@ -229,6 +216,5 @@ def api_manifest() -> dict[str, Any]:
             name: {"category": category, "stability": stability}
             for name, (category, stability) in _API_CLASSIFICATION.items()
         },
-        "aliases": deepcopy(_ALIASES),
         "trace": deepcopy(_TRACE),
     }

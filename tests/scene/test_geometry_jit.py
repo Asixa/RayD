@@ -185,7 +185,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene = pj.Scene()
             scene.add_mesh(mesh)
             scene.build()
-            none_flag = getattr(pj.RayFlags, "None")
+            none_flag = pj.RayFlags.Empty
 
             def vec3_rows(vec):
                 return [
@@ -682,7 +682,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene.build()
 
             options = pj.ReflectionTraceOptions()
-            options.export_mode = pj.REFLECTION_EXPORT_MINIMAL
+            options.export_mode = pj.ReflectionExportMode.MINIMAL
             options.return_trailing = False
 
             ray = pj.Ray(
@@ -1616,38 +1616,116 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertAlmostEqual(data["edge_point"][1][1], 0.25, places=5)
         self.assertAlmostEqual(data["edge_point"][2][1], 0.0, places=5)
 
-    def test_scene_edge_bvh_combined_backend_alias_is_deprecated_and_canonicalized(self):
+    def test_scene_backend_selectors_are_exact_keyword_only_and_raise_value_error(self):
         data = run_json_case(
             """
             import json
-            import warnings
             import rayd.drjit as pj
 
-            with warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter("always")
-                legacy = pj.Scene(edge_bvh_backend="hybrid")
+            def error_type(make):
+                try:
+                    make()
+                except Exception as error:
+                    return type(error).__name__
+                return None
 
-            with warnings.catch_warnings(record=True) as canonical_caught:
-                warnings.simplefilter("always")
-                canonical = pj.Scene(edge_bvh_backend="optix_drjit")
-
+            removed_aliases = ["hybrid", "mixed", "optix_ray", "ray_optix", "custom_aabb", "dr_jit", "software", ""]
+            canonical = pj.Scene(edge_bvh_backend="optix_drjit")
+            mixed = pj.MixedScene(trace_backend="auto", edge_bvh_backend="drjit")
             print(json.dumps({
-                "legacy_backend": legacy.edge_bvh_backend,
                 "canonical_backend": canonical.edge_bvh_backend,
-                "legacy_warning_count": len(caught),
-                "legacy_warning_category": caught[0].category.__name__,
-                "legacy_warning": str(caught[0].message),
-                "canonical_warning_count": len(canonical_caught),
+                "trace_backend": canonical.trace_backend,
+                "has_trace_backend_name": hasattr(canonical, "trace_backend_name"),
+                "mixed_built": mixed.is_ready(),
+                "edge_alias_errors": {
+                    alias: error_type(lambda alias=alias: pj.Scene(edge_bvh_backend=alias)) for alias in removed_aliases
+                },
+                "mixed_alias_error": error_type(lambda: pj.MixedScene(edge_bvh_backend="hybrid")),
+                "edge_case_error": error_type(lambda: pj.Scene(edge_bvh_backend="OptiX")),
+                "trace_case_error": error_type(lambda: pj.Scene(trace_backend="OPTIX")),
+                "trace_invalid_error": error_type(lambda: pj.Scene(trace_backend="bogus")),
+                "positional_error": error_type(lambda: pj.Scene("optix")),
+                "mixed_positional_error": error_type(lambda: pj.MixedScene("optix")),
             }))
             """
         )
 
-        self.assertEqual(data["legacy_backend"], "optix_drjit")
         self.assertEqual(data["canonical_backend"], "optix_drjit")
-        self.assertEqual(data["legacy_warning_count"], 1)
-        self.assertEqual(data["legacy_warning_category"], "DeprecationWarning")
-        self.assertIn("optix_drjit", data["legacy_warning"])
-        self.assertEqual(data["canonical_warning_count"], 0)
+        self.assertIn(data["trace_backend"], {"optix", "cuda"})
+        self.assertFalse(data["has_trace_backend_name"])
+        self.assertFalse(data["mixed_built"])
+        for alias, error in data["edge_alias_errors"].items():
+            with self.subTest(alias=alias):
+                self.assertEqual(error, "ValueError")
+        self.assertEqual(data["mixed_alias_error"], "ValueError")
+        self.assertEqual(data["edge_case_error"], "ValueError")
+        self.assertEqual(data["trace_case_error"], "ValueError")
+        self.assertEqual(data["trace_invalid_error"], "ValueError")
+        self.assertEqual(data["positional_error"], "TypeError")
+        self.assertEqual(data["mixed_positional_error"], "TypeError")
+
+    def test_option_enums_and_argument_errors(self):
+        data = run_json_case(
+            """
+            import json
+            import drjit.cuda as cuda
+            import rayd.drjit as pj
+
+            def error_type(call):
+                try:
+                    call()
+                except Exception as error:
+                    return type(error).__name__
+                return None
+
+            dfr = pj.DfrOptions()
+            dfr.strategy_mask = pj.DfrStrategy.DIRECT | pj.DfrStrategy.SUFFIX_REFL
+            dfr.sample_sequence = pj.DfrSampleSequence.SOBOL
+            path = pj.DfrPathOptions()
+            trace = pj.ReflectionTraceOptions()
+            trace.export_mode = pj.ReflectionExportMode.COUNT_ONLY
+
+            mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]), cuda.Array3i([0], [1], [2]))
+            scene = pj.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+            ray = pj.Ray(cuda.Array3f([0.25], [0.25], [-1.0]), cuda.Array3f([0.0], [0.0], [1.0]))
+            receiver = cuda.Array3f([0.25], [0.25], [-1.0])
+
+            print(json.dumps({
+                "default_strategy": int(pj.DfrOptions().strategy_mask),
+                "default_strategy_is_flag": isinstance(pj.DfrOptions().strategy_mask, pj.DfrStrategy),
+                "strategy": int(dfr.strategy_mask),
+                "strategy_type": type(dfr.strategy_mask).__name__,
+                "sequence": dfr.sample_sequence.name,
+                "receiver": pj.DfrCoherentOptions().receiver_model.name,
+                "path_strategy": path.strategy_mask.name,
+                "export_mode": trace.export_mode.name,
+                "export_default": pj.ReflectionTraceOptions().export_mode.name,
+                "ray_flags": [member.name for member in pj.RayFlags],
+                "legacy_constants": [name for name in dir(pj) if name.startswith(("RAYD_DFR_", "REFLECTION_EXPORT_"))],
+                "zero_bounces": error_type(lambda: scene.trace_reflections(ray, 0)),
+                "zero_bounces_options": error_type(lambda: scene.trace_reflections(ray, 0, trace, symbolic=False)),
+                "mask_as_options": error_type(lambda: scene.trace_refl_epc(ray, receiver, 1, cuda.Bool([True]))),
+            }))
+            """
+        )
+
+        self.assertEqual(data["default_strategy"], 3)
+        self.assertTrue(data["default_strategy_is_flag"])
+        self.assertEqual(data["strategy"], 5)
+        self.assertEqual(data["strategy_type"], "DfrStrategy")
+        self.assertEqual(data["sequence"], "SOBOL")
+        self.assertEqual(data["receiver"], "MATCHED_ISO")
+        self.assertEqual(data["path_strategy"], "DIRECT")
+        self.assertEqual(data["export_mode"], "COUNT_ONLY")
+        self.assertEqual(data["export_default"], "FULL")
+        self.assertIn("Empty", data["ray_flags"])
+        self.assertNotIn("None", data["ray_flags"])
+        self.assertEqual(data["legacy_constants"], [])
+        self.assertEqual(data["zero_bounces"], "ValueError")
+        self.assertEqual(data["zero_bounces_options"], "ValueError")
+        self.assertEqual(data["mask_as_options"], "TypeError")
 
     def test_scene_edge_bvh_removed_hlbvh_strategy_is_rejected(self):
         data = run_json_case(
@@ -3611,7 +3689,7 @@ class GeometryCoreTests(unittest.TestCase):
                 ad.Array3f([0.25], [0.25], [-1.0]),
                 ad.Array3f([0.0], [0.0], [1.0]),
             )
-            flags_none = getattr(pj.RayFlags, "None")
+            flags_none = pj.RayFlags.Empty
 
             samples = []
             warm_counts = None
@@ -3743,7 +3821,7 @@ class GeometryCoreTests(unittest.TestCase):
                            [0.0, 0.0],
                            [1.0, 1.0]),
             )
-            its = scene.intersect(rays, flags=getattr(pj.RayFlags, "None"))
+            its = scene.intersect(rays, flags=pj.RayFlags.Empty)
             loss = dr.sum(its.t)
             dr.backward(loss)
             dr.eval(dr.grad(static_vertices), dr.grad(dynamic_vertices))
@@ -3803,7 +3881,7 @@ class GeometryCoreTests(unittest.TestCase):
                 ad.Array3f([0.25], [0.25], [-1.0]),
                 ad.Array3f([0.0], [0.0], [1.0]),
             )
-            flags_none = getattr(pj.RayFlags, "None")
+            flags_none = pj.RayFlags.Empty
 
             scene.update_mesh_vertices(mesh_id, vertices_a)
             scene.sync()

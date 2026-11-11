@@ -60,6 +60,14 @@ def _require_ray_batch(value: torch.Tensor, name: str) -> None:
         raise ValueError(f"{name} must have shape (N, 3) (got {tuple(value.shape)}).")
 
 
+def _trace_options(options: SdfTraceOptions | None, operation: str) -> SdfTraceOptions:
+    if options is None:
+        return SdfTraceOptions()
+    if not isinstance(options, SdfTraceOptions):
+        raise TypeError(f"{operation} expects rayd.torch.SdfTraceOptions, got {type(options).__name__}.")
+    return options
+
+
 def _require_active(active: torch.Tensor | None, count: int, device: torch.device) -> torch.Tensor:
     if active is None:
         return torch.ones((count,), dtype=torch.bool, device=device)
@@ -112,20 +120,17 @@ class SdfGrid:
         return torch.maximum(2.0 * resolved, self.scale.new_tensor(_RAY_EPSILON))
 
     def intersect(
-        self,
-        ray: Ray,
-        *,
-        active: torch.Tensor | None = None,
-        max_steps: int = DEFAULT_MAX_STEPS,
-        relaxation: float = DEFAULT_RELAXATION,
-        eps_hit: float | None = None,
+        self, ray: Ray, options: SdfTraceOptions | None = None, active: torch.Tensor | None = None
     ) -> SdfIntersection:
         """Trace a ray batch against this grid, honoring per-lane ``Ray.tmax`` and ``active``."""
         if not isinstance(ray, Ray):
             raise TypeError("SdfGrid.intersect() expects rayd.torch.Ray.")
+        options = _trace_options(options, "SdfGrid.intersect()")
         lane_active = _require_active(active, ray.o.shape[0], ray.o.device)
-        hit = sdf_intersect(self, ray.o, ray.d, max_steps=max_steps, relaxation=relaxation, eps_hit=eps_hit)
-        valid = hit.hit_mask & lane_active
+        hit = sdf_intersect(
+            self, ray.o, ray.d, max_steps=options.max_steps, relaxation=options.relaxation, eps_hit=options.eps_hit
+        )
+        valid = hit.valid & lane_active
         if ray.tmax.numel() != 0:
             valid = valid & (hit.t < ray.tmax)
         inf = torch.full_like(hit.t, float("inf"))
@@ -142,13 +147,11 @@ class SdfGrid:
         self,
         start: torch.Tensor,
         end: torch.Tensor,
+        options: SdfTraceOptions | None = None,
         active: torch.Tensor | None = None,
-        *,
-        max_steps: int = DEFAULT_MAX_STEPS,
-        relaxation: float = DEFAULT_RELAXATION,
-        eps_hit: float | None = None,
     ) -> torch.Tensor:
         """Return segment LOS; only SDF intersections can block the segment."""
+        options = _trace_options(options, "SdfGrid.visible()")
         _require_ray_batch(start, "start")
         _require_ray_batch(end, "end")
         if start.shape != end.shape or start.device != self.values.device or end.device != self.values.device:
@@ -156,7 +159,7 @@ class SdfGrid:
         lane_active = _require_active(active, start.shape[0], start.device)
         delta = end - start
         length = torch.linalg.vector_norm(delta, dim=1)
-        bias = self._query_bias(eps_hit)
+        bias = self._query_bias(options.eps_hit)
         short = length <= 2.0 * bias
         direction = delta / torch.clamp_min(length, 1.0e-12)[:, None]
         ray = Ray(
@@ -164,24 +167,16 @@ class SdfGrid:
             direction.contiguous(),
             torch.clamp_min(length - 2.0 * bias, 0.0).contiguous(),
         )
-        hit = self.intersect(
-            ray, active=lane_active & ~short, max_steps=max_steps, relaxation=relaxation, eps_hit=eps_hit
-        )
-        return lane_active & (short | ~hit.hit_mask)
+        hit = self.intersect(ray, options, lane_active & ~short)
+        return lane_active & (short | ~hit.valid)
 
     def trace_reflections(
-        self,
-        ray: Ray,
-        max_bounces: int,
-        active: torch.Tensor | None = None,
-        *,
-        max_steps: int = DEFAULT_MAX_STEPS,
-        relaxation: float = DEFAULT_RELAXATION,
-        eps_hit: float | None = None,
+        self, ray: Ray, max_bounces: int, options: SdfTraceOptions | None = None, active: torch.Tensor | None = None
     ) -> ReflectionChain:
         """Trace specular SDF reflections without adding any diffraction path."""
         if not isinstance(ray, Ray):
             raise TypeError("SdfGrid.trace_reflections() expects rayd.torch.Ray.")
+        options = _trace_options(options, "SdfGrid.trace_reflections()")
         if max_bounces < 0:
             raise ValueError("max_bounces must be non-negative.")
         count = ray.o.shape[0]
@@ -197,16 +192,14 @@ class SdfGrid:
         direction = ray.d / torch.clamp_min(torch.linalg.vector_norm(ray.d, dim=1), 1.0e-12)[:, None]
         current_ray = Ray(ray.o, direction.contiguous(), ray.tmax)
         current_image_source = ray.o
-        bias = self._query_bias(eps_hit)
+        bias = self._query_bias(options.eps_hit)
         valid_slots: list[torch.Tensor] = []
         t_slots: list[torch.Tensor] = []
         image_slots: list[torch.Tensor] = []
         id_slots: list[torch.Tensor] = []
         for _bounce in range(max_bounces):
-            hit = self.intersect(
-                current_ray, active=lane_active, max_steps=max_steps, relaxation=relaxation, eps_hit=eps_hit
-            )
-            bounce_hit = lane_active & hit.hit_mask
+            hit = self.intersect(current_ray, options, lane_active)
+            bounce_hit = lane_active & hit.valid
             normal = torch.where((torch.sum(current_ray.d * hit.normal, dim=1) > 0.0)[:, None], -hit.normal, hit.normal)
             plane_distance = torch.sum((current_image_source - hit.position) * normal, dim=1)
             image_source = current_image_source - 2.0 * plane_distance[:, None] * normal
@@ -281,31 +274,15 @@ class SdfGridBatch:
         return SdfGrid(self.values[index], self.position[index], self.rotation[index], self.scale[index])
 
     def intersect(
-        self,
-        ray: Ray,
-        *,
-        active: torch.Tensor | None = None,
-        max_steps: int = DEFAULT_MAX_STEPS,
-        relaxation: float = DEFAULT_RELAXATION,
-        eps_hit: float | None = None,
+        self, ray: Ray, options: SdfTraceOptions | None = None, active: torch.Tensor | None = None
     ) -> tuple[SdfIntersection, ...]:
         _require_native_dispatcher()
         if not isinstance(ray, Ray):
             raise TypeError("SdfGridBatch.intersect() expects rayd.torch.Ray.")
-        if max_steps < 1:
-            raise ValueError(f"max_steps must be at least 1 (got {max_steps}).")
-        if not 0.0 < relaxation <= 1.0:
-            raise ValueError(f"relaxation must lie in (0, 1] (got {relaxation}).")
-        if eps_hit is not None and not eps_hit > 0.0:
-            raise ValueError(f"eps_hit must be positive, or None to derive it on the device (got {eps_hit}).")
+        options = _trace_options(options, "SdfGridBatch.intersect()")
         lane_active = _require_active(active, ray.o.shape[0], ray.o.device)
         if _needs_reverse_or_forward_ad(self.values, self.position, self.rotation, self.scale, ray.o, ray.d):
-            return tuple(
-                self.grid(index).intersect(
-                    ray, active=lane_active, max_steps=max_steps, relaxation=relaxation, eps_hit=eps_hit
-                )
-                for index in range(self.grid_count)
-            )
+            return tuple(self.grid(index).intersect(ray, options, lane_active) for index in range(self.grid_count))
         if ray.o.device != self.values.device:
             raise ValueError("ray must be on the SDF batch values device.")
         values = torch.ops.rayd_torch.sdf_batch_intersect_forward(
@@ -316,9 +293,9 @@ class SdfGridBatch:
             ray.o,
             ray.d,
             float("inf"),
-            int(max_steps),
-            float(relaxation),
-            _EPS_HIT_DEVICE_DERIVED if eps_hit is None else float(eps_hit),
+            int(options.max_steps),
+            float(options.relaxation),
+            _EPS_HIT_DEVICE_DERIVED if options.eps_hit is None else float(options.eps_hit),
         )
         results = []
         for index in range(self.grid_count):

@@ -753,7 +753,11 @@ class MultipathTests(unittest.TestCase):
         grid = rt.DfrGrid(axis=2, position=0.0, resolution0=2, resolution1=2)
         with self.assertRaises(TypeError):
             scene.trace_dfr_paths(
-                tx_positions=tx_pos, rx_positions=rx_pos, states=states, material=material, max_paths=1, wavelength=1.0
+                tx_positions=tx_pos,
+                rx_positions=rx_pos,
+                states=states,
+                material=material,
+                options=rt.DfrPathOptions(max_paths=1, wavelength=1.0),
             )
 
         with self.assertRaises((TypeError, RuntimeError)):
@@ -763,8 +767,7 @@ class MultipathTests(unittest.TestCase):
                 states=states,
                 material=material,
                 active=None,
-                max_paths=1,
-                wavelength=1.0,
+                options=rt.DfrPathOptions(max_paths=1, wavelength=1.0),
             )
 
         with mock.patch(
@@ -772,7 +775,7 @@ class MultipathTests(unittest.TestCase):
             side_effect=AssertionError("Coherent public call must not create a Python empty active sentinel."),
         ):
             coherent = scene.accum_dfr_coherent_direct(
-                states=states, grid=grid, material=material, active=None, wavelength=1.0
+                states=states, grid=grid, material=material, active=None, options=rt.DfrCoherentOptions(wavelength=1.0)
             )
         self.assertEqual(tuple(coherent.direct_field_x_re.shape), (2, 2))
 
@@ -870,8 +873,7 @@ class MultipathTests(unittest.TestCase):
                 states=states,
                 material=material,
                 active=active_strided,
-                max_paths=2,
-                wavelength=1.0,
+                options=rt.DfrPathOptions(max_paths=2, wavelength=1.0),
             )
         paths_contig = scene.trace_dfr_paths(
             tx_positions=tx_pos,
@@ -879,8 +881,7 @@ class MultipathTests(unittest.TestCase):
             states=states,
             material=material,
             active=active_contig,
-            max_paths=2,
-            wavelength=1.0,
+            options=rt.DfrPathOptions(max_paths=2, wavelength=1.0),
         )
         self.assertEqual(tuple(paths_contig.valid.shape), (2,))
         self.assertEqual(paths_contig.layout, rt.DfrPathLayout.Compact)
@@ -890,9 +891,7 @@ class MultipathTests(unittest.TestCase):
             states=states,
             material=material,
             active=active_contig,
-            max_paths=2,
-            wavelength=1.0,
-            layout=rt.DfrPathLayout.SourceLane,
+            options=rt.DfrPathOptions(max_paths=2, wavelength=1.0, layout=rt.DfrPathLayout.SourceLane),
         )
         self.assertEqual(paths_source_lane.layout, rt.DfrPathLayout.SourceLane)
         self.assertEqual(tuple(paths_source_lane.valid.shape), (2,))
@@ -903,12 +902,14 @@ class MultipathTests(unittest.TestCase):
             grid=grid,
             material=material,
             active=active_strided,
-            wavelength=1.0,
-            direct_samples=4,
-            seed=13,
+            options=rt.DfrOptions(wavelength=1.0, direct_samples=4, seed=13),
         )
         accum_contig = scene.accum_dfr_direct(
-            states=states, grid=grid, material=material, active=active_contig, wavelength=1.0, direct_samples=4, seed=13
+            states=states,
+            grid=grid,
+            material=material,
+            active=active_contig,
+            options=rt.DfrOptions(wavelength=1.0, direct_samples=4, seed=13),
         )
         torch.testing.assert_close(accum_strided.power, accum_contig.power)
         torch.testing.assert_close(accum_strided.field_x_re, accum_contig.field_x_re)
@@ -1009,8 +1010,7 @@ class MultipathTests(unittest.TestCase):
             states=states,
             material=material,
             active=active,
-            max_paths=2,
-            wavelength=1.0,
+            options=rt.DfrPathOptions(max_paths=2, wavelength=1.0),
         )
         paths_contig = scene.trace_dfr_paths(
             tx_positions=tx_pos.contiguous(),
@@ -1018,8 +1018,7 @@ class MultipathTests(unittest.TestCase):
             states=expected_states,
             material=expected_material,
             active=active[:2].contiguous(),
-            max_paths=2,
-            wavelength=1.0,
+            options=rt.DfrPathOptions(max_paths=2, wavelength=1.0),
         )
 
         for name in ("count", "valid", "tx_id", "rx_id", "order", "edge0", "delay", "field_x_re", "field_x_im", "p0"):
@@ -1113,16 +1112,18 @@ class MultipathTests(unittest.TestCase):
         )
 
         direct_strided = scene.accum_dfr_direct(
-            states=states, grid=grid, material=material, active=active, wavelength=1.0, direct_samples=4, seed=17
+            states=states,
+            grid=grid,
+            material=material,
+            active=active,
+            options=rt.DfrOptions(wavelength=1.0, direct_samples=4, seed=17),
         )
         direct_expected = scene.accum_dfr_direct(
             states=expected_states,
             grid=grid,
             material=expected_material,
             active=active.contiguous(),
-            wavelength=1.0,
-            direct_samples=4,
-            seed=17,
+            options=rt.DfrOptions(wavelength=1.0, direct_samples=4, seed=17),
         )
         for name in (
             "power",
@@ -1139,10 +1140,14 @@ class MultipathTests(unittest.TestCase):
             torch.testing.assert_close(getattr(direct_strided, name), getattr(direct_expected, name))
 
         strided = scene.accum_dfr_coherent_direct(
-            states=states, grid=grid, material=material, active=active, wavelength=1.0
+            states=states, grid=grid, material=material, active=active, options=rt.DfrCoherentOptions(wavelength=1.0)
         )
         expected = scene.accum_dfr_coherent_direct(
-            states=expected_states, grid=grid, material=expected_material, active=active.contiguous(), wavelength=1.0
+            states=expected_states,
+            grid=grid,
+            material=expected_material,
+            active=active.contiguous(),
+            options=rt.DfrCoherentOptions(wavelength=1.0),
         )
 
         for name in (
@@ -1152,8 +1157,8 @@ class MultipathTests(unittest.TestCase):
             "multi_field_x_im",
             "direct_count",
             "multi_count",
-            "visibility_reject_count",
-            "utd_reject_count",
+            "vis_rejects",
+            "utd_rejects",
         ):
             torch.testing.assert_close(getattr(strided, name), getattr(expected, name))
 
@@ -1257,10 +1262,7 @@ class MultipathTests(unittest.TestCase):
             material=expected_material,
             active=active.contiguous(),
             recursive_active=recursive_active.contiguous(),
-            wavelength=1.0,
-            direct_samples=4,
-            seed=23,
-            max_order=2,
+            options=rt.DfrOptions(wavelength=1.0, direct_samples=4, seed=23, max_order=2),
         )
         with mock.patch.object(
             torch.Tensor,
@@ -1274,10 +1276,7 @@ class MultipathTests(unittest.TestCase):
                 material=material,
                 active=active,
                 recursive_active=recursive_active,
-                wavelength=1.0,
-                direct_samples=4,
-                seed=23,
-                max_order=2,
+                options=rt.DfrOptions(wavelength=1.0, direct_samples=4, seed=23, max_order=2),
             )
         for name in (
             "power",
@@ -1444,7 +1443,9 @@ class MultipathTests(unittest.TestCase):
             gain=torch.ones((1,), device="cuda", dtype=torch.float32),
             valid=torch.ones((1,), device="cuda", dtype=torch.bool),
         )
-        out = scene.accum_dfr_direct(states=states, grid=grid, material=material, wavelength=1.0, direct_samples=4)
+        out = scene.accum_dfr_direct(
+            states=states, grid=grid, material=material, options=rt.DfrOptions(wavelength=1.0, direct_samples=4)
+        )
         self.assertEqual(out.power.shape, (4, 4))
         self.assertEqual(out.field_x_re.dtype, torch.float32)
         zero_vec = torch.zeros_like(states.edge_pos)
@@ -1469,10 +1470,7 @@ class MultipathTests(unittest.TestCase):
             states=explicit_zero_states,
             grid=grid,
             material=material,
-            wavelength=1.0,
-            direct_samples=4,
-            keller_samples=4,
-            seed=11,
+            options=rt.DfrOptions(wavelength=1.0, direct_samples=4, keller_samples=4, seed=11),
         )
         with (
             mock.patch(
@@ -1489,7 +1487,10 @@ class MultipathTests(unittest.TestCase):
             ),
         ):
             missing_out = scene.accum_dfr_direct(
-                states=states, grid=grid, material=material, wavelength=1.0, direct_samples=4, keller_samples=4, seed=11
+                states=states,
+                grid=grid,
+                material=material,
+                options=rt.DfrOptions(wavelength=1.0, direct_samples=4, keller_samples=4, seed=11),
             )
         torch.testing.assert_close(missing_out.power, explicit_out.power)
         torch.testing.assert_close(missing_out.field_x_re, explicit_out.field_x_re)
@@ -1538,7 +1539,10 @@ class MultipathTests(unittest.TestCase):
         )
         grid = rt.DfrGrid(axis=2, position=-1.0, resolution0=2, resolution1=2)
         out = scene.accum_dfr_direct(
-            states=states, grid=grid, material=material, wavelength=0.125, seed=17, direct_samples=64
+            states=states,
+            grid=grid,
+            material=material,
+            options=rt.DfrOptions(wavelength=0.125, seed=17, direct_samples=64),
         )
         upstream_field = torch.arange(1, out.field_x_re.numel() + 1, device="cuda", dtype=torch.float32).reshape_as(
             out.field_x_re
@@ -1587,9 +1591,7 @@ class MultipathTests(unittest.TestCase):
                 states=fd_states,
                 grid=grid,
                 material=replace(material, gain=values["gain"]),
-                wavelength=0.125,
-                seed=17,
-                direct_samples=64,
+                options=rt.DfrOptions(wavelength=0.125, seed=17, direct_samples=64),
             )
             return fd_out.power.sum() + fd_out.field_x_re.sum()
 
@@ -1704,9 +1706,7 @@ class MultipathTests(unittest.TestCase):
                 grid=grid,
                 material=material,
                 active=strided_bool([True, True]),
-                wavelength=0.125,
-                seed=17,
-                direct_samples=8,
+                options=rt.DfrOptions(wavelength=0.125, seed=17, direct_samples=8),
             )
             strided_grads = torch.autograd.grad(
                 (out.power, out.field_x_re), inputs, grad_outputs=(upstream_power, upstream_field)
@@ -1742,9 +1742,7 @@ class MultipathTests(unittest.TestCase):
             grid=grid,
             material=expected_material,
             active=torch.tensor([True, True], device="cuda", dtype=torch.bool),
-            wavelength=0.125,
-            seed=17,
-            direct_samples=8,
+            options=rt.DfrOptions(wavelength=0.125, seed=17, direct_samples=8),
         )
         expected_inputs = (
             expected_states.edge_pos,
@@ -1826,7 +1824,10 @@ class MultipathTests(unittest.TestCase):
                 side_effect=AssertionError("Scene.accum_dfr_direct() jvp must not fill tangents in Python."),
             ):
                 out = scene.accum_dfr_direct(
-                    states=dual_states, grid=grid, material=material, wavelength=0.125, seed=17, direct_samples=64
+                    states=dual_states,
+                    grid=grid,
+                    material=material,
+                    options=rt.DfrOptions(wavelength=0.125, seed=17, direct_samples=64),
                 )
                 _power, tangent_power = torch.autograd.forward_ad.unpack_dual(out.power)
                 _field_x_re, tangent_field_x_re = torch.autograd.forward_ad.unpack_dual(out.field_x_re)
@@ -1842,7 +1843,10 @@ class MultipathTests(unittest.TestCase):
         def outputs_at(scale):
             shifted = replace(states, edge_pos=edge_pos + scale * direction)
             fd_out = scene.accum_dfr_direct(
-                states=shifted, grid=grid, material=material, wavelength=0.125, seed=17, direct_samples=64
+                states=shifted,
+                grid=grid,
+                material=material,
+                options=rt.DfrOptions(wavelength=0.125, seed=17, direct_samples=64),
             )
             return float(fd_out.power.sum()), float(fd_out.field_x_re.sum())
 
@@ -1925,11 +1929,7 @@ class MultipathTests(unittest.TestCase):
             recursive_states=recursive,
             grid=grid,
             material=material,
-            wavelength=0.125,
-            seed=17,
-            direct_samples=64,
-            keller_samples=64,
-            max_order=2,
+            options=rt.DfrOptions(wavelength=0.125, seed=17, direct_samples=64, keller_samples=64, max_order=2),
         )
         upstream_field = torch.arange(1, out.field_x_re.numel() + 1, device="cuda", dtype=torch.float32).reshape_as(
             out.field_x_re
@@ -1994,11 +1994,7 @@ class MultipathTests(unittest.TestCase):
                 recursive_states=replace(recursive, **{name: values["rec_" + name] for name in recursive_leaves}),
                 grid=grid,
                 material=replace(material, gain=values["gain"]),
-                wavelength=0.125,
-                seed=17,
-                direct_samples=64,
-                keller_samples=64,
-                max_order=2,
+                options=rt.DfrOptions(wavelength=0.125, seed=17, direct_samples=64, keller_samples=64, max_order=2),
             )
             return fd_out.power.sum() + fd_out.field_x_re.sum()
 
@@ -2085,11 +2081,7 @@ class MultipathTests(unittest.TestCase):
                     recursive_states=recursive,
                     grid=grid,
                     material=material,
-                    wavelength=0.125,
-                    seed=17,
-                    direct_samples=64,
-                    keller_samples=64,
-                    max_order=2,
+                    options=rt.DfrOptions(wavelength=0.125, seed=17, direct_samples=64, keller_samples=64, max_order=2),
                 )
                 _power, tangent_power = torch.autograd.forward_ad.unpack_dual(out.power)
                 _field_x_re, tangent_field_x_re = torch.autograd.forward_ad.unpack_dual(out.field_x_re)
@@ -2108,11 +2100,7 @@ class MultipathTests(unittest.TestCase):
                 recursive_states=recursive,
                 grid=grid,
                 material=material,
-                wavelength=0.125,
-                seed=17,
-                direct_samples=64,
-                keller_samples=64,
-                max_order=2,
+                options=rt.DfrOptions(wavelength=0.125, seed=17, direct_samples=64, keller_samples=64, max_order=2),
             )
             return float(fd_out.power.sum()), float(fd_out.field_x_re.sum())
 

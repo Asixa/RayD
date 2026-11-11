@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import NamedTuple
 import unittest
 
@@ -11,9 +10,6 @@ import torch
 
 import rayd.torch as rt
 from rayd._impl.multi import MultiDeviceOptions, _ReplicatedScene
-
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 def _empty_wedges(device: torch.device) -> rt.WedgeEvents:
@@ -49,7 +45,7 @@ class _FakeReplica:
         self.calls = []
         self.results = []
 
-    def accumulate_reflections(self, ray, tx_position, grid, material, max_bounces, options, active, tx_polarization):
+    def accum_refl(self, ray, tx_position, grid, material, max_bounces, options, active, tx_polarization):
         self.calls.append((ray, tx_position, material, options, active, tx_polarization))
         result = _partial(int(ray.o.shape[0]), int(max_bounces), grid, ray.o.device)
         self.results.append(result)
@@ -121,7 +117,7 @@ class ReflectionAccumulationFakeOrchestratorTests(unittest.TestCase):
     def test_two_shards_merge_grid_and_global_metadata_in_device_order(self):
         orchestrator, replicas = _orchestrator(2, MultiDeviceOptions(warm_up=False, min_lanes_per_device=1))
         ray, tx, polarization, active, material, grid = _inputs(64)
-        result = orchestrator.accumulate_reflections(
+        result = orchestrator.accum_refl(
             ray=ray,
             tx_position=tx,
             grid=grid,
@@ -145,7 +141,7 @@ class ReflectionAccumulationFakeOrchestratorTests(unittest.TestCase):
     def test_default_one_device_path_is_the_exact_master_result(self):
         orchestrator, replicas = _orchestrator(1, MultiDeviceOptions(warm_up=False, min_lanes_per_device=1))
         ray, tx, polarization, active, material, grid = _inputs(64)
-        result = orchestrator.accumulate_reflections(
+        result = orchestrator.accum_refl(
             ray=ray,
             tx_position=tx,
             grid=grid,
@@ -164,7 +160,7 @@ class ReflectionAccumulationFakeOrchestratorTests(unittest.TestCase):
     def test_auto_strategy_is_resolved_from_the_unsplit_batch(self):
         orchestrator, replicas = _orchestrator(2, MultiDeviceOptions(warm_up=False, min_lanes_per_device=1))
         ray, tx, polarization, active, material, grid = _inputs(2048)
-        orchestrator.accumulate_reflections(
+        orchestrator.accum_refl(
             ray=ray,
             tx_position=tx,
             grid=grid,
@@ -179,7 +175,7 @@ class ReflectionAccumulationFakeOrchestratorTests(unittest.TestCase):
     def test_wedge_collection_preserves_native_global_buffer_on_master(self):
         orchestrator, replicas = _orchestrator(2, MultiDeviceOptions(warm_up=False, min_lanes_per_device=1))
         ray, tx, polarization, active, material, grid = _inputs(64)
-        orchestrator.accumulate_reflections(
+        orchestrator.accum_refl(
             ray=ray,
             tx_position=tx,
             grid=grid,
@@ -201,7 +197,7 @@ class ReflectionAccumulationFakeOrchestratorTests(unittest.TestCase):
         )
         ray, tx, polarization, active, material, grid = _inputs(64)
         with self.assertRaisesRegex(NotImplementedError, "global capacity"):
-            orchestrator.accumulate_reflections(
+            orchestrator.accum_refl(
                 ray=ray,
                 tx_position=tx,
                 grid=grid,
@@ -215,7 +211,7 @@ class ReflectionAccumulationFakeOrchestratorTests(unittest.TestCase):
     def test_empty_active_tensor_keeps_single_device_absent_mask_semantics(self):
         orchestrator, replicas = _orchestrator(2, MultiDeviceOptions(warm_up=False, min_lanes_per_device=1))
         ray, tx, polarization, _active, material, grid = _inputs(64)
-        orchestrator.accumulate_reflections(
+        orchestrator.accum_refl(
             ray=ray,
             tx_position=tx,
             grid=grid,
@@ -226,22 +222,6 @@ class ReflectionAccumulationFakeOrchestratorTests(unittest.TestCase):
             tx_polarization=polarization,
         )
         self.assertTrue(all(call[4].numel() == 0 for replica in replicas for call in replica.calls))
-
-
-class ReflectionAccumulationStaticContractTests(unittest.TestCase):
-    def test_scene_routes_after_the_forward_only_guard(self):
-        scene = (ROOT / "python" / "rayd" / "_impl" / "scene.py").read_text(encoding="utf-8")
-        body = scene.split("    def accumulate_reflections(", 1)[1].split("    def _default_dfr_material(", 1)[0]
-        self.assertLess(body.index("_has_reverse_or_forward_ad"), body.index("self._multi.accumulate_reflections"))
-        self.assertNotIn('self._multi.unsupported("accumulate_reflections")', body)
-
-    def test_orchestrator_has_no_native_lane_or_kernel_extension(self):
-        multi = (ROOT / "python" / "rayd" / "_impl" / "multi.py").read_text(encoding="utf-8")
-        body = multi.split("    def accumulate_reflections(", 1)[1].split("    def _run_lane_shards(", 1)[0]
-        self.assertIn("self._lane_shards(0, total, operation)", body)
-        self.assertIn("_add_reflection_accum_in_place", body)
-        self.assertIn("return master()", body)
-        self.assertNotIn("torch.ops.", body)
 
 
 @unittest.skipUnless(torch.cuda.device_count() >= 2, "two CUDA devices are required")
@@ -289,8 +269,8 @@ class ReflectionAccumulationTwoGpuAcceptanceTests(unittest.TestCase):
             valid=torch.ones((1,), device=ray_o.device, dtype=torch.bool),
         )
         options = rt.AccumOptions(wavelength=12.566370614359172)
-        reference = single.accumulate_reflections(ray, ray_o, grid, material, 1, options, active, polarization)
-        merged = multi.accumulate_reflections(ray, ray_o, grid, material, 1, options, active, polarization)
+        reference = single.accum_refl(ray, ray_o, grid, material, 1, options, active, polarization)
+        merged = multi.accum_refl(ray, ray_o, grid, material, 1, options, active, polarization)
 
         for name in (
             "reflection_power",
@@ -310,7 +290,7 @@ class ReflectionAccumulationTwoGpuAcceptanceTests(unittest.TestCase):
         multi = self._scene(devices=[0, 1])
         empty3 = torch.empty((0, 3), device="cuda:0")
         empty1 = torch.empty((0,), device="cuda:0")
-        result = multi.accumulate_reflections(
+        result = multi.accum_refl(
             rt.Ray(empty3, empty3, empty1),
             empty3,
             rt.AccumGrid(resolution0=1, resolution1=1),

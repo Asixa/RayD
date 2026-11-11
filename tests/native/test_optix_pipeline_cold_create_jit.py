@@ -34,7 +34,7 @@ class OptixPipelineColdCreateTests(unittest.TestCase):
             "tests.reflection.test_epc_jit.ReflEpcTests.test_epc_field_batched_direct_path_creates_cold_pipeline",
         ),
         (
-            "accumulate_reflections",
+            "accum_refl",
             "tests.reflection.test_accumulation_jit.ReflectionAccumulationTests."
             "test_accumulate_reflections_large_cold_launch",
         ),

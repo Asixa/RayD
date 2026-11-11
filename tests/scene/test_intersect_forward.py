@@ -74,7 +74,7 @@ class IntersectForwardTests(unittest.TestCase):
             torch.tensor([[0.25, 0.25, -1.0], [2.0, 2.0, -1.0]], device="cuda", dtype=torch.float32),
             torch.tensor([[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]], device="cuda", dtype=torch.float32),
         )
-        flags_none = getattr(rt.RayFlags, "None")
+        flags_none = rt.RayFlags.Empty
 
         reduced = scene.intersect(ray, flags=flags_none)
         full = scene.intersect(ray, flags=rt.RayFlags.Geometric)

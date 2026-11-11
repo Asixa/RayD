@@ -15,7 +15,7 @@ Every multipath pipeline the CUDA fused executor serves is run under both
 Pipelines covered: reflection trace (``trace_reflections`` symbolic=False),
 segment visibility (``visible`` / ``visible_pair`` / ``visible_edge`` /
 ``visible_chain``), reflection EPC (``trace_refl_epc`` primitive + surface-group,
-``trace_refl_epc_field``), reflection accumulation (``accumulate_reflections``),
+``trace_refl_epc_field``), reflection accumulation (``accum_refl``),
 and first-order diffraction path export (``trace_dfr_paths``).
 """
 
@@ -82,7 +82,7 @@ out["refl_img"] = flt(dr.ravel(refl.image_sources))
 start = cuda.Array3f([0.0, 0.0, -2.0], [0.0, 2.0, 0.0], [3.0, 3.0, 3.0])
 end = cuda.Array3f([0.0, 0.0, 2.0], [0.0, 2.0, 0.0], [-1.0, -1.0, -1.0])
 ignore = cuda.Int([-1, -1, -1]); active = cuda.Bool([True, True, True])
-out["visible"] = b(scene.visible(start, end, ignore, active).visible)
+out["visible"] = b(scene.visible(start, end, active, ignore_prim_ids=ignore).visible)
 pair = scene.visible_pair(start, end,
     cuda.Array3f([3.0, 3.0, 3.0], [3.0, 3.0, 3.0], [-3.0, -3.0, -3.0]), ignore, active)
 out["visible_a"] = b(pair.visible_a); out["visible_b"] = b(pair.visible_b)
@@ -106,7 +106,7 @@ aray = rd.Ray(
     cuda.Array3f((np.sin(th) * np.cos(ph)).astype(np.float32).tolist(),
                  (np.sin(th) * np.sin(ph)).astype(np.float32).tolist(),
                  (-np.cos(th)).astype(np.float32).tolist()))
-mat = rd.Material()
+mat = rd.ReflMaterial()
 mat.eta_r = cuda.Float([5.0, 5.0, 5.0]); mat.sigma = cuda.Float([0.01, 0.01, 0.01])
 mat.gain = cuda.Float([1.0, 1.0, 1.0]); mat.mu_r = cuda.Float([1.0, 1.0, 1.0])
 mat.valid = cuda.Bool([True, True, True])
@@ -117,7 +117,7 @@ grid.resolution0 = 8; grid.resolution1 = 8
 opts = rd.AccumOptions()
 opts.wavelength = 0.1; opts.k = 0.5; opts.solid_angle_per_ray = 1.0; opts.cell_area = 1.0
 opts.seed = 17; opts.rr_depth = 0; opts.rr_prob = 1.0; opts.stop_threshold = 0.0
-acc = scene.accumulate_reflections(aray, cuda.Array3f([0.0], [0.0], [3.0]), grid, mat, 2, opts,
+acc = scene.accum_refl(aray, cuda.Array3f([0.0], [0.0], [3.0]), grid, mat, 2, opts,
                                    cuda.Bool([True] * n), cuda.Array3f([1.0], [0.0], [0.0]))
 out["acc_count"] = int(acc.reflection_count.numpy().tolist()[0])
 out["acc_power"] = flt(acc.reflection_power)
@@ -188,8 +188,8 @@ mat.eta_r = cuda.Float([4.0]); mat.sigma = cuda.Float([0.0]); mat.mu_r = cuda.Fl
 mat.gain = cuda.Float([1.0]); mat.valid = cuda.Bool([True])
 opt = pj.DfrPathOptions()
 opt.wavelength = 0.125; opt.k = 50.26548245743669; opt.seed = 17; opt.max_order = 1
-opt.max_paths = 4; opt.max_rx = 1; opt.strategy_mask = pj.RAYD_DFR_DIRECT
-opt.sample_count = 4; opt.return_geom = 1; opt.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+opt.max_paths = 4; opt.max_rx = 1; opt.strategy_mask = pj.DfrStrategy.DIRECT
+opt.sample_count = 4; opt.return_geom = 1; opt.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
 r = scene.trace_dfr_paths(cuda.Array3f([0.0], [0.0], [1.0]), cuda.Array3f([0.0], [0.0], [-1.0]),
                           states, mat, opt, cuda.Bool([True]))
 print(json.dumps({
@@ -274,8 +274,8 @@ st = edge_state(cuda.Array3f([0.0], [0.0], [0.0]), cuda.Array3f([1.0], [0.0], [0
 opt = pj.DfrOptions()
 opt.wavelength = 0.125; opt.k = 50.26548245743669; opt.seed = 17; opt.samples = 128
 opt.max_order = 1; opt.direct_samples = 64; opt.keller_samples = 64; opt.suffix_samples = 0
-opt.strategy_mask = pj.RAYD_DFR_DIRECT | pj.RAYD_DFR_KELLER
-opt.sample_sequence = pj.RAYD_DFR_HASH; opt.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+opt.strategy_mask = pj.DfrStrategy.DIRECT | pj.DfrStrategy.KELLER
+opt.sample_sequence = pj.DfrSampleSequence.HASH; opt.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
 opt.collect_edge_use = True; opt.collect_debug_counts = True
 r = scene.accum_dfr_direct(st, grid(), material(), opt, cuda.Bool([True]))
 dr.eval(r.power, r.field_x.real, r.direct_count, r.keller_count, r.vis_rejects,
@@ -296,8 +296,8 @@ st = edge_state(cuda.Array3f([0.0], [-1.0], [0.0]), cuda.Array3f([1.0], [0.0], [
 sopt = pj.DfrOptions()
 sopt.wavelength = 0.125; sopt.k = 50.26548245743669; sopt.seed = 41; sopt.samples = 16
 sopt.max_order = 1; sopt.direct_samples = 0; sopt.keller_samples = 0; sopt.suffix_samples = 16
-sopt.strategy_mask = pj.RAYD_DFR_SUFFIX_REFL
-sopt.sample_sequence = pj.RAYD_DFR_HASH; sopt.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+sopt.strategy_mask = pj.DfrStrategy.SUFFIX_REFL
+sopt.sample_sequence = pj.DfrSampleSequence.HASH; sopt.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
 sopt.collect_edge_use = True; sopt.collect_debug_counts = True
 r = scene.accum_dfr_direct(st, grid(axis=1, position=-2.0), material(), sopt, cuda.Bool([True]))
 dr.eval(r.power, r.suffix_count, r.vis_rejects, r.utd_rejects, r.edge_uses)
@@ -323,8 +323,8 @@ recursive.prefix_depth = cuda.Int([0])
 copt = pj.DfrOptions()
 copt.wavelength = 0.125; copt.k = 50.26548245743669; copt.seed = 41; copt.samples = 288
 copt.max_order = 2; copt.direct_samples = 32; copt.keller_samples = 256; copt.suffix_samples = 0
-copt.strategy_mask = pj.RAYD_DFR_DIRECT | pj.RAYD_DFR_KELLER
-copt.sample_sequence = pj.RAYD_DFR_HASH; copt.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+copt.strategy_mask = pj.DfrStrategy.DIRECT | pj.DfrStrategy.KELLER
+copt.sample_sequence = pj.DfrSampleSequence.HASH; copt.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
 copt.collect_edge_use = True; copt.collect_debug_counts = True
 r = scene.accum_dfr(initial, recursive, grid(), material(), copt, cuda.Bool([True]))
 dr.eval(r.power, r.direct_count, r.keller_count, r.edge_vis_rejects, r.edge_uses)
@@ -340,16 +340,16 @@ st = edge_state(cuda.Array3f([0.0], [0.0], [0.0]), cuda.Array3f([1.0], [0.0], [0
                 -0.5, 0.5, cuda.Array3f([0.0], [0.0], [1.0]))
 hopt = pj.DfrCoherentOptions()
 hopt.wavelength = 0.125; hopt.k = 50.26548245743669; hopt.max_order = 1
-hopt.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+hopt.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
 hopt.select_diffraction_point = True; hopt.prefilter_visibility = True
 hopt.collect_debug_counts = True
 r = scene.accum_dfr_coherent_direct(st, grid(), material(), hopt, cuda.Bool([True]))
 dr.eval(r.direct_field_x.real, r.direct_field_x.imag, r.direct_count,
-        r.visibility_reject_count, r.utd_reject_count)
+        r.vis_rejects, r.utd_rejects)
 out["coherent_cells"] = int(r.grid_cell_count)
 out["coherent_direct_count"] = fi(r.direct_count)
-out["coherent_visibility_reject_count"] = fi(r.visibility_reject_count)
-out["coherent_utd_reject_count"] = fi(r.utd_reject_count)
+out["coherent_visibility_reject_count"] = fi(r.vis_rejects)
+out["coherent_utd_reject_count"] = fi(r.utd_rejects)
 out["coherent_field_re"] = ff(r.direct_field_x.real)
 out["coherent_field_im"] = ff(r.direct_field_x.imag)
 
@@ -394,8 +394,8 @@ mat.gain = ad.Float([1.0]); mat.valid = ad.Bool([True])
 opt = pj.DfrOptions()
 opt.wavelength = 0.125; opt.k = 50.26548245743669; opt.seed = 17; opt.samples = 64
 opt.max_order = 1; opt.direct_samples = 64; opt.keller_samples = 0
-opt.strategy_mask = pj.RAYD_DFR_DIRECT; opt.sample_sequence = pj.RAYD_DFR_HASH
-opt.receiver_model = pj.RAYD_DFR_MATCHED_ISO; opt.collect_edge_use = True
+opt.strategy_mask = pj.DfrStrategy.DIRECT; opt.sample_sequence = pj.DfrSampleSequence.HASH
+opt.receiver_model = pj.DfrReceiverModel.MATCHED_ISO; opt.collect_edge_use = True
 
 result = scene.accum_dfr_direct(states, grid, mat, opt, True)
 loss = dr.sum(result.power)
@@ -440,8 +440,8 @@ cgrid.resolution0 = 1; cgrid.resolution1 = 1; cgrid.cell_area = 4.0
 copt = pj.DfrOptions()
 copt.wavelength = 0.125; copt.k = 50.26548245743669; copt.seed = 17; copt.samples = 64
 copt.max_order = 2; copt.direct_samples = 32; copt.keller_samples = 32
-copt.strategy_mask = pj.RAYD_DFR_DIRECT | pj.RAYD_DFR_KELLER; copt.sample_sequence = pj.RAYD_DFR_HASH
-copt.receiver_model = pj.RAYD_DFR_MATCHED_ISO; copt.collect_edge_use = True; copt.collect_debug_counts = True
+copt.strategy_mask = pj.DfrStrategy.DIRECT | pj.DfrStrategy.KELLER; copt.sample_sequence = pj.DfrSampleSequence.HASH
+copt.receiver_model = pj.DfrReceiverModel.MATCHED_ISO; copt.collect_edge_use = True; copt.collect_debug_counts = True
 cresult = scene.accum_dfr(initial, recursive, cgrid, mat, copt, True)
 closs = dr.sum(cresult.power)
 dr.backward(closs, flags=dr.ADFlag.Default | dr.ADFlag.AllowNoGrad)

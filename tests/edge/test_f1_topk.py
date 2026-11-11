@@ -45,7 +45,7 @@ class TorchTopKNearestEdgeTests(unittest.TestCase):
         point = torch.tensor([[float("nan"), 0.0, 0.0], [0.25, -0.2, 0.0]], device="cuda", dtype=torch.float32)
         active = torch.tensor([True, False], device="cuda")
         result = scene.nearest_edges(point, 2, active=active)
-        self.assertFalse(result.is_valid.any().item())
+        self.assertFalse(result.valid.any().item())
         self.assertTrue(torch.isinf(result.distances).all().item())
         empty = scene.nearest_edges(point[:0], 2)
         self.assertEqual(tuple(empty.distances.shape), (0, 2))

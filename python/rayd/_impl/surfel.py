@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import torch
 
-from .geometry import Ray, RayFlags, ReflectionChain, _CONTRACT_VALUES
+from .geometry import Ray, RayFlags, ReflectionChain, _CONTRACT_VALUES, _Record
 from .scene import Mesh, Scene
 
 
@@ -105,8 +105,8 @@ class SurfelCloud:
         return int(self.center.shape[0])
 
 
-@dataclass(frozen=True, slots=True)
-class SurfelIntersection:
+@dataclass(frozen=True, slots=True, repr=False)
+class SurfelIntersection(_Record):
     t: torch.Tensor
     p: torch.Tensor
     n: torch.Tensor
@@ -118,18 +118,30 @@ class SurfelIntersection:
     surfel_id: torch.Tensor
     triangle_id: torch.Tensor
 
+    @property
+    def valid(self) -> torch.Tensor:
+        """Per-ray hit mask; the same tensor ``is_valid()`` returns."""
+
+        return self.is_valid()
+
     def is_valid(self) -> torch.Tensor:
         return self.surfel_id >= 0
 
 
-@dataclass(frozen=True, slots=True)
-class SurfelComposite:
+@dataclass(frozen=True, slots=True, repr=False)
+class SurfelComposite(_Record):
     intensity: torch.Tensor
     alpha: torch.Tensor
     transmittance: torch.Tensor
     depth: torch.Tensor
     candidate_count: torch.Tensor
     candidate_buffer_full: torch.Tensor
+
+    @property
+    def valid(self) -> torch.Tensor:
+        """Per-ray mask of a non-zero composite alpha; the same tensor ``is_valid()`` returns."""
+
+        return self.is_valid()
 
     def is_valid(self) -> torch.Tensor:
         return self.alpha > 0.0

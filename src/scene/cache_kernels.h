@@ -6,6 +6,7 @@
 #include <ATen/ATen.h>
 
 #include <cstdint>
+#include <string_view>
 
 namespace rayd::torch_backend {
 
@@ -30,7 +31,9 @@ struct EdgeTopology {
     at::Tensor edge_local_id;
 };
 
-EdgeTopology build_edge_topology_cuda(const at::Tensor& faces, int32_t vertex_offset, int32_t shape_id);
+// `operation` names the entry point that builds the scene and prefixes the error for an edge with too many faces.
+EdgeTopology build_edge_topology_cuda(const at::Tensor& faces, int32_t vertex_offset, int32_t shape_id,
+                                      std::string_view operation);
 
 // Writes 1 into int32 `flags[k]` when the contiguous float32 `vertices[k]` holds a NaN or infinite coordinate and 0
 // otherwise, asynchronously on the current stream.

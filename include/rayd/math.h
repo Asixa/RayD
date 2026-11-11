@@ -873,14 +873,15 @@ namespace utd = ::rayd::shared::diffraction;
 // and which never divides infinity by infinity.
 RAYD_MATH_INLINE utd::Complex c_sqrt_passive(utd::Complex value) {
     const float magnitude = hypotf(value.re, value.im);
-    const float large = sqrtf(fmaxf(0.5f * (magnitude + fabsf(value.re)), 0.0f));
-    if (!(large > 0.0f) || !utd::isfinite(large)) {
+    // Windows headers define `small` as a macro, so the components are named dominant and secondary.
+    const float dominant = sqrtf(fmaxf(0.5f * (magnitude + fabsf(value.re)), 0.0f));
+    if (!(dominant > 0.0f) || !utd::isfinite(dominant)) {
         const float real = sqrtf(fmaxf(0.5f * (magnitude + value.re), 0.0f));
         const float imaginary = -sqrtf(fmaxf(0.5f * (magnitude - value.re), 0.0f));
         return utd::cplx(real, imaginary);
     }
-    const float small = fabsf(value.im) / (2.0f * large);
-    return value.re >= 0.0f ? utd::cplx(large, -small) : utd::cplx(small, -large);
+    const float secondary = fabsf(value.im) / (2.0f * dominant);
+    return value.re >= 0.0f ? utd::cplx(dominant, -secondary) : utd::cplx(secondary, -dominant);
 }
 
 RAYD_MATH_INLINE utd::Complex c_exp_neg_j(double phase) {

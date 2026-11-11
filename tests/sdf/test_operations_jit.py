@@ -32,7 +32,7 @@ class DrJitSdfOperationTests(unittest.TestCase):
             )
             chain = grid.trace_reflections(ray, 1)
             print(json.dumps({
-                "hit": bool(hit.hit_mask[0]),
+                "hit": bool(hit.valid[0]),
                 "t": float(hit.t[0]),
                 "visible": bool(visible[0]),
                 "bounce_count": int(chain.bounce_count[0]),

@@ -152,11 +152,7 @@ def accumulate(scene, states, material, grid, *, total, seed, begin, count):
         states=states,
         grid=grid,
         material=material,
-        wavelength=1.0,
-        direct_samples=total,
-        seed=seed,
-        lane_offset=begin,
-        lane_count=count,
+        options=rt.DfrOptions(wavelength=1.0, direct_samples=total, seed=seed, lane_offset=begin, lane_count=count),
     )
 
 

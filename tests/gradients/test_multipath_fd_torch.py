@@ -150,10 +150,7 @@ def _direct_objective(scene, *, direct: int, keller: int):
             states=_dfr_states(x),
             grid=rt.DfrGrid(axis=2, position=-1.0, resolution0=2, resolution1=2),
             material=_dfr_material(x),
-            wavelength=0.125,
-            seed=17,
-            direct_samples=direct,
-            keller_samples=keller,
+            options=rt.DfrOptions(wavelength=0.125, seed=17, direct_samples=direct, keller_samples=keller),
         )
         return _grid_objective(out)
 
@@ -167,11 +164,7 @@ def _chain_objective(scene, *, direct: int, keller: int):
             recursive_states=_dfr_states(x, recursive=True),
             grid=rt.DfrGrid(axis=2, position=-1.0, resolution0=2, resolution1=2),
             material=_dfr_material(x),
-            wavelength=0.125,
-            seed=17,
-            direct_samples=direct,
-            keller_samples=keller,
-            max_order=2,
+            options=rt.DfrOptions(wavelength=0.125, seed=17, direct_samples=direct, keller_samples=keller, max_order=2),
         )
         return _grid_objective(out)
 
@@ -205,9 +198,7 @@ def _suffix_objective():
             states=states,
             grid=rt.DfrGrid(axis=1, position=-2.0, cell_area=4.0),
             material=_dfr_material(x),
-            wavelength=0.125,
-            seed=41,
-            suffix_samples=16,
+            options=rt.DfrOptions(wavelength=0.125, seed=41, suffix_samples=16),
         )
         # The single suffix cell receives ~1e-5 of the source power; rescale so the edge-direction sensitivity
         # sits well above the float32 finite-difference resolution.
@@ -331,7 +322,7 @@ def _accumulate(scene, *, tx=None, eta_r=None, origin=None):
         axis=2, position=0.5, coord0_min=-2, coord0_max=2, coord1_min=-2, coord1_max=2, resolution0=1, resolution1=1
     )
     ray = rt.Ray(source if origin is None else origin, _t([[0.1, 0.0, -1.0]]))
-    return scene.accumulate_reflections(ray, source if tx is None else tx, grid, material, 1)
+    return scene.accum_refl(ray, source if tx is None else tx, grid, material, 1)
 
 
 def _paths_states(src=None, edge_pos=None):
@@ -371,8 +362,7 @@ def _trace_paths(scene, *, tx=None, states=None, material=None):
         states=_paths_states() if states is None else states,
         material=_paths_material() if material is None else material,
         active=_t([True], torch.bool),
-        max_paths=4,
-        wavelength=0.125,
+        options=rt.DfrPathOptions(max_paths=4, wavelength=0.125),
     )
 
 
@@ -381,7 +371,7 @@ def _coherent(scene, *, states=None, material=None):
         states=_paths_states() if states is None else states,
         grid=rt.DfrGrid(axis=2, position=-1.0),
         material=_paths_material() if material is None else material,
-        wavelength=0.125,
+        options=rt.DfrCoherentOptions(wavelength=0.125),
     )
 
 
@@ -414,12 +404,12 @@ UNSUPPORTED_CASES = {
     ("trace_refl_epc_field", "receiver"): (
         lambda m: _mirror_scene().trace_refl_epc_field(_t([[0.0, 0.0, 1.0]]), _mark(_t([[0.5, 0.0, 1.0]]), m), 1),
     ),
-    ("accumulate_reflections", "geometry"): (lambda m: _accumulate(_mirror_scene(m)),),
-    ("accumulate_reflections", "source_receiver"): (
+    ("accum_refl", "geometry"): (lambda m: _accumulate(_mirror_scene(m)),),
+    ("accum_refl", "source_receiver"): (
         lambda m: _accumulate(_mirror_scene(), tx=_mark(_t([[0.0, 0.0, 1.0]]), m)),
         lambda m: _accumulate(_mirror_scene(), origin=_mark(_t([[0.0, 0.0, 1.0]]), m)),
     ),
-    ("accumulate_reflections", "material"): (lambda m: _accumulate(_mirror_scene(), eta_r=_mark(_t([4.0]), m)),),
+    ("accum_refl", "material"): (lambda m: _accumulate(_mirror_scene(), eta_r=_mark(_t([4.0]), m)),),
     ("trace_dfr_paths", "continuous_inputs"): (
         lambda m: _trace_paths(_mirror_scene(m)),
         lambda m: _trace_paths(_mirror_scene(), tx=_mark(_t([[0.0, 0.0, 1.5]]), m)),

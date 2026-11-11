@@ -24,8 +24,11 @@ default to `edge_bvh_backend="drjit"`, a native compact-BVH traversal launched
 on Dr.Jit's stream that was faster than the OptiX edge backend for point, ray,
 and top-k queries at every measured size. Use `trace_backend="optix"` or
 `"cuda"` and `edge_bvh_backend="optix"`, `"optix_drjit"` (OptiX for rays
-only), or `"drjit"` to require a backend. `scene.capabilities()` reports the
-resolved choice. An explicit OptiX request fails when unavailable, and
+only), or `"drjit"` to require a backend. Both selectors are keyword-only and
+match exactly and case-sensitively; the former aliases (`hybrid`, `mixed`,
+`optix_ray`, `ray_optix`, `custom_aabb`, `dr_jit`, `software`) are removed, and
+an unknown value raises `ValueError`. `scene.trace_backend` and
+`scene.capabilities()` report the resolved choice. An explicit OptiX request fails when unavailable, and
 operational pipeline, allocation, or CUDA failures are not converted into a
 fallback. `RAYD_DISABLE_OPTIX=1` forces capability discovery to report OptiX
 unavailable and selects the CUDA trace backend without a warning.
@@ -83,15 +86,15 @@ Each core query, what it computes, its input/output, and how it behaves under Dr
 | --- | --- | --- | --- |
 | `scene.intersect(ray)` | Closest-hit ray-mesh intersection | rays -> `Intersection` (t, point, normal, uv, ids) | **AD** |
 | `scene.shadow_test(ray)` | Any-hit occlusion test | rays -> boolean mask | **Boolean** |
-| `scene.nearest_edge(point)` | Nearest scene edge to each point | points -> `NearestPointEdge` (distance, points, edge id) | **AD** |
-| `scene.nearest_edge(ray)` | Nearest scene edge to each ray (segment on `[0, tmax]` when `tmax` is finite) | rays -> `NearestRayEdge` | **AD** |
+| `scene.nearest_edge(query)` | Nearest scene edge to each point | points -> `NearestPointEdge` (distance, points, edge id) | **AD** |
+| `scene.nearest_edge(query)` with a `Ray` | Nearest scene edge to each ray (segment on `[0, tmax]` when `tmax` is finite) | rays -> `NearestRayEdge` | **AD** |
 | `scene.nearest_edges(point, k)` | k nearest scene edges per point (k <= 16) | points -> `NearestEdgesTopK` | **AD** |
 | `scene.visible(start, end)` | Mutual visibility between two segment endpoints | endpoints -> `SegmentVisibility` | **Boolean** |
 | `scene.visible_pair / visible_chain / visible_edge` | Shared-origin pair, polyline-chain, and edge-sample visibility | segments -> segment/chain/edge visibility | **Boolean** |
 | `scene.trace_reflections(ray, max_bounces)` | Specular reflection paths with image sources | rays -> `ReflectionChain` (hit points, normals, image sources, ids) | **AD** |
 | `scene.trace_refl_epc(ray, receiver, ...)` | Equivalent-path-correction reflection toward a receiver | rays + receiver -> `ReflEpc` | **Detached** |
-| `scene.trace_refl_epc_field(tx, receiver, ...)` | EPC trace returning the complex reflected field | tx position + receiver + `ReflEpcFieldOptions(AD)` -> `ReflEpcField` (complex E-field) | **Native AD** |
-| `scene.accumulate_reflections(...)` | Accumulate reflected field/power onto a grid | rays + grid + material -> `AccumResult` | **Native AD** |
+| `scene.trace_refl_epc_field(source, receiver, ...)` / `(ray, receiver, ...)` | EPC trace returning the complex reflected field | source position or rays + receiver + `ReflEpcFieldOptions(AD)` -> `ReflEpcField` (complex E-field) | **Native AD** |
+| `scene.accum_refl(...)` | Accumulate reflected field/power onto a grid | rays + grid + `ReflMaterial(AD)` -> `AccumResult` | **Native AD** |
 | `scene.accum_dfr_direct(...)` | Native direct/Keller/suffix diffraction accumulation onto a grid | `DfrStates` + `DfrGrid` + `DfrMaterial` -> `DfrAccum` | **Native AD** for direct, Keller, and suffix-reflection order-1, including suffix reflector mesh-vertex gradients; detached for unsupported AD strategies |
 | `scene.accum_dfr(...)` | Native order-2/3 diffraction-chain accumulation onto a grid | initial/recursive `DfrStates` + grid + material -> `DfrAccum` | **Native AD** for direct, Keller, and suffix-reflection order-2/3 chains, including suffix reflector mesh-vertex gradients |
 | `scene.trace_dfr_paths(...)` | Compact first-order diffraction path export | tx/rx + `DfrStates` + `DfrMaterial` -> `DfrPaths` | **AD** |
@@ -169,7 +172,7 @@ RayD includes low-level reflection and visibility primitives for custom wave sim
 - `trace_reflections(...)` for specular reflection chains
 - `visible(...)`, `visible_pair(...)`, `visible_chain(...)`, and `visible_edge(...)` for segment and polyline-chain visibility
 - `trace_refl_epc(...)` and `trace_refl_epc_field(...)` for equivalent-path correction workflows
-- `accumulate_reflections(...)` for reflection grid accumulation workloads
+- `accum_refl(...)` for reflection grid accumulation workloads
 - `accum_dfr_direct(...)`, `accum_dfr(...)`, `trace_dfr_paths(...)` for native diffraction kernels
 
 These APIs expose primitives, not a complete propagation simulator. Callers own the source model, receiver model, material policy, objective, and optimization loop.

@@ -224,7 +224,7 @@ class ProjectMetadataTests(unittest.TestCase):
             "trace_reflections",
             "trace_refl_epc",
             "trace_refl_epc_field",
-            "accumulate_reflections",
+            "accum_refl",
             "trace_dfr_paths",
             "accum_dfr_direct",
             "accum_dfr_coherent_direct",

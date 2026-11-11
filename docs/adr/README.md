@@ -2,7 +2,7 @@
 
 Every accepted RayD decision record lives in this directory as
 `NNNN-<slug>.md`. The sequence is not contiguous: it runs `0001`, `0002`, then
-`0025`, `0026`, then `0028`-`0047`. The gaps are deliberate. This file records
+`0025`, `0026`, then `0028`-`0048`. The gaps are deliberate. This file records
 why, so the sequence is not "tidied" by a later reader.
 
 ## Index
@@ -33,6 +33,7 @@ why, so the sequence is not "tidied" by a later reader.
 | [0045](0045-surface-leaving-rays.md) | Rays leaving a surface, independent of coordinate size | `surface-leaving-rays` | 2026-11-01 | Accepted |
 | [0046](0046-cuda-trace-backend-coverage.md) | Pure-CUDA trace backend for every typed scene operation | `cuda-trace-backend-coverage` | 2026-11-10 | Accepted; pending review by Xingyu Chen |
 | [0047](0047-textbook-utd-corrections.md) | Textbook corrections to the shared UTD coefficient and diffraction source | `textbook-utd-corrections` | 2026-11-10 | Accepted; accepted by the owner, 2026-11-15 |
+| [0048](0048-epc-validity-and-probe-containment.md) | Reflection EPC minimum segment length and probe-first plane-group containment | `epc-validity-and-probe-containment` | 2026-11-11 | Accepted; pending review by Xingyu Chen |
 
 Every row is copied from the target file's own five-line header block. Status,
 date, and decision ID are owned by the ADR, not by this index.
@@ -102,13 +103,6 @@ decisions take the next number after the highest one in the index above.
 Renumbering an existing ADR is rejected. ADR filenames are load-bearing in
 exact-string form:
 
-- `tests/test_adr0026_scattering_ownership.py` opens
-  `docs/adr/0026-generic-scattering-runtime-ownership.md` by path and also
-  asserts that filename appears as a link target.
-- `tests/test_adr0029_axial_edge_visibility.py` opens
-  `docs/adr/0029-typed-axial-edge-visibility.md` by path.
-- `tests/test_adr0033_segment_penetration.py` asserts
-  `docs/adr/0033-batched-segment-penetration.md` exists.
 - `CLAUDE.md` and the byte-identical `AGENTS.md` cite ADR filenames directly, as
   do `README.md`, `torch/README.md`, and
   `docs/torch/torch_gap_analysis.md`.

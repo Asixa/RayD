@@ -4,6 +4,159 @@ All notable changes to RayD are documented in this file.
 
 ## [Unreleased]
 
+### Breaking API changes
+
+The Python API of both backends changes directly: no old name is kept as an alias, no call warns, and no compatibility
+shim remains. The C++ boundary `rayd/integration.h` and the `torch.ops.rayd_torch` operator schemas are unchanged.
+
+#### `rayd.torch`
+
+| Old | New |
+|---|---|
+| `Scene(trace_backend, edge_bvh_backend, *, devices, options)` | `Scene(*, trace_backend, edge_bvh_backend, devices, options)`: the backend selectors are keyword-only |
+| `MixedScene(trace_backend, edge_bvh_backend)` | `MixedScene(*, trace_backend, edge_bvh_backend)` |
+| `Scene.nearest_edge(point)` | `Scene.nearest_edge(query, active=None)` |
+| `Scene.accumulate_reflections(...)` | `Scene.accum_refl(...)` (same parameters) |
+| `Scene.accum_dfr_direct(*, states, grid, material, active, wavelength, direct_samples, keller_samples, suffix_samples, seed, lane_offset, lane_count)` | `Scene.accum_dfr_direct(states, grid, material=None, options=None, active=None)` with `options=rt.DfrOptions(...)` |
+| `Scene.accum_dfr(initial_states=None, recursive_states=None, grid=None, ..., max_order=2, **kwargs)` | `Scene.accum_dfr(initial_states, recursive_states, grid, material=None, options=None, active=None, recursive_active=None)`; no `**kwargs`, and both state sets and the grid are required |
+| `Scene.accum_dfr_coherent_direct(*, states, grid, material, active, wavelength, select_diffraction_point, prefilter_visibility, lane_offset, lane_count)` | `Scene.accum_dfr_coherent_direct(states, grid, material=None, options=None, active=None)` with `options=rt.DfrCoherentOptions(...)` |
+| `Scene.trace_dfr_paths(*, tx_positions, rx_positions, states, material, active, max_paths, wavelength, layout)` | `Scene.trace_dfr_paths(tx_positions, rx_positions, states, material=None, options=None, *, active)` with `options=rt.DfrPathOptions(...)` |
+| `SdfGrid.intersect(ray, *, active, max_steps, relaxation, eps_hit)` | `SdfGrid.intersect(ray, options=None, active=None)` with `options=rt.SdfTraceOptions(...)` |
+| `SdfGrid.visible(start, end, active, *, max_steps, relaxation, eps_hit)` | `SdfGrid.visible(start, end, options=None, active=None)` |
+| `SdfGrid.trace_reflections(ray, max_bounces, active, *, max_steps, relaxation, eps_hit)` | `SdfGrid.trace_reflections(ray, max_bounces, options=None, active=None)` |
+| `SdfGridBatch.intersect(ray, *, active, max_steps, relaxation, eps_hit)` | `SdfGridBatch.intersect(ray, options=None, active=None)` |
+| `SceneGlobalGeometry` | `SceneGeometry` |
+| `SdfIntersection.hit_mask` | `SdfIntersection.valid` |
+| `NearestEdgesTopK.is_valid` (tensor field) | `NearestEdgesTopK.valid`, plus the method `is_valid()` |
+| `ReflEpcField.field_real` / `field_imag` | `ReflEpcField.field_re` / `field_im`, plus the complex property `field` |
+| `DfrCoherentAccum.visibility_reject_count` / `utd_reject_count` | `DfrCoherentAccum.vis_rejects` / `utd_rejects` |
+| `AccumOptions.accumulation_strategy` as an `int` | `rt.AccumStrategy.AUTO` / `ATOMIC` / `STAGED` |
+| `RayFlags.None` | `RayFlags.Empty` |
+
+#### `rayd.drjit`
+
+| Old | New |
+|---|---|
+| `Scene(edge_bvh_backend, trace_backend)` (positional) | `Scene(*, trace_backend, edge_bvh_backend)`: the backend selectors are keyword-only |
+| `MixedScene(trace_backend, edge_bvh_backend)` | `MixedScene(*, trace_backend, edge_bvh_backend)` |
+| `Scene.trace_backend_name()` | `Scene.trace_backend` (read-only property) |
+| `edge_bvh_backend` aliases `hybrid`, `mixed`, `optix_ray`, `ray_optix`, `custom_aabb`, `dr_jit`, `software`, `""` | removed; use `auto`, `drjit`, `optix`, or `optix_drjit` |
+| `Scene.visible_edge(src, edge_pos, edge_dir, ...)` | `Scene.visible_edge(source, edge_position, edge_direction, ...)` |
+| `Scene.nearest_edge(point, active=True)` | `Scene.nearest_edge(query, active=True)` |
+| `Scene.visible(start, end, ignore_prim_ids, active)` | `Scene.visible(start, end, active=True, *, ignore_prim_ids=...)` |
+| `Scene.trace_refl_epc_field(tx_position, ...)` | `Scene.trace_refl_epc_field(source, ...)`; the `Ray` overloads name it `ray` |
+| `Scene.trace_refl_epc(ray, receiver, max_bounces, active)` (mask in the options slot) | `Scene.trace_refl_epc(ray, receiver, max_bounces, options=None, active=True)`; a mask passed as `options` raises `TypeError` |
+| `Scene.accumulate_reflections(...)` | `Scene.accum_refl(...)` (same parameters) |
+| `native_launch_audit()["accumulate_reflections"]` | `native_launch_audit()["accum_refl"]` |
+| `Material` / `MaterialAD` | `ReflMaterial` / `ReflMaterialAD` (the C++ types keep their names) |
+| `DfrCoherentAccum.visibility_reject_count` / `utd_reject_count` (and the `AD` variant) | `vis_rejects` / `utd_rejects` |
+| `RAYD_DFR_DIRECT` / `RAYD_DFR_KELLER` / `RAYD_DFR_SUFFIX_REFL` | `DfrStrategy.DIRECT` / `KELLER` / `SUFFIX_REFL` (an `IntFlag`) |
+| `RAYD_DFR_HASH` / `RAYD_DFR_SOBOL` | `DfrSampleSequence.HASH` / `SOBOL` |
+| `RAYD_DFR_MATCHED_ISO` | `DfrReceiverModel.MATCHED_ISO` |
+| `REFLECTION_EXPORT_FULL` / `MINIMAL` / `COUNT_ONLY` | `ReflectionExportMode.FULL` / `MINIMAL` / `COUNT_ONLY` |
+| `DfrOptions` / `DfrPathOptions` / `DfrCoherentOptions` `strategy_mask`, `sample_sequence`, `receiver_model` as `int` | the enums above |
+| `ReflectionTraceOptions.export_mode` as `int` | `ReflectionExportMode` |
+| `RayFlags.None` | `RayFlags.Empty` |
+| `SdfIntersection.hit_mask` (and the `AD` variant) | `SdfIntersection.valid` |
+| `NearestEdgesTopK.is_valid` (field, and the `AD` variant) | `NearestEdgesTopK.valid`, plus the method `is_valid()` |
+| `MixedScene.add_surfel(cloud, ...)` | `MixedScene.add_surfel(surfel, ...)` |
+
+#### Contracts
+
+- `contracts/public_api.json` and `api_manifest()` no longer carry an `aliases` table; `accumulate_reflections` is
+  `accum_refl` in the derivative manifest.
+- `contracts/operations.json`: the operation `inputs` list the real parameter names (`query`, `active`, `max_bounces`,
+  `options`, ...), `ray_flags` names `Empty`, and the SDF intersection result names its validity field `valid` in both backends.
+
+### Behaviour changes
+
+- Torch `Scene.accum_dfr` defaults to `max_order=1` (through `DfrOptions`) instead of `2`, matching Dr.Jit. Chain
+  accumulation must ask for `max_order=2` or `3`.
+- Backend strings match exactly and case-sensitively in both backends: `"OptiX"` or `" optix"` is rejected.
+- Dr.Jit raises `ValueError` instead of `RuntimeError` for an invalid `trace_backend` or `edge_bvh_backend` value and
+  for `max_bounces < 1` in `Scene.trace_reflections`.
+- Torch `Scene.nearest_edge` takes an `active` mask with the same semantics as `nearest_edges`; inactive rows return
+  the miss sentinels.
+
+### Added
+
+- Torch result records share `repr` (field name, shape, dtype and device for tensors, value for scalars, with no device
+  synchronization), `to(device)`, and `detach()`; `ReflectionChain` has them too.
+- Every Torch record with per-row validity exposes `valid` and `is_valid()`. Records that split a complex field into
+  `<name>_re`/`<name>_im` expose the complex property `<name>`.
+- The deferred Torch intersection results are `Intersection` instances, and the mixed-scene one provides `instance_id`.
+- Torch `Scene` methods that return nothing on an offloading `MultiDeviceOptions` are annotated `X | None`.
+- Torch enums `TraceBackend`, `EdgeBVHBackend` (string enums; plain strings are still accepted) and `AccumStrategy`,
+  and the options records `DfrOptions`, `DfrCoherentOptions`, and `DfrPathOptions`.
+- Dr.Jit enums `DfrStrategy`, `DfrSampleSequence`, `DfrReceiverModel`, and `ReflectionExportMode`.
+- `tests/test_api_signature_parity.py` compares the shared `Scene` and `MixedScene` signatures of both backends
+  against a commented allowlist of accepted differences.
+- `scripts/gen_drjit_stub.sh` regenerates the Dr.Jit stub from the built extension with `nanobind.stubgen` and
+  `scripts/drjit_stub_patterns.txt`.
+
+### Channel 0.6 integration line
+
+Changes from the `release/channel-0.6` integration branch (merged with the 0.9.0 line). All C++ additions are
+additive: `kIntegrationApiVersion` stays 8 and no existing `rayd/integration.h` or `rayd/scene.h` declaration changed.
+
+#### Added
+
+- Typed scene API (`rayd/scene.h`): `SceneTraceBackend` and `SceneOptions` with a `create_scene(meshes, options)`
+  overload (the one-argument form stays `Auto`), `scene_trace_backend()` returning the resolved tracer, and
+  `optix_availability()` reporting whether OptiX is usable on a device and why not. A forced OptiX request fails
+  loudly when OptiX is unusable.
+- Typed in-place refit: `update_mesh_vertices(scene, mesh_index, vertices)` stages new vertices for a mesh created
+  with `MeshInput::dynamic`, and `sync_scene(scene)` commits them through the same path as `Scene.sync()` (refit,
+  rebuild every 16th commit, finite-vertex check). A refit scene traces bit for bit like one built from the moved
+  vertices.
+- `SegmentPenetrationOverflowPolicy::DropRow`: an overflowing segment-penetration row is returned to the inert state,
+  keeps `overflow=true`, is counted in an optional `dropped_row_count`, and sets no failure bit; other rows are
+  bitwise unchanged. The default `FailBatch` is unchanged (ADR-0033 amendment).
+- Typed `AxialEdgeVisibilityRequest::state_source` (optional float32 `[N, 3]`) traces each state's samples to its own
+  source, and typed `DiffractionPathConfig::state_source_index` (optional int32 `[state_limit]`) gives each order-1
+  exporter state its own transmitter for the incident polarization and the exported `tx_id`. Omitting them is
+  bitwise the previous behaviour.
+- `pair_face_cosines` folds the face angles of a source-edge pair into the wedge domain and returns
+  `reciprocal_face_cosines`, for callers that build face operators before the pair is evaluated.
+- Kirchhoff table sampling and density lookup (`sample_direction`, `table_pdf`) are shared header device math in
+  `include/rayd/scattering_table.cuh`; the table kernels call the same functions (no numerical change).
+- `legacy_slab_fresnel_dual_multi<N>` carries N tangent directions through one evaluation of the legacy slab Fresnel
+  primal; tangent k follows the operation sequence of `legacy_slab_fresnel_dual` exactly.
+- Typed `ReflectionEpcRequest::min_segment_length` (default 0, bitwise the previous behaviour): an EPC path with a
+  source, interaction-point or receiver segment shorter than it is invalid (ADR-0048).
+- `rayd_torch_trace_backend_parity` CTest compares the OptiX and pure-CUDA trace backends on axial-edge visibility,
+  segment penetration (both overflow policies, tapes, VJP, JVP), intersection, order-1 diffraction paths,
+  diffraction accumulation, coherent accumulation, refit, and the per-state source fields.
+
+#### Changed
+
+- Axial-edge visibility and segment penetration run on the pure-CUDA trace backend too (selected by `Auto` when OptiX
+  is unusable); each keeps one numerical body shared by both tracers.
+
+- Reflection EPC plane-group containment first traces a short probe along the plane normal and accepts the hit
+  triangle when it belongs to the expected group and contains the point; otherwise the exact member scan decides.
+  The accepted set is unchanged and finely subdivided planes no longer scale the launch linearly (ADR-0048).
+
+#### Behaviour changes (numerical, ADR-0047)
+
+- The shared UTD diffraction coefficient matches Kouyoumjian-Pathak and is reciprocal by construction: finite-edge
+  aperture factors take the Fresnel phase variable, the face reflection angles are the mean of the incidence and
+  observation sines, the direct source keeps the short-dipole `sin(theta)` pattern, and the stationary point uses
+  the unfolding closed form. Every diffraction value moves; downstream diffraction baselines must be regenerated.
+- The wedge face reflection operator is built in the edge-fixed bases (`op = -diag(r_TM, r_TE)` on (hard, soft)),
+  so the face term no longer takes its sign from rounding on the Keller cone.
+
+#### Fixed
+
+- Torch diffraction accumulation passes the real angular frequency `2 pi c / lambda` to the face Fresnel
+  coefficients (it passed `2 pi c`, scaling every face's loss tangent by the wavelength in metres), and coherent
+  accumulation radiates from the documented `+x` dipole instead of an unset polarization.
+- Order-1 diffraction paths on the pure-CUDA trace backend read the source polarization, the ISB taper width and
+  strided material columns from the request, as the OptiX program does; they used to assume `+x`, no taper and
+  contiguous materials without any error.
+
+## [0.9.0] - 2026-11-10
+
 ### Behaviour changes
 
 - **Breaking:** non-finite vertices (NaN or +/-Inf) are rejected with an error
@@ -16,6 +169,25 @@ All notable changes to RayD are documented in this file.
   (`max_order` 2 and 3) of both backends weights each lane's initial state by
   S, in the primal and in its derivatives. Each further diffraction event
   still draws one recursive state per lane with weight 1.
+- First-order diffraction visibility segments end just off the wedge instead
+  of on its edge, on every path of both backends (OptiX and CUDA trace) and in
+  every first-order site: path export, and direct, Keller-cone, suffix and
+  coherent accumulation. The segment end moves from the edge point along the
+  exterior bisector `n0 + n1` of the wedge's face normals by the larger of the
+  diffraction ray bias (1e-4) and 2^-22 of the point's largest coordinate
+  magnitude, and takes no further along-segment bias. A segment towards a
+  source or receiver inside the wedge's solid interior now crosses one of the
+  wedge's faces and is blocked, where it used to end on the edge without
+  crossing any face and count as visible. Diffraction rows and Monte-Carlo
+  lanes whose target lies inside the wedge are therefore rejected, so path
+  row counts and accumulation tapes change for such receivers (a downstream
+  check saw one single-wedge row set go from `[0, 1, 2, 5]` to `[1, 2, 5]`, a
+  vertical-edge-only scene go from 3 rows to 2, and accumulation tapes lose
+  the lanes depositing inside the wedge; the dropped contributions were about
+  1e-10 of the others). Only the Torch OptiX path export used to move the end
+  off the faces, so Torch OptiX and CUDA path counts disagreed by 17-33%; they
+  now agree. A thin screen (opposite face normals) has no bisector and keeps
+  its edge point and bias, and the UTD field still uses the true edge point.
 - `nearest_edge(ray)` follows one degenerate-row rule on every edge backend of
   both frontends: a row is searched only with a finite origin, a finite
   non-zero direction and a positive `tmax` (`+inf` or no `tmax` is the
@@ -77,9 +249,12 @@ All notable changes to RayD are documented in this file.
   `MeshInput.uv` and `MeshInput.face_uv`: `intersect_forward` reports the
   interpolated texture coordinates in `uv` (and its derivatives follow them)
   for meshes that carry UVs, where it used to report barycentric `(u, v)`, and
-  scene creation applies the same UV validation as `Scene.build()`. The
-  header and `kIntegrationApiVersion` (8) are unchanged; meshes without UVs
-  are unaffected.
+  scene creation rejects `face_uv` without `uv`, `face_uv` indices outside the
+  `uv` rows, and malformed UV tensors as `Scene.build()` does; its errors name
+  `rayd::torch::create_scene` instead of `Scene.build()`. Rejecting `uv` that
+  requires grad is a check of the Python `Scene.build()` only. The header and
+  `kIntegrationApiVersion` (8) are unchanged; meshes without UVs are
+  unaffected.
 - Torch scene commits are ordered on the GPU against queries on other CUDA
   streams: `sync()`, `set_edge_mask()` and the release of a scene (for
   example when `build()` replaces it) make their stream wait for the previous
@@ -96,14 +271,6 @@ All notable changes to RayD are documented in this file.
 
 ### Added
 
-- Typed `AxialEdgeVisibilityRequest::state_source` (optional float32 `[N, 3]`)
-  traces each state's samples to its own source, and typed
-  `DiffractionPathConfig::state_source_index` (optional int32 `[state_limit]`)
-  gives each order-1 exporter state its own transmitter for the incident
-  polarization and the exported `tx_id`, with one transmitter lane. One call
-  then serves the states of every transmitter. Both are additive; omitting them
-  is bitwise the previous behaviour, and the Dr.Jit diffraction-paths PTX is
-  unchanged.
 - Added `python -m rayd.torch.doctor` and `python -m rayd.drjit.doctor`. They print
   the OS, Python, driver, each GPU's name, compute capability and free memory, the
   installed build's GPU targets and the framework it was compiled against, the
@@ -119,12 +286,13 @@ All notable changes to RayD are documented in this file.
   the framework version (and Torch's CUDA version) each build compiled against.
 - Added a `Governance` workflow that runs the formatting check and every
   GPU-free governance and packaging test on each push and pull request.
-- The typed Torch integration API (`rayd/scene.h`) can refit a scene in place:
-  `update_mesh_vertices(scene, mesh_index, vertices)` stages new vertices for a
-  mesh created with `MeshInput::dynamic`, and `sync_scene(scene)` commits them
-  (the same refit, periodic rebuild and finite-vertex check as `Scene.sync()`).
-  A refit scene traces bit for bit like one built from the moved vertices.
-  `kIntegrationApiVersion` stays 8: no existing declaration changed.
+- Added `RAYD_CUDA_ARCHS` source-build target selection for both backends, a
+  runtime check that fails early with build-from-source guidance on GPUs the
+  installed build cannot run (`UnsupportedDeviceError`), and the `sm_70`
+  support floor; the Torch OptiX PTX is compiled for `compute_70`.
+- Added an opt-in adversarial ray stress suite for both backends, a Building
+  from Source / older GPUs README section, and GPU-support documentation that
+  separates what a build contains from what was verified.
 
 ### Changed
 
@@ -156,7 +324,7 @@ All notable changes to RayD are documented in this file.
   ship under their own names.
 - Torch configure now fails with a clear message when `RAYD_CUDA_ARCHS` is
   combined with an explicit `CMAKE_CUDA_ARCHITECTURES` or
-  `TORCH_CUDA_ARCH_LIST` (as the Dr.Jit backend already did), when the default
+  `TORCH_CUDA_ARCH_LIST` (as the Dr.Jit backend does), when the default
   native architecture detection finds no GPU (asking for `RAYD_CUDA_ARCHS`),
   and when the build environment's torch is CPU-only.
 - Torch CMake seeds Caffe2's legacy FindCUDA from `find_package(CUDAToolkit)`,
@@ -166,10 +334,6 @@ All notable changes to RayD are documented in this file.
 - Dr.Jit symbolic `trace_reflections` accepts at most 65,536 bounces and
   evaluates every 8 bounces; `nearest_edge` and `shadow_test` return empty
   results for empty batches, while `intersect` raises for one.
-- The OptiX multipath pipeline retry in both backends now fires only for
-  compile, link, and disk-cache OptiX errors, and warns once with the first
-  failure. The Torch pipeline cache no longer holds its global lock during a
-  compile.
 - The README install section now leads with the backend-specific installs and
   the CUDA Torch index URL and explains what `pip install rayd` pulls in; it
   gained a Troubleshooting section.
@@ -247,26 +411,21 @@ All notable changes to RayD are documented in this file.
   very short and very long chains.
 - Near-normal wall-frame normalization no longer biases the transmission path
   gain (relative error 2e-4 to 5e-6 at tilts of 1e-6 to 1e-5).
-
-### Since 0.8.0, before this section
-
-- Added `RAYD_CUDA_ARCHS` source-build target selection for both backends, a
-  runtime check that fails early with build-from-source guidance on GPUs the
-  installed build cannot run (`UnsupportedDeviceError`), and the `sm_70`
-  support floor; compiled the Torch OptiX PTX for `compute_70`.
-- Kept Jetson and discrete-GPU cubins apart in the device check and described
+- The device check keeps Jetson and discrete-GPU cubins apart and describes
   what a build runs on instead of "and newer".
-- Kept rays off the surface they leave at any coordinate size (ADR-0045) and
-  ended diffraction visibility segments off the wedge on every path.
-- Gave Torch multipath OptiX pipelines their own exception flags, rebuilt a
-  failed multipath pipeline after releasing idle cached ones and then without
-  the OptiX disk cache, and kept the disk cache when pipelines take turns.
-- Rejected Torch reflection batches whose output index overflows `int32` and
-  EPC `max_bounces` beyond the native chain capacity.
-- Regenerated the Dr.Jit PTX so it no longer needs R575.
-- Added an opt-in adversarial ray stress suite for both backends, a Building
-  from Source / older GPUs README section, and GPU-support documentation that
-  separates what a build contains from what was verified.
+- Rays are kept off the surface they leave at any coordinate size (ADR-0045),
+  and diffraction visibility segments end off the wedge on every path (see
+  Behaviour changes).
+- `optixPipelineCreate(multipath)` failures: Torch multipath OptiX pipelines
+  have their own exception flags, and both backends rebuild a failed multipath
+  pipeline after releasing idle cached ones and then without the OptiX disk
+  cache, keeping the disk cache when pipelines take turns. Only compile, link,
+  and disk-cache OptiX errors are retried, and a build that succeeds only on a
+  retry warns once with the first failure. The Torch pipeline cache no longer
+  holds its global lock during a compile.
+- Torch reflection batches whose output index overflows `int32` and EPC
+  `max_bounces` beyond the native chain capacity are rejected with an error.
+- The Dr.Jit PTX is regenerated so it no longer needs an R575 driver.
 
 ## [0.8.0] - 2026-07-30
 
@@ -363,6 +522,7 @@ All notable changes to RayD are documented in this file.
   diffraction accumulation, EPC bindings, and native AD propagation across
   both backends.
 
+[0.9.0]: https://github.com/Asixa/RayD/releases/tag/v0.9.0
 [0.8.0]: https://github.com/Asixa/RayD/releases/tag/v0.8.0
 [0.7.0]: https://github.com/Asixa/RayD/releases/tag/v0.7.0
 [0.6.0]: https://github.com/Asixa/RayD/releases/tag/v0.6.0

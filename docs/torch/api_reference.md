@@ -9,9 +9,41 @@ import rayd.torch as rt
 ## Core Types
 
 - `rt.Mesh(vertices, faces, ...)`: CUDA mesh input. `vertices` must be contiguous `torch.float32` with shape `(N, 3)`, and `faces` must be contiguous `torch.int32` with shape `(M, 3)`.
-- `rt.Scene()`: Native CUDA/OptiX scene. Build with `add_mesh()` and `build()`.
+- `rt.Scene(*, trace_backend="auto", edge_bvh_backend="auto", devices=None, options=None)`: Native CUDA/OptiX
+  scene. Build with `add_mesh()` and `build()`. Every constructor argument is keyword-only. `trace_backend` takes
+  `rt.TraceBackend` (`AUTO`, `OPTIX`, `CUDA`) and `edge_bvh_backend` takes `rt.EdgeBVHBackend` (`AUTO`, `OPTIX`,
+  `CUDA`); both are string enums, so the plain strings `"auto"`, `"optix"`, and `"cuda"` are accepted too. Matching
+  is exact, and any other value raises `ValueError`. `rt.MixedScene` takes the same two keyword-only selectors.
 - `rt.Ray(o, d, tmax=None)`: Ray batch with CUDA `torch.float32` origin and direction tensors of shape `(N, 3)`.
 - `rt.Camera(width, height, fov_x)`: Torch Python camera helper for primary ray generation. Exposes the `aspect` property plus `sample_to_world(sample, depth=1.0)`, `world_to_sample(point)`, and `sample_ray(sample)`.
+
+## Result Records
+
+Every result record (`Intersection`, `NearestPointEdge`, `NearestRayEdge`, `NearestEdgesTopK`, the visibility
+records, `ReflectionChain`, `ReflEpc`, `ReflEpcField`, `AccumResult`, `WedgeEvents`, `DfrAccum`, `DfrCoherentAccum`,
+`DfrPaths`, `SdfIntersection`, `SceneGeometry`, `SurfelIntersection`, `SurfelComposite`) shares one helper set:
+
+- a compact `repr` that shows each tensor field as `dtype[shape] device` and each scalar by value, and never reads
+  tensor data back to the host. Lazy results (`Intersection` from a reduced or AD query, `ReflectionChain`) show only
+  the fields already computed;
+- `to(device)`, which returns a new record with every tensor moved;
+- `detach()`, which returns a new record with every tensor detached.
+
+`to()` and `detach()` on a lazy result compute its remaining fields first and return the plain record.
+
+Every `Scene.intersect()` and `MixedScene.intersect()` result is an `Intersection` instance, including the lazy
+results of reduced (`flags=RayFlags.Empty`) and AD queries, and each provides `instance_id`.
+
+Records with per-row validity expose a boolean tensor `valid` and a method `is_valid()` that returns it:
+`Intersection`, `NearestEdgesTopK`, `ReflectionChain`, `ReflEpc`, `ReflEpcField`, `DfrPaths`, `SdfIntersection`,
+`SurfelIntersection`, and `SurfelComposite`. `SegmentChainVisibility.all_visible` and
+`AxialEdgeVisibility.any_visible` are query results, not validity, and keep their names.
+
+Complex fields stored as `<name>_re`/`<name>_im` tensor pairs also expose a complex property `<name>`:
+`ReflEpcField.field`, `AccumResult.reflection_field_{x,y,z}`, `DfrAccum.field_{x,y,z}`, `DfrPaths.field_{x,y,z}`, and
+`DfrCoherentAccum.{direct,multi}_field_{x,y,z}`.
+
+`RayFlags` has the members `Empty` (t only), `Geometric`, `ShadingN`, `UV`, and `All`.
 
 ## Introspection
 
@@ -49,16 +81,20 @@ record exchange format.
   scene-global primitive range. Face ranges are concatenated in mesh-id order;
   `global_geometry()` exposes the corresponding `shape_id`, `local_prim_id`,
   and `global_prim_id` tensors.
-- `Scene.nearest_edge(point)` returns `NearestPointEdge`.
-- `Scene.nearest_edge(ray)` returns `NearestRayEdge`.
+- `Scene.nearest_edge(query, active=None)` returns `NearestPointEdge` for a point tensor and `NearestRayEdge` for a
+  `Ray`. An inactive row returns the miss sentinels (distance `inf`, every id `-1`, other fields `0`), as in
+  `nearest_edges`.
 - `Scene.nearest_edges(point, k, active=None)` returns `NearestEdgesTopK` for `1 <= k <= 16`.
-- `Scene.global_geometry()` returns `SceneGlobalGeometry`.
+- `Scene.global_geometry()` returns `SceneGeometry`.
 - `Scene.edge_mask()` / `Scene.set_edge_mask(mask)` filter the secondary-edge BVH in scene-global edge index space.
 
 ## Visibility
 
 - `Scene.visible(start, end, active=None)` returns a `torch.bool` visibility tensor.
-- `Scene.visible_pair(...)`, `Scene.visible_edge(...)`, `Scene.visible_chain(...)`: segment-pair, edge, and chain visibility helpers.
+- `Scene.visible_pair(start, end_a, end_b, ignore_prim_ids=None, active=None)`,
+  `Scene.visible_edge(source, edge_position, edge_direction, edge_t_min, edge_t_max, sample_fractions, active)`, and
+  `Scene.visible_chain(points, chain_length, ignore_prim_per_segment=None, active=None)`: segment-pair, edge, and
+  chain visibility helpers.
 
 ## Multipath
 
@@ -73,14 +109,86 @@ record exchange format.
   This Torch method is forward-only and rejects reverse-mode or forward-mode AD
   inputs until its native derivatives cover the same Fresnel, polarization, and
   multi-bounce computation as the primal.
-- `Scene.accumulate_reflections(ray, tx_position, grid, material, max_bounces,
-  options=None, active=None, tx_polarization=None)` returns forward-only
-  `AccumResult`; `AccumGrid`, `ReflMaterial`, and `AccumOptions` mirror the
-  native accumulation contract.
-- `Scene.trace_dfr_paths(tx_positions=..., rx_positions=..., states=..., material=..., active=..., max_paths=..., wavelength=..., layout=...)` returns `DfrPaths`. Single-device calls default to `DfrPathLayout.Compact`; multi-device scenes use transmitter-aligned `SourceLane` rows. Torch rejects tracked or forward-dual endpoint, state, material, and scene-geometry inputs because this exporter is forward-only.
-- `Scene.accum_dfr_direct(states=..., grid=..., material=..., active=..., wavelength=..., direct_samples=..., keller_samples=..., suffix_samples=..., seed=..., lane_offset=..., lane_count=...)` returns `DfrAccum`.
-- `Scene.accum_dfr(initial_states=..., recursive_states=..., grid=..., material=..., active=..., recursive_active=..., wavelength=..., direct_samples=..., keller_samples=..., suffix_samples=..., seed=..., max_order=..., lane_offset=..., lane_count=...)` returns `DfrAccum` for order-2/order-3 chain accumulation.
-- `Scene.accum_dfr_coherent_direct(states=..., grid=..., material=..., active=..., wavelength=..., select_diffraction_point=..., prefilter_visibility=..., lane_offset=..., lane_count=...)` returns `DfrCoherentAccum`. Replicated scenes shard the deterministic `(state, grid-cell)` lane space and sum partial grids on the master. Torch rejects tracked or forward-dual state, material, and scene-geometry inputs because this variant is forward-only.
+- `Scene.accum_refl(ray, tx_position, grid, material, max_bounces, options=None, active=None,
+  tx_polarization=None)` returns forward-only `AccumResult`; `AccumGrid`, `ReflMaterial`, and `AccumOptions` mirror
+  the native accumulation contract. `AccumOptions.accumulation_strategy` takes `rt.AccumStrategy`: `AUTO` (stage and
+  reduce when the batch is large enough for the grid, otherwise atomics), `ATOMIC`, or `STAGED`.
+- `Scene.trace_dfr_paths(tx_positions, rx_positions, states, material=None, options=None, *, active)` returns
+  `DfrPaths`. `active` is required (ADR-0031). `rt.DfrPathOptions(wavelength=1.0, max_paths=None, layout=None)`:
+  `max_paths=None` exports every state, and `layout=None` selects `DfrPathLayout.Compact` on one device and
+  transmitter-aligned `SourceLane` rows on a multi-device scene. Torch rejects tracked or forward-dual endpoint,
+  state, material, and scene-geometry inputs because this exporter is forward-only.
+- `Scene.accum_dfr_direct(states, grid, material=None, options=None, active=None)` returns `DfrAccum`.
+- `Scene.accum_dfr(initial_states, recursive_states, grid, material=None, options=None, active=None,
+  recursive_active=None)` returns `DfrAccum` for order-2/order-3 chain accumulation. Both state sets and the grid are
+  required.
+- Both take `rt.DfrOptions(wavelength=1.0, seed=0, max_order=1, direct_samples=0, keller_samples=0,
+  suffix_samples=0, lane_offset=0, lane_count=-1)`. `max_order` is read only by `accum_dfr`; it defaults to `1`, as
+  in Dr.Jit, so chain accumulation must ask for `max_order=2` or `3`. `lane_offset`/`lane_count` select the
+  Monte-Carlo lane window.
+- `Scene.accum_dfr_coherent_direct(states, grid, material=None, options=None, active=None)` returns
+  `DfrCoherentAccum`, configured by `rt.DfrCoherentOptions(wavelength=1.0, select_diffraction_point=True,
+  prefilter_visibility=True, lane_offset=0, lane_count=-1)`. Replicated scenes shard the deterministic
+  `(state, grid-cell)` lane space and sum partial grids on the master. Torch rejects tracked or forward-dual state,
+  material, and scene-geometry inputs because this variant is forward-only.
+- A material of `None` selects the default per-face diffraction material.
+
+### Options differences from Dr.Jit
+
+The Torch options records use the Dr.Jit field name for every shared concept. They omit the Dr.Jit fields that the
+Torch kernels cannot honour:
+
+- `DfrOptions`: no `k`, `samples`, `strategy_mask`, `sample_sequence`, `receiver_model`, `collect_edge_use`, or
+  `collect_debug_counts`. Torch chooses the strategies from the non-zero `*_samples` counts, always uses the hash
+  sample sequence and the matched isotropic receiver, and always returns its counters. For that reason the Torch
+  backend has no `DfrStrategy`, `DfrSampleSequence`, or `DfrReceiverModel` enum.
+- `DfrCoherentOptions`: no `k`, `max_order`, `receiver_model`, `collect_debug_counts`, `omega`, `tx_pol_*`, or
+  `higher_*` fields; Torch runs first-order coherent accumulation with an x-polarized source.
+- `DfrPathOptions`: no `k`, `seed`, `sample_count`, `max_order`, `max_rx`, `strategy_mask`, `receiver_model`, or
+  `return_geom`. `max_paths` defaults to `None` (every state) where Dr.Jit requires a positive value; `layout` is
+  Torch-only.
+- `AccumOptions`: the shared fields `wavelength`, `solid_angle_per_ray`, `collect_wedges`, `collect_wedge_prefixes`,
+  `wedge_capacity`, and `wedge_sample_stride` have the same names in both backends. Torch-only:
+  `accumulation_strategy`, `compact_min_samples`, `staged_min_samples_per_cell`, `procedural_sample_count`, and
+  `include_los`. Dr.Jit-only: `k`, `cell_area`, `seed`, `rr_depth`, `rr_prob`, and `stop_threshold`.
+- `ReflEpcOptions`: `expected_prim_ids`, `surface_group_id`, `surface_group_size`, `surface_group_members`,
+  `visibility_ignore_mode`, and `plane_tolerance` are shared. Torch-only: `direct_plane_points` and
+  `direct_plane_normals`, which Torch requires. Dr.Jit-only: `surface_max_group_size` and `final_ignore_group_ids`.
+- Torch has no reflection export mode, so it has no `ReflectionExportMode` enum.
+
+### Known naming mismatches
+
+These names still differ between the backends and are left for a later round:
+
+- Torch `ReflEpcOptions.direct_plane_points`/`direct_plane_normals` (per-path `[N, 3]` tensors that Torch requires)
+  correspond to Dr.Jit `ReflEpcFieldOptions.slot_plane_point`/`slot_plane_normal`, which live on the field options
+  record, not on `ReflEpcOptions`, and use a singular name. Renaming either side changes a native record field (the
+  Torch tensors are `include/rayd/reflection.h` request fields).
+- Dr.Jit `ReflEpcOptions.surface_max_group_size` is an integer bound with no Torch field; Torch derives the bound
+  from the padded `surface_group_members` length divided by the group count. It is listed above as Dr.Jit-only and
+  keeps its name.
+
+## SDF
+
+- `rt.SdfGrid(values, position, rotation, scale)` with `values` of shape `(Nx, Ny, Nz)`.
+- `SdfGrid.intersect(ray, options=None, active=None)` returns `SdfIntersection`; `SdfGrid.visible(start, end,
+  options=None, active=None)` and `SdfGrid.trace_reflections(ray, max_bounces, options=None, active=None)` follow the
+  same order, as does `SdfGridBatch.intersect(ray, options=None, active=None)`. `options` is an
+  `rt.SdfTraceOptions(max_steps=64, relaxation=0.9, eps_hit=None)`, the record `MixedScene.add_sdf()` takes.
+- `rt.sdf_intersect(grid, origins, directions, *, tmax=inf, max_steps=64, relaxation=0.9, eps_hit=None)` is the
+  low-level Torch-only entry point.
+
+## Instance Transforms
+
+`Scene.set_instance_transform(instance_id, transform)` (Torch) and `Scene.set_mesh_transform(mesh_id, mat,
+set_left=True)` (Dr.Jit) are deliberately different operations. The Torch call places an instance of a shared static
+owner mesh and refreshes only its IAS entry; the Dr.Jit call rewrites a mesh's own left or right world transform.
+
+## Offload
+
+Under `MultiDeviceOptions(offload=...)`, the per-ray queries (`intersect`, `nearest_edge`, `nearest_edges`,
+`visible`, `visible_pair`, `visible_edge`, `visible_chain`, `trace_reflections`, and `trace_refl_epc_field`) stream
+their chunks to the offload hook and return `None`. Their return annotations are `X | None`.
 
 These APIs use native CUDA/OptiX source ports for the reflection and diffraction
 multipath execution paths. Current completion risk is performance parity, not

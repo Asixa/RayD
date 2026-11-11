@@ -300,16 +300,16 @@ class LaneOffsetTests(unittest.TestCase):
 
     def test_public_accum_dfr_direct_lane_offset_zero_matches_the_default(self):
         default = self.scene.accum_dfr_direct(
-            states=self.states, grid=self.grid, material=self.material, wavelength=1.0, direct_samples=64, seed=17
+            states=self.states,
+            grid=self.grid,
+            material=self.material,
+            options=rt.DfrOptions(wavelength=1.0, direct_samples=64, seed=17),
         )
         explicit = self.scene.accum_dfr_direct(
             states=self.states,
             grid=self.grid,
             material=self.material,
-            wavelength=1.0,
-            direct_samples=64,
-            seed=17,
-            lane_offset=0,
+            options=rt.DfrOptions(wavelength=1.0, direct_samples=64, seed=17, lane_offset=0),
         )
         self.assertTrue(torch.equal(default.power, explicit.power))
         self.assertTrue(torch.equal(default.field_x_re, explicit.field_x_re))
@@ -390,9 +390,7 @@ class LaneOffsetTests(unittest.TestCase):
             states=single_states,
             grid=self.grid,
             material=self.material,
-            wavelength=1.0,
-            direct_samples=samples,
-            seed=17,
+            options=rt.DfrOptions(wavelength=1.0, direct_samples=samples, seed=17),
         )
         single.power.sum().backward()
         expected = single_states.edge_pos.grad
@@ -404,11 +402,9 @@ class LaneOffsetTests(unittest.TestCase):
                 states=split_states,
                 grid=self.grid,
                 material=self.material,
-                wavelength=1.0,
-                direct_samples=samples,
-                seed=17,
-                lane_offset=offset,
-                lane_count=count,
+                options=rt.DfrOptions(
+                    wavelength=1.0, direct_samples=samples, seed=17, lane_offset=offset, lane_count=count
+                ),
             )
             total = shard.power if total is None else total + shard.power
         torch.testing.assert_close(total, single.power.detach(), rtol=1e-5, atol=1e-6)
@@ -436,13 +432,19 @@ class CoherentLaneWindowTests(unittest.TestCase):
 
     def test_public_split_windows_merge_back_to_the_full_lane_space(self):
         full = self.scene.accum_dfr_coherent_direct(
-            states=self.states, grid=self.grid, material=self.material, wavelength=1.0
+            states=self.states, grid=self.grid, material=self.material, options=rt.DfrCoherentOptions(wavelength=1.0)
         )
         first = self.scene.accum_dfr_coherent_direct(
-            states=self.states, grid=self.grid, material=self.material, wavelength=1.0, lane_offset=0, lane_count=4
+            states=self.states,
+            grid=self.grid,
+            material=self.material,
+            options=rt.DfrCoherentOptions(wavelength=1.0, lane_offset=0, lane_count=4),
         )
         second = self.scene.accum_dfr_coherent_direct(
-            states=self.states, grid=self.grid, material=self.material, wavelength=1.0, lane_offset=4, lane_count=4
+            states=self.states,
+            grid=self.grid,
+            material=self.material,
+            options=rt.DfrCoherentOptions(wavelength=1.0, lane_offset=4, lane_count=4),
         )
         for name in (
             "direct_field_x_re",
@@ -459,7 +461,7 @@ class CoherentLaneWindowTests(unittest.TestCase):
             "multi_field_z_im",
         ):
             torch.testing.assert_close(getattr(first, name) + getattr(second, name), getattr(full, name))
-        for name in ("direct_count", "multi_count", "visibility_reject_count", "utd_reject_count"):
+        for name in ("direct_count", "multi_count", "vis_rejects", "utd_rejects"):
             self.assertTrue(torch.equal(getattr(first, name) + getattr(second, name), getattr(full, name)))
 
     def test_staged_nonzero_window_merges_back_to_the_full_lane_space(self):
@@ -467,18 +469,19 @@ class CoherentLaneWindowTests(unittest.TestCase):
         total_lanes = states.state_count * self.grid.resolution0 * self.grid.resolution1
         split = total_lanes // 2
         full = self.scene.accum_dfr_coherent_direct(
-            states=states, grid=self.grid, material=self.material, wavelength=1.0
+            states=states, grid=self.grid, material=self.material, options=rt.DfrCoherentOptions(wavelength=1.0)
         )
         first = self.scene.accum_dfr_coherent_direct(
-            states=states, grid=self.grid, material=self.material, wavelength=1.0, lane_offset=0, lane_count=split
+            states=states,
+            grid=self.grid,
+            material=self.material,
+            options=rt.DfrCoherentOptions(wavelength=1.0, lane_offset=0, lane_count=split),
         )
         second = self.scene.accum_dfr_coherent_direct(
             states=states,
             grid=self.grid,
             material=self.material,
-            wavelength=1.0,
-            lane_offset=split,
-            lane_count=total_lanes - split,
+            options=rt.DfrCoherentOptions(wavelength=1.0, lane_offset=split, lane_count=total_lanes - split),
         )
         for name in (
             "direct_field_x_re",
@@ -495,7 +498,7 @@ class CoherentLaneWindowTests(unittest.TestCase):
             "multi_field_z_im",
         ):
             torch.testing.assert_close(getattr(first, name) + getattr(second, name), getattr(full, name))
-        for name in ("direct_count", "multi_count", "visibility_reject_count", "utd_reject_count"):
+        for name in ("direct_count", "multi_count", "vis_rejects", "utd_rejects"):
             self.assertTrue(torch.equal(getattr(first, name) + getattr(second, name), getattr(full, name)))
 
     def test_invalid_windows_and_cuda_nonzero_offset_are_rejected(self):
@@ -531,12 +534,9 @@ class ChainLaneOffsetTests(unittest.TestCase):
             recursive_states=recursive,
             grid=rt.DfrGrid(axis=2, position=-1.0, resolution0=2, resolution1=2),
             material=_material(),
-            wavelength=0.125,
-            seed=17,
-            direct_samples=64,
-            keller_samples=64,
-            max_order=2,
-            **window,
+            options=rt.DfrOptions(
+                wavelength=0.125, seed=17, direct_samples=64, keller_samples=64, max_order=2, **window
+            ),
         )
 
     def setUp(self):

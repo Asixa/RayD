@@ -120,8 +120,7 @@ oracle for the CUDA kernels; it must NOT ship in the product package.
   body (templated on the sampler), plus OBB slab clip and quaternion
   world↔local helpers (reuse existing shared math where present).
 - Host-compile contract coverage: extend the `tests/test_rt_host_compile.py` /
-  `tests/native/` pattern with an SDF smoke TU; add header contract test in the
-  root suite style (`tests/test_shared_headers.py` conventions).
+  `tests/native/` pattern with an SDF smoke TU.
 - Do NOT modify any existing shared header.
 
 ### Phase 3a — Torch backend native (CUDA + C++ + registration + build)

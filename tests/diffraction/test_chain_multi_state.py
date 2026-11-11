@@ -115,11 +115,13 @@ class TorchChainStateSumTests(unittest.TestCase):
             recursive_states=self.recursive(max_order - 1, rec_edge_pos),
             grid=self.rt.DfrGrid(axis=2, position=-1.0, resolution0=1, resolution1=1),
             material=material,
-            wavelength=0.125,
-            seed=17,
-            direct_samples=samples["direct"],
-            keller_samples=samples["keller"],
-            max_order=max_order,
+            options=self.rt.DfrOptions(
+                wavelength=0.125,
+                seed=17,
+                direct_samples=samples["direct"],
+                keller_samples=samples["keller"],
+                max_order=max_order,
+            ),
         )
 
     def test_initial_state_copies_scale_primal_and_gradients(self):
@@ -212,9 +214,11 @@ class DrJitChainStateSumTests(unittest.TestCase):
         options.wavelength, options.k, options.seed = 0.125, 2.0 * math.pi / 0.125, 17
         options.samples, options.max_order = direct + keller, max_order
         options.direct_samples, options.keller_samples, options.suffix_samples = direct, keller, 0
-        options.strategy_mask = (pj.RAYD_DFR_DIRECT if direct else 0) | (pj.RAYD_DFR_KELLER if keller else 0)
-        options.sample_sequence = pj.RAYD_DFR_HASH
-        options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+        options.strategy_mask = (pj.DfrStrategy.DIRECT if direct else pj.DfrStrategy(0)) | (
+            pj.DfrStrategy.KELLER if keller else pj.DfrStrategy(0)
+        )
+        options.sample_sequence = pj.DfrSampleSequence.HASH
+        options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
         return options
 
     def grid(self):

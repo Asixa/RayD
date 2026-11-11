@@ -429,10 +429,10 @@ def _plot_results(results: dict[str, Any], output_dir: Path) -> list[str]:
     }
     mode_titles = {
         "full": "Forward: full public outputs (RayFlags.All)",
-        "reduced": "Forward: t-only public output (RayFlags.None / Minimal)",
+        "reduced": "Forward: t-only public output (RayFlags.Empty / Minimal)",
         "preliminary": "Forward: t-only preliminary intersection",
         "vjp_full": "AD backward: vector-Jacobian product for t, full public outputs (RayFlags.All)",
-        "vjp_reduced": "AD backward: vector-Jacobian product for t, t-only public output (RayFlags.None)",
+        "vjp_reduced": "AD backward: vector-Jacobian product for t, t-only public output (RayFlags.Empty)",
     }
 
     def mode_title(mode: str, mode_backends: list[str]) -> str:

@@ -47,25 +47,24 @@ grid = rt.DfrGrid(axis=2, position=2.0, coord0_min=-3, coord0_max=3, coord1_min=
 CASES = {
     "trace_reflections": "values = [scene.trace_reflections(ray, 4).t]",
     "visible": "values = [scene.visible(source, receiver).float()]",
-    "trace_refl_epc_field": "values = [scene.trace_refl_epc_field(source, receiver + 100.0 * (receiver - source), 4).field_real]",
-    "accumulate_reflections": """
-        result = scene.accumulate_reflections(
+    "trace_refl_epc_field": "values = [scene.trace_refl_epc_field(source, receiver + 100.0 * (receiver - source), 4).field_re]",
+    "accum_refl": """
+        result = scene.accum_refl(
             ray, source, rt.AccumGrid(axis=2, position=0.5, resolution0=4, resolution1=4),
             rt.ReflMaterial.default(12, device=device), max_bounces=3)
         values = [result.reflection_power]
     """,
     "trace_dfr_paths": """
         rx = torch.tensor([[0.0, 2.0, 2.0], [0.0, -3.0, -0.5], [0.0, 1.0, 3.0]], device=device)
-        paths = scene.trace_dfr_paths(tx_positions=states.src[:1], rx_positions=rx, states=states,
-                                      active=torch.ones(2, dtype=torch.bool, device=device), max_paths=6,
-                                      wavelength=0.1)
+        paths = scene.trace_dfr_paths(states.src[:1], rx, states, options=rt.DfrPathOptions(max_paths=6, wavelength=0.1),
+                                      active=torch.ones(2, dtype=torch.bool, device=device))
         values = [paths.delay[paths.valid], paths.field_x_re[paths.valid]]
     """,
     "accum_dfr_direct": """
-        values = [scene.accum_dfr_direct(states=states, grid=grid, wavelength=0.1, direct_samples=64, seed=1).power]
+        values = [scene.accum_dfr_direct(states, grid, options=rt.DfrOptions(wavelength=0.1, direct_samples=64, seed=1)).power]
     """,
     "accum_dfr_coherent_direct": """
-        values = [scene.accum_dfr_coherent_direct(states=states, grid=grid, wavelength=0.1).direct_field_x_re]
+        values = [scene.accum_dfr_coherent_direct(states, grid, options=rt.DfrCoherentOptions(wavelength=0.1)).direct_field_x_re]
     """,
 }
 

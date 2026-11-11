@@ -60,5 +60,3 @@ This document defines the maintained source layout, formatting, comment, math ow
   allocation, stream, ABI, packaging, or error ownership differs, and share the backend-neutral algorithm beneath them.
 - The two private path-exchange modules are intentionally byte-identical because the independently installable wheels
   require disjoint private file ownership. New exact whole-file duplicates are not allowed.
-- `tests/test_source_file_standards.py` enforces layout, math ownership, file headers, formatting configuration, and the
-  closed set of intentional exact whole-file duplicates.

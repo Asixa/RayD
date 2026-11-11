@@ -285,7 +285,11 @@ def run_C_diffraction_export(args: argparse.Namespace, state_count: int) -> dict
 
     def call_kernel():
         paths = scene.trace_dfr_paths(
-            tx_positions=tx, rx_positions=rx, states=states, material=material, max_paths=state_count, wavelength=0.125
+            tx_positions=tx,
+            rx_positions=rx,
+            states=states,
+            material=material,
+            options=rt.DfrPathOptions(max_paths=state_count, wavelength=0.125),
         )
         return (
             paths.count,
@@ -357,7 +361,7 @@ def run_rayd_reflection_trace(
     scene, build_ms = _rayd_parallel_reflector_scene(rayd, cuda, dr)
     ray = _rayd_reflection_ray(rayd, cuda, dr, ray_count)
     options = rayd.ReflectionTraceOptions()
-    options.export_mode = rayd.REFLECTION_EXPORT_MINIMAL
+    options.export_mode = rayd.ReflectionExportMode.MINIMAL
     options.return_trailing = False
 
     def call_kernel():
@@ -453,10 +457,10 @@ def run_rayd_diffraction_export(
     options.max_order = 1
     options.max_paths = state_count
     options.max_rx = 1
-    options.strategy_mask = rayd.RAYD_DFR_DIRECT
+    options.strategy_mask = rayd.DfrStrategy.DIRECT
     options.sample_count = 1
     options.return_geom = 1
-    options.receiver_model = rayd.RAYD_DFR_MATCHED_ISO
+    options.receiver_model = rayd.DfrReceiverModel.MATCHED_ISO
 
     tx = cuda.Array3f([0.0], [0.0], [1.0])
     rx = cuda.Array3f([0.0], [0.0], [-1.0])
