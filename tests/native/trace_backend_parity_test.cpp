@@ -633,6 +633,7 @@ void test_diffraction_parity() {
                                        cuda_coherent.multi_y_im, cuda_coherent.multi_z_re, cuda_coherent.multi_z_im}),
                             name + " field");
     }
+}
 
 std::vector<rayd::torch::MeshInput> dynamic_meshes(std::vector<rayd::torch::MeshInput> meshes) {
     for (auto& mesh : meshes)

@@ -1439,9 +1439,9 @@ __device__ __forceinline__ utd::JonesOperatorT<utd::Dual> slab_face_operator_dua
         utd::cplx_zero<Dual>(),
         r_tm,
     };
-    const utd::Vec3T<Dual> face_in = utd::f3_cross(normal, in_direction);
-    const utd::Vec3T<Dual> raw_out = utd::f3_cross(normal, out_direction);
+    const utd::Vec3T<Dual> face_in = utd::face_s_axis(normal, in_direction, in_edge.v);
     const utd::Vec3T<Dual> reference = utd::stable_perp_basis(out_direction, face_in);
+    const utd::Vec3T<Dual> raw_out = utd::face_s_axis(normal, out_direction, reference);
     const utd::Vec3T<Dual> face_out = utd::f3_dot(raw_out, reference) < 0.0f ? utd::f3_neg(raw_out) : raw_out;
     const utd::Basis3T<Dual> input_basis =
         utd::basis_from_first_vector(in_direction, face_in,
