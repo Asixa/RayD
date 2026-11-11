@@ -276,4 +276,76 @@ __device__ __forceinline__ void eval_te_tm_grad(const float* __restrict__ fte, c
     g.dtm_dwo[2] = df_tm_wo2;
 }
 
+// Nearest-cell sampling density p(wo | wi) of a resident table, 0 below the horizon.
+__device__ __forceinline__ float table_pdf(const float* __restrict__ density, int nti, int npi, int nto, int npo,
+                                           const float* wi, const float* wo) {
+    if (wi[2] <= 0.0f || wo[2] <= 0.0f)
+        return 0.0f;
+    const float phi_i = positive_phi(wi[1], wi[0]);
+    float phi_o = positive_phi(wo[1], wo[0]);
+    if (npi == 1) {
+        phi_o -= phi_i;
+        if (phi_o < 0.0f)
+            phi_o += kTwoPi;
+    }
+    const int ti = nearest_axis(wi[2], nti, 1.0f, false);
+    const int pi = npi == 1 ? 0 : nearest_axis(phi_i, npi, kTwoPi, true);
+    const int to = nearest_axis(wo[2], nto, 1.0f, false);
+    const int po = nearest_axis(phi_o, npo, kTwoPi, true);
+    return density[((static_cast<int64_t>(ti) * npi + pi) * nto + to) * npo + po];
+}
+
+// Draw a local outgoing direction from the marginal/conditional CDFs with two
+// uniforms; returns wo and the forward/reverse nearest-cell densities.
+__device__ __forceinline__ void sample_direction(const float* __restrict__ marginal,
+                                                 const float* __restrict__ conditional,
+                                                 const float* __restrict__ density, int nti, int npi, int nto, int npo,
+                                                 const float* wi, float uniform0, float uniform1, float* wo,
+                                                 float& pdf_forward, float& pdf_reverse) {
+    const float* a = wi;
+    const float phi_i = positive_phi(a[1], a[0]);
+    const int ti = nearest_axis(a[2], nti, 1.0f, false);
+    const int pi = npi == 1 ? 0 : nearest_axis(phi_i, npi, kTwoPi, true);
+    const float u1 = fminf(fmaxf(uniform0, 0.0f), 1.0f - 1e-7f);
+    const float u2 = fminf(fmaxf(uniform1, 0.0f), 1.0f - 1e-7f);
+    const int64_t mbase = (static_cast<int64_t>(ti) * npi + pi) * nto;
+    int lo = 0, hi = nto;
+    while (lo < hi) {
+        const int mid = (lo + hi) >> 1;
+        if (marginal[mbase + mid] <= u1)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    const int to = min(lo, nto - 1);
+    const float mlo = to ? marginal[mbase + to - 1] : 0.0f;
+    const float mhi = marginal[mbase + to];
+    const float mf = mhi > mlo ? (u1 - mlo) / (mhi - mlo) : 0.5f;
+    const int64_t cbase = ((static_cast<int64_t>(ti) * npi + pi) * nto + to) * npo;
+    lo = 0;
+    hi = npo;
+    while (lo < hi) {
+        const int mid = (lo + hi) >> 1;
+        if (conditional[cbase + mid] <= u2)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    const int po = min(lo, npo - 1);
+    const float clo = po ? conditional[cbase + po - 1] : 0.0f;
+    const float chi = conditional[cbase + po];
+    const float pf = chi > clo ? (u2 - clo) / (chi - clo) : 0.5f;
+    const float cos_o = fminf(fmaxf((static_cast<float>(to) + mf) / nto, 1e-6f), 1.0f);
+    float phi_o = (static_cast<float>(po) + pf) * (kTwoPi / npo);
+    if (npi == 1)
+        phi_o += phi_i;
+    const float sin_o = sqrtf(fmaxf(0.0f, 1.0f - cos_o * cos_o));
+    float* b = wo;
+    b[0] = sin_o * cosf(phi_o);
+    b[1] = sin_o * sinf(phi_o);
+    b[2] = cos_o;
+    pdf_forward = density[cbase + po];
+    pdf_reverse = table_pdf(density, nti, npi, nto, npo, b, a);
+}
+
 } // namespace rayd::shared::scattering
