@@ -136,6 +136,8 @@ struct ReflectionEpcRequest {
     std::int64_t max_bounces = 1;
     std::int64_t visibility_ignore_mode = 0;
     double plane_tolerance = 0.0;
+    // Paths with a segment (source, interaction points, receiver) shorter than this are invalid.
+    double min_segment_length = 0.0;
 };
 
 struct ReflectionEpcResult {

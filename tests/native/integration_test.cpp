@@ -754,6 +754,14 @@ void test_reflection_accumulation_and_epc_typed_contracts() {
     require_tensor_exact(path.hit_positions, at::zeros({1, 1, 3}, floats), "reflection EPC hit");
     require_tensor_exact(path.normals, at::tensor({0.0F, 0.0F, 1.0F}, floats).reshape({1, 1, 3}),
                          "reflection EPC normal");
+    // Both segments are 1 m long: a 0.5 m minimum keeps the path, a 1.5 m minimum rejects it.
+    rayd::torch::ReflectionEpcRequest short_segments = epc;
+    short_segments.min_segment_length = 0.5;
+    require_tensor_exact(rayd::torch::reflection_epc_paths_forward(scene, short_segments).valid, at::ones({1}, bools),
+                         "reflection EPC minimum segment below the segments");
+    short_segments.min_segment_length = 1.5;
+    require_tensor_exact(rayd::torch::reflection_epc_paths_forward(scene, short_segments).valid, at::zeros({1}, bools),
+                         "reflection EPC minimum segment above the segments");
 
     rayd::torch::ReflectionEpcBackwardRequest backward;
     backward.source = epc.source;
