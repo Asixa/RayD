@@ -32,7 +32,7 @@ why, so the sequence is not "tidied" by a later reader.
 | [0044](0044-torch-optix-ptx-at-the-volta-floor.md) | Torch OptiX PTX at the Volta floor | `torch-optix-ptx-at-the-volta-floor` | 2026-11-01 | Accepted by the user; pending review by Xingyu Chen |
 | [0045](0045-surface-leaving-rays.md) | Rays leaving a surface, independent of coordinate size | `surface-leaving-rays` | 2026-11-01 | Accepted |
 | [0046](0046-cuda-trace-backend-coverage.md) | Pure-CUDA trace backend for every typed scene operation | `cuda-trace-backend-coverage` | 2026-11-10 | Accepted; pending review by Xingyu Chen |
-| [0047](0047-textbook-utd-corrections.md) | Textbook corrections to the shared UTD coefficient and diffraction source | `textbook-utd-corrections` | 2026-11-10 | Accepted; pending review by Xingyu Chen |
+| [0047](0047-textbook-utd-corrections.md) | Textbook corrections to the shared UTD coefficient and diffraction source | `textbook-utd-corrections` | 2026-11-10 | Accepted; accepted by the owner, 2026-11-15 |
 
 Every row is copied from the target file's own five-line header block. Status,
 date, and decision ID are owned by the ADR, not by this index.

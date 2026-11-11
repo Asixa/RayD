@@ -1,6 +1,6 @@
 # ADR-0047: Textbook corrections to the shared UTD coefficient and diffraction source
 
-- Status: Accepted; pending review by Xingyu Chen
+- Status: Accepted; accepted by the owner, 2026-11-15
 - Date: 2026-11-10
 - Decision ID: `textbook-utd-corrections`
 - Scope: `include/rayd/utd.h` (finite-edge aperture factors, face reflection axes, direct source field),
@@ -128,3 +128,10 @@ sin(theta)` for the direct source.
 - The calibrated corner-mend constants (`C_BLEND`, the sigmoid width) were fitted with the old
   aperture factor. They are left unchanged; refitting them needs the full-wave reference, which this
   change does not have.
+
+## Owner acceptance
+
+Accepted by the owner, 2026-11-15: the symmetric face-angle rule (mean of the incidence and
+observation sines), the refit of the corner-weight constants (`C_BLEND`, the corner sigmoid width)
+against the full-wave reference with the corrected finite-edge factor, and the resulting movement
+of every diffraction value.
