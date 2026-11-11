@@ -22,6 +22,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <optional>
 #include <vector>
 
 namespace {
@@ -1101,6 +1102,58 @@ void test_diffraction_paths_typed_contracts() {
     require_tensor_contract(empty.valid, {0}, at::kBool, device, "empty diffraction path valid");
 }
 
+// The optional face-layer table gives the diffraction face terms the slab / layer-stack reflection: a thick lossy
+// slab reflects as the half-space, a thin slab differently, and a stack of two equal layers as the slab of their
+// summed thickness. Without the table the export is unchanged.
+void test_diffraction_face_layer_reflection() {
+    MeshFixture mesh = make_triangle();
+    auto scene = rayd::torch::create_scene({mesh_input(mesh)});
+    auto fixture = make_one_diffraction_fixture();
+    const auto floats = mesh.vertices.options();
+    const auto ints = mesh.faces.options();
+    fixture.state.exterior_angle = at::full({1}, static_cast<float>(2.0 * 3.14159265358979323846), floats);
+    fixture.material.eta_r = at::full({1}, 4.0F, floats);
+    fixture.material.sigma = at::full({1}, 0.5F, floats);
+    rayd::torch::DiffractionPathConfig config = {
+        fixture.tx_pos, fixture.tx_pol, fixture.rx_pos, fixture.active, fixture.state, fixture.material, 1, 8, 1.0, 0.0,
+    };
+    auto field = [&](const std::optional<rayd::torch::DiffractionFaceLayers>& layers) {
+        auto request = config;
+        request.face_layers = layers;
+        const auto paths = rayd::torch::diffraction_paths_order1_forward(scene, request);
+        require(paths.count.item<int>() == 1, "face-layer fixture must export one diffraction row");
+        return at::stack({paths.field_x_re.select(0, 0), paths.field_x_im.select(0, 0), paths.field_y_re.select(0, 0),
+                          paths.field_y_im.select(0, 0), paths.field_z_re.select(0, 0), paths.field_z_im.select(0, 0)});
+    };
+    auto layers = [&](float thickness, int row, std::vector<float> layer_thickness) {
+        const int64_t count = static_cast<int64_t>(layer_thickness.size());
+        return rayd::torch::DiffractionFaceLayers{
+            at::full({1}, thickness, floats),
+            at::full({1}, row, ints),
+            at::zeros({1}, ints),
+            at::full({1}, static_cast<int>(count), ints),
+            at::tensor(layer_thickness, floats),
+            at::full({count}, 4.0F, floats),
+            at::full({count}, 0.5F, floats),
+            at::ones({count}, floats),
+        };
+    };
+    const auto half_space = field(std::nullopt);
+    const auto thick = field(layers(30.0F, -1, {30.0F}));
+    const auto thin = field(layers(0.05F, -1, {0.05F}));
+    const auto stack = field(layers(0.05F, 0, {0.02F, 0.03F}));
+    const auto scale = half_space.norm().item<float>();
+    require(scale > 0.0F, "face-layer fixture field must be non-zero");
+    require((thick - half_space).norm().item<float>() < 1.0e-3F * scale,
+            "a thick lossy slab must reflect like the half-space");
+    require((thin - half_space).norm().item<float>() > 1.0e-2F * scale, "a thin slab must change the face term");
+    require((stack - thin).norm().item<float>() < 1.0e-4F * scale,
+            "a stack of two equal layers must reflect as the slab of their summed thickness");
+    auto wrong_rows = layers(0.05F, -1, {0.05F});
+    wrong_rows.thickness_m = at::full({2}, 0.05F, floats);
+    require_throws([&] { (void)field(wrong_rows); }, "face-layer rows must match the material rows");
+}
+
 void test_diffraction_accumulation_typed_contracts() {
     MeshFixture mesh = make_triangle();
     auto scene = rayd::torch::create_scene({mesh_input(mesh)});
@@ -2105,6 +2158,8 @@ int main() {
         test_error_and_lifecycle_contracts();
         std::cout << "[RUN] test_diffraction_paths_typed_contracts" << std::endl;
         test_diffraction_paths_typed_contracts();
+        std::cout << "[RUN] test_diffraction_face_layer_reflection" << std::endl;
+        test_diffraction_face_layer_reflection();
         std::cout << "[RUN] test_diffraction_accumulation_typed_contracts" << std::endl;
         test_diffraction_accumulation_typed_contracts();
         std::cout << "[RUN] test_coherent_diffraction_typed_contracts" << std::endl;

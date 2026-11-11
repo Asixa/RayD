@@ -112,6 +112,18 @@ struct DfrPathParams {
     const uint8_t* material_valid;
     int material_valid_stride;
     int material_count;
+    // Optional slab / layer-stack face reflection (rows like the material rows). A null face_thickness_m keeps the
+    // half-space face coefficient.
+    const float* face_thickness_m;
+    const int* face_layer_material;
+    const int* face_layer_offset;
+    const int* face_layer_count;
+    const float* face_layer_thickness_m;
+    const float* face_layer_eps_r;
+    const float* face_layer_sigma_e;
+    const float* face_layer_mu_r;
+    int face_layer_rows;
+    int64_t face_layer_total;
 
     float wavelength;
     float k;

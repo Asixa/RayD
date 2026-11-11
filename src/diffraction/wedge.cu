@@ -9,6 +9,7 @@
 #include <c10/util/complex.h>
 #include <rayd/field_transport.cuh>
 #include <src/bindings/tensor_contract.h>
+#include <src/diffraction/face_coefficients.cuh>
 #include <src/field_transport_ad.cuh>
 
 #include <array>
@@ -41,6 +42,16 @@ namespace transport = rayd::shared::field_transport;
 namespace ad = rayd::torch::field_transport_ad;
 
 using Dual = field::Dual;
+namespace faces = rayd::shared::diffraction_faces;
+
+// Per-row face-layer pointers of a wedge launch (null thickness: half-space faces).
+struct WedgeFaceLayerArgs {
+    const float* thickness0 = nullptr;
+    const float* thickness1 = nullptr;
+    const int* layer0 = nullptr;
+    const int* layer1 = nullptr;
+    faces::FaceLayerStore store;
+};
 
 __device__ __forceinline__ field::float3a load3f(const float* values, int64_t index) {
     const int64_t base = index * 3;
@@ -111,6 +122,11 @@ struct WedgeRowInputs {
     bool has_vertices;
     bool edge_boundary;
     field::float3a v0, v1, opp0, opp1;
+    // Slab / layer-stack face reflection; `layered` false keeps the half-space faces.
+    bool layered;
+    faces::FaceLayerStore store;
+    faces::FaceLayers face0_layers;
+    faces::FaceLayers face1_layers;
 };
 
 struct WedgeRowSeeds {
@@ -226,6 +242,92 @@ __device__ __forceinline__ field::FaceMaterialParamsT<T> wedge_face_material(boo
     return {eps, T(mu), sigma, field::fmaxf(gain, T(0.f)), 1.f, 1.f};
 }
 
+__device__ __forceinline__ field::ComplexT<Dual> from_dual_c(ad::DualC value) {
+    return {Dual(value.v.re, value.d.re), Dual(value.v.im, value.d.im)};
+}
+
+// The wedge row's face coefficients: the export's provider in float, its forward-mode twin in Dual (the slab
+// thickness and the stack layers carry no tangent).
+template <typename T> struct WedgeFaceCoefficients;
+
+template <> struct WedgeFaceCoefficients<float> {
+    faces::LayeredFaceCoefficients base;
+    __device__ __forceinline__ bool evaluates(int face, const field::FaceMaterialParamsT<float>& material) const {
+        return base.evaluates(face, material);
+    }
+    __device__ __forceinline__ field::FaceFresnelT<float> operator()(int face,
+                                                                     const field::FaceMaterialParamsT<float>& material,
+                                                                     float cos_theta) const {
+        return base(face, material, cos_theta);
+    }
+};
+
+template <> struct WedgeFaceCoefficients<Dual> {
+    faces::LayeredFaceCoefficients base;
+    Dual frequency;
+    __device__ __forceinline__ bool evaluates(int, const field::FaceMaterialParamsT<Dual>& material) const {
+        return material.present > 0.5f && base.omega > 0.f;
+    }
+    __device__ __forceinline__ field::FaceFresnelT<Dual> operator()(int face,
+                                                                    const field::FaceMaterialParamsT<Dual>& material,
+                                                                    Dual cos_theta) const {
+        if (!base.layered)
+            return field::HalfSpaceFaceCoefficients<Dual>{2.0f * field::UTD_PI * frequency}(face, material, cos_theta);
+        const faces::FaceLayers& layers = face == 0 ? base.face0 : base.face1;
+        ad::DualC r_te, r_tm;
+        transmission_view_dual(layers, material, cos_theta, r_te, r_tm);
+        return {from_dual_c(r_te), from_dual_c(r_tm)};
+    }
+    __device__ __forceinline__ void transmission_view_dual(const faces::FaceLayers& layers,
+                                                           const field::FaceMaterialParamsT<Dual>& material,
+                                                           Dual cos_theta, ad::DualC& r_te, ad::DualC& r_tm) const {
+        rayd::shared::transmission::LayerView view;
+        if (faces::face_stack(base.store, layers, view)) {
+            const ad::DualStackRT te =
+                ad::stack_rt_dual(cos_theta.v, view, frequency.v, cos_theta.d, frequency.d,
+                                  rayd::shared::transmission::kPolTE, [](int) { return ad::LayerSeed{0.f, 0.f, 0.f}; });
+            const ad::DualStackRT tm =
+                ad::stack_rt_dual(cos_theta.v, view, frequency.v, cos_theta.d, frequency.d,
+                                  rayd::shared::transmission::kPolTM, [](int) { return ad::LayerSeed{0.f, 0.f, 0.f}; });
+            const ad::DualF gain = {material.gain.v, material.gain.d};
+            r_te = ad::dc_mul_dualreal(te.r, gain);
+            r_tm = ad::dc_mul_dualreal(tm.r, {-material.gain.v, -material.gain.d});
+            return;
+        }
+        ad::slab_fresnel_dual(cos_theta.v, material.etaR.v, material.sigma.v, material.muR.v, material.gain.v,
+                              layers.thickness_m, frequency.v, cos_theta.d, material.etaR.d, material.sigma.d,
+                              material.gain.d, 0.f, frequency.d, r_te, r_tm);
+    }
+};
+
+template <typename T>
+__device__ WedgeFaceCoefficients<T> wedge_face_coefficients(const WedgeRowInputs& in, T frequency);
+
+template <>
+__device__ WedgeFaceCoefficients<float> wedge_face_coefficients<float>(const WedgeRowInputs& in, float frequency) {
+    WedgeFaceCoefficients<float> out;
+    out.base.layered = in.layered;
+    out.base.store = in.store;
+    out.base.face0 = in.face0_layers;
+    out.base.face1 = in.face1_layers;
+    out.base.omega = 2.0f * field::UTD_PI * frequency;
+    out.base.frequency_hz = frequency;
+    return out;
+}
+
+template <>
+__device__ WedgeFaceCoefficients<Dual> wedge_face_coefficients<Dual>(const WedgeRowInputs& in, Dual frequency) {
+    WedgeFaceCoefficients<Dual> out;
+    out.base.layered = in.layered;
+    out.base.store = in.store;
+    out.base.face0 = in.face0_layers;
+    out.base.face1 = in.face1_layers;
+    out.base.omega = 2.0f * field::UTD_PI * frequency.v;
+    out.base.frequency_hz = frequency.v;
+    out.frequency = frequency;
+    return out;
+}
+
 template <typename T>
 __device__ WedgeRowOutputs<T> wedge_row_eval(const WedgeRowInputs& in, const WedgeRowSeeds& seeds) {
     const field::Vec3T<T> source = seeded3<T>(in.source, seeds.source);
@@ -286,7 +388,9 @@ __device__ WedgeRowOutputs<T> wedge_row_eval(const WedgeRowInputs& in, const Wed
     mat.txPolZ = T(1.f);
 
     WedgeRowOutputs<T> out;
-    const field::Complex3T<T> vec = field::compute_pair_vector_contribution(pair, target, wave_number, mat);
+    const field::Complex3T<T> vec =
+        field::compute_pair_vector_contribution_faces(pair, target, wave_number, mat,
+                                                      wedge_face_coefficients<T>(in, frequency));
     const T amplitude = sqrtf(T(fmaxf(in.tx_power, 0.f)));
     out.field_vector = field::c3_scale_real(vec, amplitude);
 
@@ -301,14 +405,14 @@ __device__ WedgeRowOutputs<T> wedge_row_eval(const WedgeRowInputs& in, const Wed
     return out;
 }
 
-__device__ __forceinline__ WedgeRowInputs
-load_wedge_row(int64_t index, const float* source, const float* target, const float* edge_position,
-               const float* edge_direction, const float* edge_t_min, const float* edge_t_max, const float* edge_n0,
-               const float* edge_n1, const float* exterior_angle, const bool* face0_valid, const float* face0_eps_r,
-               const float* face0_sigma_e, const float* face0_mu_r, const float* face0_gain, const bool* face1_valid,
-               const float* face1_eps_r, const float* face1_sigma_e, const float* face1_mu_r, const float* face1_gain,
-               const float* tx_power, float frequency_hz, const float* vertex_v0, const float* vertex_v1,
-               const float* vertex_opp0, const float* vertex_opp1, const bool* edge_boundary, float isb_taper_width) {
+__device__ __forceinline__ WedgeRowInputs load_wedge_row(
+    int64_t index, const float* source, const float* target, const float* edge_position, const float* edge_direction,
+    const float* edge_t_min, const float* edge_t_max, const float* edge_n0, const float* edge_n1,
+    const float* exterior_angle, const bool* face0_valid, const float* face0_eps_r, const float* face0_sigma_e,
+    const float* face0_mu_r, const float* face0_gain, const bool* face1_valid, const float* face1_eps_r,
+    const float* face1_sigma_e, const float* face1_mu_r, const float* face1_gain, const float* tx_power,
+    float frequency_hz, const float* vertex_v0, const float* vertex_v1, const float* vertex_opp0,
+    const float* vertex_opp1, const bool* edge_boundary, float isb_taper_width, WedgeFaceLayerArgs face_layers) {
     WedgeRowInputs in;
     in.source = load3f(source, index);
     in.target = load3f(target, index);
@@ -346,6 +450,12 @@ load_wedge_row(int64_t index, const float* source, const float* target, const fl
         in.opp0 = field::f3_zero();
         in.opp1 = field::f3_zero();
     }
+    in.layered = face_layers.thickness0 != nullptr;
+    in.store = face_layers.store;
+    if (in.layered) {
+        in.face0_layers = {face_layers.thickness0[index], face_layers.layer0[index]};
+        in.face1_layers = {face_layers.thickness1[index], face_layers.layer1[index]};
+    }
     return in;
 }
 
@@ -356,13 +466,14 @@ load_wedge_row(int64_t index, const float* source, const float* target, const fl
         const float *face0_sigma_e, const float *face0_mu_r, const float *face0_gain, const bool *face1_valid,         \
         const float *face1_eps_r, const float *face1_sigma_e, const float *face1_mu_r, const float *face1_gain,        \
         const float *tx_power, float frequency_hz, const float *vertex_v0, const float *vertex_v1,                     \
-        const float *vertex_opp0, const float *vertex_opp1, const bool *edge_boundary, float isb_taper_width
+        const float *vertex_opp0, const float *vertex_opp1, const bool *edge_boundary, float isb_taper_width,          \
+        WedgeFaceLayerArgs face_layers
 
 #define WEDGE_ROW_ARGS(index)                                                                                          \
     index, source, target, edge_position, edge_direction, edge_t_min, edge_t_max, edge_n0, edge_n1, exterior_angle,    \
         face0_valid, face0_eps_r, face0_sigma_e, face0_mu_r, face0_gain, face1_valid, face1_eps_r, face1_sigma_e,      \
         face1_mu_r, face1_gain, tx_power, frequency_hz, vertex_v0, vertex_v1, vertex_opp0, vertex_opp1, edge_boundary, \
-        isb_taper_width
+        isb_taper_width, face_layers
 
 __global__ void diffraction_wedge_forward_kernel(int64_t count, WEDGE_ROW_PARAMS, c10::complex<float>* field_vector,
                                                  float* direction) {
@@ -632,6 +743,10 @@ void check_wedge_primal(const rayd::torch::DiffractionWedgeRequest& request) {
     TORCH_CHECK(request.frequency_hz > 0.0, "frequency_hz must be positive");
 }
 
+int64_t total_of(const rayd::torch::DiffractionFaceLayers& table) {
+    return table.layer_thickness_m.size(0);
+}
+
 struct WedgeVertexArgs {
     const at::Tensor* v0 = nullptr;
     const at::Tensor* v1 = nullptr;
@@ -679,6 +794,54 @@ const at::Tensor* optional_tensor(const std::optional<at::Tensor>& value, const 
     return &*value;
 }
 
+// The optional face-layer table of a wedge request: both faces or neither, rows like the wedge rows.
+WedgeFaceLayerArgs wedge_face_layers(const rayd::torch::DiffractionWedgeRequest& request) {
+    TORCH_CHECK(request.face0_layers.has_value() == request.face1_layers.has_value(),
+                "face0_layers and face1_layers must be supplied together");
+    WedgeFaceLayerArgs args;
+    if (!request.face0_layers.has_value())
+        return args;
+    const int64_t count = request.source.size(0);
+    const rayd::torch::DiffractionFaceLayers* tables[2] = {&*request.face0_layers, &*request.face1_layers};
+    for (const rayd::torch::DiffractionFaceLayers* table : tables) {
+        const std::pair<const at::Tensor*, at::ScalarType> named[8] = {{&table->thickness_m, at::kFloat},
+                                                                       {&table->layer_material, at::kInt},
+                                                                       {&table->layer_offset, at::kInt},
+                                                                       {&table->layer_count, at::kInt},
+                                                                       {&table->layer_thickness_m, at::kFloat},
+                                                                       {&table->layer_eps_r, at::kFloat},
+                                                                       {&table->layer_sigma_e, at::kFloat},
+                                                                       {&table->layer_mu_r, at::kFloat}};
+        for (const auto& [tensor, dtype] : named) {
+            rayd::torch_backend::require_cuda(*tensor, "face_layers");
+            rayd::torch_backend::require_contiguous(*tensor, "face_layers");
+            rayd::torch_backend::require_dtype(*tensor, dtype, "face_layers");
+            rayd::torch_backend::require_rank(*tensor, 1, "face_layers");
+            require_same_device(*tensor, request.source, "face_layers");
+        }
+        require_rows(table->thickness_m, count, "face_layers.thickness_m");
+        require_rows(table->layer_material, count, "face_layers.layer_material");
+        TORCH_CHECK(table->layer_count.size(0) == table->layer_offset.size(0),
+                    "face_layers layer_offset and layer_count must have matching widths");
+        const int64_t total = table->layer_thickness_m.size(0);
+        TORCH_CHECK(table->layer_eps_r.size(0) == total && table->layer_sigma_e.size(0) == total &&
+                        table->layer_mu_r.size(0) == total,
+                    "face_layers layer tensors must have matching widths");
+    }
+    TORCH_CHECK(tables[0]->layer_offset.data_ptr() == tables[1]->layer_offset.data_ptr() &&
+                    tables[0]->layer_thickness_m.data_ptr() == tables[1]->layer_thickness_m.data_ptr(),
+                "face0_layers and face1_layers must share one layer store");
+    args.thickness0 = tables[0]->thickness_m.data_ptr<float>();
+    args.thickness1 = tables[1]->thickness_m.data_ptr<float>();
+    args.layer0 = tables[0]->layer_material.data_ptr<int>();
+    args.layer1 = tables[1]->layer_material.data_ptr<int>();
+    args.store = {tables[0]->layer_offset.data_ptr<int>(),           tables[0]->layer_count.data_ptr<int>(),
+                  tables[0]->layer_thickness_m.data_ptr<float>(),    tables[0]->layer_eps_r.data_ptr<float>(),
+                  tables[0]->layer_sigma_e.data_ptr<float>(),        tables[0]->layer_mu_r.data_ptr<float>(),
+                  static_cast<int>(tables[0]->layer_offset.size(0)), total_of(*tables[0])};
+    return args;
+}
+
 template <typename T> const T* opt_ptr(const at::Tensor* tensor) {
     return tensor == nullptr ? nullptr : tensor->data_ptr<T>();
 }
@@ -701,7 +864,7 @@ template <typename T> T* opt_mut_ptr(at::Tensor* tensor) {
         primal.face1_mu_r.data_ptr<float>(), primal.face1_gain.data_ptr<float>(), primal.tx_power.data_ptr<float>(),   \
         static_cast<float>(primal.frequency_hz), opt_ptr<float>(vertex_args.v0), opt_ptr<float>(vertex_args.v1),       \
         opt_ptr<float>(vertex_args.opp0), opt_ptr<float>(vertex_args.opp1), opt_ptr<bool>(vertex_args.boundary),       \
-        static_cast<float>(primal.isb_boundary_taper_width)
+        static_cast<float>(primal.isb_boundary_taper_width), wedge_face_layers(primal)
 
 rayd::torch::DiffractionWedgeResult rayd::torch::field_diffraction_wedge(const DiffractionWedgeRequest& primal) {
     check_wedge_primal(primal);

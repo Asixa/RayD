@@ -8,6 +8,7 @@
 #include <src/diffraction/paths_params.h>
 #include <src/runtime/rt_device.cuh>
 #include <rayd/utd.h>
+#include <src/diffraction/face_coefficients.cuh>
 
 namespace rayd::torch_backend {
 
@@ -253,6 +254,30 @@ static __forceinline__ __device__ utd::FaceMaterialParams face_material_params(i
     return m;
 }
 
+// Slab / layer-stack face coefficients of a state when the launch carries a face-layer table.
+static __forceinline__ __device__ shared::diffraction_faces::LayeredFaceCoefficients face_coefficients(int state_idx) {
+    shared::diffraction_faces::LayeredFaceCoefficients coefficients;
+    coefficients.layered = params.face_thickness_m != nullptr;
+    coefficients.omega = params.omega;
+    coefficients.frequency_hz = 299792458.0f / params.wavelength;
+    if (coefficients.layered) {
+        coefficients.store = {params.face_layer_offset, params.face_layer_count,   params.face_layer_thickness_m,
+                              params.face_layer_eps_r,  params.face_layer_sigma_e, params.face_layer_mu_r,
+                              params.face_layer_rows,   params.face_layer_total};
+        const int prims[2] = {read_i32(params.state_prim0, params.state_prim0_stride, state_idx),
+                              read_i32(params.state_prim1, params.state_prim1_stride, state_idx)};
+        shared::diffraction_faces::FaceLayers* faces[2] = {&coefficients.face0, &coefficients.face1};
+        for (int face = 0; face < 2; ++face) {
+            const int prim = prims[face];
+            if (prim >= 0 && prim < params.material_count) {
+                faces[face]->thickness_m = params.face_thickness_m[prim];
+                faces[face]->row = params.face_layer_material != nullptr ? params.face_layer_material[prim] : -1;
+            }
+        }
+    }
+    return coefficients;
+}
+
 static __forceinline__ __device__ utd::PairInputs direct_pair_inputs(int state_idx, float3 source, float3 edge_pos,
                                                                      float3 edge_dir, float t_min, float t_max) {
     utd::PairInputs p = {};
@@ -374,7 +399,8 @@ template <bool SplitScene> static __forceinline__ __device__ void trace_paths_or
 
     const utd::PairInputs pair = direct_pair_inputs(state_idx, source, edge_pos, edge_dir, t_min, t_max);
     const utd::PairOutputs utd_out =
-        utd::compute_pair_contribution(pair, to_utd(receiver), params.k, paths_material_params(source_tx));
+        utd::compute_pair_contribution_faces(pair, to_utd(receiver), params.k, paths_material_params(source_tx),
+                                             face_coefficients(state_idx));
     const float field_norm = utd::cplx_abs_sqr(utd_out.vectorField.x) + utd::cplx_abs_sqr(utd_out.vectorField.y) +
                              utd::cplx_abs_sqr(utd_out.vectorField.z);
     if (!(field_norm > 1.0e-30f) || !isfinite(field_norm)) {

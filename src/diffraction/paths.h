@@ -12,6 +12,7 @@
 #include <src/diffraction/contracts.h>
 #include <src/runtime/rt_device.cuh>
 #include <rayd/utd.h>
+#include <src/diffraction/face_coefficients.cuh>
 
 // Host-compilable first-order diffraction compact-path-export algorithm. This is
 // the de-CUDA-ised body of the former (Dr.Jit) diffraction_paths raygen family:
@@ -160,6 +161,11 @@ RAYD_HOST_DEVICE bool path_source_tx(const Params& params, int state_idx, int la
     return true;
 }
 
+template <typename Params, typename = void> struct has_face_layers : std::false_type {};
+template <typename Params>
+struct has_face_layers<Params, std::void_t<decltype(std::declval<const Params&>().face_thickness_m)>> : std::true_type {
+};
+
 template <typename Params, typename = void> struct has_isb_taper : std::false_type {};
 template <typename Params>
 struct has_isb_taper<Params, std::void_t<decltype(std::declval<const Params&>().isb_taper_width_scale)>>
@@ -217,6 +223,35 @@ RAYD_HOST_DEVICE utd::PairInputs direct_pair_inputs(const Params& params, int st
     p.face0Material = face_material_params(params, params.state_prim0[state_idx]);
     p.face1Material = face_material_params(params, params.state_prim1[state_idx]);
     return p;
+}
+
+// Face reflection coefficients of a state's pair: slab / layer stack when the params carry a face-layer table,
+// otherwise the half-space coefficient of the face materials.
+template <typename Params> RAYD_DEVICE auto paths_face_coefficients(const Params& params, int state_idx) {
+    if constexpr (has_face_layers<Params>::value) {
+        ::rayd::shared::diffraction_faces::LayeredFaceCoefficients coefficients;
+        coefficients.layered = params.face_thickness_m != nullptr;
+        coefficients.omega = params.omega;
+        coefficients.frequency_hz = 299792458.0f / params.wavelength;
+        if (coefficients.layered) {
+            coefficients.store = {params.face_layer_offset, params.face_layer_count,   params.face_layer_thickness_m,
+                                  params.face_layer_eps_r,  params.face_layer_sigma_e, params.face_layer_mu_r,
+                                  params.face_layer_rows,   params.face_layer_total};
+            const int prims[2] = {params.state_prim0[state_idx], params.state_prim1[state_idx]};
+            ::rayd::shared::diffraction_faces::FaceLayers* faces[2] = {&coefficients.face0, &coefficients.face1};
+            for (int face = 0; face < 2; ++face) {
+                const int prim = prims[face];
+                if (prim >= 0 && prim < params.material_count) {
+                    faces[face]->thickness_m = params.face_thickness_m[prim];
+                    faces[face]->row = params.face_layer_material != nullptr ? params.face_layer_material[prim] : -1;
+                }
+            }
+        }
+        return coefficients;
+    } else {
+        (void)state_idx;
+        return utd::HalfSpaceFaceCoefficients<float>{params.omega};
+    }
 }
 
 template <typename Params>
@@ -384,7 +419,8 @@ RAYD_DEVICE void trace_paths_order1_algo(const Params& params, std::uint32_t lan
 
     const utd::PairInputs pair = direct_pair_inputs(params, state_idx, source, edge_pos, edge_dir, t_min, t_max);
     const utd::PairOutputs utd_out =
-        utd::compute_pair_contribution(pair, to_utd(receiver), params.k, paths_material_params(params, source_tx));
+        utd::compute_pair_contribution_faces(pair, to_utd(receiver), params.k, paths_material_params(params, source_tx),
+                                             paths_face_coefficients(params, state_idx));
     const float field_norm = utd::cplx_abs_sqr(utd_out.vectorField.x) + utd::cplx_abs_sqr(utd_out.vectorField.y) +
                              utd::cplx_abs_sqr(utd_out.vectorField.z);
     if (!(field_norm > 1.0e-30f) || !is_finite(field_norm)) {
@@ -497,7 +533,8 @@ RAYD_DEVICE void trace_paths_target_export_algo(const Params& params, std::uint3
         direct_pair_inputs(params, state_idx, source, edge_pos, edge_dir, params.state_edge_t_min[state_idx],
                            params.state_edge_t_max[state_idx]);
     const utd::PairOutputs utd_out =
-        utd::compute_pair_contribution(pair, to_utd(receiver), params.k, paths_material_params(params, source_tx));
+        utd::compute_pair_contribution_faces(pair, to_utd(receiver), params.k, paths_material_params(params, source_tx),
+                                             paths_face_coefficients(params, state_idx));
     const float field_norm = utd::cplx_abs_sqr(utd_out.vectorField.x) + utd::cplx_abs_sqr(utd_out.vectorField.y) +
                              utd::cplx_abs_sqr(utd_out.vectorField.z);
     if (!(field_norm > 1.0e-30f) || !is_finite(field_norm)) {

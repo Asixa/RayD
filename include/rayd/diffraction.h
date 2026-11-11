@@ -49,6 +49,23 @@ struct RecursiveDiffractionState {
     std::int64_t state_limit = 0;
 };
 
+// Optional finite-slab and layer-stack reflection of the diffraction face terms. Without it a face term reflects
+// off a half-space of the face's (eta_r, sigma, mu_r). With it each face reflects with the coefficient its specular
+// reflection uses: a slab of `thickness_m` of those parameters, or, when its `layer_material` row of the layer store
+// holds two or more layers, that whole layer stack (TE/TM coefficients of a vacuum | layers | vacuum stack). The two
+// per-face tensors index like the material rows they extend; the store is the CSR of the transmission layer API.
+// Their derivatives are not taken: the slab thickness and the stack layers are constants of the AD companions.
+struct DiffractionFaceLayers {
+    at::Tensor thickness_m;       // float32 [rows]
+    at::Tensor layer_material;    // int32 [rows], -1 for a slab
+    at::Tensor layer_offset;      // int32 [M]
+    at::Tensor layer_count;       // int32 [M]
+    at::Tensor layer_thickness_m; // float32 [L]
+    at::Tensor layer_eps_r;       // float32 [L]
+    at::Tensor layer_sigma_e;     // float32 [L]
+    at::Tensor layer_mu_r;        // float32 [L]
+};
+
 struct DiffractionPathConfig {
     at::Tensor tx_pos;
     at::Tensor tx_pol;
@@ -66,6 +83,8 @@ struct DiffractionPathConfig {
     // as the path's tx_id, so one launch serves states of every transmitter; a state whose index is outside
     // [0, tx_pol rows) exports nothing.
     std::optional<at::Tensor> state_source_index;
+    // Optional slab / layer-stack face reflection, rows indexed like `material` (one per primitive).
+    std::optional<DiffractionFaceLayers> face_layers;
 };
 
 struct DiffractionPathResult {
@@ -196,6 +215,10 @@ struct DiffractionWedgeRequest {
     std::optional<at::Tensor> vertex_opp1;
     std::optional<at::Tensor> edge_boundary;
     double isb_boundary_taper_width = 0.0;
+    // Optional slab / layer-stack face reflection of face 0 and face 1, rows indexed like the wedge rows. Both or
+    // neither; the forward and its JVP/VJP companions evaluate the same coefficient.
+    std::optional<DiffractionFaceLayers> face0_layers;
+    std::optional<DiffractionFaceLayers> face1_layers;
 };
 
 struct DiffractionWedgeResult {

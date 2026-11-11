@@ -448,6 +448,30 @@ struct DiffractionPathOutputs {
     at::Tensor p2;
 };
 
+// Shapes, dtypes and device of an optional face-layer table whose per-face rows extend `rows` material rows.
+void require_face_layers(const rayd::torch::DiffractionFaceLayers& layers, int64_t rows, const SceneCache& scene) {
+    require_flat_f32(layers.thickness_m, "face_layers.thickness_m");
+    require_flat_i32(layers.layer_material, "face_layers.layer_material");
+    require_flat_i32(layers.layer_offset, "face_layers.layer_offset");
+    require_flat_i32(layers.layer_count, "face_layers.layer_count");
+    require_flat_f32(layers.layer_thickness_m, "face_layers.layer_thickness_m");
+    require_flat_f32(layers.layer_eps_r, "face_layers.layer_eps_r");
+    require_flat_f32(layers.layer_sigma_e, "face_layers.layer_sigma_e");
+    require_flat_f32(layers.layer_mu_r, "face_layers.layer_mu_r");
+    if (layers.thickness_m.size(0) != rows || layers.layer_material.size(0) != rows)
+        throw std::runtime_error("face_layers per-face tensors must have one row per material row.");
+    if (layers.layer_count.size(0) != layers.layer_offset.size(0))
+        throw std::runtime_error("face_layers layer_offset and layer_count must have matching widths.");
+    const int64_t total = layers.layer_thickness_m.size(0);
+    if (layers.layer_eps_r.size(0) != total || layers.layer_sigma_e.size(0) != total ||
+        layers.layer_mu_r.size(0) != total)
+        throw std::runtime_error("face_layers layer tensors must have matching widths.");
+    for (const at::Tensor* tensor :
+         {&layers.thickness_m, &layers.layer_material, &layers.layer_offset, &layers.layer_count,
+          &layers.layer_thickness_m, &layers.layer_eps_r, &layers.layer_sigma_e, &layers.layer_mu_r})
+        require_scene_device(scene, *tensor, "face_layers");
+}
+
 DiffractionPathOutputs diffraction_paths_order1_forward_impl(
     SceneCache& scene, at::Tensor tx_pos, at::Tensor tx_pol, at::Tensor rx_pos, at::Tensor active,
     at::Tensor state_edge_index, at::Tensor state_edge_pos, at::Tensor state_edge_dir, at::Tensor state_edge_t_min,
@@ -455,7 +479,8 @@ DiffractionPathOutputs diffraction_paths_order1_forward_impl(
     at::Tensor state_prim1, at::Tensor state_exterior_angle, at::Tensor state_src, at::Tensor state_src_power,
     at::Tensor material_eta_r, at::Tensor material_sigma, at::Tensor material_mu_r, at::Tensor material_gain,
     at::Tensor material_valid, int64_t state_limit_arg, int64_t capacity, int output_layout, double wavelength,
-    double isb_taper_width_scale, const at::Tensor* state_source_index) {
+    double isb_taper_width_scale, const at::Tensor* state_source_index,
+    const rayd::torch::DiffractionFaceLayers* face_layers) {
     require_vec3f_strided(tx_pos, "tx_pos");
     require_vec3f_strided(tx_pol, "tx_pol");
     require_vec3f_strided(rx_pos, "rx_pos");
@@ -515,6 +540,9 @@ DiffractionPathOutputs diffraction_paths_order1_forward_impl(
         material_mu_r.size(0) != material_count || material_valid.size(0) != material_count)
         throw std::runtime_error("diffraction material tensors must have matching widths.");
 
+    if (face_layers != nullptr) {
+        require_face_layers(*face_layers, material_count, scene);
+    }
     if (state_source_index != nullptr) {
         require_cuda(*state_source_index, "state_source_index");
         require_contiguous(*state_source_index, "state_source_index");
@@ -707,6 +735,18 @@ DiffractionPathOutputs diffraction_paths_order1_forward_impl(
     params.material_valid = mask_ptr(material_valid);
     params.material_valid_stride = stride_i32(material_valid, 0, "material_valid_stride");
     params.material_count = checked_i32(material_count, "material_count");
+    if (face_layers != nullptr) {
+        params.face_thickness_m = face_layers->thickness_m.data_ptr<float>();
+        params.face_layer_material = face_layers->layer_material.data_ptr<int>();
+        params.face_layer_offset = face_layers->layer_offset.data_ptr<int>();
+        params.face_layer_count = face_layers->layer_count.data_ptr<int>();
+        params.face_layer_thickness_m = face_layers->layer_thickness_m.data_ptr<float>();
+        params.face_layer_eps_r = face_layers->layer_eps_r.data_ptr<float>();
+        params.face_layer_sigma_e = face_layers->layer_sigma_e.data_ptr<float>();
+        params.face_layer_mu_r = face_layers->layer_mu_r.data_ptr<float>();
+        params.face_layer_rows = checked_i32(face_layers->layer_offset.size(0), "face_layer_rows");
+        params.face_layer_total = face_layers->layer_thickness_m.size(0);
+    }
     params.wavelength = static_cast<float>(wavelength);
     params.k = static_cast<float>(2.0 * 3.14159265358979323846 / wavelength);
     params.omega = static_cast<float>(2.0 * 3.14159265358979323846 * 299792458.0 / wavelength);
@@ -784,7 +824,7 @@ py::tuple diffraction_paths_order1_forward_op(
         std::move(state_prim1), std::move(state_exterior_angle), std::move(state_src), std::move(state_src_power),
         std::move(material_eta_r), std::move(material_sigma), std::move(material_mu_r), std::move(material_gain),
         std::move(material_valid), state_limit, capacity, checked_i32(output_layout, "output_layout"), wavelength,
-        isb_taper_width_scale, nullptr));
+        isb_taper_width_scale, nullptr, nullptr));
 }
 
 struct DiffractionAccumulationOutputs {
@@ -2697,7 +2737,8 @@ DiffractionPathResult diffraction_paths_order1_forward(const SceneResource& scen
         config.material.gain, config.material.valid, config.state_limit, config.capacity,
         static_cast<int>(config.layout), config.wavelength, config.isb_taper_width_scale,
         config.state_source_index.has_value() && config.state_source_index->defined() ? &*config.state_source_index
-                                                                                      : nullptr);
+                                                                                      : nullptr,
+        config.face_layers.has_value() ? &*config.face_layers : nullptr);
     return {result.count,      result.valid,      result.tx_id,      result.rx_id,      result.order,
             result.edge0,      result.edge1,      result.edge2,      result.delay,      result.field_x_re,
             result.field_x_im, result.field_y_re, result.field_y_im, result.field_z_re, result.field_z_im,

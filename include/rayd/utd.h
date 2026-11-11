@@ -1335,6 +1335,50 @@ UTD_DINLINE JonesOperatorT<T> face_reflection_operator(FaceMaterialParamsT<T> fm
                              cplx_mul_real(cplx_mul(gain, rTE), T(-1.f))};
 }
 
+// Reflection coefficients of one wedge face in the s / p = s x k convention of the specular reflection kernels (a
+// perfect conductor has rTE = -1, rTM = +1), the face gain included.
+template <typename T> struct FaceFresnelT {
+    ComplexT<T> rTE;
+    ComplexT<T> rTM;
+};
+
+// The face coefficients of a pair taken from its FaceMaterialParams: the half-space Fresnel coefficients of (eta, mu,
+// sigma) times the gain, for each face that carries a material while the pair's material has a positive angular
+// frequency. A face it does not evaluate keeps the operator stored in the pair state. A caller whose faces are
+// finite slabs or layer stacks supplies its own provider with the same two members, so the diffraction face term
+// reflects with the coefficient the specular reflection of that face uses.
+template <typename T> struct HalfSpaceFaceCoefficients {
+    T omega;
+    UTD_DINLINE bool evaluates(int face, const FaceMaterialParamsT<T>& material) const {
+        (void)face;
+        return material.present > 0.5f && scalar_value(omega) > 0.f;
+    }
+    UTD_DINLINE FaceFresnelT<T> operator()(int face, const FaceMaterialParamsT<T>& material, T cosTheta) const {
+        (void)face;
+        FaceFresnelT<T> out;
+        fresnel_reflection_face(cosTheta, material.etaR, material.muR, material.sigma, omega, out.rTE, out.rTM);
+        out.rTE = cplx_mul(cplx(material.gain, T(0)), out.rTE);
+        out.rTM = cplx_mul(cplx(material.gain, T(0)), out.rTM);
+        return out;
+    }
+};
+
+// Edge-fixed (Luebbers) face operator of a pair face: the provider's coefficients as op = -diag(r_TM, r_TE) on (hard
+// u, soft v), a face without a Fresnel response as its gain, and a face the provider does not evaluate as the stored
+// operator.
+template <typename T, typename FaceCoefficients>
+UTD_DINLINE JonesOperatorT<T> pair_face_operator(const FaceCoefficients& coefficients, int face,
+                                                 const FaceMaterialParamsT<T>& material, JonesOperatorT<T> stored,
+                                                 T cosTheta) {
+    if (!coefficients.evaluates(face, material))
+        return stored;
+    if (!(material.useFresnel > 0.5f))
+        return JonesOperatorT<T>{cplx(material.gain, T(0)), cplx_zero<T>(), cplx_zero<T>(), cplx(material.gain, T(0))};
+    const FaceFresnelT<T> r = coefficients(face, material, cosTheta);
+    return JonesOperatorT<T>{cplx_mul_real(r.rTM, T(-1.f)), cplx_zero<T>(), cplx_zero<T>(),
+                             cplx_mul_real(r.rTE, T(-1.f))};
+}
+
 template <typename T>
 UTD_DINLINE JonesOperatorT<T> fallback_face_operator(JonesOperatorT<T> stored, Vec3T<T> normal, Vec3T<T> inHat,
                                                      Vec3T<T> outHat, Basis3T<T> inEdgeBasis, Basis3T<T> outEdgeBasis) {
@@ -1735,15 +1779,17 @@ template <typename T> UTD_DINLINE Complex3T<T> c3_scale_real(Complex3T<T> value,
     return c3_scale(value, s);
 }
 
-template <typename T>
-UTD_DINLINE Complex3T<T> compute_pair_vector_at_angles(
-    PairInputsT<T> state, Vec3T<T> tgtPos, T k, MaterialParamsT<T> mat, T phi, T phiP, T s, T sP, T sb, Basis3T<T> inEB,
-    Basis3T<T> outEB, ComplexT<T> finiteFactor, T gammaOdd = T(1.f), ComplexT<T> truncEven = c_const<T>(1, 0),
-    // Source-to-edge distance captured at the ORIGINAL (pre-re-anchor) edge
-    // point. Consumed only on the external-incident stationary path
-    // (stationaryExternalIncident > 0.5) to re-extrapolate the frozen incident
-    // spherical wave to the re-anchored stationary point; ignored otherwise.
-    T sPrimeFrozen = T(-1.f)) {
+// Vector field of one pair at its edge angles, with the face reflection coefficients from `faces` (see
+// HalfSpaceFaceCoefficients). sPrimeFrozen is the source-to-edge distance captured at the original (pre-re-anchor)
+// edge point; only the external-incident stationary path (stationaryExternalIncident > 0.5) uses it, to
+// re-extrapolate the frozen incident spherical wave to the re-anchored stationary point.
+template <typename T, typename FaceCoefficients>
+UTD_DINLINE Complex3T<T> compute_pair_vector_at_angles_faces(PairInputsT<T> state, Vec3T<T> tgtPos, T k,
+                                                             MaterialParamsT<T> mat, T phi, T phiP, T s, T sP, T sb,
+                                                             Basis3T<T> inEB, Basis3T<T> outEB,
+                                                             ComplexT<T> finiteFactor, T gammaOdd,
+                                                             ComplexT<T> truncEven, T sPrimeFrozen,
+                                                             const FaceCoefficients& faces) {
     bool selectedStationary = state.selectStationaryPoint > 0.5f;
     bool externalIncident = selectedStationary && (state.stationaryExternalIncident > 0.5f);
     // Faces are finite: continue the coefficient with its grazing value at the
@@ -1792,18 +1838,11 @@ UTD_DINLINE Complex3T<T> compute_pair_vector_at_angles(
     bool hasSlope = (derivativePower > 1.0e-24f) && slopeSafe;
 
     bool useFace = (state.face0Material.present > 0.5f) || (state.face1Material.present > 0.5f);
-    bool f0HasMat = state.face0Material.present > 0.5f;
-    bool f1HasMat = state.face1Material.present > 0.5f;
-    bool useStoredFaceOps = mat.omega <= 0.f;
 
     T face0Cos, face1Cos;
     reciprocal_face_cosines(phi, phiP, state.wedgeN, face0Cos, face1Cos);
-    JonesOperatorT<T> f0Op = (f0HasMat && !useStoredFaceOps)
-                                 ? face_reflection_operator(state.face0Material, face0Cos, mat.omega)
-                                 : fallback_face_operator(state.face0Operator, state.n0, inEB.k, outEB.k, inEB, outEB);
-    JonesOperatorT<T> f1Op = (f1HasMat && !useStoredFaceOps)
-                                 ? face_reflection_operator(state.face1Material, face1Cos, mat.omega)
-                                 : fallback_face_operator(state.face1Operator, state.nn, inEB.k, outEB.k, inEB, outEB);
+    JonesOperatorT<T> f0Op = pair_face_operator(faces, 0, state.face0Material, state.face0Operator, face0Cos);
+    JonesOperatorT<T> f1Op = pair_face_operator(faces, 1, state.face1Material, state.face1Operator, face1Cos);
 
     DiffractionOperatorTermsT<T> terms = useFace ? compute_op_terms_3d(phi, phiP, state.wedgeN, k, s, sP, sb, gammaOdd,
                                                                        truncEven, T(state.isbTaperWidthScale))
@@ -1835,8 +1874,19 @@ UTD_DINLINE Complex3T<T> compute_pair_vector_at_angles(
 }
 
 template <typename T>
-UTD_DINLINE Complex3T<T> compute_pair_vector_contribution_no_completion(PairInputsT<T> state, Vec3T<T> tgtPos, T k,
-                                                                        MaterialParamsT<T> mat) {
+UTD_DINLINE Complex3T<T> compute_pair_vector_at_angles(PairInputsT<T> state, Vec3T<T> tgtPos, T k,
+                                                       MaterialParamsT<T> mat, T phi, T phiP, T s, T sP, T sb,
+                                                       Basis3T<T> inEB, Basis3T<T> outEB, ComplexT<T> finiteFactor,
+                                                       T gammaOdd = T(1.f), ComplexT<T> truncEven = c_const<T>(1, 0),
+                                                       T sPrimeFrozen = T(-1.f)) {
+    return compute_pair_vector_at_angles_faces(state, tgtPos, k, mat, phi, phiP, s, sP, sb, inEB, outEB, finiteFactor,
+                                               gammaOdd, truncEven, sPrimeFrozen,
+                                               HalfSpaceFaceCoefficients<T>{mat.omega});
+}
+
+template <typename T, typename FaceCoefficients>
+UTD_DINLINE Complex3T<T> compute_pair_vector_contribution_faces(PairInputsT<T> state, Vec3T<T> tgtPos, T k,
+                                                                MaterialParamsT<T> mat, const FaceCoefficients& faces) {
     // Deterministic (selectStationaryPoint > 0.5) path re-anchors the edge to
     // its analytic Fermat point; MC leaves the caller-supplied Keller point.
     // Capture the source-to-edge distance at the ORIGINAL edge point BEFORE the
@@ -1884,8 +1934,14 @@ UTD_DINLINE Complex3T<T> compute_pair_vector_contribution_no_completion(PairInpu
         gammaOdd = T(1.f);
         outerFinite = finite_wedge_truncation_factor(state, tgtPos, k);
     }
-    return compute_pair_vector_at_angles(state, tgtPos, k, mat, phi, phiP, s, sP, sb, inEB, outEB, outerFinite,
-                                         gammaOdd, truncEven, sPrimeFrozen);
+    return compute_pair_vector_at_angles_faces(state, tgtPos, k, mat, phi, phiP, s, sP, sb, inEB, outEB, outerFinite,
+                                               gammaOdd, truncEven, sPrimeFrozen, faces);
+}
+
+template <typename T>
+UTD_DINLINE Complex3T<T> compute_pair_vector_contribution_no_completion(PairInputsT<T> state, Vec3T<T> tgtPos, T k,
+                                                                        MaterialParamsT<T> mat) {
+    return compute_pair_vector_contribution_faces(state, tgtPos, k, mat, HalfSpaceFaceCoefficients<T>{mat.omega});
 }
 
 template <typename T>
@@ -1897,17 +1953,23 @@ UTD_DINLINE Complex3T<T> compute_pair_vector_contribution(PairInputsT<T> state, 
 // ===================================================================
 // Full pair contribution (scalar field + vector field)
 // ===================================================================
-template <typename T>
-UTD_DINLINE PairOutputsT<T> compute_pair_contribution(PairInputsT<T> state, Vec3T<T> tgtPos, T k,
-                                                      MaterialParamsT<T> mat) {
+template <typename T, typename FaceCoefficients>
+UTD_DINLINE PairOutputsT<T> compute_pair_contribution_faces(PairInputsT<T> state, Vec3T<T> tgtPos, T k,
+                                                            MaterialParamsT<T> mat, const FaceCoefficients& faces) {
     PairOutputsT<T> out;
     out.field = cplx_zero<T>();
     out.vectorField = c3_zero<T>();
     bool gv;
     ComplexT<T> dg, dvg;
     compute_pair_field_terms(state, tgtPos, k, mat, gv, out.field, dg, dvg);
-    out.vectorField = compute_pair_vector_contribution(state, tgtPos, k, mat);
+    out.vectorField = compute_pair_vector_contribution_faces(state, tgtPos, k, mat, faces);
     return out;
+}
+
+template <typename T>
+UTD_DINLINE PairOutputsT<T> compute_pair_contribution(PairInputsT<T> state, Vec3T<T> tgtPos, T k,
+                                                      MaterialParamsT<T> mat) {
+    return compute_pair_contribution_faces(state, tgtPos, k, mat, HalfSpaceFaceCoefficients<T>{mat.omega});
 }
 
 // ===================================================================

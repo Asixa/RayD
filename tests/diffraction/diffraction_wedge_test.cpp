@@ -428,6 +428,69 @@ void test_invalid_row_short_circuits_poison() {
 
 } // namespace
 
+rayd::torch::DiffractionFaceLayers wedge_face_layers(float thickness, int row, std::vector<float> layer_thickness,
+                                                     int device = 0) {
+    const auto floats = float_options(device);
+    const auto ints = floats.dtype(at::kInt);
+    const int64_t count = static_cast<int64_t>(layer_thickness.size());
+    return {at::full({1}, thickness, floats),
+            at::full({1}, row, ints),
+            at::zeros({1}, ints),
+            at::full({1}, static_cast<int>(count), ints),
+            at::tensor(layer_thickness, floats),
+            at::full({count}, 4.0F, floats),
+            at::full({count}, 0.01F, floats),
+            at::ones({count}, floats)};
+}
+
+// Face layers give the wedge faces their slab / layer-stack reflection in the forward and in the JVP/VJP alike: a
+// thin slab changes the field, the JVP of a face permittivity matches the central difference of the layered
+// forward, and the JVP/VJP duality holds.
+void test_face_layers_forward_and_ad() {
+    auto plain = wedge_request(false);
+    auto layered = plain;
+    // The store is shared by both faces; one stack row of two layers (face 1), a slab for face 0.
+    const auto store = wedge_face_layers(0.006F, -1, {0.004F, 0.004F});
+    layered.face0_layers = store;
+    layered.face1_layers = store;
+    layered.face1_layers->layer_material = at::zeros({1}, store.layer_material.options());
+    const auto floats = plain.source.options();
+    const auto base = rayd::torch::field_diffraction_wedge(plain).field_vector;
+    const auto thin = rayd::torch::field_diffraction_wedge(layered).field_vector;
+    require((thin - base).abs().max().item<float>() > 1.0e-2F * base.abs().max().item<float>(),
+            "thin face layers must change the wedge field");
+
+    const float step = 1.0e-2F;
+    auto plus = layered;
+    plus.face0_eps_r = plain.face0_eps_r + step;
+    auto minus = layered;
+    minus.face0_eps_r = plain.face0_eps_r - step;
+    const auto difference = (rayd::torch::field_diffraction_wedge(plus).field_vector -
+                             rayd::torch::field_diffraction_wedge(minus).field_vector) /
+                            (2.0F * step);
+    rayd::torch::DiffractionWedgeJvpRequest jvp;
+    jvp.primal = layered;
+    jvp.tangent_face0_eps_r = at::ones({1}, floats);
+    const auto tangent = rayd::torch::field_diffraction_wedge_jvp(jvp).tangent_field_vector;
+    require((tangent - difference).abs().max().item<float>() <= 2.0e-2F * difference.abs().max().item<float>(),
+            "layered wedge JVP must match the layered forward's central difference");
+
+    rayd::torch::DiffractionWedgeBackwardRequest backward;
+    backward.primal = layered;
+    backward.grad_field_vector = at::ones({1, 3}, floats.dtype(at::kComplexFloat));
+    backward.need_grad_material = true;
+    const auto gradients = rayd::torch::field_diffraction_wedge_backward(backward);
+    const double lhs = at::view_as_real(tangent).select(-1, 0).sum().item<double>();
+    const double rhs = gradients.grad_face0_eps_r->sum().item<double>();
+    require(std::fabs(lhs - rhs) <= 1.0e-3 * std::max({1.0, std::fabs(lhs), std::fabs(rhs)}),
+            "layered wedge JVP/VJP duality differs");
+
+    auto unpaired = layered;
+    unpaired.face1_layers.reset();
+    require_throws([&] { (void)rayd::torch::field_diffraction_wedge(unpaired); },
+                   "face0 and face1 layers must be supplied together");
+}
+
 int main() {
     try {
         require(at::cuda::is_available(), "CUDA is required for wedge tests");
@@ -439,6 +502,8 @@ int main() {
         test_negative_contracts();
         std::cout << "[RUN] test_nondefault_stream_dependency\n";
         test_nondefault_stream_dependency();
+        std::cout << "[RUN] test_face_layers_forward_and_ad\n";
+        test_face_layers_forward_and_ad();
         std::cout << "[RUN] test_invalid_row_short_circuits_poison\n";
         test_invalid_row_short_circuits_poison();
         std::cout << "rayd::torch pure-wedge direct contracts passed\n";

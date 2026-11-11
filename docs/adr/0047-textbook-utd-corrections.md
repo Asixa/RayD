@@ -227,3 +227,39 @@ source at 60 degrees, the coefficient at the face-0 reflection boundary (120 deg
 at the incident boundary (240 deg) its shadow-side value, for both polarizations; on the previous header the
 four cases fail. Channel's boundary probe (a 10 m PEC or concrete half-plane, receivers 0 and 1e-6 m from the
 reflection boundary) is recorded in Channel's ADR for the full-wave fixes.
+
+## Amendment: the face term reflects with the face's slab or layer stack (2026-11-11)
+
+**Context.** Channel's full-wave suite (Channel defect D3) measured the step left in the total field at a
+reflection shadow boundary, as a fraction of the reflected field: 0.05 for a 0.1 m concrete slab, 0.38-0.42 for
+6 mm glass and 0.54-0.60 for a three-layer wall, at normal incidence on the edge. The diffraction face term
+evaluated the half-space Fresnel coefficient of one (eta, sigma) per face (`face_reflection_operator`), while
+Channel's specular reflection of the same face uses the finite slab of its thickness or its whole layer stack.
+On the reflection boundary the face term must cancel exactly the reflected field's step, so it must use the
+same coefficient.
+
+**Decision.** The pair evaluation takes its face reflection coefficients from a provider:
+`compute_pair_vector_contribution_faces` / `compute_pair_contribution_faces` /
+`compute_pair_vector_at_angles_faces` take a `FaceCoefficients` object with `evaluates(face, material)` and
+`operator()(face, material, cosTheta) -> FaceFresnelT{rTE, rTM}` (s / p = s x k convention, gain included).
+The former entry points forward with `HalfSpaceFaceCoefficients{mat.omega}`, the previous coefficient, and
+keep the stored-operator path for faces it does not evaluate, so every existing caller is unchanged.
+`pair_face_operator` turns the coefficients into the face operator.
+
+The Torch order-1 exporter and the wedge field with its JVP/VJP gain an optional `DiffractionFaceLayers`
+table (`DiffractionPathConfig::face_layers`, `DiffractionWedgeRequest::face0_layers`/`face1_layers`): per face
+the slab thickness and the row of a layer store in the transmission CSR layout. With it a face reflects as the
+slab of its (eta, sigma, mu) and thickness, or, when its row holds two or more usable layers, as the whole stack
+(`src/diffraction/face_coefficients.cuh`, the same `slab_fresnel` / `stack_rt` the specular kernels use). The
+wedge companion's forward-mode twin uses `slab_fresnel_dual` / `stack_rt_dual`; the slab thickness and the
+stack layers carry no tangent. Without the table nothing changes. The Dr.Jit exporter has no table and keeps
+the half-space faces.
+
+**Evidence.** `tests/native/integration_test.cpp::test_diffraction_face_layer_reflection`: a 30 m lossy slab
+reflects like the half-space (1e-3), a 5 cm slab changes the field by more than 1 %, a stack of two layers equals
+the slab of their summed thickness (1e-4), and per-face rows must match the material rows.
+`tests/diffraction/diffraction_wedge_test.cpp::test_face_layers_forward_and_ad`: the layered wedge field
+differs from the half-space one, its permittivity JVP matches the central difference of the layered forward
+(2 %), and JVP/VJP duality holds. The Dr.Jit `diffraction_paths` and `diffraction_accumulation` PTX were
+regenerated (the PTX closure gains `face_coefficients.cuh`, `field_transport.cuh` and `transmission_device.cuh`).
+Channel's full-wave tables are in its ADR for the full-wave fixes.
