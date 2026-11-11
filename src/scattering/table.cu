@@ -21,24 +21,8 @@ using rayd::shared::scattering::interp4;
 using rayd::shared::scattering::linear_axis;
 using rayd::shared::scattering::nearest_axis;
 using rayd::shared::scattering::positive_phi;
+using rayd::shared::scattering::table_pdf;
 
-__device__ __forceinline__ float table_pdf(const float* __restrict__ density, int nti, int npi, int nto, int npo,
-                                           const float* wi, const float* wo) {
-    if (wi[2] <= 0.0f || wo[2] <= 0.0f)
-        return 0.0f;
-    const float phi_i = positive_phi(wi[1], wi[0]);
-    float phi_o = positive_phi(wo[1], wo[0]);
-    if (npi == 1) {
-        phi_o -= phi_i;
-        if (phi_o < 0.0f)
-            phi_o += kTwoPi;
-    }
-    const int ti = nearest_axis(wi[2], nti, 1.0f, false);
-    const int pi = npi == 1 ? 0 : nearest_axis(phi_i, npi, kTwoPi, true);
-    const int to = nearest_axis(wo[2], nto, 1.0f, false);
-    const int po = nearest_axis(phi_o, npo, kTwoPi, true);
-    return density[((static_cast<int64_t>(ti) * npi + pi) * nto + to) * npo + po];
-}
 __global__ void scattering_eval_kernel(int64_t count, const bool* __restrict__ valid, const float* __restrict__ wi,
                                        const float* __restrict__ wo, const float* __restrict__ fte,
                                        const float* __restrict__ ftm, int nti, int npi, int nto, int npo, float* out_te,
@@ -85,50 +69,9 @@ __global__ void scattering_sample_kernel(int64_t count, const bool* valid, const
             pdf_rev[row] = 0.0f;
             continue;
         }
-        const float* a = wi + 3 * row;
-        const float phi_i = positive_phi(a[1], a[0]);
-        const int ti = nearest_axis(a[2], nti, 1.0f, false);
-        const int pi = npi == 1 ? 0 : nearest_axis(phi_i, npi, kTwoPi, true);
-        const float u1 = fminf(fmaxf(uniforms[2 * row], 0.0f), 1.0f - 1e-7f);
-        const float u2 = fminf(fmaxf(uniforms[2 * row + 1], 0.0f), 1.0f - 1e-7f);
-        const int64_t mbase = (static_cast<int64_t>(ti) * npi + pi) * nto;
-        int lo = 0, hi = nto;
-        while (lo < hi) {
-            const int mid = (lo + hi) >> 1;
-            if (marginal[mbase + mid] <= u1)
-                lo = mid + 1;
-            else
-                hi = mid;
-        }
-        const int to = min(lo, nto - 1);
-        const float mlo = to ? marginal[mbase + to - 1] : 0.0f;
-        const float mhi = marginal[mbase + to];
-        const float mf = mhi > mlo ? (u1 - mlo) / (mhi - mlo) : 0.5f;
-        const int64_t cbase = ((static_cast<int64_t>(ti) * npi + pi) * nto + to) * npo;
-        lo = 0;
-        hi = npo;
-        while (lo < hi) {
-            const int mid = (lo + hi) >> 1;
-            if (conditional[cbase + mid] <= u2)
-                lo = mid + 1;
-            else
-                hi = mid;
-        }
-        const int po = min(lo, npo - 1);
-        const float clo = po ? conditional[cbase + po - 1] : 0.0f;
-        const float chi = conditional[cbase + po];
-        const float pf = chi > clo ? (u2 - clo) / (chi - clo) : 0.5f;
-        const float cos_o = fminf(fmaxf((static_cast<float>(to) + mf) / nto, 1e-6f), 1.0f);
-        float phi_o = (static_cast<float>(po) + pf) * (kTwoPi / npo);
-        if (npi == 1)
-            phi_o += phi_i;
-        const float sin_o = sqrtf(fmaxf(0.0f, 1.0f - cos_o * cos_o));
-        float* b = wo + 3 * row;
-        b[0] = sin_o * cosf(phi_o);
-        b[1] = sin_o * sinf(phi_o);
-        b[2] = cos_o;
-        pdf_fwd[row] = density[cbase + po];
-        pdf_rev[row] = table_pdf(density, nti, npi, nto, npo, b, a);
+        rayd::shared::scattering::sample_direction(marginal, conditional, density, nti, npi, nto, npo, wi + 3 * row,
+                                                   uniforms[2 * row], uniforms[2 * row + 1], wo + 3 * row, pdf_fwd[row],
+                                                   pdf_rev[row]);
     }
 }
 
