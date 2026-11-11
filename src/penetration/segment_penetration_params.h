@@ -12,6 +12,9 @@ namespace rayd::torch_backend {
 inline constexpr std::int32_t SegmentPenetrationEnumeratedFullDistance = 0;
 inline constexpr std::int32_t SegmentPenetrationMonteCarloTargetInset = 1;
 
+inline constexpr std::int32_t SegmentPenetrationOverflowFailBatch = 0;
+inline constexpr std::int32_t SegmentPenetrationOverflowDropRow = 1;
+
 inline constexpr std::uint8_t SegmentPenetrationRestartConstant = 0u;
 inline constexpr std::uint8_t SegmentPenetrationRestartPosition = 1u;
 
@@ -24,6 +27,7 @@ struct SegmentPenetrationParams {
     const int* faces = nullptr;
     const int* face_offsets = nullptr;
     int* capacity_failure_state = nullptr;
+    int* dropped_row_count = nullptr;
 
     std::uint8_t* valid = nullptr;
     int* num_hits = nullptr;
@@ -49,6 +53,7 @@ struct SegmentPenetrationParams {
     std::int32_t mesh_count = 0;
     std::int32_t policy = SegmentPenetrationEnumeratedFullDistance;
     std::int32_t failure_bit = 0;
+    std::int32_t overflow_policy = SegmentPenetrationOverflowFailBatch;
     float scene_diagonal = 0.0f;
 };
 

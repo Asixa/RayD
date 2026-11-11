@@ -10,6 +10,7 @@
 
 #include <src/runtime/optix_pipeline.h>
 #include <src/scene/cache.h>
+#include <src/penetration/segment_penetration_params.h>
 #include <rayd/penetration.h>
 
 namespace rayd::torch_backend {
@@ -44,6 +45,10 @@ struct SegmentPenetrationJvpOutputs {
 };
 
 OptixPipelineConfig segment_penetration_pipeline_config();
+
+// Runs the forward march for every segment lane over the scene's CUDA triangle BVH on `stream`.
+void segment_penetration_forward_cuda_bvh(const SceneCache& scene, const SegmentPenetrationParams& params,
+                                          cudaStream_t stream);
 
 void segment_penetration_initialize_cuda(SegmentPenetrationNativeOutputs& outputs, const at::Tensor* input_active,
                                          const at::Tensor& capacity_failure_state, std::int32_t failure_bit,

@@ -718,6 +718,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
         DEPENDS
             ${RAYD_ROOT_DIR}/src/visibility/axial_edge_visibility_optix.cu
             ${RAYD_ROOT_DIR}/src/visibility/axial_edge_visibility_params.h
+            ${RAYD_ROOT_DIR}/src/visibility/axial_edge_visibility.cuh
             "${RAYD_INCLUDE_DIR}/rayd/math.h"
             "${RAYD_ROOT_DIR}/src/visibility/segment_visibility.cuh"
             "${RAYD_ROOT_DIR}/src/runtime/rt_device.cuh"
@@ -909,6 +910,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
         DEPENDS
             ${RAYD_ROOT_DIR}/src/penetration/penetration_optix.cu
             ${RAYD_ROOT_DIR}/src/penetration/segment_penetration_params.h
+            ${RAYD_ROOT_DIR}/src/penetration/segment_penetration_march.cuh
             "${RAYD_INCLUDE_DIR}/rayd/contracts.h"
         DEPFILE "${RAYD_TORCH_SEGMENT_PENETRATION_PTX}.d"
         VERBATIM
@@ -1131,6 +1133,28 @@ if(RAYD_TORCH_BUILD_NATIVE)
             NAME rayd_torch_integration
             COMMAND rayd_torch_integration_test)
         add_executable(
+            rayd_torch_trace_backend_parity_test
+            ${RAYD_ROOT_DIR}/tests/native/trace_backend_parity_test.cpp)
+        target_include_directories(
+            rayd_torch_trace_backend_parity_test
+            PRIVATE
+                ${Python_INCLUDE_DIRS}
+                "${TORCH_INSTALL_PREFIX}/include"
+                "${TORCH_INSTALL_PREFIX}/include/torch/csrc/api/include"
+                ${CUDAToolkit_INCLUDE_DIRS})
+        target_link_libraries(
+            rayd_torch_trace_backend_parity_test
+            PRIVATE
+                rayd_torch_native_core
+                rayd_torch_python_ops
+                Python::Python)
+        target_compile_features(rayd_torch_trace_backend_parity_test PRIVATE cxx_std_17)
+        add_test(
+            NAME rayd_torch_trace_backend_parity
+            COMMAND rayd_torch_trace_backend_parity_test)
+        # The test exits with 77 when the machine has no CUDA device or no usable OptiX runtime.
+        set_tests_properties(rayd_torch_trace_backend_parity PROPERTIES SKIP_RETURN_CODE 77)
+        add_executable(
             rayd_torch_segment_penetration_test
             ${RAYD_ROOT_DIR}/tests/penetration/segment_penetration_test.cpp
             ${RAYD_ROOT_DIR}/tests/penetration/segment_penetration_oracle.cu)
@@ -1221,6 +1245,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
         if(WIN32)
             set_tests_properties(
                 rayd_torch_integration
+                rayd_torch_trace_backend_parity
                 rayd_torch_segment_penetration
                 rayd_torch_diffraction_wedge
                 rayd_torch_scattering

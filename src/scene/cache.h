@@ -323,8 +323,12 @@ int64_t scene_edge_count(int64_t handle);
 std::string scene_trace_backend(int64_t handle);
 std::string scene_edge_backend(int64_t handle);
 void update_mesh_vertices(int64_t handle, int64_t mesh_id, at::Tensor vertices);
+// Stages new vertices for a dynamic mesh; the caller holds the scene exclusively.
+void update_mesh_vertices(SceneCache& scene, int64_t mesh_id, at::Tensor vertices);
 void update_instance_transform(int64_t handle, int64_t mesh_id, at::Tensor vertices, at::Tensor transform);
 void sync_scene(int64_t handle);
+// Commits staged vertex and transform updates; the caller holds the scene exclusively.
+void sync_scene(SceneCache& scene);
 int64_t scene_version(c10::intrusive_ptr<SceneHandle> scene);
 int64_t scene_num_meshes(c10::intrusive_ptr<SceneHandle> scene);
 int64_t scene_num_geometries(c10::intrusive_ptr<SceneHandle> scene);

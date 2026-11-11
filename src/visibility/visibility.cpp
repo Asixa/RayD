@@ -700,10 +700,8 @@ std::vector<at::Tensor> visible_chain_forward_impl(int64_t scene_handle, at::Ten
 at::Tensor axial_edge_visibility_forward_native_impl(
     SceneCache& scene, const at::Tensor& tx, const at::Tensor& edge_position, const at::Tensor& edge_direction,
     const at::Tensor& edge_t_min, const at::Tensor& edge_t_max, const at::Tensor* active,
-    const std::array<std::uint32_t, AxialEdgeVisibilitySampleCount>& sample_fraction_bits) {
-    if (scene.trace_backend == TraceBackend::Cuda)
-        throw std::runtime_error("ADR-0029 axial-edge visibility is unsupported by the CUDA ray-tracing backend; "
-                                 "select trace_backend='optix'.");
+    const std::array<std::uint32_t, AxialEdgeVisibilitySampleCount>& sample_fraction_bits,
+    const at::Tensor* state_source) {
     require_cuda(tx, "tx");
     require_contiguous(tx, "tx");
     require_dtype(tx, at::kFloat, "tx");
@@ -725,6 +723,14 @@ at::Tensor axial_edge_visibility_forward_native_impl(
         if (active->size(0) != state_count) {
             throw std::runtime_error("active must match the axial-edge state count.");
         }
+    }
+    if (state_source != nullptr) {
+        require_vec3f(*state_source, "state_source");
+        require_contiguous(*state_source, "state_source");
+        if (state_source->size(0) != state_count) {
+            throw std::runtime_error("state_source must match the axial-edge state count.");
+        }
+        require_scene_device(scene, *state_source, "state_source");
     }
 
     require_scene_device(scene, tx, "tx");
@@ -756,11 +762,16 @@ at::Tensor axial_edge_visibility_forward_native_impl(
     params.edge_t_min = edge_t_min.data_ptr<float>();
     params.edge_t_max = edge_t_max.data_ptr<float>();
     params.active = active == nullptr ? nullptr : mask_ptr(*active);
+    params.state_source = state_source == nullptr ? nullptr : state_source->data_ptr<float>();
     params.state_count = checked_i32(state_count, "state_count");
     for (std::size_t index = 0; index < sample_fractions.size(); ++index)
         params.sample_fractions[index] = sample_fractions[index];
     params.out_any_visible = mutable_mask_ptr(any_visible);
 
+    if (scene.trace_backend == TraceBackend::Cuda) {
+        launch_axial_edge_visibility_cuda(scene, params);
+        return any_visible;
+    }
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     optix_pipeline_for_scene(scene, axial_edge_visibility_pipeline_config())
         ->launch(0, params, static_cast<unsigned int>(state_count), torch_ctx.stream);
@@ -796,7 +807,8 @@ AxialEdgeVisibilityResult axial_edge_visibility_forward(const SceneResource& sce
                                                                      request.edge_direction, request.edge_t_min,
                                                                      request.edge_t_max,
                                                                      present_optional(request.active),
-                                                                     request.config.sample_fraction_bits)};
+                                                                     request.config.sample_fraction_bits,
+                                                                     present_optional(request.state_source))};
 }
 
 } // namespace rayd::torch

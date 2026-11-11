@@ -94,3 +94,15 @@ UTD math, makes source-lane the single-device Python default, reads inactive pay
 count as a host-visible shape, adds synchronization or a host transfer, changes
 compact output semantics, performs a floating-point reduction, or introduces a
 generation-suffixed name or compatibility shim.
+
+## Amendment: per-state sources (2026-11-11)
+
+`DiffractionPathConfig` gains an optional contiguous int32 `[state_limit]`
+`state_source_index`. When present the launch has one transmitter lane
+(`rx_count * state_limit` lanes; `SourceLane` writes lane `rx * state_limit +
+state`), each state takes its incident polarization from `tx_pol[index]` and
+writes the index as `tx_id`, and a state whose index is outside the `tx_pol`
+rows exports nothing. Source position and power already come from the state.
+A row is bitwise the row of the single-transmitter launch for that state's
+transmitter. Omitting the field is bitwise the previous launch; the Dr.Jit
+params have no such field and its diffraction-paths PTX is byte-identical.

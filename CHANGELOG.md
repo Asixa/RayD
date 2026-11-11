@@ -86,6 +86,8 @@ shim remains. The C++ boundary `rayd/integration.h` is unchanged. Of the `torch.
 
 ### Behaviour changes
 
+#### Python API
+
 - Torch `Scene.accum_dfr` defaults to `max_order=1` (through `DfrOptions`) instead of `2`, matching Dr.Jit. Chain
   accumulation must ask for `max_order=2` or `3`.
 - Backend strings match exactly and case-sensitively in both backends: `"OptiX"` or `" optix"` is rejected.
@@ -94,7 +96,18 @@ shim remains. The C++ boundary `rayd/integration.h` is unchanged. Of the `torch.
 - Torch `Scene.nearest_edge` takes an `active` mask with the same semantics as `nearest_edges`; inactive rows return
   the miss sentinels.
 
+#### UTD diffraction (ADR-0047)
+
+- The shared UTD diffraction coefficient matches Kouyoumjian-Pathak and is reciprocal by construction: finite-edge
+  aperture factors take the Fresnel phase variable, the face reflection angles are the mean of the incidence and
+  observation sines, the direct source keeps the short-dipole `sin(theta)` pattern, and the stationary point uses
+  the unfolding closed form. Every diffraction value moves; downstream diffraction baselines must be regenerated.
+- The wedge face reflection operator is built in the edge-fixed bases (`op = -diag(r_TM, r_TE)` on (hard, soft)),
+  so the face term no longer takes its sign from rounding on the Keller cone.
+
 ### Added
+
+#### Python API
 
 - Torch result records share `repr` (field name, shape, dtype and device for tensors, value for scalars, with no device
   synchronization), `to(device)`, and `detach()`; `ReflectionChain` has them too.
@@ -118,6 +131,56 @@ shim remains. The C++ boundary `rayd/integration.h` is unchanged. Of the `torch.
   against a commented allowlist of accepted differences.
 - `scripts/gen_drjit_stub.sh` regenerates the Dr.Jit stub from the built extension with `nanobind.stubgen` and
   `scripts/drjit_stub_patterns.txt`.
+
+#### Typed C++ API
+
+These additions are additive: `kIntegrationApiVersion` stays 8 and no existing `rayd/integration.h` or `rayd/scene.h`
+declaration changed.
+
+- Typed scene API (`rayd/scene.h`): `SceneTraceBackend` and `SceneOptions` with a `create_scene(meshes, options)`
+  overload (the one-argument form stays `Auto`), `scene_trace_backend()` returning the resolved tracer, and
+  `optix_availability()` reporting whether OptiX is usable on a device and why not. A forced OptiX request fails
+  loudly when OptiX is unusable.
+- Typed in-place refit: `update_mesh_vertices(scene, mesh_index, vertices)` stages new vertices for a mesh created
+  with `MeshInput::dynamic`, and `sync_scene(scene)` commits them through the same path as `Scene.sync()` (refit,
+  rebuild every 16th commit, finite-vertex check). A refit scene traces bit for bit like one built from the moved
+  vertices.
+- `SegmentPenetrationOverflowPolicy::DropRow`: an overflowing segment-penetration row is returned to the inert state,
+  keeps `overflow=true`, is counted in an optional `dropped_row_count`, and sets no failure bit; other rows are
+  bitwise unchanged. The default `FailBatch` is unchanged (ADR-0033 amendment).
+- Typed `AxialEdgeVisibilityRequest::state_source` (optional float32 `[N, 3]`) traces each state's samples to its own
+  source, and typed `DiffractionPathConfig::state_source_index` (optional int32 `[state_limit]`) gives each order-1
+  exporter state its own transmitter for the incident polarization and the exported `tx_id`. Omitting them is
+  bitwise the previous behaviour.
+- `pair_face_cosines` folds the face angles of a source-edge pair into the wedge domain and returns
+  `reciprocal_face_cosines`, for callers that build face operators before the pair is evaluated.
+- Kirchhoff table sampling and density lookup (`sample_direction`, `table_pdf`) are shared header device math in
+  `include/rayd/scattering_table.cuh`; the table kernels call the same functions (no numerical change).
+- `legacy_slab_fresnel_dual_multi<N>` carries N tangent directions through one evaluation of the legacy slab Fresnel
+  primal; tangent k follows the operation sequence of `legacy_slab_fresnel_dual` exactly.
+- Typed `ReflectionEpcRequest::min_segment_length` (default 0, bitwise the previous behaviour): an EPC path with a
+  source, interaction-point or receiver segment shorter than it is invalid (ADR-0048). It is typed-only: the Python
+  `ReflEpcOptions` and the `torch.ops.rayd_torch` EPC operators keep the 0 default.
+- `rayd_torch_trace_backend_parity` CTest compares the OptiX and pure-CUDA trace backends on axial-edge visibility,
+  segment penetration (both overflow policies, tapes, VJP, JVP), intersection, order-1 diffraction paths,
+  diffraction accumulation, coherent accumulation, refit, and the per-state source fields.
+
+### Changed
+
+- Axial-edge visibility and segment penetration run on the pure-CUDA trace backend too (selected by `Auto` when OptiX
+  is unusable); each keeps one numerical body shared by both tracers.
+- Reflection EPC plane-group containment first traces a short probe along the plane normal and accepts the hit
+  triangle when it belongs to the expected group and contains the point; otherwise the exact member scan decides.
+  The accepted set is unchanged and finely subdivided planes no longer scale the launch linearly (ADR-0048).
+
+### Fixed
+
+- Torch diffraction accumulation passes the real angular frequency `2 pi c / lambda` to the face Fresnel
+  coefficients (it passed `2 pi c`, scaling every face's loss tangent by the wavelength in metres), and coherent
+  accumulation radiates from the documented `+x` dipole instead of an unset polarization.
+- Order-1 diffraction paths on the pure-CUDA trace backend read the source polarization, the ISB taper width and
+  strided material columns from the request, as the OptiX program does; they used to assume `+x`, no taper and
+  contiguous materials without any error.
 
 ## [0.9.0] - 2026-11-10
 

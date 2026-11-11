@@ -679,6 +679,19 @@ OptixDeviceContextEntry& get_optix_context(int device_index) {
     return *inserted->second;
 }
 
+bool optix_context_probe(int device_index, std::string* reason) {
+    try {
+        (void)get_optix_context(device_index);
+        if (reason != nullptr)
+            reason->clear();
+        return true;
+    } catch (const OptixCapabilityUnavailable& error) {
+        if (reason != nullptr)
+            *reason = error.what();
+        return false;
+    }
+}
+
 bool optix_context_available(int device_index) {
     try {
         (void)get_optix_context(device_index);

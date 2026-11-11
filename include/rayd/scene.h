@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace rayd::torch {
@@ -26,6 +27,21 @@ struct MeshInput {
     bool use_face_normals = false;
     bool edges_enabled = true;
     bool dynamic = false;
+};
+
+// Which ray tracer a scene's triangle queries run on. Every scene operation of this API gives the same discrete
+// results on both tracers; floating-point outputs agree to float32 rounding of the triangle test.
+enum class SceneTraceBackend : std::uint8_t {
+    // OptiX when it is usable on the scene device, otherwise the CUDA BVH.
+    Auto = 0,
+    // OptiX; scene creation fails when OptiX is not usable on the scene device.
+    Optix = 1,
+    // The pure-CUDA triangle BVH; needs no OptiX runtime.
+    Cuda = 2,
+};
+
+struct SceneOptions {
+    SceneTraceBackend trace_backend = SceneTraceBackend::Auto;
 };
 
 class SceneResource final {
@@ -48,9 +64,26 @@ class SceneResource final {
 
     friend struct detail::IntegrationAccess;
     friend SceneResource create_scene(std::vector<MeshInput> meshes);
+    friend SceneResource create_scene(std::vector<MeshInput> meshes, const SceneOptions& options);
 };
 
+// Same as create_scene(meshes, SceneOptions{}).
 SceneResource create_scene(std::vector<MeshInput> meshes);
+SceneResource create_scene(std::vector<MeshInput> meshes, const SceneOptions& options);
+
+// The tracer a built scene resolved to: Optix or Cuda, never Auto.
+SceneTraceBackend scene_trace_backend(const SceneResource& scene);
+
+struct OptixAvailability {
+    bool available = false;
+    // Why OptiX is unusable (driver library missing, driver too old, device unsupported, or disabled by
+    // RAYD_DISABLE_OPTIX); empty when available.
+    std::string reason;
+};
+
+// Probes whether OptiX can trace on a CUDA device, without warning. A usable context is kept for later scenes. CUDA
+// errors that are not an OptiX capability gap are thrown.
+OptixAvailability optix_availability(int device_index);
 
 struct SceneEdgeRecordsResult {
     at::Tensor global_vertices;
@@ -68,6 +101,18 @@ struct SceneEdgeRecordsResult {
 };
 
 SceneEdgeRecordsResult scene_edge_records(const SceneResource& scene);
+
+// Stages new vertices for mesh `mesh_index`, which must have been created with `MeshInput::dynamic`. The vertices
+// must be a CUDA float32 (V, 3) tensor on the scene device with the mesh's vertex count; the faces stay as built.
+// Queries keep tracing the committed geometry until sync_scene() commits the update.
+void update_mesh_vertices(SceneResource& scene, std::int64_t mesh_index, const at::Tensor& vertices);
+
+// Commits every staged vertex update on the caller's current stream: refits the updated meshes' triangle acceleration
+// structures (rebuilding one from scratch every 16th commit), repacks the scene geometry that scene_edge_records()
+// returns into new tensors, and invalidates edge query structures, which rebuild on their next use. Non-finite staged
+// vertices are refused before any structure changes, and the staged updates then stay pending. Results recorded
+// before the commit keep the tensors they were given. With nothing staged it returns without device work.
+void sync_scene(SceneResource& scene);
 
 struct RayBatch {
     at::Tensor ray_o;

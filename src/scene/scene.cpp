@@ -8,10 +8,12 @@
 #include <src/scene/cache.h>
 #include <src/scene/cache_kernels.h>
 #include <src/bindings/tensor_contract.h>
+#include <src/runtime/optix_context.h>
 #include <rayd/scene.h>
 
 #include "../bindings/integration_internal.h"
 
+#include <c10/cuda/CUDAFunctions.h>
 #include <torch/extension.h>
 
 #include <string>
@@ -228,8 +230,26 @@ torch_backend::SceneCache& detail::IntegrationAccess::scene_cache(const SceneRes
 }
 
 SceneResource create_scene(std::vector<MeshInput> meshes) {
+    return create_scene(std::move(meshes), SceneOptions{});
+}
+
+SceneResource create_scene(std::vector<MeshInput> meshes, const SceneOptions& options) {
     if (meshes.empty())
         throw std::runtime_error("rayd::torch::create_scene requires at least one mesh");
+    torch_backend::TraceBackend trace_backend = torch_backend::TraceBackend::Auto;
+    switch (options.trace_backend) {
+    case SceneTraceBackend::Auto:
+        trace_backend = torch_backend::TraceBackend::Auto;
+        break;
+    case SceneTraceBackend::Optix:
+        trace_backend = torch_backend::TraceBackend::Optix;
+        break;
+    case SceneTraceBackend::Cuda:
+        trace_backend = torch_backend::TraceBackend::Cuda;
+        break;
+    default:
+        throw std::runtime_error("rayd::torch::create_scene received an invalid SceneTraceBackend");
+    }
     std::vector<torch_backend::MeshRecord> records;
     records.reserve(meshes.size());
     for (MeshInput& mesh : meshes) {
@@ -245,8 +265,51 @@ SceneResource create_scene(std::vector<MeshInput> meshes) {
                                                                  std::move(mesh.to_world_left),
                                                                  std::move(mesh.to_world_right), flags));
     }
-    auto owner = torch_backend::create_scene_cache(std::move(records), "rayd::torch::create_scene");
+    auto owner = torch_backend::create_scene_cache(std::move(records), trace_backend, torch_backend::EdgeBackend::Auto,
+                                                   "rayd::torch::create_scene");
     return SceneResource(std::make_unique<SceneResource::Impl>(std::move(owner)));
+}
+
+SceneTraceBackend scene_trace_backend(const SceneResource& scene) {
+    return detail::IntegrationAccess::scene_cache(scene).trace_backend == torch_backend::TraceBackend::Cuda
+               ? SceneTraceBackend::Cuda
+               : SceneTraceBackend::Optix;
+}
+
+OptixAvailability optix_availability(int device_index) {
+    if (device_index < 0 || device_index >= static_cast<int>(c10::cuda::device_count()))
+        throw std::runtime_error("rayd::torch::optix_availability received an invalid CUDA device index");
+    OptixAvailability result;
+    result.available = torch_backend::optix_context_probe(device_index, &result.reason);
+    return result;
+}
+
+namespace {
+
+// Holds a typed scene's state lock exclusively for one mutation.
+class ExclusiveSceneLock {
+  public:
+    explicit ExclusiveSceneLock(torch_backend::SceneCache& scene) : scene_(scene) { scene_.state_lock.lock(); }
+    ExclusiveSceneLock(const ExclusiveSceneLock&) = delete;
+    ExclusiveSceneLock& operator=(const ExclusiveSceneLock&) = delete;
+    ~ExclusiveSceneLock() { scene_.state_lock.unlock(); }
+
+  private:
+    torch_backend::SceneCache& scene_;
+};
+
+} // namespace
+
+void update_mesh_vertices(SceneResource& scene, std::int64_t mesh_index, const at::Tensor& vertices) {
+    auto& cache = detail::IntegrationAccess::scene_cache(scene);
+    ExclusiveSceneLock lock(cache);
+    torch_backend::update_mesh_vertices(cache, mesh_index, vertices);
+}
+
+void sync_scene(SceneResource& scene) {
+    auto& cache = detail::IntegrationAccess::scene_cache(scene);
+    ExclusiveSceneLock lock(cache);
+    torch_backend::sync_scene(cache);
 }
 
 SceneEdgeRecordsResult scene_edge_records(const SceneResource& scene) {
@@ -1683,9 +1746,7 @@ std::string scene_edge_backend(int64_t handle) {
     return get_scene_metadata(handle)->edge_backend == EdgeBackend::Cuda ? "cuda" : "optix";
 }
 
-void update_mesh_vertices(int64_t handle, int64_t mesh_id, at::Tensor vertices) {
-    ScenePin scene_pin = get_scene_for_update(handle);
-    SceneCache& scene = *scene_pin;
+void update_mesh_vertices(SceneCache& scene, int64_t mesh_id, at::Tensor vertices) {
     if (mesh_id < 0 || mesh_id >= static_cast<int64_t>(scene.meshes.size()))
         throw std::runtime_error("update_mesh_vertices(): invalid mesh id.");
     MeshRecord& mesh = scene.meshes[mesh_id];
@@ -1701,6 +1762,11 @@ void update_mesh_vertices(int64_t handle, int64_t mesh_id, at::Tensor vertices) 
     retire_if_read(scene, mesh.vertices);
     mesh.vertices = vertices.contiguous();
     mesh.pending_update = true;
+}
+
+void update_mesh_vertices(int64_t handle, int64_t mesh_id, at::Tensor vertices) {
+    ScenePin scene_pin = get_scene_for_update(handle);
+    update_mesh_vertices(*scene_pin, mesh_id, std::move(vertices));
 }
 
 void update_instance_transform(int64_t handle, int64_t mesh_id, at::Tensor vertices, at::Tensor transform) {
@@ -1728,9 +1794,7 @@ void update_instance_transform(int64_t handle, int64_t mesh_id, at::Tensor verti
     mesh.pending_transform = true;
 }
 
-void sync_scene(int64_t handle) {
-    ScenePin scene_pin = get_scene_for_update(handle);
-    SceneCache& scene = *scene_pin;
+void sync_scene(SceneCache& scene) {
     scene.last_sync_gas_updates = 0;
     scene.last_sync_ias_updates = 0;
     c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
@@ -1792,6 +1856,11 @@ void sync_scene(int64_t handle) {
     }
     scene.last_sync_gas_updates = gas_updates;
     scene.last_sync_ias_updates = ias_updates;
+}
+
+void sync_scene(int64_t handle) {
+    ScenePin scene_pin = get_scene_for_update(handle);
+    sync_scene(*scene_pin);
 }
 
 int64_t scene_version(c10::intrusive_ptr<SceneHandle> scene) {

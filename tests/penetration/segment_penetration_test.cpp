@@ -584,6 +584,135 @@ void test_failed_tape_replay_after_clearing_failure(const rayd::torch::SceneReso
     }
 }
 
+// DropRow leaves an overflowing row inert apart from its overflow flag, counts it, never touches the failure
+// state, and leaves every other row bitwise equal to a batch that holds only the non-overflowing rows.
+void test_drop_row_policy(const rayd::torch::SceneResource& scene) {
+    const auto floats = at::TensorOptions().device(at::kCUDA).dtype(at::kFloat);
+    const auto integers = floats.dtype(at::kInt);
+    // Row 0 crosses all three walls, row 1 misses them, row 2 crosses the first two.
+    auto origins = at::tensor({0.0f, 0.0f, -1.0f, 7.0f, 7.0f, -1.0f, 0.0f, 0.0f, -1.0f}, floats).reshape({3, 3});
+    auto targets = at::tensor({0.0f, 0.0f, 3.0f, 7.0f, 7.0f, 3.0f, 0.0f, 0.0f, 1.5f}, floats).reshape({3, 3});
+    for (const auto policy : {rayd::torch::SegmentPenetrationPolicy::EnumeratedFullDistance,
+                              rayd::torch::SegmentPenetrationPolicy::MonteCarloTargetInset}) {
+        auto failure = failure_state();
+        auto dropped = at::zeros({1}, integers);
+        auto drop = request(scene, origins, targets, std::nullopt, true, 2, policy, failure, 8);
+        drop.overflow_policy = rayd::torch::SegmentPenetrationOverflowPolicy::DropRow;
+        drop.dropped_row_count = dropped;
+        const auto plain = rayd::torch::segment_penetration_forward(drop);
+        const auto tape = rayd::torch::segment_penetration_forward_tape(drop);
+        require_result_contract(plain, 3, 2);
+        require_result_exact(plain, tape.result);
+        require(failure.item<int>() == 0, "DropRow set the failure bit");
+        require(dropped.item<int>() == 2, "DropRow did not count one dropped row per forward");
+        require(plain.overflow[0].item<bool>() && !plain.overflow[1].item<bool>() && !plain.overflow[2].item<bool>(),
+                "DropRow overflow diagnostic");
+        auto dropped_index = at::tensor({0}, floats.dtype(at::kLong));
+        require_inert(
+            rayd::torch::SegmentPenetrationResult{
+                plain.valid.index_select(0, dropped_index),
+                plain.num_hits.index_select(0, dropped_index),
+                plain.reached_target.index_select(0, dropped_index),
+                plain.overflow.index_select(0, dropped_index),
+                plain.distance.index_select(0, dropped_index),
+                plain.direction.index_select(0, dropped_index),
+                plain.t.index_select(0, dropped_index),
+                plain.position.index_select(0, dropped_index),
+                plain.normal.index_select(0, dropped_index),
+                plain.geometric_normal.index_select(0, dropped_index),
+                plain.global_primitive_id.index_select(0, dropped_index),
+            },
+            true);
+        require(at::equal(tape.tape_primitive_id[0], at::full_like(tape.tape_primitive_id[0], -1)) &&
+                    at::equal(tape.tape_barycentric[0], at::zeros_like(tape.tape_barycentric[0])) &&
+                    at::equal(tape.tape_restart_epsilon[0], at::zeros_like(tape.tape_restart_epsilon[0])) &&
+                    !tape.tape_direction_denominator_branch[0].item<bool>(),
+                "DropRow tape row not inert");
+
+        auto kept_index = at::tensor({1, 2}, floats.dtype(at::kLong));
+        auto kept_failure = failure_state();
+        auto kept =
+            request(scene, origins.index_select(0, kept_index).contiguous(),
+                    targets.index_select(0, kept_index).contiguous(), std::nullopt, true, 2, policy, kept_failure, 8);
+        const auto reference = rayd::torch::segment_penetration_forward_tape(kept);
+        require(kept_failure.item<int>() == 0, "reference batch failed");
+        require_result_exact(
+            rayd::torch::SegmentPenetrationResult{
+                plain.valid.index_select(0, kept_index),
+                plain.num_hits.index_select(0, kept_index),
+                plain.reached_target.index_select(0, kept_index),
+                plain.overflow.index_select(0, kept_index),
+                plain.distance.index_select(0, kept_index),
+                plain.direction.index_select(0, kept_index),
+                plain.t.index_select(0, kept_index),
+                plain.position.index_select(0, kept_index),
+                plain.normal.index_select(0, kept_index),
+                plain.geometric_normal.index_select(0, kept_index),
+                plain.global_primitive_id.index_select(0, kept_index),
+            },
+            reference.result);
+        require(at::equal(tape.tape_barycentric.index_select(0, kept_index), reference.tape_barycentric) &&
+                    at::equal(tape.tape_restart_epsilon.index_select(0, kept_index), reference.tape_restart_epsilon),
+                "DropRow changed a kept tape row");
+
+        // Without overflow, DropRow is bitwise FailBatch.
+        auto fail_batch = request(scene, origins, targets, std::nullopt, true, 3, policy, failure_state(), 8);
+        auto drop_wide = request(scene, origins, targets, std::nullopt, true, 3, policy, failure_state(), 8);
+        drop_wide.overflow_policy = rayd::torch::SegmentPenetrationOverflowPolicy::DropRow;
+        const auto fail_batch_tape = rayd::torch::segment_penetration_forward_tape(fail_batch);
+        const auto drop_wide_tape = rayd::torch::segment_penetration_forward_tape(drop_wide);
+        require_result_exact(fail_batch_tape.result, drop_wide_tape.result);
+        require(at::equal(fail_batch_tape.tape_barycentric, drop_wide_tape.tape_barycentric) &&
+                    at::equal(fail_batch_tape.tape_restart_epsilon, drop_wide_tape.tape_restart_epsilon) &&
+                    at::equal(fail_batch_tape.tape_restart_branch, drop_wide_tape.tape_restart_branch),
+                "DropRow without overflow differs from FailBatch");
+
+        rayd::torch::SegmentPenetrationBackwardRequest backward{
+            drop,
+            tape,
+            at::ones_like(tape.result.distance),
+            at::ones_like(tape.result.direction),
+            at::ones_like(tape.result.t),
+            at::ones_like(tape.result.position),
+            at::ones_like(tape.result.normal),
+            at::ones_like(tape.result.geometric_normal),
+            true,
+            true,
+            true,
+        };
+        const auto gradients = rayd::torch::segment_penetration_backward(backward);
+        require(at::equal(gradients.grad_origins[0], at::zeros_like(gradients.grad_origins[0])) &&
+                    at::equal(gradients.grad_targets[0], at::zeros_like(gradients.grad_targets[0])),
+                "dropped row produced a nonzero VJP");
+        require(gradients.grad_targets[2].abs().sum().item<float>() > 0.0f, "kept row lost its VJP");
+        rayd::torch::SegmentPenetrationJvpRequest jvp{
+            drop, tape, std::nullopt, at::ones_like(origins), at::ones_like(targets),
+        };
+        const auto tangents = rayd::torch::segment_penetration_jvp(jvp);
+        require(at::equal(tangents.tangent_distance[0], at::zeros_like(tangents.tangent_distance[0])) &&
+                    at::equal(tangents.tangent_direction[0], at::zeros_like(tangents.tangent_direction[0])) &&
+                    at::equal(tangents.tangent_t[0], at::zeros_like(tangents.tangent_t[0])),
+                "dropped row produced a nonzero JVP");
+    }
+
+    auto counter_without_drop = request(scene, origins, targets, std::nullopt, true, 2,
+                                        rayd::torch::SegmentPenetrationPolicy::EnumeratedFullDistance, failure_state());
+    counter_without_drop.dropped_row_count = at::zeros({1}, integers);
+    require_throws([&]() { (void)rayd::torch::segment_penetration_forward(counter_without_drop); },
+                   "dropped_row_count accepted without DropRow");
+    auto bad_counter = request(scene, origins, targets, std::nullopt, true, 2,
+                               rayd::torch::SegmentPenetrationPolicy::EnumeratedFullDistance, failure_state());
+    bad_counter.overflow_policy = rayd::torch::SegmentPenetrationOverflowPolicy::DropRow;
+    bad_counter.dropped_row_count = at::zeros({2}, integers);
+    require_throws([&]() { (void)rayd::torch::segment_penetration_forward(bad_counter); },
+                   "dropped_row_count with a bad shape accepted");
+    auto bad_policy = request(scene, origins, targets, std::nullopt, true, 2,
+                              rayd::torch::SegmentPenetrationPolicy::EnumeratedFullDistance, failure_state());
+    bad_policy.overflow_policy = static_cast<rayd::torch::SegmentPenetrationOverflowPolicy>(9);
+    require_throws([&]() { (void)rayd::torch::segment_penetration_forward(bad_policy); },
+                   "invalid overflow policy accepted");
+}
+
 // The OptiX program addresses vec3 slots as int32 index * 3; capacities whose
 // element offsets leave int32 are rejected before any allocation.
 void test_int32_element_index_guard(const rayd::torch::SceneResource& scene) {
@@ -616,6 +745,7 @@ int main() {
         test_ad_and_stream(scene, fixture);
         test_validation(scene);
         test_failed_tape_replay_after_clearing_failure(scene);
+        test_drop_row_policy(scene);
         test_int32_element_index_guard(scene);
         return 0;
     } catch (const std::exception& error) {

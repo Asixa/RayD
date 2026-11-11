@@ -15,6 +15,14 @@ enum class SegmentPenetrationPolicy : std::uint8_t {
     MonteCarloTargetInset = 1,
 };
 
+// What a row whose ordered march finds more than `hit_capacity` crossings does to the batch.
+// FailBatch ORs `failure_bit` and makes the whole batch inert. DropRow leaves only that row inert,
+// flags it in `overflow`, and counts it in the optional `dropped_row_count`; the other rows stay valid.
+enum class SegmentPenetrationOverflowPolicy : std::uint8_t {
+    FailBatch = 0,
+    DropRow = 1,
+};
+
 struct SegmentPenetrationRequest {
     const SceneResource& scene;
     at::Tensor origins;
@@ -26,6 +34,9 @@ struct SegmentPenetrationRequest {
     double scene_diagonal = 0.0;
     at::Tensor capacity_failure_state;
     std::int32_t failure_bit = 0;
+    SegmentPenetrationOverflowPolicy overflow_policy = SegmentPenetrationOverflowPolicy::FailBatch;
+    // CUDA int32 [1] counter, used only with DropRow: every dropped row adds one. RayD never clears it.
+    std::optional<at::Tensor> dropped_row_count;
 };
 
 struct SegmentPenetrationResult {

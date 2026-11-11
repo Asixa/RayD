@@ -1216,6 +1216,168 @@ __device__ __forceinline__ void legacy_slab_fresnel_dual(float cos_theta, float 
     r_tm = dc_make(result_tm.v.re, result_tm.v.im, result_tm.d.re, result_tm.d.im);
 }
 
+// Multi-tangent form of legacy_slab_fresnel_dual: one primal evaluation carries N tangent
+// directions at once. Tangent k follows exactly the operation sequence legacy_slab_fresnel_dual
+// applies to its single tangent, so result k equals that function seeded with tangent k; the
+// primal (.v) is the same sequence as well. Edit both TOGETHER with the legacy primal.
+template <int N> struct DualLCN {
+    transport::LegacySlabComplex v;
+    transport::LegacySlabComplex d[N];
+};
+
+template <int N> __device__ __forceinline__ DualLCN<N> dlcn_const(float re, float im) {
+    DualLCN<N> out;
+    out.v = {re, im};
+    for (int k = 0; k < N; ++k)
+        out.d[k] = {0.0f, 0.0f};
+    return out;
+}
+
+template <int N> __device__ __forceinline__ DualLCN<N> dlcn_add(const DualLCN<N>& a, const DualLCN<N>& b) {
+    DualLCN<N> out;
+    out.v = transport::legacy_add(a.v, b.v);
+    for (int k = 0; k < N; ++k)
+        out.d[k] = transport::legacy_add(a.d[k], b.d[k]);
+    return out;
+}
+
+template <int N> __device__ __forceinline__ DualLCN<N> dlcn_sub(const DualLCN<N>& a, const DualLCN<N>& b) {
+    DualLCN<N> out;
+    out.v = transport::legacy_sub(a.v, b.v);
+    for (int k = 0; k < N; ++k)
+        out.d[k] = transport::legacy_sub(a.d[k], b.d[k]);
+    return out;
+}
+
+template <int N> __device__ __forceinline__ DualLCN<N> dlcn_mul(const DualLCN<N>& a, const DualLCN<N>& b) {
+    DualLCN<N> out;
+    out.v = transport::legacy_mul(a.v, b.v);
+    for (int k = 0; k < N; ++k)
+        out.d[k] = transport::legacy_add(transport::legacy_mul(a.d[k], b.v), transport::legacy_mul(a.v, b.d[k]));
+    return out;
+}
+
+template <int N> __device__ __forceinline__ DualLCN<N> dlcn_scale_dual(const DualLCN<N>& a, float s, const float* ds) {
+    DualLCN<N> out;
+    out.v = transport::legacy_scale(a.v, s);
+    for (int k = 0; k < N; ++k)
+        out.d[k] = transport::legacy_add(transport::legacy_scale(a.d[k], s), transport::legacy_scale(a.v, ds[k]));
+    return out;
+}
+
+template <int N> __device__ __forceinline__ DualLCN<N> dlcn_div(const DualLCN<N>& a, const DualLCN<N>& b) {
+    const float mag2 = b.v.re * b.v.re + b.v.im * b.v.im;
+    const float denom = fmaxf(mag2, 1.0e-30f);
+    DualLCN<N> out;
+    out.v = transport::legacy_div(a.v, b.v);
+    for (int k = 0; k < N; ++k) {
+        const float d_denom = mag2 > 1.0e-30f ? 2.0f * (b.v.re * b.d[k].re + b.v.im * b.d[k].im) : 0.0f;
+        const transport::LegacySlabComplex d_num =
+            transport::legacy_add(transport::legacy_mul(a.d[k], {b.v.re, -b.v.im}),
+                                  transport::legacy_mul(a.v, {b.d[k].re, -b.d[k].im}));
+        out.d[k] = {(d_num.re - out.v.re * d_denom) / denom, (d_num.im - out.v.im * d_denom) / denom};
+    }
+    return out;
+}
+
+template <int N> __device__ __forceinline__ DualLCN<N> dlcn_sqrt(const DualLCN<N>& a) {
+    DualLCN<N> out;
+    out.v = transport::legacy_sqrt(a.v);
+    const float w_mag2 = out.v.re * out.v.re + out.v.im * out.v.im;
+    const float two_w_mag2 = 4.0f * w_mag2;
+    for (int k = 0; k < N; ++k) {
+        if (w_mag2 <= 1.0e-30f) {
+            out.d[k] = {0.0f, 0.0f};
+            continue;
+        }
+        out.d[k] = {(a.d[k].re * 2.0f * out.v.re + a.d[k].im * 2.0f * out.v.im) / two_w_mag2,
+                    (a.d[k].im * 2.0f * out.v.re - a.d[k].re * 2.0f * out.v.im) / two_w_mag2};
+    }
+    return out;
+}
+
+template <int N> __device__ __forceinline__ DualLCN<N> dlcn_exp_neg_2i(const DualLCN<N>& q) {
+    const float exponent = 2.0f * q.v.im;
+    const float amplitude = expf(fminf(exponent, 80.0f));
+    float sine;
+    float cosine;
+    sincosf(2.0f * q.v.re, &sine, &cosine);
+    DualLCN<N> out;
+    out.v = {amplitude * cosine, -amplitude * sine};
+    for (int k = 0; k < N; ++k) {
+        const float d_amplitude = exponent < 80.0f ? amplitude * 2.0f * q.d[k].im : 0.0f;
+        const float d_theta = 2.0f * q.d[k].re;
+        out.d[k] = {d_amplitude * cosine - amplitude * sine * d_theta,
+                    -(d_amplitude * sine + amplitude * cosine * d_theta)};
+    }
+    return out;
+}
+
+// Tangent seeds per direction k: d_eps[k] / d_sigma[k] / d_gain[k] / d_thickness[k] /
+// d_wavelength[k]. Outputs: the shared primal and the N tangents of r_te and r_tm.
+template <int N>
+__device__ __forceinline__ void legacy_slab_fresnel_dual_multi(float cos_theta, float eps_r, float sigma_e, float gain,
+                                                               float thickness, float wavelength, const float* d_eps,
+                                                               const float* d_sigma, const float* d_gain,
+                                                               const float* d_thickness, const float* d_wavelength,
+                                                               utd::Complex& r_te, utd::Complex& r_tm,
+                                                               utd::Complex* d_r_te, utd::Complex* d_r_tm) {
+    const float wavelength_clamped = fmaxf(wavelength, utd::UTD_SMALL_EPS);
+    const float omega = 2.0f * utd::UTD_PI * transport::kSpeedOfLight / wavelength_clamped;
+    const float eps_clamped = fmaxf(eps_r, utd::UTD_SMALL_EPS);
+    const float sigma_clamped = fmaxf(sigma_e, 0.0f);
+    const float eta_im = -sigma_clamped / (omega * utd::UTD_EPSILON_0);
+    DualLCN<N> eta;
+    eta.v = {eps_clamped, eta_im};
+    float d_wavelength_clamped[N];
+    for (int k = 0; k < N; ++k) {
+        d_wavelength_clamped[k] = wavelength > utd::UTD_SMALL_EPS ? d_wavelength[k] : 0.0f;
+        const float d_omega = -omega * d_wavelength_clamped[k] / wavelength_clamped;
+        const float d_eps_clamped = eps_r > utd::UTD_SMALL_EPS ? d_eps[k] : 0.0f;
+        const float d_sigma_clamped = sigma_e >= 0.0f ? d_sigma[k] : 0.0f;
+        const float d_eta_im =
+            (-d_sigma_clamped / omega + sigma_clamped * d_omega / (omega * omega)) / utd::UTD_EPSILON_0;
+        eta.d[k] = {d_eps_clamped, d_eta_im};
+    }
+    const float ct = fminf(fmaxf(fabsf(cos_theta), utd::UTD_SMALL_EPS), 1.0f);
+    const float sin2 = fmaxf(0.0f, 1.0f - ct * ct);
+    const DualLCN<N> root = dlcn_sqrt(dlcn_sub(eta, dlcn_const<N>(sin2, 0.0f)));
+    const DualLCN<N> ct_complex = dlcn_const<N>(ct, 0.0f);
+    float zero[N];
+    for (int k = 0; k < N; ++k)
+        zero[k] = 0.0f;
+    const DualLCN<N> eta_ct = dlcn_scale_dual(eta, ct, zero);
+    const DualLCN<N> interface_te = dlcn_div(dlcn_sub(ct_complex, root), dlcn_add(ct_complex, root));
+    const DualLCN<N> interface_tm = dlcn_div(dlcn_sub(eta_ct, root), dlcn_add(eta_ct, root));
+    const float thickness_clamped = fmaxf(thickness, 0.0f);
+    const float q_scale = 2.0f * utd::UTD_PI * thickness_clamped / wavelength_clamped;
+    float d_q_scale[N];
+    for (int k = 0; k < N; ++k) {
+        const float d_thickness_clamped = thickness >= 0.0f ? d_thickness[k] : 0.0f;
+        d_q_scale[k] = 2.0f * utd::UTD_PI *
+                       (d_thickness_clamped * wavelength_clamped - thickness_clamped * d_wavelength_clamped[k]) /
+                       (wavelength_clamped * wavelength_clamped);
+    }
+    const DualLCN<N> q = dlcn_scale_dual(root, q_scale, d_q_scale);
+    const DualLCN<N> phase = dlcn_exp_neg_2i(q);
+    const DualLCN<N> one = dlcn_const<N>(1.0f, 0.0f);
+    const DualLCN<N> numerator = dlcn_sub(one, phase);
+    const DualLCN<N> result_te =
+        dlcn_scale_dual(dlcn_div(dlcn_mul(interface_te, numerator),
+                                 dlcn_sub(one, dlcn_mul(dlcn_mul(interface_te, interface_te), phase))),
+                        gain, d_gain);
+    const DualLCN<N> result_tm =
+        dlcn_scale_dual(dlcn_div(dlcn_mul(interface_tm, numerator),
+                                 dlcn_sub(one, dlcn_mul(dlcn_mul(interface_tm, interface_tm), phase))),
+                        gain, d_gain);
+    r_te = utd::cplx(result_te.v.re, result_te.v.im);
+    r_tm = utd::cplx(result_tm.v.re, result_tm.v.im);
+    for (int k = 0; k < N; ++k) {
+        d_r_te[k] = utd::cplx(result_te.d[k].re, result_te.d[k].im);
+        d_r_tm[k] = utd::cplx(result_tm.d[k].re, result_tm.d[k].im);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // RayD-dual bridges (plan 07 AD-4). The templated UTD math in
 // rayd/utd runs on utd::Dual scalars; these helpers feed the validated
@@ -1271,21 +1433,13 @@ __device__ __forceinline__ utd::JonesOperatorT<utd::Dual> slab_face_operator_dua
     utd::ComplexT<Dual> r_te;
     utd::ComplexT<Dual> r_tm;
     slab_fresnel_dual_rd(cos_theta, eps_r, sigma_e, mu_r, gain, thickness, frequency, r_te, r_tm);
-    const utd::JonesOperatorT<Dual> diagonal = {
-        r_te,
-        utd::cplx_zero<Dual>(),
-        utd::cplx_zero<Dual>(),
-        r_tm,
-    };
-    const utd::Vec3T<Dual> face_in = utd::f3_cross(normal, in_direction);
-    const utd::Vec3T<Dual> raw_out = utd::f3_cross(normal, out_direction);
-    const utd::Vec3T<Dual> reference = utd::stable_perp_basis(out_direction, face_in);
-    const utd::Vec3T<Dual> face_out = utd::f3_dot(raw_out, reference) < 0.0f ? utd::f3_neg(raw_out) : raw_out;
-    const utd::Basis3T<Dual> input_basis =
-        utd::basis_from_first_vector(in_direction, face_in,
-                                     utd::stable_perp_basis(in_direction, utd::v3_const<Dual>(0, 0, 1)));
-    const utd::Basis3T<Dual> output_basis = utd::basis_from_first_vector(out_direction, face_out, reference);
-    return utd::jop_in_basis(diagonal, input_basis, output_basis, in_edge, out_edge);
+    (void)normal;
+    (void)in_direction;
+    (void)out_direction;
+    (void)in_edge;
+    (void)out_edge;
+    return {utd::cplx_mul_real(r_tm, Dual(-1.0f)), utd::cplx_zero<Dual>(), utd::cplx_zero<Dual>(),
+            utd::cplx_mul_real(r_te, Dual(-1.0f))};
 }
 
 // Cotangent of the final complex3 field value, folded from the output

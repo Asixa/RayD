@@ -90,9 +90,6 @@ struct ValidatedRequest {
 
 ValidatedRequest validate_request(const rayd::torch::SegmentPenetrationRequest& request) {
     SceneCache& scene = rayd::torch::detail::IntegrationAccess::scene_cache(request.scene);
-    if (scene.trace_backend == TraceBackend::Cuda)
-        throw std::runtime_error("ADR-0033 segment penetration is unsupported by the CUDA ray-tracing backend; "
-                                 "select trace_backend='optix'.");
     require_vec3f(request.origins, "origins");
     require_vec3f(request.targets, "targets");
     if (request.targets.size(0) != request.origins.size(0))
@@ -124,6 +121,21 @@ ValidatedRequest validate_request(const rayd::torch::SegmentPenetrationRequest& 
     require_shape(request.capacity_failure_state, {1}, "capacity_failure_state");
     require_same_device(request.origins, request.capacity_failure_state, "capacity_failure_state");
     validate_failure_bit(request.failure_bit);
+    const auto overflow_policy = static_cast<std::uint8_t>(request.overflow_policy);
+    if (overflow_policy != static_cast<std::uint8_t>(rayd::torch::SegmentPenetrationOverflowPolicy::FailBatch) &&
+        overflow_policy != static_cast<std::uint8_t>(rayd::torch::SegmentPenetrationOverflowPolicy::DropRow)) {
+        throw std::runtime_error("SegmentPenetrationOverflowPolicy is invalid.");
+    }
+    const at::Tensor* dropped_row_count = present(request.dropped_row_count);
+    if (dropped_row_count != nullptr) {
+        if (request.overflow_policy != rayd::torch::SegmentPenetrationOverflowPolicy::DropRow)
+            throw std::runtime_error("dropped_row_count requires the DropRow overflow policy.");
+        require_cuda(*dropped_row_count, "dropped_row_count");
+        require_contiguous(*dropped_row_count, "dropped_row_count");
+        require_dtype(*dropped_row_count, at::kInt, "dropped_row_count");
+        require_shape(*dropped_row_count, {1}, "dropped_row_count");
+        require_same_device(request.origins, *dropped_row_count, "dropped_row_count");
+    }
     const std::int32_t segment_count = checked_i32(request.origins.size(0), "segment_count");
     const std::int32_t hit_capacity = checked_i32(request.hit_capacity, "hit_capacity");
     if (hit_capacity != 0 && segment_count > std::numeric_limits<std::int32_t>::max() / hit_capacity) {
@@ -233,15 +245,22 @@ SegmentPenetrationNativeOutputs forward_native(const rayd::torch::SegmentPenetra
         params.mesh_count = checked_i32(validated.scene.meshes.size(), "mesh_count");
         params.policy = validated.policy;
         params.failure_bit = request.failure_bit;
+        params.overflow_policy = static_cast<std::int32_t>(request.overflow_policy);
+        const at::Tensor* dropped_row_count = present(request.dropped_row_count);
+        params.dropped_row_count = dropped_row_count == nullptr ? nullptr : dropped_row_count->data_ptr<int>();
         params.scene_diagonal = validated.scene_diagonal;
         // The context, the pipeline, and the stream all belong to the validated
         // scene device, not to whichever device happens to be ambient.
         const int device_index = static_cast<int>(validated.scene.device_index);
-        OptixDeviceContextEntry& optix = get_optix_context(device_index);
-        shared_optix_launch_pipeline(optix.optix_context, device_index, params.mesh_count,
-                                     segment_penetration_pipeline_config())
-            ->launch(0, params, static_cast<unsigned int>(validated.segment_count),
-                     at::cuda::getCurrentCUDAStream(device_index).stream());
+        const cudaStream_t stream = at::cuda::getCurrentCUDAStream(device_index).stream();
+        if (validated.scene.trace_backend == TraceBackend::Cuda) {
+            segment_penetration_forward_cuda_bvh(validated.scene, params, stream);
+        } else {
+            OptixDeviceContextEntry& optix = get_optix_context(device_index);
+            shared_optix_launch_pipeline(optix.optix_context, device_index, params.mesh_count,
+                                         segment_penetration_pipeline_config())
+                ->launch(0, params, static_cast<unsigned int>(validated.segment_count), stream);
+        }
     }
     segment_penetration_sanitize_cuda(outputs, request.capacity_failure_state);
     return outputs;

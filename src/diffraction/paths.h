@@ -5,6 +5,8 @@
 
 #include <cmath>
 #include <cstdint>
+#include <type_traits>
+#include <utility>
 
 #include <rayd/math.h>
 #include <src/diffraction/contracts.h>
@@ -125,6 +127,44 @@ template <typename Params> RAYD_HOST_DEVICE bool state_active(const Params& para
     return params.active_mask[state_idx] != 0u;
 }
 
+// The Torch path params carry strided material tensors, per-transmitter polarization, and the ISB taper width. The
+// Dr.Jit params carry contiguous materials and neither of the other two, and keep a +x source polarization and the
+// hard incident-shadow boundary. Each backend's trace backends read the same fields of their params.
+template <typename Params, typename = void> struct has_material_strides : std::false_type {};
+template <typename Params>
+struct has_material_strides<Params, std::void_t<decltype(std::declval<const Params&>().material_eta_r_stride)>>
+    : std::true_type {};
+
+template <typename Params, typename = void> struct has_tx_polarization : std::false_type {};
+template <typename Params>
+struct has_tx_polarization<Params, std::void_t<decltype(std::declval<const Params&>().tx_pol_aos)>> : std::true_type {};
+
+template <typename Params, typename = void> struct has_state_source_index : std::false_type {};
+template <typename Params>
+struct has_state_source_index<Params, std::void_t<decltype(std::declval<const Params&>().state_source_index)>>
+    : std::true_type {};
+
+// Transmitter of a state: its per-state index when one is given, else the lane transmitter. Returns false when the
+// per-state index is outside the polarization rows; params without per-state indices always keep the lane transmitter.
+template <typename Params>
+RAYD_HOST_DEVICE bool path_source_tx(const Params& params, int state_idx, int lane_tx, int& source_tx) {
+    if constexpr (has_state_source_index<Params>::value) {
+        if (params.state_source_index != nullptr) {
+            source_tx = params.state_source_index[state_idx];
+            return source_tx >= 0 && source_tx < params.tx_pol_count;
+        }
+    }
+    (void)params;
+    (void)state_idx;
+    source_tx = lane_tx;
+    return true;
+}
+
+template <typename Params, typename = void> struct has_isb_taper : std::false_type {};
+template <typename Params>
+struct has_isb_taper<Params, std::void_t<decltype(std::declval<const Params&>().isb_taper_width_scale)>>
+    : std::true_type {};
+
 template <typename Params>
 RAYD_HOST_DEVICE utd::FaceMaterialParams face_material_params(const Params& params, int prim) {
     utd::FaceMaterialParams m;
@@ -134,15 +174,27 @@ RAYD_HOST_DEVICE utd::FaceMaterialParams face_material_params(const Params& para
     m.gain = 1.f;
     m.useFresnel = 1.f;
     m.present = 0.f;
-    if (prim < 0 || prim >= params.material_count ||
-        (params.material_valid != nullptr && params.material_valid[prim] == 0u)) {
-        return m;
+    if constexpr (has_material_strides<Params>::value) {
+        if (prim < 0 || prim >= params.material_count ||
+            (params.material_valid != nullptr && params.material_valid[prim * params.material_valid_stride] == 0u)) {
+            return m;
+        }
+        m.present = 1.f;
+        m.etaR = params.material_eta_r[prim * params.material_eta_r_stride];
+        m.sigma = params.material_sigma[prim * params.material_sigma_stride];
+        m.muR = params.material_mu_r[prim * params.material_mu_r_stride];
+        m.gain = fmaxf(params.material_gain[prim * params.material_gain_stride], 0.f);
+    } else {
+        if (prim < 0 || prim >= params.material_count ||
+            (params.material_valid != nullptr && params.material_valid[prim] == 0u)) {
+            return m;
+        }
+        m.present = 1.f;
+        m.etaR = params.material_eta_r[prim];
+        m.sigma = params.material_sigma[prim];
+        m.muR = params.material_mu_r[prim];
+        m.gain = fmaxf(params.material_gain[prim], 0.f);
     }
-    m.present = 1.f;
-    m.etaR = params.material_eta_r[prim];
-    m.sigma = params.material_sigma[prim];
-    m.muR = params.material_mu_r[prim];
-    m.gain = fmaxf(params.material_gain[prim], 0.f);
     return m;
 }
 
@@ -159,12 +211,16 @@ RAYD_HOST_DEVICE utd::PairInputs direct_pair_inputs(const Params& params, int st
     p.edgeLineMax = t_max;
     p.sourcePos = to_utd(source);
     p.selectStationaryPoint = 1.f;
+    if constexpr (has_isb_taper<Params>::value) {
+        p.isbTaperWidthScale = params.isb_taper_width_scale;
+    }
     p.face0Material = face_material_params(params, params.state_prim0[state_idx]);
     p.face1Material = face_material_params(params, params.state_prim1[state_idx]);
     return p;
 }
 
-template <typename Params> RAYD_HOST_DEVICE utd::MaterialParams paths_material_params(const Params& params) {
+template <typename Params>
+RAYD_HOST_DEVICE utd::MaterialParams paths_material_params(const Params& params, int tx_idx) {
     utd::MaterialParams mat;
     mat.useFresnel = 1;
     mat.etaR = 1.f;
@@ -172,9 +228,17 @@ template <typename Params> RAYD_HOST_DEVICE utd::MaterialParams paths_material_p
     mat.sigma = 0.f;
     mat.gain = 1.f;
     mat.omega = params.omega;
-    mat.txPolX = 1.f;
-    mat.txPolY = 0.f;
-    mat.txPolZ = 0.f;
+    if constexpr (has_tx_polarization<Params>::value) {
+        const int base = (params.tx_pol_count == 1 ? 0 : tx_idx) * params.tx_pol_stride0;
+        mat.txPolX = params.tx_pol_aos[base + 0 * params.tx_pol_stride1];
+        mat.txPolY = params.tx_pol_aos[base + 1 * params.tx_pol_stride1];
+        mat.txPolZ = params.tx_pol_aos[base + 2 * params.tx_pol_stride1];
+    } else {
+        (void)tx_idx;
+        mat.txPolX = 1.f;
+        mat.txPolY = 0.f;
+        mat.txPolZ = 0.f;
+    }
     return mat;
 }
 
@@ -283,6 +347,10 @@ RAYD_DEVICE void trace_paths_order1_algo(const Params& params, std::uint32_t lan
     if (tx_idx >= params.tx_count || state_idx >= params.state_count || !state_active(params, state_idx)) {
         return;
     }
+    int source_tx = tx_idx;
+    if (!path_source_tx(params, state_idx, tx_idx, source_tx)) {
+        return;
+    }
 
     const Vec3f source = state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
     const Vec3f edge_pos =
@@ -316,7 +384,7 @@ RAYD_DEVICE void trace_paths_order1_algo(const Params& params, std::uint32_t lan
 
     const utd::PairInputs pair = direct_pair_inputs(params, state_idx, source, edge_pos, edge_dir, t_min, t_max);
     const utd::PairOutputs utd_out =
-        utd::compute_pair_contribution(pair, to_utd(receiver), params.k, paths_material_params(params));
+        utd::compute_pair_contribution(pair, to_utd(receiver), params.k, paths_material_params(params, source_tx));
     const float field_norm = utd::cplx_abs_sqr(utd_out.vectorField.x) + utd::cplx_abs_sqr(utd_out.vectorField.y) +
                              utd::cplx_abs_sqr(utd_out.vectorField.z);
     if (!(field_norm > 1.0e-30f) || !is_finite(field_norm)) {
@@ -333,7 +401,7 @@ RAYD_DEVICE void trace_paths_order1_algo(const Params& params, std::uint32_t lan
         math::length_f32(math::subtract(edge_point, source)) + math::length_f32(math::subtract(receiver, edge_point));
 
     params.out_valid[out_idx] = 1u;
-    params.out_tx_id[out_idx] = tx_idx;
+    params.out_tx_id[out_idx] = source_tx;
     params.out_rx_id[out_idx] = rx_idx;
     params.out_order[out_idx] = 1;
     params.out_edge0[out_idx] = params.state_edge_index[state_idx];
@@ -404,6 +472,10 @@ RAYD_DEVICE void trace_paths_target_export_algo(const Params& params, std::uint3
     if (!paths_order1_lane(params, lane, state_idx, rx_idx, tx_idx)) {
         return;
     }
+    int source_tx = tx_idx;
+    if (!path_source_tx(params, state_idx, tx_idx, source_tx)) {
+        return;
+    }
 
     const Vec3f source = state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
     const Vec3f edge_point = paths_edge_point(params, state_idx, rx_idx);
@@ -425,7 +497,7 @@ RAYD_DEVICE void trace_paths_target_export_algo(const Params& params, std::uint3
         direct_pair_inputs(params, state_idx, source, edge_pos, edge_dir, params.state_edge_t_min[state_idx],
                            params.state_edge_t_max[state_idx]);
     const utd::PairOutputs utd_out =
-        utd::compute_pair_contribution(pair, to_utd(receiver), params.k, paths_material_params(params));
+        utd::compute_pair_contribution(pair, to_utd(receiver), params.k, paths_material_params(params, source_tx));
     const float field_norm = utd::cplx_abs_sqr(utd_out.vectorField.x) + utd::cplx_abs_sqr(utd_out.vectorField.y) +
                              utd::cplx_abs_sqr(utd_out.vectorField.z);
     if (!(field_norm > 1.0e-30f) || !is_finite(field_norm)) {
@@ -442,7 +514,7 @@ RAYD_DEVICE void trace_paths_target_export_algo(const Params& params, std::uint3
         math::length_f32(math::subtract(edge_point, source)) + math::length_f32(math::subtract(receiver, edge_point));
 
     params.out_valid[out_idx] = 1u;
-    params.out_tx_id[out_idx] = tx_idx;
+    params.out_tx_id[out_idx] = source_tx;
     params.out_rx_id[out_idx] = rx_idx;
     params.out_order[out_idx] = 1;
     params.out_edge0[out_idx] = params.state_edge_index[state_idx];
