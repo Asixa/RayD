@@ -263,3 +263,39 @@ differs from the half-space one, its permittivity JVP matches the central differ
 (2 %), and JVP/VJP duality holds. The Dr.Jit `diffraction_paths` and `diffraction_accumulation` PTX were
 regenerated (the PTX closure gains `face_coefficients.cuh`, `field_transport.cuh` and `transmission_device.cuh`).
 Channel's full-wave tables are in its ADR for the full-wave fixes.
+
+## Amendment: the face term under oblique incidence (2026-11-11)
+
+**Context.** Channel's full-wave suite (Channel defect D2): at a dielectric edge's reflection shadow boundary
+the total field kept a step of 26-28 % of the reflected field when the incidence on the edge is oblique
+(45 degree skew, concrete), 0.2 % at normal incidence. Two parts of the face term disagree with the geometric
+reflection it has to cancel there:
+
+1. **Angle.** The coefficients were evaluated at `(|sin phi| + |sin phi'|) / 2`, the edge-plane angle. The
+   specular reflection at the edge sees the 3D incidence cosine `sin(beta0) |sin(phi')|`.
+2. **Polarization basis.** Luebbers' operator `-diag(r_TM, r_TE)` on the edge-fixed (hard, soft) components
+   is the specular reflection only at normal incidence on the edge. Under oblique incidence the face's TE/TM
+   axes are rotated against the edge-fixed axes by an angle that depends on `beta0` and `phi'`, so a
+   dielectric face couples the two components. (A perfect conductor's dyadic is `diag(-1, +1)` in the
+   edge-fixed bases for every incidence, which is why PEC edges were exact.)
+
+A host harness (Channel task scratch, the RSB residual of a half-plane at 45 degree skew) showed that the angle
+alone makes the residual larger (0.26 -> 0.55) and that the rotated dyadic at the 3D angle makes it zero.
+
+**Decision.** `pair_face_operator` evaluates the provider's coefficients at
+`sin(beta0) (|sin phi| + |sin phi'|) / 2` (`reciprocal_face_cosines` with `sinBeta0`) and returns
+`face_reflection_dyadic`: the mean of the specular reflection dyadic of the incident ray, written in its
+edge-fixed basis and in the edge-fixed basis of its mirror image, and the reciprocal image of the same
+dyadic built from the reversed observation ray (`M = (M_in + S M_rev^T S) / 2`, `S = diag(1, -1)`). On a
+reflection shadow boundary the diffracted ray is the incident ray's specular image, both halves equal the
+geometric reflection, and the face term cancels its step exactly; elsewhere the mean keeps the coefficient
+reciprocal and independent of the face labels, as amendment 4 of this record requires. For a perfect
+conductor, and at normal incidence on the edge, the result is the previous `-diag(r_TM, r_TE)`. Faces kept
+on the stored-operator path (Monte Carlo accumulation's stored operators) are unchanged.
+
+**Evidence.** `tests/diffraction/test_utd_reference.py::test_dielectric_face_term_cancels_the_reflection_step_under_oblique_incidence`
+(a concrete half-plane, three source/receiver height pairs from normal to strongly oblique incidence, three
+polarizations; the total (independent 3D Fresnel GO oracle plus the diffraction) steps by less than 2 % of the
+reflected field across the boundary; 15-24 % before) and the existing KP, reciprocity and face-label tests,
+unchanged. Dr.Jit `diffraction_paths` / `diffraction_accumulation` PTX regenerated. Channel's full-wave
+tables are in its ADR for the full-wave fixes.

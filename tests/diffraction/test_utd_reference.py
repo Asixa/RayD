@@ -76,7 +76,83 @@ static int parameter(char** a) {
                                                        make_f3(v[6], v[7], v[8]), make_f3(v[9], v[10], v[11])));
     return 0;
 }
+// argv: j eps_r sigma zs zr polx poly polz -> residual of the total (GO reflection + diffraction) step across the
+// face-0 reflection boundary of a half-plane in the xz plane (z edge, sheet on +x), relative to the GO step. The
+// source and receiver sit at heights zs and zr, so the incidence on the edge is oblique when they differ.
+static Complex3 c3_minus(Complex3 a, Complex3 b) {
+    return {cplx_sub(a.x, b.x), cplx_sub(a.y, b.y), cplx_sub(a.z, b.z)};
+}
+static Complex3 go_reflection(float3a src, float3a rx, float3a pol, float k, double eps, double sigma, double omega) {
+    // Image through y = 0; the specular point must lie on the sheet (x > 0).
+    const float3a img = make_f3(src.x, -src.y, src.z);
+    const float t = src.y / (src.y + rx.y);
+    const float3a p = f3_add(src, f3_mul(f3_sub(make_f3(rx.x, -rx.y, rx.z), src), t));
+    if (!(p.x > 0.f))
+        return c3_zero<float>();
+    const float3a ki = safe_normalize(f3_sub(p, src), make_f3(0, 0, 1));
+    const float3a kr = safe_normalize(f3_sub(rx, p), make_f3(0, 0, 1));
+    const float3a n = make_f3(0.f, 1.f, 0.f);
+    const float3a sx = safe_normalize(f3_cross(n, ki), make_f3(0, 0, 1));
+    const float3a pin = f3_cross(sx, ki), pout = f3_cross(sx, kr);
+    Complex rte, rtm;
+    fresnel_reflection_face(static_cast<float>(fabs(f3_dot(ki, n))), static_cast<float>(eps), 1.f,
+                            static_cast<float>(sigma), static_cast<float>(omega), rte, rtm);
+    const float3a e = f3_sub(pol, f3_mul(ki, f3_dot(pol, ki)));
+    const float d = safe_length(f3_sub(rx, img));
+    const Complex prop = cplx_mul_real(cplx_exp_phase(-k * d), 1.f / (2.f * k * d));
+    const Complex3 out = c3_add(cplx_scale_real(sx, cplx_mul_real(rte, f3_dot(e, sx))),
+                                cplx_scale_real(pout, cplx_mul_real(rtm, f3_dot(e, pin))));
+    return c3_scale(out, prop);
+}
+static int jump(char** a) {
+    const double eps = atof(a[2]), sigma = atof(a[3]), zs = atof(a[4]), zr = atof(a[5]);
+    const float3a pol = make_f3(atof(a[6]), atof(a[7]), atof(a[8]));
+    const double omega = 2.0 * M_PI * 3.5e9;
+    const float k = static_cast<float>(omega / 299792458.0);
+    const float3a src = make_f3(-3.0f, 2.0f, static_cast<float>(zs));
+    // Receivers on a line across the face-0 reflection boundary (the image of the source through the edge).
+    PairInputs p = {};
+    p.edgePos = make_f3(0, 0, 0);
+    p.edgeDir = make_f3(0, 0, 1);
+    p.n0 = make_f3(0, 1, 0);
+    p.nn = make_f3(0, -1, 0);
+    p.wedgeN = 2.f;
+    p.edgeLineMin = -400.f;
+    p.edgeLineMax = 400.f;
+    p.sourcePos = src;
+    p.selectStationaryPoint = 1.f;
+    const FaceMaterialParams face = {static_cast<float>(eps), 1.f, static_cast<float>(sigma), 1.f, 1.f, 1.f};
+    p.face0Material = face;
+    p.face1Material = face;
+    MaterialParams mat = {};
+    mat.useFresnel = 1;
+    mat.etaR = mat.muR = mat.gain = 1.f;
+    mat.omega = static_cast<float>(omega);
+    mat.txPolX = pol.x;
+    mat.txPolY = pol.y;
+    mat.txPolZ = pol.z;
+    // Boundary direction in the xy plane: the image (-3, -2) seen through the edge, continued to radius 4.
+    const double bx = 3.0 / sqrt(13.0) * 4.0, by = 2.0 / sqrt(13.0) * 4.0;
+    Complex3 total[2];
+    Complex3 go_step = c3_zero<float>();
+    for (int side = 0; side < 2; ++side) {
+        const double ang = (side == 0 ? -1.0 : 1.0) * 2.0e-5;
+        const float3a rx = make_f3(static_cast<float>(bx * cos(ang) - by * sin(ang)),
+                                   static_cast<float>(bx * sin(ang) + by * cos(ang)), static_cast<float>(zr));
+        const Complex3 d = compute_pair_contribution(p, rx, k, mat).vectorField;
+        const Complex3 g = go_reflection(src, rx, pol, k, eps, sigma, omega);
+        total[side] = c3_add(d, g);
+        go_step = side == 0 ? g : c3_minus(go_step, g);
+    }
+    const Complex3 step = c3_minus(total[0], total[1]);
+    const double num = cplx_abs_sqr(step.x) + cplx_abs_sqr(step.y) + cplx_abs_sqr(step.z);
+    const double den = cplx_abs_sqr(go_step.x) + cplx_abs_sqr(go_step.y) + cplx_abs_sqr(go_step.z);
+    printf("%.9e\n", sqrt(num / den));
+    return 0;
+}
 int main(int argc, char** argv) {
+    if (argc > 1 && argv[1][0] == 'j')
+        return jump(argv);
     if (argc > 1 && argv[1][0] == 'd')
         return dipole(argv);
     if (argc > 1 && argv[1][0] == 'p')
@@ -229,6 +305,19 @@ class UtdReferenceTests(unittest.TestCase):
                 expected, other = (lit, shadow) if takes_lit else (shadow, lit)
                 with self.subTest(boundary=boundary, hard=hard):
                     self.assertLess(abs(on - expected), 0.05 * abs(on - other))
+
+    def test_dielectric_face_term_cancels_the_reflection_step_under_oblique_incidence(self):
+        # A concrete half-plane: across the face-0 reflection boundary the total field (GO reflection plus the
+        # diffraction) must not step, for normal and oblique incidence on the edge and every polarization. The GO
+        # reflection is the 3D Fresnel reflection at the specular point (an independent oracle in the harness).
+        for zs, zr in ((0.0, 0.0), (1.5, -1.5), (3.0, 0.5)):
+            for pol in ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.6, 0.0, 0.8)):
+                out = subprocess.run(
+                    [self._exe, "j", "5.24", "0.123", str(zs), str(zr), *(str(v) for v in pol)],
+                    capture_output=True, text=True, check=True,
+                ).stdout
+                with self.subTest(zs=zs, zr=zr, pol=pol):
+                    self.assertLess(float(out), 0.02)
 
     def test_direct_source_keeps_the_short_dipole_pattern(self):
         for theta in (90.0, 60.0, 30.0, 0.0):

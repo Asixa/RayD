@@ -1309,6 +1309,65 @@ template <typename T> UTD_DINLINE void reciprocal_face_cosines(T phi, T phiP, T 
 // assembles -direct + face * op, so op = -R (a perfect conductor gives op = diag(-1, +1), i.e. D_h = d12 + d34 and
 // D_s = d12 - d34). The edge bases already carry the in/out ray geometry, so the operator is diagonal there and
 // needs no face-local s/p frame, whose orientation is undefined when the two rays are not a specular pair.
+// Incidence cosines of the two faces at an oblique incidence on the edge (Keller cone half-angle beta0). A ray
+// meeting face 0 at the edge-plane angle phi' has the face-normal component sin(beta0) sin(phi'), so the face 0
+// reflection boundary (phi + phi' = pi) sees the specular reflection's 3D incidence cosine sin(beta0) |sin(phi')|;
+// the reciprocal mean of the edge-plane sines, times sin(beta0), keeps that value on each reflection boundary and
+// stays symmetric in source and observer (sin(beta0) is).
+template <typename T>
+UTD_DINLINE void reciprocal_face_cosines(T phi, T phiP, T n, T sinBeta0, T& face0Cos, T& face1Cos) {
+    reciprocal_face_cosines(phi, phiP, n, face0Cos, face1Cos);
+    face0Cos = fminf(fmaxf(face0Cos * sinBeta0, T(1.0e-6f)), T(1.f));
+    face1Cos = fminf(fmaxf(face1Cos * sinBeta0, T(1.0e-6f)), T(1.f));
+}
+
+// Specular reflection dyadic of one face for the ray arriving along `incident`, written in the edge-fixed bases of
+// that ray and of its mirror image: M_ab = r_TE (out_a . s)(s . in_b) + r_TM (out_a . p_out)(p_in . in_b), with
+// s = n x k_i and p = s x k. On the (hard u, soft v) components a perfect conductor gives diag(-1, +1) for every
+// incidence, which is Luebbers' operator; a dielectric face under oblique incidence couples the two components.
+template <typename T>
+UTD_DINLINE JonesOperatorT<T> specular_face_jones(ComplexT<T> rTE, ComplexT<T> rTM, Vec3T<T> normal, Vec3T<T> incident,
+                                                  Vec3T<T> edgeDir) {
+    const Vec3T<T> ki = safe_normalize(incident, v3_const<T>(0.f, 0.f, 1.f));
+    Vec3T<T> nHat = safe_normalize(normal, v3_const<T>(0.f, 0.f, 1.f));
+    T cosIn = f3_dot(ki, nHat);
+    if (scalar_value(cosIn) > 0.f) {
+        nHat = f3_neg(nHat);
+        cosIn = -cosIn;
+    }
+    const Vec3T<T> kr = safe_normalize(f3_sub(ki, f3_mul(nHat, 2.f * cosIn)), f3_neg(ki));
+    const Vec3T<T> sAxis = safe_normalize(f3_cross(nHat, ki), stable_perp_basis(ki, nHat));
+    const Vec3T<T> pIn = safe_normalize(f3_cross(sAxis, ki), stable_perp_basis(ki, sAxis));
+    const Vec3T<T> pOut = safe_normalize(f3_cross(sAxis, kr), stable_perp_basis(kr, sAxis));
+    const Basis3T<T> inB = diffraction_edge_basis(ki, edgeDir, false);
+    const Basis3T<T> outB = diffraction_edge_basis(kr, edgeDir, true);
+    const T su = f3_dot(sAxis, inB.u), sv = f3_dot(sAxis, inB.v);
+    const T pu = f3_dot(pIn, inB.u), pv = f3_dot(pIn, inB.v);
+    const T ou = f3_dot(outB.u, sAxis), ov = f3_dot(outB.v, sAxis);
+    const T qu = f3_dot(outB.u, pOut), qv = f3_dot(outB.v, pOut);
+    return {cplx_add(cplx_mul_real(rTE, ou * su), cplx_mul_real(rTM, qu * pu)),
+            cplx_add(cplx_mul_real(rTE, ou * sv), cplx_mul_real(rTM, qu * pv)),
+            cplx_add(cplx_mul_real(rTE, ov * su), cplx_mul_real(rTM, qv * pu)),
+            cplx_add(cplx_mul_real(rTE, ov * sv), cplx_mul_real(rTM, qv * pv))};
+}
+
+// Face operator of a diffraction pair in its edge-fixed bases: the mean of the specular dyadic of the incident ray
+// and the reciprocal image of the dyadic of the reversed observation ray, M = (M_in + S M_rev^T S) / 2 with
+// S = diag(1, -1) (reversing a ray keeps the edge-fixed u axis and flips v). On a reflection shadow boundary the
+// diffracted ray is the incident ray's specular image, both halves equal the geometric reflection there, and the
+// face term cancels the reflected field's step exactly; elsewhere the mean keeps the coefficient reciprocal. A
+// perfect conductor gives diag(-1, +1) everywhere.
+template <typename T>
+UTD_DINLINE JonesOperatorT<T> face_reflection_dyadic(ComplexT<T> rTE, ComplexT<T> rTM, Vec3T<T> normal,
+                                                     Vec3T<T> sourcePos, Vec3T<T> edgePos, Vec3T<T> targetPos,
+                                                     Vec3T<T> edgeDir) {
+    const JonesOperatorT<T> f = specular_face_jones(rTE, rTM, normal, f3_sub(edgePos, sourcePos), edgeDir);
+    const JonesOperatorT<T> r = specular_face_jones(rTE, rTM, normal, f3_sub(edgePos, targetPos), edgeDir);
+    const T half = T(0.5f);
+    return {cplx_mul_real(cplx_add(f.m00, r.m00), half), cplx_mul_real(cplx_sub(f.m01, r.m10), half),
+            cplx_mul_real(cplx_sub(f.m10, r.m01), half), cplx_mul_real(cplx_add(f.m11, r.m11), half)};
+}
+
 // reciprocal_face_cosines for a source-edge pair and a target. phi and phi' do not depend on the axial position
 // along a straight edge, so any point of the edge line gives them; both are folded into the wedge domain the way
 // the pair coefficient folds them.
@@ -1363,20 +1422,20 @@ template <typename T> struct HalfSpaceFaceCoefficients {
     }
 };
 
-// Edge-fixed (Luebbers) face operator of a pair face: the provider's coefficients as op = -diag(r_TM, r_TE) on (hard
-// u, soft v), a face without a Fresnel response as its gain, and a face the provider does not evaluate as the stored
-// operator.
+// Face operator of a pair face: the provider's coefficients at the face's oblique incidence cosine as the
+// reciprocal specular dyadic in the edge-fixed bases (face_reflection_dyadic), a face without a Fresnel response as
+// its gain, and a face the provider does not evaluate as the stored operator.
 template <typename T, typename FaceCoefficients>
 UTD_DINLINE JonesOperatorT<T> pair_face_operator(const FaceCoefficients& coefficients, int face,
                                                  const FaceMaterialParamsT<T>& material, JonesOperatorT<T> stored,
-                                                 T cosTheta) {
+                                                 T cosTheta, const PairInputsT<T>& state, Vec3T<T> tgtPos) {
     if (!coefficients.evaluates(face, material))
         return stored;
     if (!(material.useFresnel > 0.5f))
         return JonesOperatorT<T>{cplx(material.gain, T(0)), cplx_zero<T>(), cplx_zero<T>(), cplx(material.gain, T(0))};
     const FaceFresnelT<T> r = coefficients(face, material, cosTheta);
-    return JonesOperatorT<T>{cplx_mul_real(r.rTM, T(-1.f)), cplx_zero<T>(), cplx_zero<T>(),
-                             cplx_mul_real(r.rTE, T(-1.f))};
+    return face_reflection_dyadic(r.rTE, r.rTM, face == 0 ? state.n0 : state.nn, state.sourcePos, state.edgePos, tgtPos,
+                                  state.edgeDir);
 }
 
 template <typename T>
@@ -1840,9 +1899,11 @@ UTD_DINLINE Complex3T<T> compute_pair_vector_at_angles_faces(PairInputsT<T> stat
     bool useFace = (state.face0Material.present > 0.5f) || (state.face1Material.present > 0.5f);
 
     T face0Cos, face1Cos;
-    reciprocal_face_cosines(phi, phiP, state.wedgeN, face0Cos, face1Cos);
-    JonesOperatorT<T> f0Op = pair_face_operator(faces, 0, state.face0Material, state.face0Operator, face0Cos);
-    JonesOperatorT<T> f1Op = pair_face_operator(faces, 1, state.face1Material, state.face1Operator, face1Cos);
+    reciprocal_face_cosines(phi, phiP, state.wedgeN, sb, face0Cos, face1Cos);
+    JonesOperatorT<T> f0Op =
+        pair_face_operator(faces, 0, state.face0Material, state.face0Operator, face0Cos, state, tgtPos);
+    JonesOperatorT<T> f1Op =
+        pair_face_operator(faces, 1, state.face1Material, state.face1Operator, face1Cos, state, tgtPos);
 
     DiffractionOperatorTermsT<T> terms = useFace ? compute_op_terms_3d(phi, phiP, state.wedgeN, k, s, sP, sb, gammaOdd,
                                                                        truncEven, T(state.isbTaperWidthScale))
