@@ -63,6 +63,9 @@ shim remains. The C++ boundary `rayd/integration.h` is unchanged. Of the `torch.
 | `SdfIntersection.hit_mask` (and the `AD` variant) | `SdfIntersection.valid` |
 | `NearestEdgesTopK.is_valid` (field, and the `AD` variant) | `NearestEdgesTopK.valid`, plus the method `is_valid()` |
 | `MixedScene.add_surfel(cloud, ...)` | `MixedScene.add_surfel(surfel, ...)` |
+| `DfrPathOptions.seed`, `sample_count`, `return_geom` | removed; the first-order path export never read them |
+| `DfrPathOptions.max_paths` defaults to `0`, which `trace_dfr_paths` rejected | `max_paths: int \| None`, default `None`; `None` or `0` exports every state, as in `rayd.torch`, and a negative value raises `ValueError` |
+| `SurfelRenderOptions.channel_chunk` | removed; the renderer never read it |
 
 #### Contracts
 

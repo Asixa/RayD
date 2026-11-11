@@ -611,9 +611,9 @@ class DiffractionParityTests(_MultipathBase):
         )
         pj, cuda = self.mods.pj, self.mods.cuda
         options = pj.DfrPathOptions()
-        options.wavelength, options.k, options.seed = WAVELENGTH, 2.0 * math.pi / WAVELENGTH, 17
+        options.wavelength, options.k = WAVELENGTH, 2.0 * math.pi / WAVELENGTH
         options.max_order, options.max_paths, options.max_rx = 1, 64, len(rx)
-        options.strategy_mask, options.sample_count, options.return_geom = pj.DfrStrategy.DIRECT, 1, 1
+        options.strategy_mask = pj.DfrStrategy.DIRECT
         options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
         paths_d = self.scene_d.trace_dfr_paths(
             bs.drjit_vec3(self.mods, tx),

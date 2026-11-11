@@ -351,9 +351,9 @@ def _paths_objective(scene):
 
     def objective(x):
         options = pj.DfrPathOptions()
-        options.wavelength, options.k, options.seed = 0.125, 2.0 * math.pi / 0.125, 17
-        options.max_order, options.max_paths, options.max_rx, options.sample_count = 1, 8, 2, 1
-        options.strategy_mask, options.return_geom = pj.DfrStrategy.DIRECT, 1
+        options.wavelength, options.k = 0.125, 2.0 * math.pi / 0.125
+        options.max_order, options.max_paths, options.max_rx = 1, 8, 2
+        options.strategy_mask = pj.DfrStrategy.DIRECT
         options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
         paths = scene.trace_dfr_paths(x["tx"], x["rx"], _dfr_states(x), _dfr_material(x), options, ad.Bool([True]))
         weight = dr.linspace(ad.Float, 0.5, 1.5, int(paths.capacity))

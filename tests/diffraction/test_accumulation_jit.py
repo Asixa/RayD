@@ -606,14 +606,25 @@ class DfrAccumulationTests(unittest.TestCase):
             options = pj.DfrPathOptions()
             options.wavelength = 0.125
             options.k = 50.26548245743669
-            options.seed = 19
             options.max_order = 1
+            default_max_paths = pj.DfrPathOptions().max_paths
+            options.max_paths = 0
+            zero_max_paths = options.max_paths
+            options.max_paths = 5
+            options.max_paths = None
+            none_max_paths = options.max_paths
             options.max_paths = 8
             options.max_rx = 3
             options.strategy_mask = pj.DfrStrategy.DIRECT
-            options.sample_count = 64
-            options.return_geom = 1
             options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
+            try:
+                options.max_paths = -1
+                negative_error = None
+            except ValueError as error:
+                negative_error = type(error).__name__
+            removed = [
+                name for name in ("seed", "sample_count", "return_geom") if hasattr(options, name)
+            ] + [name for name in ("channel_chunk",) if hasattr(pj.SurfelRenderOptions(), name)]
 
             result = pj.DfrPaths()
             result.capacity = 2
@@ -636,7 +647,11 @@ class DfrAccumulationTests(unittest.TestCase):
 
             print(json.dumps({
                 "max_paths": options.max_paths,
-                "return_geom": options.return_geom,
+                "default_max_paths": default_max_paths,
+                "zero_max_paths": zero_max_paths,
+                "none_max_paths": none_max_paths,
+                "negative_error": negative_error,
+                "removed_present": removed,
                 "capacity": result.capacity,
                 "count": int(result.count[0]),
                 "rx0": int(result.rx_id[0]),
@@ -648,7 +663,11 @@ class DfrAccumulationTests(unittest.TestCase):
         )
 
         self.assertEqual(data["max_paths"], 8)
-        self.assertEqual(data["return_geom"], 1)
+        self.assertIsNone(data["default_max_paths"])
+        self.assertIsNone(data["zero_max_paths"])
+        self.assertIsNone(data["none_max_paths"])
+        self.assertEqual(data["negative_error"], "ValueError")
+        self.assertEqual(data["removed_present"], [])
         self.assertEqual(data["capacity"], 2)
         self.assertEqual(data["count"], 1)
         self.assertEqual(data["rx0"], 1)
@@ -1717,13 +1736,10 @@ class DfrAccumulationTests(unittest.TestCase):
             options = pj.DfrPathOptions()
             options.wavelength = 0.125
             options.k = 50.26548245743669
-            options.seed = 17
             options.max_order = 1
             options.max_paths = 4
             options.max_rx = 1
             options.strategy_mask = pj.DfrStrategy.DIRECT
-            options.sample_count = 4
-            options.return_geom = 1
             options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
 
             pj.native_launch_audit_clear()
@@ -1747,7 +1763,22 @@ class DfrAccumulationTests(unittest.TestCase):
             )
             audit = pj.native_launch_audit()
 
+            every_state = pj.DfrPathOptions()
+            every_state.wavelength = options.wavelength
+            every_state.k = options.k
+            default_result = scene.trace_dfr_paths(
+                cuda.Array3f([0.0, 0.0], [0.0, 0.0], [1.0, 1.5]),
+                cuda.Array3f([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [-1.0, -1.5, -2.0]),
+                states,
+                material,
+                every_state,
+                cuda.Bool([True]),
+            )
+            dr.eval(default_result.count)
+
             print(json.dumps({
+                "default_capacity": default_result.capacity,
+                "default_count": int(np.asarray(default_result.count, dtype=np.int32)[0]),
                 "capacity": result.capacity,
                 "count": int(np.asarray(result.count, dtype=np.int32)[0]),
                 "valid0": bool(np.asarray(result.valid, dtype=np.bool_)[0]),
@@ -1773,6 +1804,8 @@ class DfrAccumulationTests(unittest.TestCase):
         self.assertTrue(math.isfinite(data["field_x_im0"]))
         self.assertAlmostEqual(data["p0_x0"], 0.0, places=5)
         self.assertEqual(data["path_export_launches"], 2)
+        self.assertEqual(data["default_capacity"], 6)
+        self.assertGreaterEqual(data["default_count"], 1)
 
     def test_trace_dfr_paths_order1_supports_ad_inputs(self):
         data = run_json(
@@ -1820,13 +1853,10 @@ class DfrAccumulationTests(unittest.TestCase):
                 options = pj.DfrPathOptions()
                 options.wavelength = 0.125
                 options.k = 50.26548245743669
-                options.seed = 17
                 options.max_order = 1
                 options.max_paths = 4
                 options.max_rx = 1
                 options.strategy_mask = pj.DfrStrategy.DIRECT
-                options.sample_count = 4
-                options.return_geom = 1
                 options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
 
                 rx = ad.Array3f([0.0], [0.0], [rx_z])

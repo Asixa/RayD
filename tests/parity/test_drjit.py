@@ -368,13 +368,10 @@ class DrJitParityTests(unittest.TestCase):
         options = dr_backend.DfrPathOptions()
         options.wavelength = 0.125
         options.k = 50.26548245743669
-        options.seed = 17
         options.max_order = 1
         options.max_paths = 4
         options.max_rx = 1
         options.strategy_mask = dr_backend.DfrStrategy.DIRECT
-        options.sample_count = 1
-        options.return_geom = 1
         options.receiver_model = dr_backend.DfrReceiverModel.MATCHED_ISO
         out_d = scene_d.trace_dfr_paths(
             cuda.Array3f([0.0], [0.0], [1.0]),

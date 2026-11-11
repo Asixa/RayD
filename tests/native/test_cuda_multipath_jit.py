@@ -187,9 +187,9 @@ mat = pj.DfrMaterial()
 mat.eta_r = cuda.Float([4.0]); mat.sigma = cuda.Float([0.0]); mat.mu_r = cuda.Float([1.0])
 mat.gain = cuda.Float([1.0]); mat.valid = cuda.Bool([True])
 opt = pj.DfrPathOptions()
-opt.wavelength = 0.125; opt.k = 50.26548245743669; opt.seed = 17; opt.max_order = 1
+opt.wavelength = 0.125; opt.k = 50.26548245743669; opt.max_order = 1
 opt.max_paths = 4; opt.max_rx = 1; opt.strategy_mask = pj.DfrStrategy.DIRECT
-opt.sample_count = 4; opt.return_geom = 1; opt.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
+opt.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
 r = scene.trace_dfr_paths(cuda.Array3f([0.0], [0.0], [1.0]), cuda.Array3f([0.0], [0.0], [-1.0]),
                           states, mat, opt, cuda.Bool([True]))
 print(json.dumps({

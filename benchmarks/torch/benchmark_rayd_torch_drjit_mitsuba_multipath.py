@@ -453,13 +453,10 @@ def run_rayd_diffraction_export(
     options = rayd.DfrPathOptions()
     options.wavelength = 0.125
     options.k = 50.26548245743669
-    options.seed = args.seed
     options.max_order = 1
     options.max_paths = state_count
     options.max_rx = 1
     options.strategy_mask = rayd.DfrStrategy.DIRECT
-    options.sample_count = 1
-    options.return_geom = 1
     options.receiver_model = rayd.DfrReceiverModel.MATCHED_ISO
 
     tx = cuda.Array3f([0.0], [0.0], [1.0])

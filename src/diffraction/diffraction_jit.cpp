@@ -118,7 +118,8 @@ DfrPathsT<Detached> Scene::trace_dfr_paths(const Vector3fT<Detached>& tx_positio
     require_inputs_on_build_device("Scene::trace_dfr_paths()", tx_positions, rx_positions, states, material, active);
     require(options.wavelength > 0.f, "Scene::trace_dfr_paths(): wavelength must be positive.");
     require(options.max_order == 1, "Scene::trace_dfr_paths(): only max_order == 1 is supported.");
-    require(options.max_paths > 0, "Scene::trace_dfr_paths(): max_paths must be positive.");
+    require(options.max_paths >= 0,
+            "Scene::trace_dfr_paths(): max_paths must be non-negative (0 exports every state).");
     require((options.strategy_mask & RAYD_DFR_DIRECT) != 0,
             "Scene::trace_dfr_paths(): first-order path export requires direct diffraction.");
 
@@ -181,7 +182,7 @@ DfrPathsT<Detached> Scene::trace_dfr_paths(const Vector3fT<Detached>& tx_positio
                     "Scene::trace_dfr_paths(): active width must be 1 or match state count.");
         }
 
-        const int state_limit = std::min(state_count, options.max_paths);
+        const int state_limit = options.max_paths > 0 ? std::min(state_count, options.max_paths) : state_count;
         const int64_t capacity64 =
             static_cast<int64_t>(tx_count) * static_cast<int64_t>(rx_count) * static_cast<int64_t>(state_limit);
         require(capacity64 <= static_cast<int64_t>(std::numeric_limits<int>::max()),
@@ -345,7 +346,7 @@ DfrPathsT<Detached> Scene::trace_dfr_paths(const Vector3fT<Detached>& tx_positio
                            drjit::isfinite(states.edge_pos.y()) && drjit::isfinite(states.edge_pos.z()) &&
                            drjit::isfinite(states.src_power);
 
-        const int state_limit = std::min(state_count, options.max_paths);
+        const int state_limit = options.max_paths > 0 ? std::min(state_count, options.max_paths) : state_count;
         const int64_t capacity64 =
             static_cast<int64_t>(tx_count) * static_cast<int64_t>(rx_count) * static_cast<int64_t>(state_limit);
         require(capacity64 <= static_cast<int64_t>(std::numeric_limits<int>::max()),

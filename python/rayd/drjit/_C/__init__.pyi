@@ -472,12 +472,6 @@ class SurfelRenderOptions:
     @channel_count.setter
     def channel_count(self, arg: int, /) -> None: ...
     @property
-    def channel_chunk(self) -> int:
-        """Not used by the current renderer."""
-
-    @channel_chunk.setter
-    def channel_chunk(self, arg: int, /) -> None: ...
-    @property
     def background_rgb(self) -> drjit.scalar.Array3f:
         """Background color for the RGB modes."""
 
@@ -2835,7 +2829,7 @@ class DfrPathOptions:
     """
     Options for Scene.trace_dfr_paths().
 
-    Options record. max_paths must be set to a positive value.
+    Options record. The defaults export every state for every receiver.
     """
 
     def __init__(self) -> None: ...
@@ -2854,25 +2848,19 @@ class DfrPathOptions:
     @k.setter
     def k(self, arg: float, /) -> None: ...
     @property
-    def seed(self) -> int:
-        """Not read by the first-order path export."""
-
-    @seed.setter
-    def seed(self, arg: int, /) -> None: ...
-    @property
     def max_order(self) -> int:
         """Diffraction order; only 1 is supported."""
 
     @max_order.setter
     def max_order(self, arg: int, /) -> None: ...
     @property
-    def max_paths(self) -> int:
+    def max_paths(self) -> int | None:
         """
-        Maximum states exported per (transmitter, receiver) pair; must be positive.
+        Maximum states exported per (transmitter, receiver) pair. None (the default) or 0 exports every state; reading it back gives None for both.
         """
 
     @max_paths.setter
-    def max_paths(self, arg: int, /) -> None: ...
+    def max_paths(self, value: int | None) -> None: ...
     @property
     def max_rx(self) -> int:
         """Use at most this many receivers; 0 uses all."""
@@ -2885,18 +2873,6 @@ class DfrPathOptions:
 
     @strategy_mask.setter
     def strategy_mask(self, arg: DfrStrategy, /) -> None: ...
-    @property
-    def sample_count(self) -> int:
-        """Not read by the first-order path export."""
-
-    @sample_count.setter
-    def sample_count(self, arg: int, /) -> None: ...
-    @property
-    def return_geom(self) -> int:
-        """Not read by the first-order path export; p0 is always written."""
-
-    @return_geom.setter
-    def return_geom(self, arg: int, /) -> None: ...
     @property
     def receiver_model(self) -> DfrReceiverModel:
         """Receiver model; only MATCHED_ISO is supported."""
@@ -4750,11 +4726,11 @@ class Scene:
             rx_positions: Receiver positions.
             states: DfrStates, or DfrStatesAD for the AD overload.
             material: DfrMaterial, or DfrMaterialAD for the AD overload.
-            options: DfrPathOptions; max_paths must be positive.
+            options: DfrPathOptions; max_paths None or 0 exports every state.
             active: Per-state mask, one or one per state.
 
         Returns:
-            DfrPaths with capacity n_tx * n_rx * min(n_states, max_paths), or DfrPathsAD.
+            DfrPaths with capacity n_tx * n_rx * min(n_states, max_paths), or n_tx * n_rx * n_states when max_paths is None; DfrPathsAD for the AD overload.
 
         Differentiable with AD inputs: VJP and JVP with respect to the continuous inputs. Raises RuntimeError if the scene is not built or has pending updates (call sync() first).
         """

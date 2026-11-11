@@ -5,6 +5,7 @@
 
 #include <stdexcept>
 
+#include <nanobind/stl/optional.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 #include <drjit/python.h>
@@ -570,7 +571,6 @@ NB_MODULE(_C, m) {
             .def_rw("sh_degree", &SurfelRenderOptions::sh_degree, "Spherical-harmonic degree to evaluate, in [0, 3].")
             .def_rw("channel_count", &SurfelRenderOptions::channel_count,
                     "Number of feature channels for the Feature mode.")
-            .def_rw("channel_chunk", &SurfelRenderOptions::channel_chunk, "Not used by the current renderer.")
             .def_rw("background_rgb", &SurfelRenderOptions::background_rgb, "Background color for the RGB modes.");
 
         nb::enum_<ReflectionExportMode>(m, "ReflectionExportMode", nb::is_arithmetic(),
@@ -1413,22 +1413,31 @@ NB_MODULE(_C, m) {
         nb::class_<DfrPathOptions>(m, "DfrPathOptions",
                                    "Options for Scene.trace_dfr_paths().\n"
                                    "\n"
-                                   "Options record. max_paths must be set to a positive value.")
+                                   "Options record. The defaults export every state for every receiver.")
             .def(nb::init<>())
             .def_rw("wavelength", &DfrPathOptions::wavelength, "Wavelength in world units; must be positive.")
             .def_rw("k", &DfrPathOptions::k,
                     "Wavenumber used for path phases. It is used as given, not derived from wavelength.")
-            .def_rw("seed", &DfrPathOptions::seed, "Not read by the first-order path export.")
             .def_rw("max_order", &DfrPathOptions::max_order, "Diffraction order; only 1 is supported.")
-            .def_rw("max_paths", &DfrPathOptions::max_paths,
-                    "Maximum states exported per (transmitter, receiver) pair; must be positive.")
+            .def_prop_rw(
+                "max_paths",
+                [](const DfrPathOptions& options) -> std::optional<int> {
+                    if (options.max_paths > 0)
+                        return options.max_paths;
+                    return std::nullopt;
+                },
+                [](DfrPathOptions& options, std::optional<int> value) {
+                    if (value.has_value() && *value < 0)
+                        throw nb::value_error("DfrPathOptions.max_paths must be None or non-negative.");
+                    options.max_paths = value.value_or(0);
+                },
+                nb::for_setter(nb::arg("value").none()),
+                "Maximum states exported per (transmitter, receiver) pair. None (the default) or 0 exports every "
+                "state; reading it back gives None for both.")
             .def_rw("max_rx", &DfrPathOptions::max_rx, "Use at most this many receivers; 0 uses all.")
             .def_prop_rw("strategy_mask", enum_field_getter<DfrStrategyMask>(&DfrPathOptions::strategy_mask),
                          enum_field_setter<DfrStrategyMask>(&DfrPathOptions::strategy_mask),
                          "Enabled strategies; must include DIRECT.")
-            .def_rw("sample_count", &DfrPathOptions::sample_count, "Not read by the first-order path export.")
-            .def_rw("return_geom", &DfrPathOptions::return_geom,
-                    "Not read by the first-order path export; p0 is always written.")
             .def_prop_rw("receiver_model", enum_field_getter<DfrReceiverModel>(&DfrPathOptions::receiver_model),
                          enum_field_setter<DfrReceiverModel>(&DfrPathOptions::receiver_model),
                          "Receiver model; only MATCHED_ISO is supported.");
@@ -2901,11 +2910,12 @@ NB_MODULE(_C, m) {
                 "    rx_positions: Receiver positions.\n"
                 "    states: DfrStates, or DfrStatesAD for the AD overload.\n"
                 "    material: DfrMaterial, or DfrMaterialAD for the AD overload.\n"
-                "    options: DfrPathOptions; max_paths must be positive.\n"
+                "    options: DfrPathOptions; max_paths None or 0 exports every state.\n"
                 "    active: Per-state mask, one or one per state.\n"
                 "\n"
                 "Returns:\n"
-                "    DfrPaths with capacity n_tx * n_rx * min(n_states, max_paths), or DfrPathsAD.\n"
+                "    DfrPaths with capacity n_tx * n_rx * min(n_states, max_paths), or n_tx * n_rx * n_states when "
+                "max_paths is None; DfrPathsAD for the AD overload.\n"
                 "\n"
                 "Differentiable with AD inputs: VJP and JVP with respect to the continuous inputs. Raises RuntimeError "
                 "if the scene is not built or has pending updates (call sync() first).")

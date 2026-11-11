@@ -155,9 +155,8 @@ Torch kernels cannot honour:
   backend has no `DfrStrategy`, `DfrSampleSequence`, or `DfrReceiverModel` enum.
 - `DfrCoherentOptions`: no `k`, `max_order`, `receiver_model`, `collect_debug_counts`, `omega`, `tx_pol_*`, or
   `higher_*` fields; Torch runs first-order coherent accumulation with an x-polarized source.
-- `DfrPathOptions`: no `k`, `seed`, `sample_count`, `max_order`, `max_rx`, `strategy_mask`, `receiver_model`, or
-  `return_geom`. `max_paths` defaults to `None` (every state) where Dr.Jit requires a positive value; `layout` is
-  Torch-only.
+- `DfrPathOptions`: no `k`, `max_order`, `max_rx`, `strategy_mask`, or `receiver_model`. `max_paths` defaults to
+  `None` (every state) in both backends; `layout` is Torch-only.
 - `AccumOptions`: the shared fields `wavelength`, `solid_angle_per_ray`, `collect_wedges`, `collect_wedge_prefixes`,
   `wedge_capacity`, and `wedge_sample_stride` have the same names in both backends. Torch-only:
   `accumulation_strategy`, `compact_min_samples`, `staged_min_samples_per_cell`, `procedural_sample_count`, and
