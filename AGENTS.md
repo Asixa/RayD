@@ -157,6 +157,14 @@ SceneOptions)` requests one (`Auto` picks OptiX when usable),
 scene-tracing operation must ship both paths over one shared body and a case in
 `tests/native/trace_backend_parity_test.cpp`.
 
+A typed scene whose meshes were created with `MeshInput::dynamic` refits in
+place: `update_mesh_vertices(scene, mesh, vertices)` stages vertices (same
+count, same device) and `sync_scene(scene)` commits them through the same
+`sync()` path as the legacy `Scene`, repacking the geometry that
+`scene_edge_records` returns into new tensors. The parity test checks that a
+refit scene traces bitwise like a freshly built one through the 16-refit
+rebuild period on both tracers.
+
 ## OptiX Pipeline Guardrail
 
 - If a native multipath call fails with `OptiX error in optixPipelineCreate(multipath)`, treat it first as a multipath OptiX pipeline configuration issue, not as an input/API issue.

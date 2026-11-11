@@ -111,6 +111,12 @@ All notable changes to RayD are documented in this file.
   the framework version (and Torch's CUDA version) each build compiled against.
 - Added a `Governance` workflow that runs the formatting check and every
   GPU-free governance and packaging test on each push and pull request.
+- The typed Torch integration API (`rayd/scene.h`) can refit a scene in place:
+  `update_mesh_vertices(scene, mesh_index, vertices)` stages new vertices for a
+  mesh created with `MeshInput::dynamic`, and `sync_scene(scene)` commits them
+  (the same refit, periodic rebuild and finite-vertex check as `Scene.sync()`).
+  A refit scene traces bit for bit like one built from the moved vertices.
+  `kIntegrationApiVersion` stays 8: no existing declaration changed.
 
 ### Changed
 
