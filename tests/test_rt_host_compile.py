@@ -3,8 +3,9 @@
 
 """P4 key gate: the migrated multipath algorithm headers compile host-only.
 
-A POSIX C++17 compile of the shared math header and an MSVC host compile of
-tests/native/rt_host_compile_smoke.cpp, with no CUDA/OptiX device compiler.
+A POSIX C++17 compile of the shared math header, and POSIX and MSVC host
+compiles of tests/native/rt_host_compile_smoke.cpp, with no CUDA/OptiX device
+compiler.
 """
 
 import os
@@ -77,10 +78,55 @@ def _cuda_include_dir():
     return None
 
 
+def posix_compiler():
+    """Return the first POSIX C++ compiler on PATH, or None."""
+    return next((path for name in ("c++", "g++", "clang++") if (path := shutil.which(name))), None)
+
+
+def _posix_cuda_include_dir():
+    """Return a directory holding <vector_types.h> from CUDA_PATH, CUDA_HOME, or nvcc, or None."""
+    roots = [Path(value) for key in ("CUDA_PATH", "CUDA_HOME") if (value := os.environ.get(key))]
+    if nvcc := shutil.which("nvcc"):
+        roots.append(Path(nvcc).resolve().parent.parent)
+    for root in roots:
+        for candidate in (root / "include", root / "targets" / "x86_64-linux" / "include"):
+            if (candidate / "vector_types.h").is_file():
+                return candidate
+    return None
+
+
 class RtHostCompileTests(unittest.TestCase):
     @unittest.skipIf(platform.system() == "Windows", "POSIX compiler gate runs outside Windows")
+    def test_smoke_translation_unit_compiles_with_posix_cxx(self):
+        compiler = posix_compiler()
+        if compiler is None:
+            self.skipTest("no POSIX C++ compiler found")
+        cuda_include = _posix_cuda_include_dir()
+        if cuda_include is None:
+            self.skipTest("no CUDA include directory with <vector_types.h> found")
+
+        with tempfile.TemporaryDirectory() as directory:
+            cmd = [
+                compiler,
+                "-std=c++17",
+                "-c",
+                f"-I{ROOT}",
+                f"-I{SHARED_INCLUDE}",
+                f"-I{cuda_include}",
+                str(SMOKE_TU),
+                "-o",
+                str(Path(directory) / "rt_host_compile_smoke.o"),
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        self.assertEqual(
+            result.returncode,
+            0,
+            f"POSIX host compile failed.\nCMD: {' '.join(cmd)}\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}",
+        )
+
+    @unittest.skipIf(platform.system() == "Windows", "POSIX compiler gate runs outside Windows")
     def test_shared_math_header_compiles_with_posix_cxx(self):
-        compiler = next((path for name in ("c++", "g++", "clang++") if (path := shutil.which(name))), None)
+        compiler = posix_compiler()
         if compiler is None:
             self.skipTest("no POSIX C++ compiler found")
 

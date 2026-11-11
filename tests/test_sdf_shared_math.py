@@ -7,10 +7,11 @@ import json
 import os
 import platform
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
-from tests.test_rt_host_compile import _msvc_environment
+from tests.test_rt_host_compile import _msvc_environment, posix_compiler
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -81,6 +82,39 @@ class SdfHostSmokeTests(unittest.TestCase):
         # Each check in the smoke TU owns a distinct exit code, so a failure
         # names the numerical claim that broke.
         ran = subprocess.run([str(executable)], cwd=str(out_dir), capture_output=True, text=True, check=False)
+        self.assertEqual(
+            ran.returncode,
+            0,
+            f"sdf_shared_math_smoke check #{ran.returncode} failed.\nSTDOUT:\n{ran.stdout}\nSTDERR:\n{ran.stderr}",
+        )
+
+
+@unittest.skipIf(platform.system() == "Windows", "POSIX compiler gate runs outside Windows")
+class SdfPosixHostSmokeTests(unittest.TestCase):
+    def test_smoke_translation_unit_compiles_and_passes_with_posix_cxx(self):
+        compiler = posix_compiler()
+        if compiler is None:
+            self.skipTest("no POSIX C++ compiler found")
+
+        with tempfile.TemporaryDirectory() as directory:
+            executable = Path(directory) / "sdf_shared_math_smoke"
+            compile_cmd = [
+                compiler,
+                "-std=c++17",
+                f"-I{SHARED_INCLUDE}",
+                f"-I{ROOT}",
+                str(SMOKE_TU),
+                "-o",
+                str(executable),
+            ]
+            built = subprocess.run(compile_cmd, capture_output=True, text=True, check=False)
+            self.assertEqual(
+                built.returncode,
+                0,
+                f"host compile failed.\nCMD: {' '.join(compile_cmd)}\nSTDOUT:\n{built.stdout}\nSTDERR:\n{built.stderr}",
+            )
+            # Each check in the smoke TU owns a distinct exit code.
+            ran = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
         self.assertEqual(
             ran.returncode,
             0,
