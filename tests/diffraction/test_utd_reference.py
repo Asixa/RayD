@@ -306,6 +306,20 @@ class UtdReferenceTests(unittest.TestCase):
                 with self.subTest(boundary=boundary, hard=hard):
                     self.assertLess(abs(on - expected), 0.05 * abs(on - other))
 
+    def test_the_coefficient_is_smooth_up_to_the_boundary(self):
+        # Within 1e-4 rad of a GO boundary the cotangent pole and the transition zero must come from one small angle:
+        # computed apart they missed the limit by up to 8 % at 2e-6 rad. Each side's values agree with that side's
+        # value 1e-3 deg away to 0.5 %.
+        for boundary in (120.0, 240.0):
+            for hard in (False, True):
+                far = {side: self._field(2.0, 60.0, boundary + side * 1.0e-3, 40.0, 12.0, 400.0, hard, HALF_PLANE)
+                       for side in (-1.0, 1.0)}
+                for side in (-1.0, 1.0):
+                    for offset in (1.0e-4, 3.0e-4):
+                        near = self._field(2.0, 60.0, boundary + side * offset, 40.0, 12.0, 400.0, hard, HALF_PLANE)
+                        with self.subTest(boundary=boundary, hard=hard, side=side, offset=offset):
+                            self.assertLess(abs(near - far[side]), 5.0e-3 * abs(far[side]))
+
     def test_dielectric_face_term_cancels_the_reflection_step_under_oblique_incidence(self):
         # A concrete half-plane: across the face-0 reflection boundary the total field (GO reflection plus the
         # diffraction) must not step, for normal and oblique incidence on the edge and every polarization. The GO

@@ -303,3 +303,13 @@ polarizations; the total (independent 3D Fresnel GO oracle plus the diffraction)
 reflected field across the boundary; 15-24 % before) and the existing KP, reciprocity and face-label tests,
 unchanged. Dr.Jit `diffraction_paths` / `diffraction_accumulation` PTX regenerated. Channel's full-wave
 tables are in its ADR for the full-wave fixes.
+
+**Follow-up (same date): one small angle near the pole.** Within about 1e-4 rad of a boundary the cotangent and the
+transition argument were computed from the angle separately (the cotangent of an argument near 0 or pi, the cosine
+of one near pi/2 after a subtraction from 2 pi n N), so their product, which is finite, lost the small angle to
+different roundings; `cot_val`'s guard on `|sin| < 1e-6` also capped the cotangent within `2n * 1e-6` rad. The
+coefficient missed its limit by up to 8 % at 2e-6 rad from a half-plane's boundaries (host harness) and Channel's
+boundary gradient ledger saw it as a jump. `beta_term_values` now derives both, within 1e-2 rad of the term's
+pole, from one small angle `d = po -+ pi`: the cotangent of `-+d / 2n` without the guard and `a = 2 sin^2(d / 2)`.
+Outside that window nothing changes. `test_the_coefficient_is_smooth_up_to_the_boundary` (each side within 0.5 %
+of its value 1e-3 deg away, at 1e-4 and 3e-4 deg; eight failures on the previous header).

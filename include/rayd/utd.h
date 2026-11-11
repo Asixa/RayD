@@ -849,6 +849,23 @@ UTD_DINLINE void beta_term_values(T beta, T n, T kL, float cotSign, bool plusBra
     T a2v = 1.f - a;
     T ca = (UTD_PI + cotSign * beta) / twoN;
     cotV = cot_val(ca);
+    // Near this term's GO boundary the cotangent has a pole and the transition argument a double zero, and their
+    // product is finite. Computed apart, the two lose the small angle to different roundings (the cotangent of an
+    // argument near 0 or pi, the cosine of one near pi/2, the subtraction from 2 pi n N), and the product misses its
+    // limit by up to a few percent within 1e-4 rad; cot_val's guard on |sin| < 1e-6 also caps the cotangent
+    // within 2n e-6 rad of the pole. There both come from one small angle d = po -+ pi: the cotangent argument is
+    // -+d / 2n (mod pi), evaluated without the guard, and a = 2 sin^2(d / 2).
+    const T dPole = plusBranch ? po - T(UTD_PI) : po + T(UTD_PI);
+    if (fabsf(scalar_value(dPole)) < 1.0e-2f) {
+        const T sh = sinf(0.5f * dPole);
+        a = 2.f * sh * sh;
+        a1v = -sinf(dPole);
+        a2v = 1.f - a;
+        const T poleArg = plusBranch ? -dPole / twoN : dPole / twoN;
+        T sinArg, cosArg;
+        sincosf(poleArg, &sinArg, &cosArg);
+        cotV = scalar_value(sinArg) != 0.f ? cosArg / sinArg : cot_val(poleArg);
+    }
     c1 = -(cotSign / twoN) * (1.f + cotV * cotV);
     c2 = 0.5f * cotV * (1.f + cotV * cotV) / (n * n);
     xo = kL * a;
