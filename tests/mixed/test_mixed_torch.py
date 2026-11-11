@@ -71,7 +71,9 @@ class TorchMixedSceneTests(unittest.TestCase):
     def test_all_geometry_families_share_one_closest_hit_and_reflection_query(self) -> None:
         ray = self._ray()
         hit = self.scene.intersect(ray)
+        self.assertIsInstance(hit, rt.Intersection)
         self.assertEqual(hit.shape_id.tolist(), [0, 1, 2])
+        self.assertEqual(hit.instance_id.tolist(), [0, 1, 2])
         self.assertEqual(hit.global_prim_id.tolist(), [0, 1, 2])
         torch.testing.assert_close(hit.t, torch.full_like(hit.t, 2.0), atol=2.0e-3, rtol=0.0)
         self.assertEqual(self.scene.visible(ray.o, ray.o + 4.0 * ray.d).tolist(), [False, False, False])
@@ -82,7 +84,7 @@ class TorchMixedSceneTests(unittest.TestCase):
         self.assertEqual(chain.prim_ids.tolist(), [[0], [1], [2]])
         self.assertFalse(hasattr(self.scene, "trace_dfr_paths"))
         self.assertFalse(hasattr(self.scene, "trace_diffraction"))
-        minimal = self.scene.intersect(ray, flags=getattr(rt.RayFlags, "None"))
+        minimal = self.scene.intersect(ray, flags=rt.RayFlags.Empty)
         torch.testing.assert_close(minimal.p, torch.zeros_like(minimal.p))
         torch.testing.assert_close(minimal.n, torch.zeros_like(minimal.n))
         torch.testing.assert_close(minimal.geo_n, torch.zeros_like(minimal.geo_n))
@@ -161,7 +163,7 @@ class TorchMixedSceneTests(unittest.TestCase):
         batched = batch.intersect(ray)
         individual = tuple(batch.grid(index).intersect(ray) for index in range(2))
         for batch_hit, individual_hit in zip(batched, individual):
-            for field in ("t", "hit_mask", "position", "normal", "steps"):
+            for field in ("t", "valid", "position", "normal", "steps"):
                 self.assertTrue(torch.equal(getattr(batch_hit, field), getattr(individual_hit, field)), field)
 
         scene = rt.MixedScene()
@@ -207,8 +209,8 @@ class TorchMixedSceneTests(unittest.TestCase):
             torch.tensor((3.0, 3.0, 1.0), dtype=torch.float32, device="cuda"),
         )
         first, second = batch.intersect(ray, active=torch.tensor((True, False, True), device="cuda"))
-        self.assertEqual(first.hit_mask.tolist(), [True, False, False])
-        self.assertEqual(second.hit_mask.tolist(), [False, False, False])
+        self.assertEqual(first.valid.tolist(), [True, False, False])
+        self.assertEqual(second.valid.tolist(), [False, False, False])
         torch.testing.assert_close(first.position[1:], torch.zeros_like(first.position[1:]))
         self.assertEqual(int(first.steps[1].item()), 0)
         self.assertTrue(torch.isinf(first.t[1:]).all())

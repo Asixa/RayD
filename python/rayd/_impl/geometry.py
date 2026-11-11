@@ -3,10 +3,11 @@
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
-from enum import IntEnum, IntFlag
+from enum import Enum, IntEnum, IntFlag
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, TypeVar
 import torch
 
 from .runtime import C as _C
@@ -14,6 +15,17 @@ from .runtime import core_ops
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+try:
+    from enum import StrEnum as _StrEnum
+except ImportError:  # Python 3.10 has no StrEnum; a str-mixin Enum compares equal to its value the same way.
+
+    class _StrEnum(str, Enum):  # type: ignore[no-redef]
+        def __str__(self) -> str:
+            return str(self.value)
+
+        def __hash__(self) -> int:
+            return hash(self.value)
 
 
 _CONTRACT_VALUES = {
@@ -56,13 +68,122 @@ _validate_native_contract_values()
 RayFlags = IntFlag(
     "RayFlags",
     {
-        "None": _CONTRACT_VALUES["ray_flags_none"],
+        "Empty": _CONTRACT_VALUES["ray_flags_none"],
         "Geometric": _CONTRACT_VALUES["ray_flags_geometric"],
         "ShadingN": _CONTRACT_VALUES["ray_flags_shading_n"],
         "UV": _CONTRACT_VALUES["ray_flags_uv"],
         "All": _CONTRACT_VALUES["ray_flags_all"],
     },
 )
+
+
+class TraceBackend(_StrEnum):
+    """Triangle-intersection backend accepted by ``Scene(trace_backend=...)``."""
+
+    AUTO = "auto"
+    OPTIX = "optix"
+    CUDA = "cuda"
+
+
+class EdgeBVHBackend(_StrEnum):
+    """Edge-query acceleration backend accepted by ``Scene(edge_bvh_backend=...)``."""
+
+    AUTO = "auto"
+    OPTIX = "optix"
+    CUDA = "cuda"
+
+
+class AccumStrategy(IntEnum):
+    """Grid write strategy of ``Scene.accum_refl()``.
+
+    ``AUTO`` stages per-sample writes and reduces them when the batch is large
+    enough for the grid, and otherwise writes with atomics; ``ATOMIC`` and
+    ``STAGED`` force one of the two.
+    """
+
+    AUTO = 0
+    ATOMIC = 1
+    STAGED = 2
+
+
+def _describe_value(value: object) -> str:
+    """Describe one record field without reading tensor data back to the host."""
+
+    if isinstance(value, torch.Tensor):
+        dtype = str(value.dtype).removeprefix("torch.")
+        shape = ", ".join(str(int(size)) for size in value.shape)
+        grad = ", requires_grad" if value.requires_grad else ""
+        return f"{dtype}[{shape}] {value.device}{grad}"
+    return repr(value)
+
+
+_RecordT = TypeVar("_RecordT", bound="_Record")
+
+
+class _Record:
+    """Shared compact ``repr``, ``to(device)``, and ``detach()`` for Torch result records.
+
+    A record lists its fields through ``_record_items`` (dataclass fields by
+    default) and rebuilds itself from a field mapping through
+    ``_record_rebuild``. Tensor fields are mapped, nested records recurse, and
+    every other value is carried over unchanged.
+    """
+
+    __slots__ = ()
+
+    def _record_items(self) -> tuple[tuple[str, Any], ...]:
+        return tuple((field.name, getattr(self, field.name)) for field in dataclasses.fields(self))  # type: ignore[arg-type]
+
+    def _record_rebuild(self: _RecordT, values: dict[str, Any]) -> _RecordT:
+        return type(self)(**values)
+
+    def _record_name(self) -> str:
+        return type(self).__name__
+
+    def __repr__(self) -> str:
+        body = ", ".join(f"{name}={_describe_value(value)}" for name, value in self._record_items())
+        return f"{self._record_name()}({body})"
+
+    def _map_tensors(self: _RecordT, function: Callable[[torch.Tensor], torch.Tensor]) -> _RecordT:
+        def convert(value: Any) -> Any:
+            if isinstance(value, torch.Tensor):
+                return function(value)
+            if isinstance(value, _Record):
+                return value._map_tensors(function)
+            return value
+
+        return self._record_rebuild({name: convert(value) for name, value in self._record_items()})
+
+    def to(self: _RecordT, device: torch.device | str | int) -> _RecordT:
+        """Return a new record with every tensor field moved to ``device``."""
+
+        return self._map_tensors(lambda value: value.to(device))
+
+    def detach(self: _RecordT) -> _RecordT:
+        """Return a new record with every tensor field detached from autograd."""
+
+        return self._map_tensors(lambda value: value.detach())
+
+
+class _ValidRecord(_Record):
+    """A result record whose per-row validity is the boolean tensor ``valid``."""
+
+    __slots__ = ()
+
+    valid: torch.Tensor
+
+    def is_valid(self) -> torch.Tensor:
+        return self.valid
+
+
+def _complex_field(name: str) -> property:
+    """Expose the split ``<name>_re``/``<name>_im`` tensors as one complex tensor."""
+
+    def read(self: Any) -> torch.Tensor:
+        return torch.complex(getattr(self, f"{name}_re"), getattr(self, f"{name}_im"))
+
+    read.__doc__ = f"Complex ``{name}`` assembled from ``{name}_re`` and ``{name}_im``."
+    return property(read)
 
 
 def _require_float_cuda_tensor(value: torch.Tensor, name: str, shape_last: int | None) -> None:
@@ -95,8 +216,8 @@ class Ray:
                 raise ValueError("Ray.tmax must be empty or have shape (N,).")
 
 
-@dataclass(frozen=True, slots=True)
-class Intersection:
+@dataclass(frozen=True, slots=True, repr=False)
+class Intersection(_Record):
     t: torch.Tensor
     p: torch.Tensor
     n: torch.Tensor
@@ -114,6 +235,12 @@ class Intersection:
 
         return self.shape_id
 
+    @property
+    def valid(self) -> torch.Tensor:
+        """Per-ray hit mask; the same tensor ``is_valid()`` returns."""
+
+        return self.is_valid()
+
     def is_valid(self) -> torch.Tensor:
         if self.t.device.type == "cuda":
             return core_ops().intersection_valid(self.t, self.shape_id)
@@ -121,8 +248,48 @@ class Intersection:
             return torch.isfinite(self.t)
         return self.shape_id >= 0
 
+    def _record_rebuild(self, values: dict[str, Any]) -> Intersection:
+        # The lazy subclasses materialize into the plain record.
+        return Intersection(**values)
 
-class _LazyIntersection:
+    def _record_name(self) -> str:
+        return "Intersection"
+
+
+class _DeferredIntersection(Intersection):
+    """Base of the intersection results that compute their fields on first access.
+
+    They are ``Intersection`` instances, so ``isinstance`` and the field surface
+    hold, but their dataclass slots stay unset: every field is a property that
+    loads on demand. ``repr`` shows only what is already loaded.
+    """
+
+    __slots__ = ()
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        # The frozen dataclass `__setattr__` refuses every subclass assignment
+        # under Python 3.11 slots; the private load state stays assignable
+        # while the public fields stay read-only.
+        if not name.startswith("_"):
+            raise dataclasses.FrozenInstanceError(f"cannot assign to field {name!r}")
+        object.__setattr__(self, name, value)
+
+    def _loaded_t(self) -> torch.Tensor | None:
+        raise NotImplementedError
+
+    def _loaded_full(self) -> Intersection | None:
+        raise NotImplementedError
+
+    def __repr__(self) -> str:
+        full = self._loaded_full()
+        if full is not None:
+            return repr(full)
+        t = self._loaded_t()
+        shown = "<not loaded>" if t is None else _describe_value(t)
+        return f"Intersection(t={shown}, <remaining fields load on access>)"
+
+
+class _LazyIntersection(_DeferredIntersection):
     __slots__ = ("_load_t", "_load_full", "_t", "_full")
 
     def __init__(self, load_t: Callable[[], torch.Tensor], load_full: Callable[[], Intersection]) -> None:
@@ -131,13 +298,19 @@ class _LazyIntersection:
         self._t: torch.Tensor | None = None
         self._full: Intersection | None = None
 
+    def _loaded_t(self) -> torch.Tensor | None:
+        return self._t
+
+    def _loaded_full(self) -> Intersection | None:
+        return self._full
+
     def _ensure_full(self) -> Intersection:
         if self._full is None:
             self._full = self._load_full()
         return self._full
 
     @property
-    def t(self) -> torch.Tensor:
+    def t(self) -> torch.Tensor:  # type: ignore[override]
         if self._t is not None:
             return self._t
         if self._full is not None:
@@ -146,56 +319,60 @@ class _LazyIntersection:
         return self._t
 
     @property
-    def p(self) -> torch.Tensor:
+    def p(self) -> torch.Tensor:  # type: ignore[override]
         return self._ensure_full().p
 
     @property
-    def n(self) -> torch.Tensor:
+    def n(self) -> torch.Tensor:  # type: ignore[override]
         return self._ensure_full().n
 
     @property
-    def geo_n(self) -> torch.Tensor:
+    def geo_n(self) -> torch.Tensor:  # type: ignore[override]
         return self._ensure_full().geo_n
 
     @property
-    def uv(self) -> torch.Tensor:
+    def uv(self) -> torch.Tensor:  # type: ignore[override]
         return self._ensure_full().uv
 
     @property
-    def barycentric(self) -> torch.Tensor:
+    def barycentric(self) -> torch.Tensor:  # type: ignore[override]
         return self._ensure_full().barycentric
 
     @property
-    def shape_id(self) -> torch.Tensor:
+    def shape_id(self) -> torch.Tensor:  # type: ignore[override]
         return self._ensure_full().shape_id
 
     @property
-    def instance_id(self) -> torch.Tensor:
-        return self._ensure_full().instance_id
-
-    @property
-    def prim_id(self) -> torch.Tensor:
+    def prim_id(self) -> torch.Tensor:  # type: ignore[override]
         return self._ensure_full().prim_id
 
     @property
-    def local_prim_id(self) -> torch.Tensor:
+    def local_prim_id(self) -> torch.Tensor:  # type: ignore[override]
         return self._ensure_full().local_prim_id
 
     @property
-    def global_prim_id(self) -> torch.Tensor:
+    def global_prim_id(self) -> torch.Tensor:  # type: ignore[override]
         return self._ensure_full().global_prim_id
 
     def is_valid(self) -> torch.Tensor:
         return self._ensure_full().is_valid()
 
 
-class _ReducedIntersection:
-    __slots__ = ("_scene", "t", "_fields")
+class _ReducedIntersection(_DeferredIntersection):
+    __slots__ = ("_scene", "_fields")
 
     def __init__(self, scene_handle: int, t: torch.Tensor) -> None:
         self._scene = scene_handle
-        self.t = t
+        # `t` is the inherited dataclass slot; the frozen dataclass refuses a
+        # plain assignment to a field name.
+        object.__setattr__(self, "t", t)
         self._fields: tuple[torch.Tensor, ...] | None = None
+
+    def _loaded_t(self) -> torch.Tensor | None:
+        return self.t
+
+    def _loaded_full(self) -> Intersection | None:
+        return None
 
     def _empty_fields(self) -> tuple[torch.Tensor, ...]:
         if self._fields is None:
@@ -203,51 +380,47 @@ class _ReducedIntersection:
         return self._fields
 
     @property
-    def p(self) -> torch.Tensor:
+    def p(self) -> torch.Tensor:  # type: ignore[override]
         return self._empty_fields()[0]
 
     @property
-    def n(self) -> torch.Tensor:
+    def n(self) -> torch.Tensor:  # type: ignore[override]
         return self._empty_fields()[1]
 
     @property
-    def geo_n(self) -> torch.Tensor:
+    def geo_n(self) -> torch.Tensor:  # type: ignore[override]
         return self._empty_fields()[2]
 
     @property
-    def uv(self) -> torch.Tensor:
+    def uv(self) -> torch.Tensor:  # type: ignore[override]
         return self._empty_fields()[3]
 
     @property
-    def barycentric(self) -> torch.Tensor:
+    def barycentric(self) -> torch.Tensor:  # type: ignore[override]
         return self._empty_fields()[4]
 
     @property
-    def shape_id(self) -> torch.Tensor:
+    def shape_id(self) -> torch.Tensor:  # type: ignore[override]
         return self._empty_fields()[5]
 
     @property
-    def instance_id(self) -> torch.Tensor:
-        return self.shape_id
-
-    @property
-    def prim_id(self) -> torch.Tensor:
+    def prim_id(self) -> torch.Tensor:  # type: ignore[override]
         return self._empty_fields()[6]
 
     @property
-    def local_prim_id(self) -> torch.Tensor:
+    def local_prim_id(self) -> torch.Tensor:  # type: ignore[override]
         return self._empty_fields()[7]
 
     @property
-    def global_prim_id(self) -> torch.Tensor:
+    def global_prim_id(self) -> torch.Tensor:  # type: ignore[override]
         return self._empty_fields()[8]
 
     def is_valid(self) -> torch.Tensor:
         return core_ops().intersection_valid(self.t, self.shape_id)
 
 
-@dataclass(frozen=True)
-class NearestPointEdge:
+@dataclass(frozen=True, repr=False)
+class NearestPointEdge(_Record):
     distance: torch.Tensor
     edge_point: torch.Tensor
     edge_t: torch.Tensor
@@ -256,11 +429,11 @@ class NearestPointEdge:
     global_edge_id: torch.Tensor
 
 
-@dataclass(frozen=True)
-class NearestEdgesTopK:
+@dataclass(frozen=True, repr=False)
+class NearestEdgesTopK(_ValidRecord):
     query_count: int
     k: int
-    is_valid: torch.Tensor
+    valid: torch.Tensor
     distances: torch.Tensor
     points: torch.Tensor
     edge_t: torch.Tensor
@@ -271,21 +444,21 @@ class NearestEdgesTopK:
     is_boundary: torch.Tensor
 
 
-@dataclass(frozen=True)
-class SegmentPairVisibility:
+@dataclass(frozen=True, repr=False)
+class SegmentPairVisibility(_Record):
     ray_count: int
     visible_a: torch.Tensor
     visible_b: torch.Tensor
 
 
-@dataclass(frozen=True)
-class AxialEdgeVisibility:
+@dataclass(frozen=True, repr=False)
+class AxialEdgeVisibility(_Record):
     state_count: int
     any_visible: torch.Tensor
 
 
-@dataclass(frozen=True)
-class SegmentChainVisibility:
+@dataclass(frozen=True, repr=False)
+class SegmentChainVisibility(_Record):
     chain_count: int
     max_segments: int
     all_visible: torch.Tensor
@@ -293,8 +466,8 @@ class SegmentChainVisibility:
     first_blocked_prim: torch.Tensor
 
 
-@dataclass(frozen=True)
-class NearestRayEdge:
+@dataclass(frozen=True, repr=False)
+class NearestRayEdge(_Record):
     distance: torch.Tensor
     ray_t: torch.Tensor
     point: torch.Tensor
@@ -305,7 +478,7 @@ class NearestRayEdge:
     global_edge_id: torch.Tensor
 
 
-class ReflectionChain:
+class ReflectionChain(_ValidRecord):
     __slots__ = ("_valid", "_t", "_image_sources", "_prim_ids", "_loader")
 
     def __init__(
@@ -366,14 +539,34 @@ class ReflectionChain:
         self._ensure_reduced()
         return self._prim_ids
 
+    def _record_items(self) -> tuple[tuple[str, Any], ...]:
+        # Moving or detaching needs every field, so it runs the full trace once.
+        image_sources = self.image_sources
+        return (("valid", self.valid), ("t", self.t), ("image_sources", image_sources), ("prim_ids", self.prim_ids))
 
-@dataclass(frozen=True)
-class ReflEpcField:
-    field_real: torch.Tensor
-    field_imag: torch.Tensor
+    def __repr__(self) -> str:
+        # Show only the fields already traced: a repr must not launch the trace.
+        loaded = (
+            ("valid", self._valid),
+            ("t", self._t),
+            ("image_sources", self._image_sources),
+            ("prim_ids", self._prim_ids),
+        )
+        body = ", ".join(
+            f"{name}={'<not loaded>' if value is None else _describe_value(value)}" for name, value in loaded
+        )
+        return f"ReflectionChain({body})"
+
+
+@dataclass(frozen=True, repr=False)
+class ReflEpcField(_ValidRecord):
+    field_re: torch.Tensor
+    field_im: torch.Tensor
     path_length: torch.Tensor
     valid: torch.Tensor
     resolved_prim_ids: torch.Tensor
+
+    field = _complex_field("field")
 
 
 @dataclass(frozen=True)
@@ -388,8 +581,8 @@ class ReflEpcOptions:
     plane_tolerance: float = 1.0e-5
 
 
-@dataclass(frozen=True)
-class ReflEpc:
+@dataclass(frozen=True, repr=False)
+class ReflEpc(_ValidRecord):
     ray_count: int
     max_bounces: int
     valid: torch.Tensor
@@ -420,11 +613,20 @@ class AccumOptions:
     collect_wedge_prefixes: bool = False
     wedge_capacity: int = 0
     wedge_sample_stride: int = 1
-    accumulation_strategy: int = 0
+    accumulation_strategy: AccumStrategy = AccumStrategy.AUTO
     compact_min_samples: int = 0
     staged_min_samples_per_cell: int = 0
     procedural_sample_count: int = 0
     include_los: bool = False
+
+    def __post_init__(self) -> None:
+        try:
+            strategy = AccumStrategy(self.accumulation_strategy)
+        except ValueError:
+            raise ValueError(
+                f"AccumOptions.accumulation_strategy must be an AccumStrategy value, got {self.accumulation_strategy!r}."
+            ) from None
+        object.__setattr__(self, "accumulation_strategy", strategy)
 
 
 @dataclass(frozen=True)
@@ -446,8 +648,8 @@ class ReflMaterial:
         )
 
 
-@dataclass(frozen=True)
-class WedgeEvents:
+@dataclass(frozen=True, repr=False)
+class WedgeEvents(_Record):
     capacity: int
     count: torch.Tensor
     ray_index: torch.Tensor
@@ -461,8 +663,8 @@ class WedgeEvents:
     bounce_depth: torch.Tensor
 
 
-@dataclass(frozen=True)
-class AccumResult:
+@dataclass(frozen=True, repr=False)
+class AccumResult(_Record):
     ray_count: int
     max_bounces: int
     grid_cell_count: int
@@ -476,17 +678,9 @@ class AccumResult:
     reflection_count: torch.Tensor
     wedge_events: WedgeEvents
 
-    @property
-    def reflection_field_x(self) -> torch.Tensor:
-        return torch.complex(self.reflection_field_x_re, self.reflection_field_x_im)
-
-    @property
-    def reflection_field_y(self) -> torch.Tensor:
-        return torch.complex(self.reflection_field_y_re, self.reflection_field_y_im)
-
-    @property
-    def reflection_field_z(self) -> torch.Tensor:
-        return torch.complex(self.reflection_field_z_re, self.reflection_field_z_im)
+    reflection_field_x = _complex_field("reflection_field_x")
+    reflection_field_y = _complex_field("reflection_field_y")
+    reflection_field_z = _complex_field("reflection_field_z")
 
 
 @dataclass(frozen=True)
@@ -533,6 +727,55 @@ class DfrPathLayout(IntEnum):
 
     Compact = 0
     SourceLane = 1
+
+
+@dataclass(frozen=True)
+class DfrOptions:
+    """Options of ``Scene.accum_dfr_direct()`` and ``Scene.accum_dfr()``.
+
+    Field names and defaults follow the Dr.Jit ``DfrOptions``. ``max_order`` is
+    read only by ``accum_dfr``. ``lane_offset``/``lane_count`` select the
+    Monte-Carlo lane window (Torch only); the default runs every lane.
+    """
+
+    wavelength: float = 1.0
+    seed: int = 0
+    max_order: int = 1
+    direct_samples: int = 0
+    keller_samples: int = 0
+    suffix_samples: int = 0
+    lane_offset: int = 0
+    lane_count: int = -1
+
+
+@dataclass(frozen=True)
+class DfrCoherentOptions:
+    """Options of ``Scene.accum_dfr_coherent_direct()``.
+
+    Field names and defaults follow the Dr.Jit ``DfrCoherentOptions``;
+    ``lane_offset``/``lane_count`` select the ``(state, grid-cell)`` lane window
+    (Torch only).
+    """
+
+    wavelength: float = 1.0
+    select_diffraction_point: bool = True
+    prefilter_visibility: bool = True
+    lane_offset: int = 0
+    lane_count: int = -1
+
+
+@dataclass(frozen=True)
+class DfrPathOptions:
+    """Options of ``Scene.trace_dfr_paths()``.
+
+    ``wavelength`` follows the Dr.Jit ``DfrPathOptions``. ``max_paths=None``
+    exports every state (Dr.Jit requires a positive value). ``layout=None``
+    picks ``Compact`` on one device and ``SourceLane`` on a multi-device scene.
+    """
+
+    wavelength: float = 1.0
+    max_paths: int | None = None
+    layout: DfrPathLayout | None = None
 
 
 @dataclass(frozen=True)
@@ -583,8 +826,8 @@ class DfrStates:
         )
 
 
-@dataclass(frozen=True)
-class DfrAccum:
+@dataclass(frozen=True, repr=False)
+class DfrAccum(_Record):
     grid_cell_count: int
     power: torch.Tensor
     field_x_re: torch.Tensor
@@ -601,9 +844,13 @@ class DfrAccum:
     utd_rejects: torch.Tensor
     edge_uses: torch.Tensor
 
+    field_x = _complex_field("field_x")
+    field_y = _complex_field("field_y")
+    field_z = _complex_field("field_z")
 
-@dataclass(frozen=True)
-class DfrCoherentAccum:
+
+@dataclass(frozen=True, repr=False)
+class DfrCoherentAccum(_Record):
     grid_cell_count: int
     direct_field_x_re: torch.Tensor
     direct_field_x_im: torch.Tensor
@@ -619,12 +866,19 @@ class DfrCoherentAccum:
     multi_field_z_im: torch.Tensor
     direct_count: torch.Tensor
     multi_count: torch.Tensor
-    visibility_reject_count: torch.Tensor
-    utd_reject_count: torch.Tensor
+    vis_rejects: torch.Tensor
+    utd_rejects: torch.Tensor
+
+    direct_field_x = _complex_field("direct_field_x")
+    direct_field_y = _complex_field("direct_field_y")
+    direct_field_z = _complex_field("direct_field_z")
+    multi_field_x = _complex_field("multi_field_x")
+    multi_field_y = _complex_field("multi_field_y")
+    multi_field_z = _complex_field("multi_field_z")
 
 
-@dataclass(frozen=True)
-class DfrPaths:
+@dataclass(frozen=True, repr=False)
+class DfrPaths(_ValidRecord):
     capacity: int
     count: torch.Tensor
     valid: torch.Tensor
@@ -646,25 +900,29 @@ class DfrPaths:
     p2: torch.Tensor
     layout: DfrPathLayout = DfrPathLayout.Compact
 
+    field_x = _complex_field("field_x")
+    field_y = _complex_field("field_y")
+    field_z = _complex_field("field_z")
 
-@dataclass(frozen=True)
-class SdfIntersection:
+
+@dataclass(frozen=True, repr=False)
+class SdfIntersection(_ValidRecord):
     """ADR-0037 section 5 result of one SDF sphere trace.
 
-    `t`, `position` and `normal` are differentiable; `hit_mask` and `steps`
+    `t`, `position` and `normal` are differentiable; `valid` and `steps`
     carry no derivative. A missed lane reports `t = +inf` and exact positive
     zero in `position` and `normal`.
     """
 
     t: torch.Tensor
-    hit_mask: torch.Tensor
+    valid: torch.Tensor
     position: torch.Tensor
     normal: torch.Tensor
     steps: torch.Tensor
 
 
-@dataclass(frozen=True)
-class SceneGlobalGeometry:
+@dataclass(frozen=True, repr=False)
+class SceneGeometry(_Record):
     vertices: torch.Tensor
     faces: torch.Tensor
     face_normal: torch.Tensor

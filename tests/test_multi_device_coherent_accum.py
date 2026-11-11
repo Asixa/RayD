@@ -26,8 +26,8 @@ FIELDS = (
     "multi_field_z_im",
     "direct_count",
     "multi_count",
-    "visibility_reject_count",
-    "utd_reject_count",
+    "vis_rejects",
+    "utd_rejects",
 )
 
 

@@ -42,7 +42,7 @@ class IntersectGradientTests(unittest.TestCase):
             torch.tensor([[0.25, 0.25, -1.0]], device="cuda", dtype=torch.float32),
             torch.tensor([[0.0, 0.0, 1.0]], device="cuda", dtype=torch.float32),
         )
-        flags_none = getattr(rt.RayFlags, "None")
+        flags_none = rt.RayFlags.Empty
 
         its = scene.intersect(ray, flags=flags_none)
         self.assertEqual(tuple(its.p.shape), (0, 3))
@@ -76,7 +76,7 @@ class IntersectGradientTests(unittest.TestCase):
         native_scene.add_mesh(rt.Mesh(base.clone(), faces))
         native_scene.build()
         active = torch.ones((ray.o.shape[0],), device="cuda", dtype=torch.bool)
-        flags_none = getattr(rt.RayFlags, "None")
+        flags_none = rt.RayFlags.Empty
         values = torch.ops.rayd_torch.intersect_forward_ad_flags(
             native_scene._require_native_scene(), ray.o, ray.d, ray.tmax, active, int(flags_none)
         )
@@ -109,7 +109,7 @@ class IntersectGradientTests(unittest.TestCase):
             torch.tensor([[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]], device="cuda", dtype=torch.float32),
         )
         active = torch.ones((ray.o.shape[0],), device="cuda", dtype=torch.bool)
-        flags_none = getattr(rt.RayFlags, "None")
+        flags_none = rt.RayFlags.Empty
         values = torch.ops.rayd_torch.intersect_forward_ad_flags(
             scene._require_native_scene(), ray.o, ray.d, ray.tmax, active, int(flags_none)
         )
@@ -239,7 +239,7 @@ class IntersectGradientTests(unittest.TestCase):
             torch.tensor([[0.25, 0.25, -1.0]], device="cuda", dtype=torch.float32),
             torch.tensor([[0.0, 0.0, 1.0]], device="cuda", dtype=torch.float32),
         )
-        flags_none = getattr(rt.RayFlags, "None")
+        flags_none = rt.RayFlags.Empty
 
         def fn(verts):
             scene = rt.Scene()

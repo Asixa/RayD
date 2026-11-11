@@ -82,7 +82,7 @@ for bounces in (8, 64):
 source = origin[well_formed]
 receiver = source + 100.0 * direction[well_formed]
 field = scene.trace_refl_epc_field(source, receiver, 8)
-report["trace_refl_epc_field"] = nonfinite(field.field_real[field.valid], field.path_length[field.valid])
+report["trace_refl_epc_field"] = nonfinite(field.field_re[field.valid], field.path_length[field.valid])
 torch.cuda.synchronize()
 print(json.dumps(report))
 """

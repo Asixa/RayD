@@ -144,7 +144,7 @@ def _run_scene_query_ops(scene: rt.Scene, index: int) -> dict[str, torch.Tensor]
         "nearest_edge_ray.ray_t": nearest_ray.ray_t,
         "nearest_edge_ray.edge_point": nearest_ray.edge_point,
         "nearest_edge_ray.global_edge_id": nearest_ray.global_edge_id,
-        "nearest_edges.is_valid": topk.is_valid,
+        "nearest_edges.valid": topk.valid,
         "nearest_edges.distances": topk.distances,
         "nearest_edges.edge_points": topk.edge_points,
         "nearest_edges.global_edge_ids": topk.global_edge_ids,
@@ -175,8 +175,8 @@ def _run_reflection_ops(scene: rt.Scene, index: int) -> dict[str, torch.Tensor]:
         "trace_reflections.valid": chain.valid,
         "trace_reflections.t": chain.t,
         "trace_reflections.prim_ids": chain.prim_ids,
-        "trace_refl_epc_field.field_real": epc.field_real,
-        "trace_refl_epc_field.field_imag": epc.field_imag,
+        "trace_refl_epc_field.field_re": epc.field_re,
+        "trace_refl_epc_field.field_im": epc.field_im,
         "trace_refl_epc_field.path_length": epc.path_length,
         "trace_refl_epc_field.valid": epc.valid,
         "trace_refl_epc_field.resolved_prim_ids": epc.resolved_prim_ids,
@@ -205,7 +205,7 @@ def _run_scene_free_ops(index: int) -> dict[str, torch.Tensor]:
         "camera.sample_ray.o": camera_ray.o,
         "camera.sample_ray.d": camera_ray.d,
         "sdf_intersect.t": sdf.t,
-        "sdf_intersect.hit_mask": sdf.hit_mask,
+        "sdf_intersect.valid": sdf.valid,
         "sdf_intersect.position": sdf.position,
         "sdf_intersect.normal": sdf.normal,
         "sdf_intersect.steps": sdf.steps,
@@ -233,21 +233,18 @@ def _run_diffraction_ops(scene: rt.Scene, index: int) -> dict[str, torch.Tensor]
         rx_positions=_RECEIVER.to(device),
         states=states,
         active=active,
-        max_paths=states.state_count,
-        wavelength=1.0,
+        options=rt.DfrPathOptions(max_paths=states.state_count, wavelength=1.0),
     )
-    direct = scene.accum_dfr_direct(states=states, grid=grid, wavelength=1.0, direct_samples=4, seed=7)
+    direct = scene.accum_dfr_direct(
+        states=states, grid=grid, options=rt.DfrOptions(wavelength=1.0, direct_samples=4, seed=7)
+    )
     recursive = scene.accum_dfr(
         initial_states=states,
         recursive_states=states,
         grid=grid,
-        wavelength=1.0,
-        direct_samples=4,
-        keller_samples=4,
-        seed=7,
-        max_order=2,
+        options=rt.DfrOptions(wavelength=1.0, direct_samples=4, keller_samples=4, seed=7, max_order=2),
     )
-    coherent = scene.accum_dfr_coherent_direct(states=states, grid=grid, wavelength=1.0)
+    coherent = scene.accum_dfr_coherent_direct(states=states, grid=grid, options=rt.DfrCoherentOptions(wavelength=1.0))
 
     return {
         "trace_dfr_paths.count": paths.count,

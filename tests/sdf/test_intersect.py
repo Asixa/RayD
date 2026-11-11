@@ -73,7 +73,7 @@ def grazing_rays() -> tuple[Tensor, Tensor]:
 
 # Scalar objective touching every differentiable output of every ray.
 def objective(result: SdfIntersection | ref.SdfIntersectionRef, weights: Tensor) -> Tensor:
-    finite_t = torch.where(result.hit_mask, result.t, torch.zeros_like(result.t))
+    finite_t = torch.where(result.valid, result.t, torch.zeros_like(result.t))
     rows = weights.unsqueeze(-1)
     return (finite_t * weights).sum() + (result.position * rows).sum() + (result.normal * rows).sum()
 
@@ -87,12 +87,12 @@ class SdfIntersectForwardTests(unittest.TestCase):
         result = sdf_intersect(SdfGrid(*inputs[:4]), inputs[4], inputs[5])
         expected = ref.intersect(ref.SdfGridRef(*inputs[:4]), inputs[4], inputs[5])
 
-        self.assertTrue(bool(result.hit_mask.all()))
+        self.assertTrue(bool(result.valid.all()))
         torch.testing.assert_close(result.t, expected.t, atol=1e-5, rtol=1e-6)
         torch.testing.assert_close(result.position, expected.position, atol=1e-5, rtol=1e-6)
         torch.testing.assert_close(result.normal, expected.normal, atol=1e-4, rtol=1e-5)
         self.assertTrue(torch.equal(result.steps, expected.steps))
-        self.assertEqual(result.hit_mask.dtype, torch.bool)
+        self.assertEqual(result.valid.dtype, torch.bool)
         self.assertEqual(result.steps.dtype, torch.int32)
 
     def test_forward_matches_the_closed_form_sphere(self) -> None:
@@ -100,7 +100,7 @@ class SdfIntersectForwardTests(unittest.TestCase):
         origins, directions = z_rays([0.0, 0.1, 0.2, 0.3], DEVICE, DTYPE)
 
         result = sdf_intersect(grid, origins, directions)
-        self.assertTrue(bool(result.hit_mask.all()))
+        self.assertTrue(bool(result.valid.all()))
         torch.testing.assert_close(result.t, sphere_hit_t(origins, directions, grid.position, 0.5), atol=1e-3, rtol=0.0)
         torch.testing.assert_close(
             result.normal, result.position / result.position.norm(dim=-1, keepdim=True), atol=5e-2, rtol=0.0
@@ -112,7 +112,7 @@ class SdfIntersectForwardTests(unittest.TestCase):
         directions = torch.tensor([[0.0, 0.0, 1.0]], device=DEVICE, dtype=DTYPE)
 
         result = sdf_intersect(grid, origins, directions)
-        self.assertTrue(bool(result.hit_mask.all()))
+        self.assertTrue(bool(result.valid.all()))
         torch.testing.assert_close(result.t, torch.full((1,), 0.5, device=DEVICE), atol=1e-3, rtol=0.0)
         # A signed distance field's gradient points outward on both sides.
         torch.testing.assert_close(result.normal, directions, atol=5e-2, rtol=0.0)
@@ -125,8 +125,8 @@ class SdfIntersectForwardTests(unittest.TestCase):
 
         result = sdf_intersect(grid, origins, directions)
         clipped = sdf_intersect(grid, origins[3:], directions[3:], tmax=1.0)
-        torch.testing.assert_close(result.hit_mask, torch.tensor([True, False, False, True], device=DEVICE))
-        self.assertFalse(bool(clipped.hit_mask.any()))
+        torch.testing.assert_close(result.valid, torch.tensor([True, False, False, True], device=DEVICE))
+        self.assertFalse(bool(clipped.valid.any()))
 
         missed = torch.cat([result.t[1:3], clipped.t])
         self.assertTrue(bool((missed == float("inf")).all()))
@@ -145,11 +145,11 @@ class SdfIntersectForwardTests(unittest.TestCase):
         origins, directions = grazing_rays()
 
         result = sdf_intersect(grid, origins, directions)
-        self.assertTrue(bool(result.hit_mask.any()))
-        self.assertFalse(bool(result.hit_mask.all()))
+        self.assertTrue(bool(result.valid.any()))
+        self.assertFalse(bool(result.valid.all()))
         self.assertFalse(bool(result.t.isnan().any()))
-        self.assertTrue(bool((result.t[result.hit_mask]).isfinite().all()))
-        self.assertTrue(bool((result.t[~result.hit_mask] == float("inf")).all()))
+        self.assertTrue(bool((result.t[result.valid]).isfinite().all()))
+        self.assertTrue(bool((result.t[~result.valid] == float("inf")).all()))
         self.assertTrue(bool(result.position.isfinite().all()))
         self.assertTrue(bool(result.normal.isfinite().all()))
 
@@ -166,7 +166,7 @@ class SdfIntersectForwardTests(unittest.TestCase):
         with torch.no_grad():
             detached = sdf_intersect(grid, origins, directions)
         self.assertFalse(detached.t.requires_grad)
-        self.assertTrue(bool(detached.hit_mask.all()))
+        self.assertTrue(bool(detached.valid.all()))
 
     def test_forward_is_deterministic_and_path_independent(self) -> None:
         inputs = oriented_case()
@@ -174,13 +174,13 @@ class SdfIntersectForwardTests(unittest.TestCase):
         first = sdf_intersect(SdfGrid(*inputs[:4]), origins, directions)
         for _ in range(3):
             repeat = sdf_intersect(SdfGrid(*inputs[:4]), origins, directions)
-            for name in ("t", "hit_mask", "position", "normal", "steps"):
+            for name in ("t", "valid", "position", "normal", "steps"):
                 self.assertTrue(torch.equal(getattr(first, name), getattr(repeat, name)), name)
 
         # The autograd path must not change a single bit of the forward result.
         tracked = [value.detach().clone().requires_grad_(True) for value in inputs]
         tracked_result = sdf_intersect(SdfGrid(*tracked[:4]), tracked[4], tracked[5])
-        for name in ("t", "hit_mask", "position", "normal", "steps"):
+        for name in ("t", "valid", "position", "normal", "steps"):
             expected = getattr(first, name)
             actual = getattr(tracked_result, name).detach()
             self.assertTrue(torch.equal(expected, actual), name)

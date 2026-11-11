@@ -66,7 +66,7 @@ class TorchReflectionApiNativeTests(unittest.TestCase):
             surface_group_members=torch.tensor([0], device="cuda", dtype=torch.int32),
         )
 
-    def test_accumulate_reflections_wraps_native_result(self):
+    def test_accum_refl_wraps_native_result(self):
         scene = self._scene()
         ray_o = torch.tensor([[0.0, 0.0, -1.0]], device="cuda")
         ray = rt.Ray(ray_o, torch.tensor([[0.0, 0.0, 1.0]], device="cuda"), torch.tensor([2.0], device="cuda"))
@@ -80,9 +80,7 @@ class TorchReflectionApiNativeTests(unittest.TestCase):
             resolution0=4,
             resolution1=4,
         )
-        result = scene.accumulate_reflections(
-            ray, ray_o, grid, rt.ReflMaterial.default(1, device=ray_o.device), max_bounces=1
-        )
+        result = scene.accum_refl(ray, ray_o, grid, rt.ReflMaterial.default(1, device=ray_o.device), max_bounces=1)
         self.assertIsInstance(result, rt.AccumResult)
         self.assertEqual(result.ray_count, 1)
         self.assertEqual(result.grid_cell_count, 16)
@@ -111,7 +109,7 @@ class TorchReflectionApiNativeTests(unittest.TestCase):
         ray = rt.Ray(source, torch.tensor([[0.0, 0.0, 1.0]], device="cuda"), torch.tensor([2.0], device="cuda"))
         grid = rt.AccumGrid(resolution0=1, resolution1=1)
         with self.assertRaisesRegex(RuntimeError, "forward-only"):
-            scene.accumulate_reflections(ray, source, grid, rt.ReflMaterial.default(1, device=source.device), 1)
+            scene.accum_refl(ray, source, grid, rt.ReflMaterial.default(1, device=source.device), 1)
 
     def test_forward_only_operations_reject_jvp(self):
         scene = self._scene()
@@ -125,7 +123,7 @@ class TorchReflectionApiNativeTests(unittest.TestCase):
                 dual_source, torch.tensor([[0.0, 0.0, 1.0]], device="cuda"), torch.tensor([2.0], device="cuda")
             )
             with self.assertRaisesRegex(RuntimeError, "JVP"):
-                scene.accumulate_reflections(
+                scene.accum_refl(
                     ray,
                     dual_source,
                     rt.AccumGrid(resolution0=1, resolution1=1),

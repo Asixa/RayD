@@ -72,8 +72,8 @@ def multipath_case():
     return {
         "reflection_t": _as_list(refl.t),
         "reflection_valid": _as_list(refl.valid),
-        "epc_field_real": _as_list(epc.field_real),
-        "epc_field_imag": _as_list(epc.field_imag),
+        "epc_field_real": _as_list(epc.field_re),
+        "epc_field_imag": _as_list(epc.field_im),
         "dfr_power": _as_list(dfr.power),
     }
 

@@ -60,7 +60,7 @@ def main() -> None:
         torch.rand((args.queries, 3), device="cuda", dtype=torch.float32),
         torch.randn((args.queries, 3), device="cuda", dtype=torch.float32),
     )
-    ray_flags_none = getattr(rt.RayFlags, "None")
+    ray_flags_none = rt.RayFlags.Empty
     points = torch.rand((args.queries, 3), device="cuda", dtype=torch.float32)
     dfr_states, dfr_grid, dfr_material = _dfr_case()
     dfr_tx = torch.tensor([[0.0, 0.0, 1.0]], device="cuda", dtype=torch.float32)
@@ -90,9 +90,7 @@ def main() -> None:
                     states=dfr_states,
                     grid=dfr_grid,
                     material=dfr_material,
-                    wavelength=0.125,
-                    direct_samples=args.direct_samples,
-                    seed=17,
+                    options=rt.DfrOptions(wavelength=0.125, direct_samples=args.direct_samples, seed=17),
                 ).power
             ),
             args.warmup,
@@ -106,8 +104,7 @@ def main() -> None:
                     states=dfr_states,
                     material=dfr_material,
                     active=dfr_active,
-                    max_paths=4,
-                    wavelength=0.125,
+                    options=rt.DfrPathOptions(max_paths=4, wavelength=0.125),
                 ).count
             ),
             args.warmup,

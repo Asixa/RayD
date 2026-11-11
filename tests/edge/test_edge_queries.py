@@ -31,8 +31,8 @@ class EdgeQueryTests(unittest.TestCase):
                 self.assertLessEqual(float(result.distance.max()), 1e-6)
                 if pairs.shape[0] <= 16:
                     top = scene.nearest_edges(midpoints[:1], 16)
-                    self.assertEqual(int(top.is_valid.sum()), pairs.shape[0])
-                    found = top.global_edge_ids[0][top.is_valid[0]]
+                    self.assertEqual(int(top.valid.sum()), pairs.shape[0])
+                    found = top.global_edge_ids[0][top.valid[0]]
                     self.assertEqual(sorted(found.tolist()), list(range(pairs.shape[0])))
 
     def test_nearest_edge_point_forward_and_grad(self):

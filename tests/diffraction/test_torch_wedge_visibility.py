@@ -70,9 +70,9 @@ class TorchWedgeVisibilityTests(unittest.TestCase):
             rx_positions=gpu(receivers + shift),
             states=states,
             active=torch.ones(count, dtype=torch.bool, device="cuda"),
-            max_paths=count * len(receivers),
-            wavelength=0.1,
-            layout=rt.DfrPathLayout.SourceLane,
+            options=rt.DfrPathOptions(
+                max_paths=count * len(receivers), wavelength=0.1, layout=rt.DfrPathLayout.SourceLane
+            ),
         )
         return paths.valid.cpu().numpy().reshape(len(receivers), count)
 
