@@ -41,6 +41,22 @@ typed API gave the caller no way to learn which tracer a scene used or why OptiX
    once-per-process fallback warning. A forced `Optix` request on a machine without usable OptiX fails loudly at
    scene creation. `kIntegrationApiVersion` stays `8`: no existing declaration changed.
 
+3. **Every CUDA lane reads the same inputs as its OptiX twin.** An audit of each OptiX launch against its CUDA twin
+   found one family where they diverged: the order-1 diffraction path exporter. Its OptiX program is a separate
+   hand-written body, while the CUDA kernel runs the shared `src/diffraction/paths.h` algorithm, which hard-coded a
+   +x source polarization, never set the ISB taper width, and read the material tensors as contiguous although the
+   typed API accepts strided ones. On the CUDA backend a non-x polarization, a non-zero `isb_taper_width_scale`, or a
+   strided material column therefore gave wrong fields silently (a z-polarized source on one wedge differed by about
+   100%). `paths.h` now reads `tx_pol` (per transmitter, or one shared row), `isb_taper_width_scale`, and the material
+   strides whenever its params type carries them. The Dr.Jit params carry none of these fields, so the Dr.Jit path keeps
+   its +x, hard-boundary, contiguous behaviour, and its generated PTX is byte-identical. The other families were
+   already consistent: reflection trace, reflection accumulation, EPC, segment visibility, axial-edge visibility,
+   penetration, and diffraction accumulation and coherent accumulation instantiate one shared algorithm for both
+   tracers, with matching layout policies, from one host-built params struct. Diffraction accumulation and coherent
+   accumulation fix their source polarization in the host params (+x and zero respectively) identically for both
+   tracers; that is a property of their typed configs, which have no polarization or ISB field. The wedge
+   coefficient functions and their AD take no scene and run the same kernels on both backends.
+
 ## Parity contract
 
 Same inputs through both tracers give identical discrete outputs: axial `any_visible`; penetration `valid`,
@@ -55,9 +71,20 @@ that consume them) agree to float32 rounding of the triangle test, because OptiX
 round differently. Inputs that graze a triangle edge or vertex within that rounding can resolve differently on the two
 tracers; that is a property of two independent triangle tests, not a contract violation.
 
+Field amplitudes agree to a few `1e-4` relative, not to float32 rounding. The Torch OptiX PTX modules compile with
+`--use_fast_math` (`RAYD_TORCH_OPTIX_FAST_MATH`, default ON), while the CUDA kernels in `multipath.cu` compile at nvcc
+defaults (ADR-0035 profiles `fast_math` and `nvcc_default`), so approximate division, square root, and
+transcendentals in the UTD and field math round differently. Channel measured Path amplitudes that differ by up to
+`2.8e-4` relative between the backends. This record does not change either profile; aligning them is an ADR-0035
+decision. The penetration family is unaffected because both its PTX and its CUDA unit use `precise_no_ftz`.
+
 `tests/native/trace_backend_parity_test.cpp` (CTest `rayd_torch_trace_backend_parity`) checks the contract on a
 two-mesh scene of random and tilted triangles with 8,192 lanes per operation, both penetration policies, masks,
-non-finite inputs, overflow, all-inactive requests, VJP and JVP. It exits with CTest's skip code without CUDA or
+non-finite inputs, overflow, all-inactive requests, VJP and JVP; and every diffraction entry point Channel calls on
+a closed box: order-1 paths in both layouts with x, z, and per-transmitter oblique polarizations, ISB taper widths 0
+and 0.35 (with receivers placed at each edge's incident shadow boundary), strided material columns, diffraction
+accumulation (direct and Keller samples), and coherent accumulation with and without point selection. It also asserts
+that a z polarization changes the CUDA field, so the +x defect cannot return unnoticed. It exits with CTest's skip code without CUDA or
 without usable OptiX. `RAYD_TRACE_BACKEND_BENCH=1` adds a timing table.
 
 ## Consequences

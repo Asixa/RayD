@@ -358,6 +358,283 @@ void test_intersection_parity(const ScenePair& scenes) {
     require_close(optix.t.masked_select(hit), cuda.t.masked_select(hit), 1.0e-5, 1.0e-5, "intersect t");
 }
 
+// A closed box whose twelve convex edges give real wedges; the two diagonal edges of each square face are flat and
+// are dropped.
+struct WedgeFixture {
+    rayd::torch::DiffractionState state;
+    at::Tensor active;
+    int64_t state_limit;
+    int64_t face_count;
+};
+
+std::vector<rayd::torch::MeshInput> box_meshes() {
+    const std::vector<float> vertices = {
+        -1.0f, -1.0f, -1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f,
+        -1.0f, -1.0f, 1.0f,  1.0f, -1.0f, 1.0f,  1.0f, 1.0f, 1.0f,  -1.0f, 1.0f, 1.0f,
+    };
+    const std::vector<int> faces = {
+        0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7,
+    };
+    std::vector<rayd::torch::MeshInput> meshes;
+    meshes.push_back(
+        mesh_input(at::tensor(vertices, at::TensorOptions().dtype(at::kFloat)).reshape({-1, 3}).to(floats()),
+                   at::tensor(faces, at::TensorOptions().dtype(at::kInt)).reshape({-1, 3}).to(ints())));
+    return meshes;
+}
+
+WedgeFixture wedge_fixture(const rayd::torch::SceneResource& scene, const at::Tensor& source) {
+    const auto records = rayd::torch::scene_edge_records(scene);
+    const at::Tensor normals =
+        at::stack({records.tri_fn_x, records.tri_fn_y, records.tri_fn_z}, 1).to(at::kFloat).contiguous();
+    const at::Tensor unit_normals = normals / normals.norm(2, 1, true).clamp_min(1.0e-12f);
+    const at::Tensor face0 = records.edge_face0_global.to(at::kLong);
+    const at::Tensor face1 = records.edge_face1_global.to(at::kLong);
+    const at::Tensor has_two_faces = face1 >= 0;
+    const at::Tensor n0_all = unit_normals.index_select(0, face0);
+    const at::Tensor n1_all = unit_normals.index_select(0, face1.clamp_min(0));
+    const at::Tensor keep = at::logical_and(has_two_faces, (n0_all * n1_all).sum(1).abs() < 0.5f);
+    const at::Tensor rows = keep.nonzero().reshape({-1});
+    const int64_t count = rows.numel();
+    const at::Tensor v0 = records.global_vertices.index_select(0, records.edge_v0.index_select(0, rows).to(at::kLong));
+    const at::Tensor v1 = records.global_vertices.index_select(0, records.edge_v1.index_select(0, rows).to(at::kLong));
+    const at::Tensor span = v1 - v0;
+    const at::Tensor length = span.norm(2, 1);
+    rayd::torch::DiffractionState state = {
+        rows.to(at::kInt).contiguous(),
+        v0.contiguous(),
+        (span / length.unsqueeze(1)).contiguous(),
+        at::zeros({count}, floats()),
+        length.contiguous(),
+        n0_all.index_select(0, rows).contiguous(),
+        n1_all.index_select(0, rows).contiguous(),
+        face0.index_select(0, rows).to(at::kInt).contiguous(),
+        face1.index_select(0, rows).to(at::kInt).contiguous(),
+        at::full({count}, static_cast<float>(1.5 * 3.14159265358979323846), floats()),
+        source.reshape({1, 3}).expand({count, 3}).contiguous(),
+        at::ones({count}, floats()),
+        std::nullopt,
+        std::nullopt,
+    };
+    return {std::move(state), at::ones({count}, bools()), count, records.tri_fn_x.numel()};
+}
+
+// Material columns are views with stride 2, so a backend that ignored the strides would read the wrong faces.
+rayd::torch::MaterialPayload strided_material(int64_t faces) {
+    std::mt19937 rng(53);
+    const at::Tensor eta = uniform(rng, faces, 2, 2.0f, 6.0f);
+    const at::Tensor sigma = uniform(rng, faces, 2, 0.0f, 0.2f);
+    const at::Tensor mu = uniform(rng, faces, 2, 1.0f, 1.5f);
+    const at::Tensor gain = uniform(rng, faces, 2, 0.3f, 1.0f);
+    at::Tensor valid = at::ones({faces, 2}, bools());
+    valid.index_put_({3, 0}, false);
+    return {eta.select(1, 0), sigma.select(1, 0), mu.select(1, 0), gain.select(1, 0), valid.select(1, 0)};
+}
+
+// Receivers on a shell around the box plus receivers just off the incident shadow boundary of every edge midpoint,
+// where a non-zero ISB taper changes the field.
+at::Tensor wedge_receivers(const WedgeFixture& fixture, const at::Tensor& source) {
+    std::mt19937 rng(59);
+    const at::Tensor shell = random_unit_rows(rng, 48) * 3.5f;
+    const at::Tensor midpoint =
+        fixture.state.edge_pos + fixture.state.edge_dir * (0.5f * fixture.state.edge_t_max).unsqueeze(1);
+    const at::Tensor away = midpoint - source.reshape({1, 3});
+    const at::Tensor away_unit = away / away.norm(2, 1, true);
+    const at::Tensor offset = uniform(rng, fixture.state_limit, 3, -0.05f, 0.05f);
+    const at::Tensor boundary = midpoint + away_unit * 2.0f + offset;
+    return at::cat({shell, boundary}, 0).contiguous();
+}
+
+void require_field_close(const at::Tensor& optix, const at::Tensor& cuda, const std::string& name) {
+    // OptiX modules compile with fast math and the CUDA kernels without it, so amplitudes agree to a few 1e-4
+    // relative; scale the absolute tolerance by the largest entry.
+    const double scale = std::max(optix.abs().max().item<double>(), 1.0e-30);
+    require_close(optix, cuda, 2.0e-3, 2.0e-3 * scale, name);
+}
+
+void require_paths_parity(const rayd::torch::DiffractionPathResult& optix,
+                          const rayd::torch::DiffractionPathResult& cuda, rayd::torch::DiffractionPathLayout layout,
+                          int64_t rx_count, const std::string& name) {
+    require_equal(optix.count, cuda.count, name + " count");
+    std::vector<at::Tensor> optix_columns = {optix.valid.to(at::kFloat), optix.tx_id.to(at::kFloat),
+                                             optix.rx_id.to(at::kFloat), optix.order.to(at::kFloat),
+                                             optix.edge0.to(at::kFloat), optix.edge1.to(at::kFloat),
+                                             optix.edge2.to(at::kFloat)};
+    at::Tensor optix_order = at::arange(optix.valid.numel(), optix.valid.options().dtype(at::kLong));
+    at::Tensor cuda_order = optix_order;
+    if (layout == rayd::torch::DiffractionPathLayout::Compact) {
+        // Compact rows are appended in atomic order, which differs between the backends; compare them by key.
+        auto key = [&](const rayd::torch::DiffractionPathResult& result) {
+            // edge0 is a scene edge id, not a state index, so it gets its own wide digit.
+            const at::Tensor raw = (result.tx_id.to(at::kLong) * rx_count + result.rx_id.to(at::kLong)) * (1ll << 32) +
+                                   result.edge0.to(at::kLong);
+            return at::where(result.valid, raw, at::full_like(raw, std::numeric_limits<int64_t>::max()));
+        };
+        optix_order = std::get<1>(key(optix).sort());
+        cuda_order = std::get<1>(key(cuda).sort());
+    }
+    auto pick = [](const at::Tensor& tensor, const at::Tensor& order) { return tensor.index_select(0, order); };
+    for (const auto& entry : {std::pair<const at::Tensor*, const at::Tensor*>{&optix.valid, &cuda.valid},
+                              {&optix.tx_id, &cuda.tx_id},
+                              {&optix.rx_id, &cuda.rx_id},
+                              {&optix.order, &cuda.order},
+                              {&optix.edge0, &cuda.edge0},
+                              {&optix.edge1, &cuda.edge1},
+                              {&optix.edge2, &cuda.edge2}}) {
+        require_equal(pick(*entry.first, optix_order), pick(*entry.second, cuda_order), name + " path ids");
+    }
+    require_close(pick(optix.delay, optix_order), pick(cuda.delay, cuda_order), 1.0e-5, 1.0e-12, name + " delay");
+    require_close(pick(optix.p0, optix_order), pick(cuda.p0, cuda_order), 1.0e-5, 1.0e-5, name + " p0");
+    require_equal(pick(optix.p1, optix_order), pick(cuda.p1, cuda_order), name + " p1");
+    require_equal(pick(optix.p2, optix_order), pick(cuda.p2, cuda_order), name + " p2");
+    const at::Tensor optix_field = at::stack({optix.field_x_re, optix.field_x_im, optix.field_y_re, optix.field_y_im,
+                                              optix.field_z_re, optix.field_z_im},
+                                             1);
+    const at::Tensor cuda_field = at::stack({cuda.field_x_re, cuda.field_x_im, cuda.field_y_re, cuda.field_y_im,
+                                             cuda.field_z_re, cuda.field_z_im},
+                                            1);
+    require_field_close(pick(optix_field, optix_order), pick(cuda_field, cuda_order), name + " field");
+}
+
+at::Tensor path_field(const rayd::torch::DiffractionPathResult& result) {
+    return at::stack({result.field_x_re, result.field_x_im, result.field_y_re, result.field_y_im, result.field_z_re,
+                      result.field_z_im},
+                     1);
+}
+
+void test_diffraction_parity() {
+    auto optix_scene = rayd::torch::create_scene(box_meshes(), {rayd::torch::SceneTraceBackend::Optix});
+    auto cuda_scene = rayd::torch::create_scene(box_meshes(), {rayd::torch::SceneTraceBackend::Cuda});
+    const at::Tensor source = at::tensor({3.0f, 0.4f, 2.2f}, at::TensorOptions().dtype(at::kFloat)).to(floats());
+    const WedgeFixture fixture = wedge_fixture(optix_scene, source);
+    require(fixture.state_limit == 12, "the box fixture must expose its twelve convex edges");
+    const auto material = strided_material(fixture.face_count);
+    const at::Tensor receivers = wedge_receivers(fixture, source);
+    const int64_t rx_count = receivers.size(0);
+    const at::Tensor tx_pos = at::stack({source, source + 0.25f}, 0).contiguous();
+
+    const std::vector<std::pair<std::string, at::Tensor>> polarizations = {
+        {"x", at::tensor({1.0f, 0.0f, 0.0f}, at::TensorOptions().dtype(at::kFloat)).reshape({1, 3}).to(floats())},
+        {"z", at::tensor({0.0f, 0.0f, 1.0f}, at::TensorOptions().dtype(at::kFloat)).reshape({1, 3}).to(floats())},
+        {"per-transmitter", at::tensor({0.0f, 1.0f, 0.0f, 0.3f, 0.8f, -0.52f}, at::TensorOptions().dtype(at::kFloat))
+                                .reshape({2, 3})
+                                .to(floats())},
+    };
+    auto run = [&](const rayd::torch::SceneResource& scene, const at::Tensor& tx_pol, double isb,
+                   rayd::torch::DiffractionPathLayout layout) {
+        rayd::torch::DiffractionPathConfig config;
+        config.tx_pos = tx_pos;
+        config.tx_pol = tx_pol;
+        config.rx_pos = receivers;
+        config.active = fixture.active;
+        config.state = fixture.state;
+        config.material = material;
+        config.state_limit = fixture.state_limit;
+        config.capacity = 2 * rx_count * fixture.state_limit;
+        config.wavelength = 0.125;
+        config.isb_taper_width_scale = isb;
+        config.layout = layout;
+        return rayd::torch::diffraction_paths_order1_forward(scene, config);
+    };
+    std::optional<at::Tensor> x_field;
+    std::optional<at::Tensor> hard_field;
+    for (const auto& polarization : polarizations) {
+        for (const double isb : {0.0, 0.35}) {
+            for (const auto layout :
+                 {rayd::torch::DiffractionPathLayout::Compact, rayd::torch::DiffractionPathLayout::SourceLane}) {
+                const std::string name =
+                    "diffraction paths pol=" + polarization.first + " isb=" + std::to_string(isb) +
+                    (layout == rayd::torch::DiffractionPathLayout::Compact ? " compact" : " source-lane");
+                const auto optix = run(optix_scene, polarization.second, isb, layout);
+                const auto cuda = run(cuda_scene, polarization.second, isb, layout);
+                require(optix.count.item<int>() > 2 * fixture.state_limit, name + ": fixture exports too few paths");
+                require_paths_parity(optix, cuda, layout, rx_count, name);
+                if (layout == rayd::torch::DiffractionPathLayout::SourceLane) {
+                    if (polarization.first == "x" && isb == 0.0)
+                        x_field = path_field(cuda);
+                    if (polarization.first == "z" && isb == 0.0)
+                        hard_field = path_field(cuda);
+                    if (polarization.first == "z" && isb != 0.0) {
+                        const double change = (path_field(cuda) - *hard_field).abs().max().item<double>();
+                        require(change > 0.0, "the fixture must place receivers where the ISB taper acts");
+                    }
+                }
+            }
+        }
+    }
+    // The CUDA backend must not collapse every polarization to +x.
+    require((*x_field - *hard_field).abs().max().item<double>() > 1.0e-3 * x_field->abs().max().item<double>(),
+            "z polarization must change the CUDA diffraction field");
+
+    rayd::torch::Grid2D grid = {2, -1.5, -4.0, 4.0, -4.0, 4.0, 16, 16, 0.25};
+    auto accumulate = [&](const rayd::torch::SceneResource& scene) {
+        rayd::torch::DiffractionAccumulationConfig config;
+        config.active = fixture.active;
+        config.state = fixture.state;
+        config.material = material;
+        config.state_limit = fixture.state_limit;
+        config.grid = grid;
+        config.wavelength = 0.125;
+        config.direct_samples = 4096;
+        config.keller_samples = 1024;
+        config.seed = 17;
+        return rayd::torch::diffraction_accumulation_forward(scene, config);
+    };
+    const auto optix_accumulated = accumulate(optix_scene);
+    const auto cuda_accumulated = accumulate(cuda_scene);
+    for (const auto& counter : {std::pair<const at::Tensor*, const at::Tensor*>{&optix_accumulated.direct_count,
+                                                                                &cuda_accumulated.direct_count},
+                                {&optix_accumulated.keller_count, &cuda_accumulated.keller_count},
+                                {&optix_accumulated.visibility_rejects, &cuda_accumulated.visibility_rejects},
+                                {&optix_accumulated.edge_visibility_rejects, &cuda_accumulated.edge_visibility_rejects},
+                                {&optix_accumulated.utd_rejects, &cuda_accumulated.utd_rejects},
+                                {&optix_accumulated.edge_uses, &cuda_accumulated.edge_uses}}) {
+        require_equal(*counter.first, *counter.second, "diffraction accumulation counters");
+    }
+    require(optix_accumulated.direct_count.item<int>() > 0, "accumulation fixture must reach the grid");
+    require_field_close(optix_accumulated.power, cuda_accumulated.power, "diffraction accumulation power");
+    require_field_close(at::stack({optix_accumulated.field_x_re, optix_accumulated.field_x_im,
+                                   optix_accumulated.field_y_re, optix_accumulated.field_y_im,
+                                   optix_accumulated.field_z_re, optix_accumulated.field_z_im}),
+                        at::stack({cuda_accumulated.field_x_re, cuda_accumulated.field_x_im,
+                                   cuda_accumulated.field_y_re, cuda_accumulated.field_y_im,
+                                   cuda_accumulated.field_z_re, cuda_accumulated.field_z_im}),
+                        "diffraction accumulation field");
+
+    for (const bool select_point : {false, true}) {
+        auto coherent = [&](const rayd::torch::SceneResource& scene) {
+            rayd::torch::CoherentDiffractionConfig config;
+            config.active = fixture.active;
+            config.state = fixture.state;
+            config.material = material;
+            config.state_limit = fixture.state_limit;
+            config.grid = grid;
+            config.wavelength = 0.125;
+            config.select_diffraction_point = select_point;
+            config.prefilter_visibility = select_point;
+            return rayd::torch::diffraction_coherent_accumulation_forward(scene, config);
+        };
+        const auto optix_coherent = coherent(optix_scene);
+        const auto cuda_coherent = coherent(cuda_scene);
+        const std::string name = std::string("coherent diffraction select=") + (select_point ? "1" : "0");
+        require_equal(optix_coherent.direct_count, cuda_coherent.direct_count, name + " direct_count");
+        require_equal(optix_coherent.multi_count, cuda_coherent.multi_count, name + " multi_count");
+        require_equal(optix_coherent.visibility_reject_count, cuda_coherent.visibility_reject_count,
+                      name + " visibility_reject_count");
+        require_equal(optix_coherent.utd_reject_count, cuda_coherent.utd_reject_count, name + " utd_reject_count");
+        require(optix_coherent.direct_count.sum().item<int64_t>() > 0, name + ": fixture must reach the grid");
+        require_field_close(at::stack(
+                                {optix_coherent.direct_x_re, optix_coherent.direct_x_im, optix_coherent.direct_y_re,
+                                 optix_coherent.direct_y_im, optix_coherent.direct_z_re, optix_coherent.direct_z_im,
+                                 optix_coherent.multi_x_re, optix_coherent.multi_x_im, optix_coherent.multi_y_re,
+                                 optix_coherent.multi_y_im, optix_coherent.multi_z_re, optix_coherent.multi_z_im}),
+                            at::stack({cuda_coherent.direct_x_re, cuda_coherent.direct_x_im, cuda_coherent.direct_y_re,
+                                       cuda_coherent.direct_y_im, cuda_coherent.direct_z_re, cuda_coherent.direct_z_im,
+                                       cuda_coherent.multi_x_re, cuda_coherent.multi_x_im, cuda_coherent.multi_y_re,
+                                       cuda_coherent.multi_y_im, cuda_coherent.multi_z_re, cuda_coherent.multi_z_im}),
+                            name + " field");
+    }
+}
+
 double median_ms(const std::function<void()>& work, int repetitions) {
     std::vector<double> samples;
     for (int index = 0; index < repetitions; ++index) {
@@ -416,9 +693,11 @@ int main() {
         test_segment_penetration_parity(scenes);
         std::cout << "[RUN] test_intersection_parity" << std::endl;
         test_intersection_parity(scenes);
+        std::cout << "[RUN] test_diffraction_parity" << std::endl;
+        test_diffraction_parity();
         const char* bench = std::getenv("RAYD_TRACE_BACKEND_BENCH");
         if (bench != nullptr && std::string(bench) == "1") {
-            for (int triangles : {2048, 65536, 524288})
+            for (int triangles : {2048, 65536})
                 benchmark(triangles);
         }
         std::cout << "rayd::torch trace backend parity passed\n";
