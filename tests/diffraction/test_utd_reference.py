@@ -306,6 +306,19 @@ class UtdReferenceTests(unittest.TestCase):
                 with self.subTest(boundary=boundary, hard=hard):
                     self.assertLess(abs(on - expected), 0.05 * abs(on - other))
 
+    def test_grazing_incidence_keeps_one_side_for_both_terms(self):
+        # A source within float noise of a face plane puts the incident and reflection boundaries on one angle;
+        # the two terms must take one side there, or the pair leaves a spurious one-sided limit (it was 12x the
+        # grazing value). Sources 2e-5 deg either side of either face plane match the exactly grazing value.
+        for hard in (False, True):
+            scale = abs(self._field(2.0, 0.0, 180.0, 40.0, 12.0, 400.0, True, HALF_PLANE))
+            for phi in (180.0 - 1.0e-3, 180.0, 180.0 + 1.0e-3):
+                grazing = self._field(2.0, 0.0, phi, 40.0, 12.0, 400.0, hard, HALF_PLANE)
+                for phi_p in (-2.0e-5, 2.0e-5, 360.0 - 2.0e-5, 360.0, 360.0 + 2.0e-5):
+                    value = self._field(2.0, phi_p, phi, 40.0, 12.0, 400.0, hard, HALF_PLANE)
+                    with self.subTest(hard=hard, phi=phi, phi_p=phi_p):
+                        self.assertLess(abs(value - grazing), 3.0e-2 * scale)
+
     def test_the_coefficient_is_smooth_up_to_the_boundary(self):
         # Within 1e-4 rad of a GO boundary the cotangent pole and the transition zero must come from one small angle:
         # computed apart they missed the limit by up to 8 % at 2e-6 rad. Each side's values agree with that side's

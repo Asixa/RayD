@@ -938,9 +938,17 @@ template <typename T> UTD_DINLINE T reflection_nearest_boundary(T beta, T n) {
 template <typename T> UTD_DINLINE float beta_term_boundary_side(int term, T dP, T sP2, T n) {
     const float phiP = 0.5f * (scalar_value(sP2) - scalar_value(dP));
     const bool grazing = fabsf(phiP) < UTD_SMALL_EPS || fabsf(phiP - scalar_value(n) * UTD_PI) < UTD_SMALL_EPS;
-    if (grazing)
-        return 0.f;
-    return term < 2 ? -1.f : 1.f;
+    if (!grazing)
+        return term < 2 ? -1.f : 1.f;
+    // Under grazing incidence the incident and reflection terms share one boundary and must keep one side: the
+    // side of the observation angle phi, which both terms see (their own angles differ by +-phi' within float
+    // noise). It is the sign the cotangent takes at phi on the term's branch.
+    const float twoNPi = 2.f * scalar_value(n) * UTD_PI;
+    const float phi = 0.5f * (scalar_value(sP2) + scalar_value(dP));
+    const bool plusBranch = (term & 1) == 0;
+    const float po = twoNPi * roundf((phi + (plusBranch ? UTD_PI : -UTD_PI)) / twoNPi) - phi;
+    const float d = plusBranch ? po - UTD_PI : po + UTD_PI;
+    return (plusBranch ? -d : d) >= 0.f ? 1.f : -1.f;
 }
 
 template <typename T>

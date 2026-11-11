@@ -313,3 +313,12 @@ boundary gradient ledger saw it as a jump. `beta_term_values` now derives both, 
 pole, from one small angle `d = po -+ pi`: the cotangent of `-+d / 2n` without the guard and `a = 2 sin^2(d / 2)`.
 Outside that window nothing changes. `test_the_coefficient_is_smooth_up_to_the_boundary` (each side within 0.5 %
 of its value 1e-3 deg away, at 1e-4 and 3e-4 deg; eight failures on the previous header).
+
+**Follow-up (same date): the grazing pair's side from the observation angle.** The grazing exception above left the
+pair's side to each term's cotangent sign. Each term's own angle is `phi -+ phi'`, so with `phi'` in float noise
+(up to 1e-6 rad) on either side of a face plane the two terms could take opposite sides; that went unnoticed
+while both cotangents came from one rounded `pi + beta`, and the near-pole evaluation above resolves them. A
+grazing pair now takes the side of the observation angle `phi`: the cotangent's sign at `phi` on the term's branch.
+`test_grazing_incidence_keeps_one_side_for_both_terms` (sources 2e-5 deg either side of either face plane of a
+half-plane match the exactly grazing value within 3 %; 18 failures on the previous header, where a source
+2e-5 deg below the face plane gave 12x the grazing value).
