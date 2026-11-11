@@ -2604,14 +2604,34 @@ class _ReplicatedScene:
 
         return ReflectionChain(loader=load)
 
-    def trace_refl_epc_field(self, source, receiver, max_bounces: int, active):
-        total = int(source.shape[0])
+    def trace_refl_epc_field(self, source, receiver, max_bounces: int, options, active):
+        is_ray = isinstance(source, Ray)
+        total = int(source.o.shape[0] if is_ray else source.shape[0])
+
+        def shard_options(device, start, stop):
+            # The per-slot material rows follow their ray; one polarization row is shared by every shard.
+            if options is None:
+                return None
+            polarization = options.tx_polarization
+            if polarization is not None and polarization.shape[0] == 1 and total != 1:
+                polarization = self._retain(polarization.to(device, non_blocking=True))
+            else:
+                polarization = self._slice_rows(polarization, "tx_polarization", total, start, stop, device)
+            return replace(
+                options,
+                slot_eta_r=self._slice_rows(options.slot_eta_r, "slot_eta_r", total, start, stop, device),
+                slot_mu_r=self._slice_rows(options.slot_mu_r, "slot_mu_r", total, start, stop, device),
+                slot_sigma=self._slice_rows(options.slot_sigma, "slot_sigma", total, start, stop, device),
+                slot_gain=self._slice_rows(options.slot_gain, "slot_gain", total, start, stop, device),
+                tx_polarization=polarization,
+            )
 
         def shard(device, start, stop):
             return (
-                self._slice(source, start, stop, device),
+                self._shard_ray(source, start, stop, device) if is_ray else self._slice(source, start, stop, device),
                 self._slice(receiver, start, stop, device),
                 max_bounces,
+                shard_options(device, start, stop),
                 self._slice_rows(active, "active", total, start, stop, device),
             )
 
@@ -2626,7 +2646,7 @@ class _ReplicatedScene:
             call,
             _field_reader(_REFL_EPC_FIELD_FIELDS),
             lambda rows, columns: ReflEpcField(*columns),
-            lambda: self.master().trace_refl_epc_field(source, receiver, max_bounces, active),
+            lambda: self.master().trace_refl_epc_field(source, receiver, max_bounces, options, active),
             transfer_row_bytes=38 + 4 * max_bounces,
         )
 

@@ -24,8 +24,10 @@ from .geometry import (
     NearestPointEdge,
     NearestEdgesTopK,
     NearestRayEdge,
+    Ray,
     ReflEpc,
     ReflEpcField,
+    ReflEpcFieldOptions,
     ReflEpcOptions,
     ReflMaterial,
     ReflectionChain,
@@ -1200,25 +1202,65 @@ def trace_reflections(
     return ReflectionChain(*values[:4])
 
 
+def _sanitized_ray_active(ray: Ray, active: torch.Tensor | None, operation: str) -> torch.Tensor:
+    """The `active` mask of an EPC trace from a `Ray`, with Dr.Jit's ray checks applied.
+
+    As in Dr.Jit, a row is traced only when its origin and direction are finite, its direction is non-zero, and its
+    `tmax` is positive or not finite.
+    """
+    count = int(ray.o.shape[0])
+    keep = torch.isfinite(ray.o).all(dim=1) & torch.isfinite(ray.d).all(dim=1) & ((ray.d * ray.d).sum(dim=1) > 0.0)
+    if ray.tmax.numel() != 0:
+        keep &= ~torch.isfinite(ray.tmax) | (ray.tmax > 0.0)
+    if active is not None:
+        if not isinstance(active, torch.Tensor) or active.dtype != torch.bool or tuple(active.shape) != (count,):
+            raise ValueError(f"{operation}: active must be a torch.bool tensor of shape (N,).")
+        keep &= active
+    return keep
+
+
+def _ray_tmax_or_none(ray: Ray) -> torch.Tensor | None:
+    return ray.tmax if ray.tmax.numel() != 0 else None
+
+
+# The angular frequency the EPC field used before it took options; float32 rounds it to the same value Dr.Jit uses.
+_EPC_FIELD_OMEGA = ReflEpcFieldOptions.omega
+
+
 def _make_trace_refl_epc_field_function(fused: bool):
     """Build the reflection equivalent-path-correction field autograd Function.
 
     ``fused=True`` takes a single scene-global vertex tensor at apply index 1;
-    ``fused=False`` takes one vertex tensor per mesh as trailing varargs.
+    ``fused=False`` takes one vertex tensor per mesh as trailing varargs. The
+    ``field_inputs`` argument is ``None`` for the plain source-to-receiver call
+    or the tuple ``(ray_d, ray_tmax, slot_eta_r, slot_mu_r, slot_sigma,
+    slot_gain, tx_polarization, omega, wavelength)``; the native derivatives
+    model neither a caller ray nor a material, so such a call is forward-only.
     """
     vertex_at = 1 if fused else None
     source_at = 2 if fused else 1
     receiver_at = source_at + 1
     active_at = source_at + 2
     max_bounces_at = source_at + 3
-    mesh_at = 5
+    field_inputs_at = source_at + 4
+    mesh_at = 6
 
     class _Fn(torch.autograd.Function):
         @staticmethod
         def forward(*args):
             _require_native_dispatcher()
+            field_inputs = args[field_inputs_at]
+            if field_inputs is None:
+                field_inputs = (None,) * 7 + (_EPC_FIELD_OMEGA, 1.0)
             outputs = torch.ops.rayd_torch.trace_refl_epc_field_forward(
-                args[0], args[source_at], args[receiver_at], args[active_at], int(args[max_bounces_at])
+                args[0],
+                args[source_at],
+                args[receiver_at],
+                args[active_at],
+                int(args[max_bounces_at]),
+                *field_inputs[:7],
+                float(field_inputs[7]),
+                float(field_inputs[8]),
             )
             return tuple(outputs[:-1]) + (_returnable_mask(outputs[-1]),)
 
@@ -1234,6 +1276,7 @@ def _make_trace_refl_epc_field_function(fused: bool):
             ctx.scene = inputs[0]
             _record_scene_geometry(ctx)
             ctx.max_bounces = int(inputs[max_bounces_at])
+            ctx.forward_only = inputs[field_inputs_at] is not None
             ctx.save_for_backward(source, receiver, active, tape_prim_id, tape_barycentric, tape_t)
             if fused:
                 vertices = torch.autograd.forward_ad.unpack_dual(inputs[vertex_at]).primal
@@ -1246,6 +1289,7 @@ def _make_trace_refl_epc_field_function(fused: bool):
         @staticmethod
         @_first_order_backward
         def backward(ctx, *grad_outputs):
+            _require_epc_field_derivative(ctx)
             _require_scene_geometry(ctx)
             source, receiver, active, tape_prim_id, tape_barycentric, tape_t = ctx.saved_tensors
             if fused:
@@ -1280,6 +1324,7 @@ def _make_trace_refl_epc_field_function(fused: bool):
                     grad_receiver if need_grad_receiver else None,
                     None,
                     None,
+                    None,
                 )
             if need_grad_vertices:
                 mesh_grad_tuple = torch.ops.rayd_torch.split_scene_vertex_grad(ctx.scene, grad_vertices)
@@ -1292,11 +1337,13 @@ def _make_trace_refl_epc_field_function(fused: bool):
                 grad_receiver if need_grad_receiver else None,
                 None,
                 None,
+                None,
                 *mesh_grads,
             )
 
         @staticmethod
         def jvp(ctx, *tangents):
+            _require_epc_field_derivative(ctx)
             _require_scene_geometry(ctx)
             if fused:
                 _vertices, source, receiver, active, tape_prim_id, tape_barycentric, tape_t = ctx.saved_tensors
@@ -1327,32 +1374,76 @@ def _make_trace_refl_epc_field_function(fused: bool):
     return _named_autograd_function(_Fn, "_TraceReflEpcFieldFunction" if fused else "_TraceReflEpcFieldMeshesFunction")
 
 
+def _require_epc_field_derivative(ctx) -> None:
+    if ctx.forward_only:
+        raise RuntimeError(
+            "trace_refl_epc_field() from a Ray or with ReflEpcFieldOptions is forward-only and does not support "
+            "reverse-mode AD or JVP."
+        )
+
+
 _TraceReflEpcFieldFunction = _make_trace_refl_epc_field_function(True)
 _TraceReflEpcFieldMeshesFunction = _make_trace_refl_epc_field_function(False)
+
+
+def epc_field_option_tensors(options: ReflEpcFieldOptions | None) -> tuple[torch.Tensor | None, ...]:
+    """Every tensor a `ReflEpcFieldOptions` carries, for the forward-only AD check."""
+    if options is None:
+        return ()
+    return (options.slot_eta_r, options.slot_mu_r, options.slot_sigma, options.slot_gain, options.tx_polarization)
 
 
 def trace_refl_epc_field(
     scene_handle: int,
     vertices: torch.Tensor,
-    source: torch.Tensor,
+    source: torch.Tensor | Ray,
     receiver: torch.Tensor,
     active: torch.Tensor | None,
     max_bounces: int,
     mesh_vertices: tuple[torch.Tensor, ...] | None = None,
+    options: ReflEpcFieldOptions | None = None,
 ) -> ReflEpcField:
+    ray_d = ray_tmax = None
+    if isinstance(source, Ray):
+        active = _sanitized_ray_active(source, active, "Scene.trace_refl_epc_field()")
+        ray_d, ray_tmax = source.d, _ray_tmax_or_none(source)
+        source = source.o
+    field_inputs = None
+    if ray_d is not None or options is not None:
+        options = ReflEpcFieldOptions() if options is None else options
+        field_inputs = (
+            ray_d,
+            ray_tmax,
+            *epc_field_option_tensors(options),
+            float(options.omega),
+            float(options.wavelength),
+        )
     tracked_vertices = (vertices,) if mesh_vertices is None else tuple(mesh_vertices)
     if len(tracked_vertices) > 1:
         values = _TraceReflEpcFieldMeshesFunction.apply(
-            scene_handle, source, receiver, active, int(max_bounces), *tracked_vertices
+            scene_handle, source, receiver, active, int(max_bounces), field_inputs, *tracked_vertices
         )
         return ReflEpcField(*values[:5])
-    values = _TraceReflEpcFieldFunction.apply(scene_handle, vertices, source, receiver, active, int(max_bounces))
+    values = _TraceReflEpcFieldFunction.apply(
+        scene_handle, vertices, source, receiver, active, int(max_bounces), field_inputs
+    )
     return ReflEpcField(*values[:5])
+
+
+_EPC_VISIBILITY_MODES = {"primitive": 0, "surface_group": 1}
+_EPC_DIRECT_TABLES = (
+    "expected_prim_ids",
+    "direct_plane_points",
+    "direct_plane_normals",
+    "surface_group_id",
+    "surface_group_size",
+    "surface_group_members",
+)
 
 
 def trace_refl_epc_native(
     scene_handle: int,
-    source: torch.Tensor,
+    source: torch.Tensor | Ray,
     receiver: torch.Tensor,
     *,
     max_bounces: int,
@@ -1360,22 +1451,45 @@ def trace_refl_epc_native(
     active: torch.Tensor | None,
 ) -> ReflEpc:
     _require_native_dispatcher()
+    ray = source if isinstance(source, Ray) else None
     if _needs_reverse_or_forward_ad(
-        source,
+        *((ray.o, ray.d, ray.tmax) if ray is not None else (source,)),
         receiver,
-        options.expected_prim_ids,
-        options.direct_plane_points,
-        options.direct_plane_normals,
-        options.surface_group_id,
-        options.surface_group_size,
-        options.surface_group_members,
+        *(getattr(options, name) for name in _EPC_DIRECT_TABLES),
     ):
         raise RuntimeError("Scene.trace_refl_epc() is forward-only and does not support reverse-mode AD or JVP.")
-    visibility_modes = {"primitive": 0, "surface_group": 1}
     try:
-        visibility_ignore_mode = visibility_modes[options.visibility_ignore_mode]
+        visibility_ignore_mode = _EPC_VISIBILITY_MODES[options.visibility_ignore_mode]
     except KeyError:
         raise ValueError("ReflEpcOptions.visibility_ignore_mode must be 'primitive' or 'surface_group'.") from None
+    if ray is not None:
+        if options.direct_plane_points is not None or options.direct_plane_normals is not None:
+            raise ValueError(
+                "Scene.trace_refl_epc(): a Ray traces its own path, so ReflEpcOptions.direct_plane_points and "
+                "direct_plane_normals must be None; pass source positions to reflect across given planes."
+            )
+        values = torch.ops.rayd_torch.reflection_epc_ray_paths_forward(
+            scene_handle,
+            ray.o,
+            ray.d,
+            _ray_tmax_or_none(ray),
+            receiver,
+            _sanitized_ray_active(ray, active, "Scene.trace_refl_epc()"),
+            options.expected_prim_ids,
+            options.surface_group_id,
+            options.surface_group_size,
+            options.surface_group_members,
+            int(max_bounces),
+            visibility_ignore_mode,
+            float(options.plane_tolerance),
+        )
+        return ReflEpc(int(ray.o.shape[0]), int(max_bounces), *values)
+    missing = [name for name in _EPC_DIRECT_TABLES if getattr(options, name) is None]
+    if missing:
+        raise ValueError(
+            "Scene.trace_refl_epc() from source positions reflects across the given planes and requires "
+            f"ReflEpcOptions.{', '.join(missing)}."
+        )
     values = torch.ops.rayd_torch.reflection_epc_paths_forward(
         scene_handle,
         source,

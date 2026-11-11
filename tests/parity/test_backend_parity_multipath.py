@@ -395,6 +395,106 @@ class ReflectionParityTests(_MultipathBase):
         for name in ("field_y_re", "field_y_im", "field_z_re", "field_z_im"):
             self.close("trace_refl_epc_field", name, np.zeros(count), getattr(field_d, name), FIELD_ABS, 0.0)
 
+    # A material, source polarization, frequency and wavelength that differ from the Torch defaults in every input.
+    EPC_MATERIAL = {"slot_eta_r": 2.5, "slot_mu_r": 1.3, "slot_sigma": 0.02, "slot_gain": 0.8}
+    EPC_POLARIZATION = [0.6, 0.0, 0.8]
+    EPC_OMEGA = 2.0 * math.pi * 3.0e9
+
+    def _epc_material_options(self, count, bounces):
+        """Matching non-default Torch and Dr.Jit EPC field options; the Dr.Jit one still needs its planes."""
+        cuda = self.mods.cuda
+        options_t = self.rt.ReflEpcFieldOptions(
+            **{name: self.t_tensor([[value] * bounces] * count) for name, value in self.EPC_MATERIAL.items()},
+            tx_polarization=self.t_tensor([self.EPC_POLARIZATION]),
+            omega=self.EPC_OMEGA,
+            wavelength=WAVELENGTH,
+        )
+        options_d = self.mods.pj.ReflEpcFieldOptions()
+        for name, value in self.EPC_MATERIAL.items():
+            setattr(options_d, name, cuda.Float([value] * bounces * count))
+        options_d.tx_polarization = bs.drjit_vec3(self.mods, [self.EPC_POLARIZATION])
+        options_d.omega = self.EPC_OMEGA
+        options_d.wavelength = WAVELENGTH
+        return options_t, options_d
+
+    def _compare_epc_field(self, op, field_t, field_d, count):
+        self.assertTrue(bs.host(field_t.valid).all())
+        self.assertGreater(float(np.abs(bs.host(field_t.field_re)).min()), 1.0e-5)
+        self.equal(op, "valid", field_t.valid, field_d.valid)
+        self.close(op, "path_length", field_t.path_length, field_d.path_length)
+        self.close(op, "field_re", field_t.field_re, field_d.field_x_re, FIELD_ABS, FIELD_REL)
+        self.close(op, "field_im", field_t.field_im, field_d.field_x_im, FIELD_ABS, FIELD_REL)
+
+    def test_trace_refl_epc_field_non_default_material(self):
+        spec, planes = _two_bounce_mirrors()
+        scene_t = bs.torch_scene(self.rt, spec)
+        scene_d = bs.drjit_scene(self.mods, spec)
+        count = len(EPC_SOURCES)
+        options_t, options_d = self._epc_material_options(count, 2)
+        options_d.expected_prim_ids = self.mods.cuda.Int([0, 1] * count)
+        options_d.slot_plane_point = bs.drjit_vec3(self.mods, [plane[0] for plane in planes] * count)
+        options_d.slot_plane_normal = bs.drjit_vec3(self.mods, [plane[1] for plane in planes] * count)
+        field_t = scene_t.trace_refl_epc_field(bs.torch_rows(EPC_SOURCES), bs.torch_rows(EPC_RECEIVERS), 2, options_t)
+        field_d = scene_d.trace_refl_epc_field(
+            bs.drjit_vec3(self.mods, EPC_SOURCES), bs.drjit_vec3(self.mods, EPC_RECEIVERS), 2, options_d
+        )
+        self._compare_epc_field("trace_refl_epc_field_material", field_t, field_d, count)
+        default_t = scene_t.trace_refl_epc_field(bs.torch_rows(EPC_SOURCES), bs.torch_rows(EPC_RECEIVERS), 2)
+        self.assertFalse(np.allclose(bs.host(default_t.field_re), bs.host(field_t.field_re)))
+
+    def test_trace_refl_epc_field_from_ray(self):
+        spec, planes = _two_bounce_mirrors()
+        scene_t = bs.torch_scene(self.rt, spec)
+        scene_d = bs.drjit_scene(self.mods, spec)
+        count = len(EPC_SOURCES)
+        directions = (np.asarray(EPC_RECEIVERS) - np.asarray(EPC_SOURCES)).tolist()
+        options_t, options_d = self._epc_material_options(count, 2)
+        # The Dr.Jit Ray overload evaluates the field with the slot normals it is given; these are the mirror
+        # normals the Torch trace discovers.
+        options_d.slot_plane_normal = bs.drjit_vec3(self.mods, [plane[1] for plane in planes] * count)
+        field_t = scene_t.trace_refl_epc_field(
+            bs.torch_ray(self.rt, EPC_SOURCES, directions), bs.torch_rows(EPC_RECEIVERS), 2, options_t
+        )
+        field_d = scene_d.trace_refl_epc_field(
+            bs.drjit_ray(self.mods, EPC_SOURCES, directions), bs.drjit_vec3(self.mods, EPC_RECEIVERS), 2, options_d
+        )
+        self._compare_epc_field("trace_refl_epc_field_ray", field_t, field_d, count)
+
+    def test_trace_refl_epc_from_ray(self):
+        spec, _planes = _two_bounce_mirrors()
+        scene_t = bs.torch_scene(self.rt, spec)
+        scene_d = bs.drjit_scene(self.mods, spec)
+        count = len(EPC_SOURCES)
+        directions = (np.asarray(EPC_RECEIVERS) - np.asarray(EPC_SOURCES)).tolist()
+        options_t = self.rt.ReflEpcOptions(
+            expected_prim_ids=self.t_tensor([[0, 1]] * count, self.torch.int32),
+            surface_group_id=self.t_tensor([0, 1], self.torch.int32),
+            surface_group_size=self.t_tensor([1, 1], self.torch.int32),
+            surface_group_members=self.t_tensor([0, 1], self.torch.int32),
+        )
+        cuda = self.mods.cuda
+        options_d = self.mods.pj.ReflEpcOptions()
+        options_d.expected_prim_ids = cuda.Int([0, 1] * count)
+        options_d.surface_group_id = cuda.Int([0, 1])
+        options_d.surface_group_size = cuda.Int([1, 1])
+        options_d.surface_group_members = cuda.Int([0, 1])
+        options_d.surface_max_group_size = 1
+        for label, opts_t, opts_d in (("constrained", options_t, options_d), ("free", None, None)):
+            with self.subTest(options=label):
+                epc_t = scene_t.trace_refl_epc(
+                    bs.torch_ray(self.rt, EPC_SOURCES, directions), bs.torch_rows(EPC_RECEIVERS), 2, opts_t
+                )
+                epc_d = scene_d.trace_refl_epc(
+                    bs.drjit_ray(self.mods, EPC_SOURCES, directions), bs.drjit_vec3(self.mods, EPC_RECEIVERS), 2, opts_d
+                )
+                self.assertTrue(bs.host(epc_t.valid).all())
+                self.equal("trace_refl_epc_ray", "valid", epc_t.valid, epc_d.valid)
+                self.close("trace_refl_epc_ray", "path_length", epc_t.path_length, epc_d.path_length)
+                self.close("trace_refl_epc_ray", "reflection_points", epc_t.hit_points, epc_d.reflection_points)
+                self.equal("trace_refl_epc_ray", "resolved_prim_ids", epc_t.resolved_prim_ids, epc_d.resolved_prim_ids)
+                self.equal("trace_refl_epc_ray", "surface_group_ids", epc_t.surface_group_ids, epc_d.surface_group_ids)
+                self.close("trace_refl_epc_ray", "normals", epc_t.normals.reshape(-1, 3), epc_d.plane_normals)
+
     def test_accumulate_reflections_box_bounce_counts(self):
         spec = bs.closed_box()
         scene_t = bs.torch_scene(self.rt, spec)

@@ -16,6 +16,7 @@ class TorchReflectionApiContractTests(unittest.TestCase):
             "AccumOptions",
             "AccumResult",
             "ReflEpc",
+            "ReflEpcFieldOptions",
             "ReflEpcOptions",
             "ReflMaterial",
             "WedgeEvents",
@@ -23,9 +24,11 @@ class TorchReflectionApiContractTests(unittest.TestCase):
             self.assertIn(name, rt.__all__)
             self.assertTrue(hasattr(rt, name))
 
-    def test_epc_options_are_required(self):
-        options = inspect.signature(rt.Scene.trace_refl_epc).parameters["options"]
-        self.assertIs(options.default, inspect.Parameter.empty)
+    def test_epc_options_default_to_none_as_in_drjit(self):
+        for method in (rt.Scene.trace_refl_epc, rt.Scene.trace_refl_epc_field):
+            parameters = inspect.signature(method).parameters
+            self.assertEqual(list(parameters)[1:], ["source", "receiver", "max_bounces", "options", "active"])
+            self.assertIsNone(parameters["options"].default)
 
     def test_multi_device_epc_paths_fail_loudly(self):
         class MultiStub:
@@ -137,3 +140,53 @@ class TorchReflectionApiNativeTests(unittest.TestCase):
         receiver = torch.tensor([[0.5, 0.0, -1.0]], device="cuda")
         with self.assertRaisesRegex(RuntimeError, "forward-only"):
             scene.trace_refl_epc(source, receiver, 1, self._epc_options())
+
+    def _ray_toward_receiver(self, source, receiver):
+        direction = receiver - source
+        return rt.Ray(source, direction / torch.linalg.vector_norm(direction, dim=1, keepdim=True))
+
+    def test_trace_refl_epc_from_a_ray_follows_the_ray(self):
+        scene = self._scene()
+        source = torch.tensor([[-0.5, -0.5, -1.0], [-0.5, -0.5, -1.0]], device="cuda")
+        receiver = torch.tensor([[0.0, -0.5, -1.0], [0.0, -0.5, -1.0]], device="cuda")
+        planes = scene.trace_refl_epc(source[:1], receiver[:1], 1, self._epc_options())
+        # Row 0 aims at the specular point (-0.25, -0.5, 0); row 1 points away from the mirror, which a Ray respects.
+        toward = torch.tensor([[0.25, 0.0, 1.0], [0.0, 0.0, -1.0]], device="cuda")
+        traced = scene.trace_refl_epc(rt.Ray(source, toward), receiver, 1)
+        self.assertEqual(traced.valid.tolist(), [True, False])
+        self.assertTrue(planes.valid.item())
+        torch.testing.assert_close(traced.path_length[:1], planes.path_length, rtol=1e-6, atol=1e-6)
+        torch.testing.assert_close(traced.hit_points[:1], planes.hit_points, rtol=1e-6, atol=1e-6)
+        self.assertEqual(traced.resolved_prim_ids[0].tolist(), [0])
+
+    def test_trace_refl_epc_from_a_ray_honours_expected_primitives_and_tmax(self):
+        scene = self._scene()
+        source = torch.tensor([[-0.5, -0.5, -1.0]], device="cuda")
+        receiver = torch.tensor([[0.0, -0.5, -1.0]], device="cuda")
+        ray = rt.Ray(source, torch.tensor([[0.25, 0.0, 1.0]], device="cuda"))
+        free = rt.ReflEpcOptions(expected_prim_ids=torch.tensor([[-1]], device="cuda", dtype=torch.int32))
+        other = rt.ReflEpcOptions(expected_prim_ids=torch.tensor([[5]], device="cuda", dtype=torch.int32))
+        self.assertTrue(scene.trace_refl_epc(ray, receiver, 1, free).valid.item())
+        self.assertFalse(scene.trace_refl_epc(ray, receiver, 1, other).valid.item())
+        short = rt.Ray(ray.o, ray.d, torch.tensor([0.5], device="cuda"))
+        self.assertFalse(scene.trace_refl_epc(short, receiver, 1).valid.item())
+        inactive = scene.trace_refl_epc(ray, receiver, 1, active=torch.tensor([False], device="cuda"))
+        self.assertFalse(inactive.valid.item())
+
+    def test_trace_refl_epc_rejects_mixed_modes(self):
+        scene = self._scene()
+        source = torch.tensor([[-0.5, -0.5, -1.0]], device="cuda")
+        receiver = torch.tensor([[0.0, -0.5, -1.0]], device="cuda")
+        with self.assertRaisesRegex(ValueError, "direct_plane_points"):
+            scene.trace_refl_epc(self._ray_toward_receiver(source, receiver), receiver, 1, self._epc_options())
+        with self.assertRaisesRegex(ValueError, "requires ReflEpcOptions"):
+            scene.trace_refl_epc(source, receiver, 1)
+        with self.assertRaisesRegex(TypeError, "ReflEpcOptions"):
+            scene.trace_refl_epc(source, receiver, 1, torch.tensor([True], device="cuda"))
+
+    def test_trace_refl_epc_from_a_ray_rejects_ad(self):
+        scene = self._scene()
+        source = torch.tensor([[-0.5, -0.5, -1.0]], device="cuda", requires_grad=True)
+        receiver = torch.tensor([[0.0, -0.5, -1.0]], device="cuda")
+        with self.assertRaisesRegex(RuntimeError, "forward-only"):
+            scene.trace_refl_epc(rt.Ray(source, torch.tensor([[0.25, 0.0, 1.0]], device="cuda")), receiver, 1)

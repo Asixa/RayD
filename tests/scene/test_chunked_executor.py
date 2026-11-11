@@ -207,6 +207,14 @@ class ChunkedSingleDeviceTests(unittest.TestCase):
         single = _build_scene(self.device)
         points = self.inputs["points"]
         active = self.inputs["active"]
+        rows = int(points.shape[0])
+        x_axis = torch.tensor([[1.0, 0.0, 0.0]], device=self.device)
+        epc_options = rt.ReflEpcFieldOptions(
+            slot_eta_r=torch.linspace(2.0, 6.0, rows, device=self.device).reshape(rows, 1),
+            slot_gain=torch.linspace(0.5, 1.0, rows, device=self.device).reshape(rows, 1),
+            tx_polarization=torch.tensor([[0.0, 0.6, 0.8]], device=self.device),
+            wavelength=0.25,
+        )
         cases = {
             "nearest_edge_point": (lambda target: target.nearest_edge(points), _NEAREST_POINT_EDGE_FIELDS),
             "nearest_edge_ray": (lambda target: target.nearest_edge(self.inputs["ray"]), _NEAREST_RAY_EDGE_FIELDS),
@@ -221,10 +229,20 @@ class ChunkedSingleDeviceTests(unittest.TestCase):
                 lambda target: target.trace_refl_epc_field(self.inputs["origins"], self.inputs["end"], 2),
                 _REFL_EPC_FIELD_FIELDS,
             ),
+            # Per-slot material rows follow their ray into each chunk; the single polarization row is shared. Half
+            # the rays are active and reflect once off the sheet back next to their origin.
+            "trace_refl_epc_field_options": (
+                lambda target: target.trace_refl_epc_field(
+                    self.inputs["ray"], self.inputs["origins"] + 0.02 * x_axis, 1, epc_options, active
+                ),
+                _REFL_EPC_FIELD_FIELDS,
+            ),
         }
         for name, (call, fields) in cases.items():
             with self.subTest(operation=name):
                 expected = call(single)
+                if name == "trace_refl_epc_field_options":
+                    self.assertTrue(expected.valid.any())
                 actual = call(scene)
                 for field in fields:
                     self.assertTrue(

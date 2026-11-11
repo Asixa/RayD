@@ -7,7 +7,8 @@ All notable changes to RayD are documented in this file.
 ### Breaking API changes
 
 The Python API of both backends changes directly: no old name is kept as an alias, no call warns, and no compatibility
-shim remains. The C++ boundary `rayd/integration.h` and the `torch.ops.rayd_torch` operator schemas are unchanged.
+shim remains. The C++ boundary `rayd/integration.h` is unchanged. Of the `torch.ops.rayd_torch` operator schemas, only
+`trace_refl_epc_field_forward` changes, and `reflection_epc_ray_paths_forward` is new (see Contracts).
 
 #### `rayd.torch`
 
@@ -32,6 +33,8 @@ shim remains. The C++ boundary `rayd/integration.h` and the `torch.ops.rayd_torc
 | `DfrCoherentAccum.visibility_reject_count` / `utd_reject_count` | `DfrCoherentAccum.vis_rejects` / `utd_rejects` |
 | `AccumOptions.accumulation_strategy` as an `int` | `rt.AccumStrategy.AUTO` / `ATOMIC` / `STAGED` |
 | `RayFlags.None` | `RayFlags.Empty` |
+| `Scene.trace_refl_epc_field(source, receiver, max_bounces, active=None)` | `Scene.trace_refl_epc_field(source, receiver, max_bounces, options=None, active=None)`: `active` moves to the fifth position |
+| `Scene.trace_refl_epc(source, receiver, max_bounces, options, active=None)` | `Scene.trace_refl_epc(source, receiver, max_bounces, options=None, active=None)`: a source-position call still needs every plane and surface-group table, now checked when called |
 
 #### `rayd.drjit`
 
@@ -67,6 +70,16 @@ shim remains. The C++ boundary `rayd/integration.h` and the `torch.ops.rayd_torc
   `accum_refl` in the derivative manifest.
 - `contracts/operations.json`: the operation `inputs` list the real parameter names (`query`, `active`, `max_bounces`,
   `options`, ...), `ray_flags` names `Empty`, and the SDF intersection result names its validity field `valid` in both backends.
+- The `trace_refl_epc_field` derivative entry gains a `ray` domain (unsupported in both backends: the Dr.Jit `Ray`
+  overload is a non-AD native path), and its Torch `material` domain changes from `not_applicable` to `unsupported`
+  because Torch now takes a material and rejects AD on it.
+- `torch.ops.rayd_torch.trace_refl_epc_field_forward` takes `Tensor? ray_d, Tensor? ray_tmax, Tensor? slot_eta_r,
+  Tensor? slot_mu_r, Tensor? slot_sigma, Tensor? slot_gain, Tensor? tx_polarization, float omega, float wavelength`
+  after `max_bounces`; null tensors keep the earlier fixed material and source-to-receiver ray. The new
+  `reflection_epc_ray_paths_forward(scene, ray_o, ray_d, ray_tmax?, receiver, active?, expected_prim_ids?,
+  surface_group_id?, surface_group_size?, surface_group_members?, max_bounces, visibility_ignore_mode,
+  plane_tolerance)` serves `trace_refl_epc` from a `Ray`. `trace_refl_epc_field_backward`/`_jvp` and
+  `reflection_epc_paths_forward` are unchanged; `torch/abi_audit.json` records 61 dispatcher operators.
 
 ### Behaviour changes
 
@@ -88,6 +101,15 @@ shim remains. The C++ boundary `rayd/integration.h` and the `torch.ops.rayd_torc
 - Torch `Scene` methods that return nothing on an offloading `MultiDeviceOptions` are annotated `X | None`.
 - Torch enums `TraceBackend`, `EdgeBVHBackend` (string enums; plain strings are still accepted) and `AccumStrategy`,
   and the options records `DfrOptions`, `DfrCoherentOptions`, and `DfrPathOptions`.
+- Torch `Scene.trace_refl_epc` and `Scene.trace_refl_epc_field` accept a `Ray` as their first argument, dispatched on
+  type, with Dr.Jit's semantics: the path is traced along the ray, `tmax` bounds its first segment, and rows with a
+  non-finite origin or direction, a zero direction, or a non-positive finite `tmax` are inactive. `ReflEpcOptions`
+  fields now default to `None`; a `Ray` trace rejects the direct planes and takes the expected primitives and surface
+  groups as optional constraints.
+- Torch `ReflEpcFieldOptions(slot_eta_r, slot_mu_r, slot_sigma, slot_gain, tx_polarization, omega, wavelength)` with
+  Dr.Jit's field names sets the per-slot material, the source polarization, the angular frequency, and the wavelength
+  of `Scene.trace_refl_epc_field`. `options=None` is bit-for-bit the earlier fixed-material result. The options are
+  forward-only; the multi-device layer shards the per-slot rows with their rays.
 - Dr.Jit enums `DfrStrategy`, `DfrSampleSequence`, `DfrReceiverModel`, and `ReflectionExportMode`.
 - `tests/test_api_signature_parity.py` compares the shared `Scene` and `MixedScene` signatures of both backends
   against a commented allowlist of accepted differences.

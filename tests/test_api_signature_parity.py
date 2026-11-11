@@ -51,15 +51,13 @@ DRJIT_ONLY = {
     ("Scene", "trace_reflections", "deduplicate"): "Dr.Jit-only flat ReflectionTraceOptions overload.",
     ("Scene", "trace_reflections", "canonical_prim_table"): "Dr.Jit-only flat ReflectionTraceOptions overload.",
     ("Scene", "trace_reflections", "image_source_tolerance"): "Dr.Jit-only flat ReflectionTraceOptions overload.",
-    # Adding an options record to the Torch call changes its dispatcher schema, which this API round leaves alone.
-    ("Scene", "trace_refl_epc_field", "options"): "Torch trace_refl_epc_field has no options record yet.",
 }
 
 # Parameters whose names differ by position, keyed by (class, method, Dr.Jit name) -> Torch name.
 RENAMED = {
-    # Documented semantic difference: Torch traces from source positions, Dr.Jit from a Ray.
+    # One Torch parameter takes source positions or a Ray (dispatched on type, like `nearest_edge(query)`); Dr.Jit
+    # binds a Ray overload named `ray`, and for trace_refl_epc_field also position overloads named `source`.
     ("Scene", "trace_refl_epc", "ray"): "source",
-    # Dr.Jit's Ray overloads start from a Ray; its position overloads use `source` like Torch.
     ("Scene", "trace_refl_epc_field", "ray"): "source",
 }
 

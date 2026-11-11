@@ -67,6 +67,7 @@ class SharedOperationContractTests(unittest.TestCase):
         derivatives = CONTRACT["derivative_capabilities"]
         forward_only = {
             ("reflection_accumulation", "accum_refl", "torch"),
+            ("reflection_trace", "trace_refl_epc_field", "torch"),
             ("diffraction_direct", "trace_dfr_paths", "torch"),
             ("diffraction_direct", "accum_dfr_coherent_direct", "drjit"),
             ("diffraction_direct", "accum_dfr_coherent_direct", "torch"),
@@ -93,7 +94,14 @@ class SharedOperationContractTests(unittest.TestCase):
         )
         self.assertEqual(
             reflection["trace_refl_epc_field"]["input_domains"]["material"]["torch"],
-            {"vjp": "not_applicable", "jvp": "not_applicable"},
+            {"vjp": "unsupported", "jvp": "unsupported"},
+        )
+        self.assertEqual(
+            reflection["trace_refl_epc_field"]["input_domains"]["ray"],
+            {
+                "drjit": {"vjp": "unsupported", "jvp": "unsupported"},
+                "torch": {"vjp": "unsupported", "jvp": "unsupported"},
+            },
         )
         self.assertEqual(
             reflection["trace_refl_epc"]["input_domains"]["plane_geometry"]["torch"],

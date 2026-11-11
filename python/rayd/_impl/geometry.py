@@ -571,14 +571,48 @@ class ReflEpcField(_ValidRecord):
 
 @dataclass(frozen=True)
 class ReflEpcOptions:
-    expected_prim_ids: torch.Tensor
-    direct_plane_points: torch.Tensor
-    direct_plane_normals: torch.Tensor
-    surface_group_id: torch.Tensor
-    surface_group_size: torch.Tensor
-    surface_group_members: torch.Tensor
+    """Options of ``Scene.trace_refl_epc()``.
+
+    With source positions, the trace reflects each source across the given
+    planes, so ``expected_prim_ids``, ``direct_plane_points``,
+    ``direct_plane_normals``, and the three surface-group tables are required.
+    With a ``Ray``, the trace follows the ray as in Dr.Jit: the direct planes
+    must stay ``None``, ``expected_prim_ids`` optionally constrains the hit of
+    each slot (``-1`` leaves a slot free), and the surface-group tables are
+    optional but given together.
+    """
+
+    expected_prim_ids: torch.Tensor | None = None
+    direct_plane_points: torch.Tensor | None = None
+    direct_plane_normals: torch.Tensor | None = None
+    surface_group_id: torch.Tensor | None = None
+    surface_group_size: torch.Tensor | None = None
+    surface_group_members: torch.Tensor | None = None
     visibility_ignore_mode: str = "primitive"
     plane_tolerance: float = 1.0e-5
+
+
+@dataclass(frozen=True)
+class ReflEpcFieldOptions:
+    """Options of ``Scene.trace_refl_epc_field()``, named as in Dr.Jit.
+
+    The per-slot material tensors have shape ``(N, max_bounces)``.
+    ``tx_polarization`` has shape ``(1, 3)`` or ``(N, 3)``. A tensor left at
+    ``None`` keeps the value the call used before these options existed:
+    ``eta_r = 4``, ``mu_r = 1``, ``sigma = 0``, ``gain = 1``, and an x-polarized
+    source. ``omega`` (rad/s) enters only the conductivity term, and
+    ``wavelength`` sets the phase and the free-space amplitude; both defaults
+    equal the Dr.Jit defaults. These inputs are forward-only: a tensor that
+    requires grad or carries a forward-mode tangent is rejected.
+    """
+
+    slot_eta_r: torch.Tensor | None = None
+    slot_mu_r: torch.Tensor | None = None
+    slot_sigma: torch.Tensor | None = None
+    slot_gain: torch.Tensor | None = None
+    tx_polarization: torch.Tensor | None = None
+    omega: float = 2.0 * math.pi * 299792458.0
+    wavelength: float = 1.0
 
 
 @dataclass(frozen=True, repr=False)

@@ -7,7 +7,7 @@ from copy import deepcopy
 from typing import Any
 
 _SCHEMA_VERSION = 3
-_SCHEMA_SHA256 = "64e71d2ee3f27a844db2c893a891d154b4e78acc30a3aa0854295f31e8a9274f"
+_SCHEMA_SHA256 = "1dd12c6aca3375f755cb06359ff41dbe7fa12ee86237873a49748a13a313e7b0"
 _BACKEND = "drjit"
 _TYPING = "complete"
 
@@ -73,7 +73,6 @@ _SUPPORTED = {"drjit": ("supported", "supported"), "torch": ("supported", "suppo
 _UNSUPPORTED = {"drjit": ("unsupported", "unsupported"), "torch": ("unsupported", "unsupported")}
 _NOT_APPLICABLE = {"drjit": ("not_applicable", "not_applicable"), "torch": ("not_applicable", "not_applicable")}
 _DRJIT_ONLY = {"drjit": ("supported", "supported"), "torch": ("unsupported", "unsupported")}
-_DRJIT_SUPPORTED_TORCH_NA = {"drjit": ("supported", "supported"), "torch": ("not_applicable", "not_applicable")}
 
 _DERIVATIVE_CONTRACT = {
     "intersect": {"intersect": {"geometry": _SUPPORTED, "ray": _SUPPORTED}},
@@ -123,11 +122,13 @@ _DERIVATIVE_CONTRACT = {
                 "geometry": _DRJIT_ONLY,
                 "source": _DRJIT_ONLY,
                 "receiver": _DRJIT_ONLY,
-                "material": _DRJIT_SUPPORTED_TORCH_NA,
+                "ray": _UNSUPPORTED,
+                "material": _DRJIT_ONLY,
             },
             "backend_notes": {
                 "torch": "The public Torch EPC-field path is forward-only because its native derivatives do not "
-                "differentiate the physical Fresnel and polarization forward computation."
+                "differentiate the physical Fresnel and polarization forward computation; ReflEpcFieldOptions "
+                "material and wavelength inputs are forward-only too."
             },
         },
     },

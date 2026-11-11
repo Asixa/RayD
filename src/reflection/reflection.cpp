@@ -768,9 +768,81 @@ py::tuple trace_reflections_jvp_optional_op(int64_t scene_handle, at::Tensor ray
     return py::make_tuple(out.tangent_t, out.tangent_image_sources);
 }
 
+namespace {
+
+// Optional inputs of the EPC field forward. A null tensor keeps the value the call had before these inputs existed:
+// the discovery ray runs from the source toward the receiver and ends there, every slot reflects off eta_r = 4,
+// mu_r = 1, sigma = 0, gain = 1, and the source is x-polarized.
+struct EpcFieldInputs {
+    const at::Tensor* ray_d = nullptr;
+    const at::Tensor* ray_tmax = nullptr;
+    const at::Tensor* slot_eta_r = nullptr;
+    const at::Tensor* slot_mu_r = nullptr;
+    const at::Tensor* slot_sigma = nullptr;
+    const at::Tensor* slot_gain = nullptr;
+    const at::Tensor* tx_polarization = nullptr;
+    float omega = 2.0f * 3.14159265358979323846f * 299792458.0f;
+    float wavelength = 1.0f;
+};
+
+void require_epc_slot_values(const at::Tensor* value, int64_t ray_count, int64_t max_bounces, const char* name) {
+    if (value == nullptr)
+        return;
+    require_cuda(*value, name);
+    require_contiguous(*value, name);
+    require_dtype(*value, at::kFloat, name);
+    require_rank(*value, 2, name);
+    if (value->size(0) != ray_count || value->size(1) != max_bounces)
+        throw std::runtime_error(std::string(name) + " must have shape (N, max_bounces).");
+}
+
+const float* optional_float_ptr(const at::Tensor* value) {
+    return value != nullptr ? value->data_ptr<float>() : nullptr;
+}
+
+void require_epc_field_inputs(const SceneCache& scene, const EpcFieldInputs& inputs, int64_t ray_count,
+                              int64_t max_bounces) {
+    if (inputs.ray_d != nullptr) {
+        require_vec3f(*inputs.ray_d, "ray_d");
+        if (inputs.ray_d->size(0) != ray_count)
+            throw std::runtime_error("ray_d must match the EPC batch size.");
+        require_scene_device(scene, inputs.ray_d, "ray_d");
+    }
+    if (inputs.ray_tmax != nullptr) {
+        if (inputs.ray_d == nullptr)
+            throw std::runtime_error("ray_tmax requires ray_d.");
+        require_scalar_f(*inputs.ray_tmax, "ray_tmax");
+        if (inputs.ray_tmax->size(0) != ray_count)
+            throw std::runtime_error("ray_tmax must match the EPC batch size.");
+        require_scene_device(scene, inputs.ray_tmax, "ray_tmax");
+    }
+    require_epc_slot_values(inputs.slot_eta_r, ray_count, max_bounces, "slot_eta_r");
+    require_epc_slot_values(inputs.slot_mu_r, ray_count, max_bounces, "slot_mu_r");
+    require_epc_slot_values(inputs.slot_sigma, ray_count, max_bounces, "slot_sigma");
+    require_epc_slot_values(inputs.slot_gain, ray_count, max_bounces, "slot_gain");
+    require_scene_device(scene, inputs.slot_eta_r, "slot_eta_r");
+    require_scene_device(scene, inputs.slot_mu_r, "slot_mu_r");
+    require_scene_device(scene, inputs.slot_sigma, "slot_sigma");
+    require_scene_device(scene, inputs.slot_gain, "slot_gain");
+    if (inputs.tx_polarization != nullptr) {
+        require_vec3f(*inputs.tx_polarization, "tx_polarization");
+        const int64_t count = inputs.tx_polarization->size(0);
+        if (count != 1 && count != ray_count)
+            throw std::runtime_error("tx_polarization must have 1 row or match the EPC batch size.");
+        require_scene_device(scene, inputs.tx_polarization, "tx_polarization");
+    }
+    if (!(inputs.omega > 0.f) || !std::isfinite(inputs.omega))
+        throw std::runtime_error("omega must be finite and positive.");
+    if (!(inputs.wavelength > 0.f) || !std::isfinite(inputs.wavelength))
+        throw std::runtime_error("wavelength must be finite and positive.");
+}
+
+} // namespace
+
 std::vector<at::Tensor> trace_refl_epc_field_forward_native_impl(int64_t scene_handle, const at::Tensor& source,
                                                                  const at::Tensor& receiver,
-                                                                 const at::Tensor* active_ptr, int64_t max_bounces) {
+                                                                 const at::Tensor* active_ptr, int64_t max_bounces,
+                                                                 const EpcFieldInputs& inputs) {
     require_vec3f(source, "source");
     require_vec3f(receiver, "receiver");
     require_same_batch(source, receiver, "trace_refl_epc_field");
@@ -788,6 +860,7 @@ std::vector<at::Tensor> trace_refl_epc_field_forward_native_impl(int64_t scene_h
     require_scene_device(scene, source, "source");
     require_scene_device(scene, receiver, "receiver");
     require_scene_device(scene, active_ptr, "active");
+    require_epc_field_inputs(scene, inputs, source.size(0), max_bounces);
     c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     const int64_t ray_count = source.size(0);
     const int64_t slot_count = ray_count * max_bounces;
@@ -894,6 +967,16 @@ std::vector<at::Tensor> trace_refl_epc_field_forward_native_impl(int64_t scene_h
     epc_params.ray_dy = ray_dy.data_ptr<float>();
     epc_params.ray_dz = ray_dz.data_ptr<float>();
     epc_params.ray_tmax = ray_tmax.data_ptr<float>();
+    // A caller ray replaces the source-to-receiver discovery ray the setup kernel derived; an unbounded ray leaves
+    // ray_tmax null, which the raygen reads as no bound.
+    Vec3SoA caller_ray_d;
+    if (inputs.ray_d != nullptr) {
+        caller_ray_d = split_vec3(*inputs.ray_d);
+        epc_params.ray_dx = caller_ray_d.x.data_ptr<float>();
+        epc_params.ray_dy = caller_ray_d.y.data_ptr<float>();
+        epc_params.ray_dz = caller_ray_d.z.data_ptr<float>();
+        epc_params.ray_tmax = optional_float_ptr(inputs.ray_tmax);
+    }
     epc_params.rx_x = receiver_x.data_ptr<float>();
     epc_params.rx_y = receiver_y.data_ptr<float>();
     epc_params.rx_z = receiver_z.data_ptr<float>();
@@ -951,9 +1034,21 @@ std::vector<at::Tensor> trace_refl_epc_field_forward_native_impl(int64_t scene_h
     field_params.slot_normal_x = plane_normal_x.data_ptr<float>();
     field_params.slot_normal_y = plane_normal_y.data_ptr<float>();
     field_params.slot_normal_z = plane_normal_z.data_ptr<float>();
+    field_params.slot_eta_r = optional_float_ptr(inputs.slot_eta_r);
+    field_params.slot_mu_r = optional_float_ptr(inputs.slot_mu_r);
+    field_params.slot_sigma = optional_float_ptr(inputs.slot_sigma);
+    field_params.slot_gain = optional_float_ptr(inputs.slot_gain);
+    Vec3SoA tx_polarization;
     field_params.tx_pol_count = 1;
-    field_params.omega = 2.0f * 3.14159265358979323846f * 299792458.0f;
-    field_params.wavelength = 1.0f;
+    if (inputs.tx_polarization != nullptr) {
+        tx_polarization = split_vec3(*inputs.tx_polarization);
+        field_params.tx_pol_x = tx_polarization.x.data_ptr<float>();
+        field_params.tx_pol_y = tx_polarization.y.data_ptr<float>();
+        field_params.tx_pol_z = tx_polarization.z.data_ptr<float>();
+        field_params.tx_pol_count = static_cast<int32_t>(inputs.tx_polarization->size(0));
+    }
+    field_params.omega = inputs.omega;
+    field_params.wavelength = inputs.wavelength;
     field_params.out_valid = mutable_mask_ptr(valid);
     field_params.out_path_length = path_length.data_ptr<float>();
     field_params.out_field_x_re = field_real.data_ptr<float>();
@@ -966,66 +1061,66 @@ std::vector<at::Tensor> trace_refl_epc_field_forward_native_impl(int64_t scene_h
 }
 
 py::tuple trace_refl_epc_field_forward_op(int64_t scene_handle, at::Tensor source, at::Tensor receiver,
-                                          py::object active_obj, int64_t max_bounces) {
+                                          py::object active_obj, int64_t max_bounces, py::object ray_d_obj,
+                                          py::object ray_tmax_obj, py::object slot_eta_r_obj, py::object slot_mu_r_obj,
+                                          py::object slot_sigma_obj, py::object slot_gain_obj,
+                                          py::object tx_polarization_obj, double omega, double wavelength) {
     at::Tensor active_storage;
+    at::Tensor ray_d_storage;
+    at::Tensor ray_tmax_storage;
+    at::Tensor slot_eta_r_storage;
+    at::Tensor slot_mu_r_storage;
+    at::Tensor slot_sigma_storage;
+    at::Tensor slot_gain_storage;
+    at::Tensor tx_polarization_storage;
     const at::Tensor* active_ptr = optional_tensor(active_obj, active_storage);
+    EpcFieldInputs inputs;
+    inputs.ray_d = optional_tensor(ray_d_obj, ray_d_storage);
+    inputs.ray_tmax = optional_tensor(ray_tmax_obj, ray_tmax_storage);
+    inputs.slot_eta_r = optional_tensor(slot_eta_r_obj, slot_eta_r_storage);
+    inputs.slot_mu_r = optional_tensor(slot_mu_r_obj, slot_mu_r_storage);
+    inputs.slot_sigma = optional_tensor(slot_sigma_obj, slot_sigma_storage);
+    inputs.slot_gain = optional_tensor(slot_gain_obj, slot_gain_storage);
+    inputs.tx_polarization = optional_tensor(tx_polarization_obj, tx_polarization_storage);
+    inputs.omega = static_cast<float>(omega);
+    inputs.wavelength = static_cast<float>(wavelength);
     return tensor_vector_to_tuple(
-        trace_refl_epc_field_forward_native_impl(scene_handle, source, receiver, active_ptr, max_bounces));
+        trace_refl_epc_field_forward_native_impl(scene_handle, source, receiver, active_ptr, max_bounces, inputs));
 }
 
-std::vector<at::Tensor> reflection_epc_paths_forward_native_impl(
-    SceneCache& scene, const at::Tensor& source, const at::Tensor& receiver, const at::Tensor* active_ptr,
-    const at::Tensor& expected_prim_ids, const at::Tensor& direct_plane_points, const at::Tensor& direct_plane_normals,
-    const at::Tensor& surface_group_id, const at::Tensor& surface_group_size, const at::Tensor& surface_group_members,
-    int64_t max_bounces, int64_t visibility_ignore_mode, double plane_tolerance) {
-    require_vec3f(source, "source");
-    require_vec3f(receiver, "receiver");
-    require_same_batch(source, receiver, "reflection_epc_paths");
-    require_cuda(expected_prim_ids, "expected_prim_ids");
-    require_contiguous(expected_prim_ids, "expected_prim_ids");
-    require_dtype(expected_prim_ids, at::kInt, "expected_prim_ids");
-    require_rank(expected_prim_ids, 2, "expected_prim_ids");
-    require_cuda(direct_plane_points, "direct_plane_points");
-    require_contiguous(direct_plane_points, "direct_plane_points");
-    require_dtype(direct_plane_points, at::kFloat, "direct_plane_points");
-    require_rank(direct_plane_points, 3, "direct_plane_points");
-    require_last_dim(direct_plane_points, 3, "direct_plane_points");
-    require_cuda(direct_plane_normals, "direct_plane_normals");
-    require_contiguous(direct_plane_normals, "direct_plane_normals");
-    require_dtype(direct_plane_normals, at::kFloat, "direct_plane_normals");
-    require_rank(direct_plane_normals, 3, "direct_plane_normals");
-    require_last_dim(direct_plane_normals, 3, "direct_plane_normals");
-    require_flat_i32(surface_group_id, "surface_group_id");
-    require_flat_i32(surface_group_size, "surface_group_size");
-    require_flat_i32(surface_group_members, "surface_group_members");
-    if (max_bounces < 1)
-        throw std::runtime_error("max_bounces must be at least 1.");
-    if (max_bounces > ReflEpcMaxBounces)
-        throw std::runtime_error("max_bounces exceeds the native EPC limit (ReflEpcMaxBounces).");
-    require_bounce_slots_fit_i32(source.size(0), max_bounces, 3, "trace_refl_epc");
-    if (!(plane_tolerance >= 0.0) || !std::isfinite(plane_tolerance))
-        throw std::runtime_error("plane_tolerance must be finite and non-negative.");
-    if (expected_prim_ids.size(0) != source.size(0) || expected_prim_ids.size(1) != max_bounces)
-        throw std::runtime_error("expected_prim_ids must have shape (N, max_bounces).");
-    if (direct_plane_points.size(0) != source.size(0) || direct_plane_points.size(1) != max_bounces)
-        throw std::runtime_error("direct_plane_points must have shape (N, max_bounces, 3).");
-    if (!direct_plane_normals.sizes().equals(direct_plane_points.sizes()))
-        throw std::runtime_error("direct_plane_normals must match direct_plane_points.");
-    if (surface_group_size.size(0) <= 0)
-        throw std::runtime_error("surface_group_size must contain at least one group.");
-    if (surface_group_members.numel() % surface_group_size.size(0) != 0)
-        throw std::runtime_error("surface_group_members must be padded to group_count * max_group_size.");
+namespace {
 
+// Inputs of one EPC path trace beyond the source, receiver, and mask. Direct-plane mode passes the reflecting planes
+// and reflects the source across them; discovery mode leaves the planes null and traces ray_d from the source, so a
+// hit must match the expected primitive of its slot when one is given. Null tables are absent.
+struct EpcPathsTrace {
+    const at::Tensor* expected_prim_ids = nullptr;
+    const at::Tensor* direct_plane_points = nullptr;
+    const at::Tensor* direct_plane_normals = nullptr;
+    const at::Tensor* surface_group_id = nullptr;
+    const at::Tensor* surface_group_size = nullptr;
+    const at::Tensor* surface_group_members = nullptr;
+    const at::Tensor* ray_d = nullptr;
+    const at::Tensor* ray_tmax = nullptr;
+    int64_t visibility_ignore_mode = 0;
+    double plane_tolerance = 1e-5;
+};
+
+std::vector<at::Tensor> run_reflection_epc_paths(SceneCache& scene, const at::Tensor& source,
+                                                 const at::Tensor& receiver, const at::Tensor* active_ptr,
+                                                 int64_t max_bounces, const EpcPathsTrace& trace) {
     at::Tensor active = optional_active_from_tensor(active_ptr, source.size(0), "active");
     require_scene_device(scene, source, "source");
     require_scene_device(scene, receiver, "receiver");
     require_scene_device(scene, active_ptr, "active");
-    require_scene_device(scene, expected_prim_ids, "expected_prim_ids");
-    require_scene_device(scene, direct_plane_points, "direct_plane_points");
-    require_scene_device(scene, direct_plane_normals, "direct_plane_normals");
-    require_scene_device(scene, surface_group_id, "surface_group_id");
-    require_scene_device(scene, surface_group_size, "surface_group_size");
-    require_scene_device(scene, surface_group_members, "surface_group_members");
+    require_scene_device(scene, trace.expected_prim_ids, "expected_prim_ids");
+    require_scene_device(scene, trace.direct_plane_points, "direct_plane_points");
+    require_scene_device(scene, trace.direct_plane_normals, "direct_plane_normals");
+    require_scene_device(scene, trace.surface_group_id, "surface_group_id");
+    require_scene_device(scene, trace.surface_group_size, "surface_group_size");
+    require_scene_device(scene, trace.surface_group_members, "surface_group_members");
+    require_scene_device(scene, trace.ray_d, "ray_d");
+    require_scene_device(scene, trace.ray_tmax, "ray_tmax");
     c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     const int64_t ray_count = source.size(0);
     const int64_t slot_count = ray_count * max_bounces;
@@ -1067,10 +1162,16 @@ std::vector<at::Tensor> reflection_epc_paths_forward_native_impl(
         return {valid, path_length, resolved_prim_ids, surface_group_ids, hit_positions, normals};
     }
 
-    at::Tensor direct_plane_points_flat = direct_plane_points.reshape({slot_count, 3}).contiguous();
-    at::Tensor direct_plane_normals_flat = direct_plane_normals.reshape({slot_count, 3}).contiguous();
-    Vec3SoA plane_points = split_vec3(direct_plane_points_flat);
-    Vec3SoA plane_normals = split_vec3(direct_plane_normals_flat);
+    const bool direct_planes = trace.direct_plane_points != nullptr;
+    Vec3SoA plane_points;
+    Vec3SoA plane_normals;
+    if (direct_planes) {
+        plane_points = split_vec3(trace.direct_plane_points->reshape({slot_count, 3}).contiguous());
+        plane_normals = split_vec3(trace.direct_plane_normals->reshape({slot_count, 3}).contiguous());
+    }
+    Vec3SoA caller_ray_d;
+    if (trace.ray_d != nullptr)
+        caller_ray_d = split_vec3(*trace.ray_d);
     TriangleSoA tri = make_scene_triangle_soa(scene);
     at::Tensor resolved_flat = resolved_prim_ids.reshape({slot_count}).contiguous();
     at::Tensor group_flat = surface_group_ids.reshape({slot_count}).contiguous();
@@ -1125,16 +1226,20 @@ std::vector<at::Tensor> reflection_epc_paths_forward_native_impl(
     epc_params.face_offsets = tri.face_offsets.data_ptr<int>();
     epc_params.n_meshes = checked_i32(scene.meshes.size(), "n_meshes");
     epc_params.n_triangles = tri.n_triangles;
-    epc_params.expected_prim_ids = expected_prim_ids.data_ptr<int>();
-    epc_params.expected_prim_count = static_cast<int32_t>(slot_count);
-    epc_params.surface_group_id = surface_group_id.data_ptr<int>();
-    epc_params.surface_group_id_count = static_cast<int32_t>(surface_group_id.size(0));
-    epc_params.surface_group_size = surface_group_size.data_ptr<int>();
-    epc_params.surface_group_count = static_cast<int32_t>(surface_group_size.size(0));
-    epc_params.surface_group_members = surface_group_members.data_ptr<int>();
-    epc_params.surface_max_group_size =
-        static_cast<int32_t>(surface_group_members.numel() / surface_group_size.size(0));
-    epc_params.visibility_ignore_mode = static_cast<int32_t>(visibility_ignore_mode);
+    if (trace.expected_prim_ids != nullptr) {
+        epc_params.expected_prim_ids = trace.expected_prim_ids->data_ptr<int>();
+        epc_params.expected_prim_count = static_cast<int32_t>(slot_count);
+    }
+    if (trace.surface_group_id != nullptr) {
+        epc_params.surface_group_id = trace.surface_group_id->data_ptr<int>();
+        epc_params.surface_group_id_count = static_cast<int32_t>(trace.surface_group_id->size(0));
+        epc_params.surface_group_size = trace.surface_group_size->data_ptr<int>();
+        epc_params.surface_group_count = static_cast<int32_t>(trace.surface_group_size->size(0));
+        epc_params.surface_group_members = trace.surface_group_members->data_ptr<int>();
+        epc_params.surface_max_group_size =
+            static_cast<int32_t>(trace.surface_group_members->numel() / trace.surface_group_size->size(0));
+    }
+    epc_params.visibility_ignore_mode = static_cast<int32_t>(trace.visibility_ignore_mode);
     epc_params.ray_ox = source_x.data_ptr<float>();
     epc_params.ray_oy = source_y.data_ptr<float>();
     epc_params.ray_oz = source_z.data_ptr<float>();
@@ -1142,12 +1247,21 @@ std::vector<at::Tensor> reflection_epc_paths_forward_native_impl(
     epc_params.ray_dy = ray_dy.data_ptr<float>();
     epc_params.ray_dz = ray_dz.data_ptr<float>();
     epc_params.ray_tmax = ray_tmax.data_ptr<float>();
-    epc_params.direct_plane_point_x = plane_points.x.data_ptr<float>();
-    epc_params.direct_plane_point_y = plane_points.y.data_ptr<float>();
-    epc_params.direct_plane_point_z = plane_points.z.data_ptr<float>();
-    epc_params.direct_plane_normal_x = plane_normals.x.data_ptr<float>();
-    epc_params.direct_plane_normal_y = plane_normals.y.data_ptr<float>();
-    epc_params.direct_plane_normal_z = plane_normals.z.data_ptr<float>();
+    if (trace.ray_d != nullptr) {
+        // A caller ray replaces the source-to-receiver ray the setup kernel derived; a null bound is unbounded.
+        epc_params.ray_dx = caller_ray_d.x.data_ptr<float>();
+        epc_params.ray_dy = caller_ray_d.y.data_ptr<float>();
+        epc_params.ray_dz = caller_ray_d.z.data_ptr<float>();
+        epc_params.ray_tmax = trace.ray_tmax != nullptr ? trace.ray_tmax->data_ptr<float>() : nullptr;
+    }
+    if (direct_planes) {
+        epc_params.direct_plane_point_x = plane_points.x.data_ptr<float>();
+        epc_params.direct_plane_point_y = plane_points.y.data_ptr<float>();
+        epc_params.direct_plane_point_z = plane_points.z.data_ptr<float>();
+        epc_params.direct_plane_normal_x = plane_normals.x.data_ptr<float>();
+        epc_params.direct_plane_normal_y = plane_normals.y.data_ptr<float>();
+        epc_params.direct_plane_normal_z = plane_normals.z.data_ptr<float>();
+    }
     epc_params.rx_x = receiver_x.data_ptr<float>();
     epc_params.rx_y = receiver_y.data_ptr<float>();
     epc_params.rx_z = receiver_z.data_ptr<float>();
@@ -1155,7 +1269,7 @@ std::vector<at::Tensor> reflection_epc_paths_forward_native_impl(
     epc_params.active_mask = optional_mask_ptr(active);
     epc_params.n_rays = static_cast<int32_t>(ray_count);
     epc_params.max_bounces = static_cast<int32_t>(max_bounces);
-    epc_params.plane_tolerance = static_cast<float>(plane_tolerance);
+    epc_params.plane_tolerance = static_cast<float>(trace.plane_tolerance);
     epc_params.out_valid = mutable_mask_ptr(valid);
     epc_params.out_bounce_count = bounce_count.data_ptr<int>();
     epc_params.out_path_length = path_length.data_ptr<float>();
@@ -1193,6 +1307,119 @@ std::vector<at::Tensor> reflection_epc_paths_forward_native_impl(
     };
 }
 
+void require_epc_surface_groups(const at::Tensor& surface_group_id, const at::Tensor& surface_group_size,
+                                const at::Tensor& surface_group_members) {
+    require_flat_i32(surface_group_id, "surface_group_id");
+    require_flat_i32(surface_group_size, "surface_group_size");
+    require_flat_i32(surface_group_members, "surface_group_members");
+    if (surface_group_size.size(0) <= 0)
+        throw std::runtime_error("surface_group_size must contain at least one group.");
+    if (surface_group_members.numel() % surface_group_size.size(0) != 0)
+        throw std::runtime_error("surface_group_members must be padded to group_count * max_group_size.");
+}
+
+void require_epc_expected_prim_ids(const at::Tensor& expected_prim_ids, int64_t ray_count, int64_t max_bounces) {
+    require_cuda(expected_prim_ids, "expected_prim_ids");
+    require_contiguous(expected_prim_ids, "expected_prim_ids");
+    require_dtype(expected_prim_ids, at::kInt, "expected_prim_ids");
+    require_rank(expected_prim_ids, 2, "expected_prim_ids");
+    if (expected_prim_ids.size(0) != ray_count || expected_prim_ids.size(1) != max_bounces)
+        throw std::runtime_error("expected_prim_ids must have shape (N, max_bounces).");
+}
+
+} // namespace
+
+std::vector<at::Tensor> reflection_epc_paths_forward_native_impl(
+    SceneCache& scene, const at::Tensor& source, const at::Tensor& receiver, const at::Tensor* active_ptr,
+    const at::Tensor& expected_prim_ids, const at::Tensor& direct_plane_points, const at::Tensor& direct_plane_normals,
+    const at::Tensor& surface_group_id, const at::Tensor& surface_group_size, const at::Tensor& surface_group_members,
+    int64_t max_bounces, int64_t visibility_ignore_mode, double plane_tolerance) {
+    require_vec3f(source, "source");
+    require_vec3f(receiver, "receiver");
+    require_same_batch(source, receiver, "reflection_epc_paths");
+    require_cuda(direct_plane_points, "direct_plane_points");
+    require_contiguous(direct_plane_points, "direct_plane_points");
+    require_dtype(direct_plane_points, at::kFloat, "direct_plane_points");
+    require_rank(direct_plane_points, 3, "direct_plane_points");
+    require_last_dim(direct_plane_points, 3, "direct_plane_points");
+    require_cuda(direct_plane_normals, "direct_plane_normals");
+    require_contiguous(direct_plane_normals, "direct_plane_normals");
+    require_dtype(direct_plane_normals, at::kFloat, "direct_plane_normals");
+    require_rank(direct_plane_normals, 3, "direct_plane_normals");
+    require_last_dim(direct_plane_normals, 3, "direct_plane_normals");
+    if (max_bounces < 1)
+        throw std::runtime_error("max_bounces must be at least 1.");
+    if (max_bounces > ReflEpcMaxBounces)
+        throw std::runtime_error("max_bounces exceeds the native EPC limit (ReflEpcMaxBounces).");
+    require_bounce_slots_fit_i32(source.size(0), max_bounces, 3, "trace_refl_epc");
+    if (!(plane_tolerance >= 0.0) || !std::isfinite(plane_tolerance))
+        throw std::runtime_error("plane_tolerance must be finite and non-negative.");
+    require_epc_expected_prim_ids(expected_prim_ids, source.size(0), max_bounces);
+    if (direct_plane_points.size(0) != source.size(0) || direct_plane_points.size(1) != max_bounces)
+        throw std::runtime_error("direct_plane_points must have shape (N, max_bounces, 3).");
+    if (!direct_plane_normals.sizes().equals(direct_plane_points.sizes()))
+        throw std::runtime_error("direct_plane_normals must match direct_plane_points.");
+    require_epc_surface_groups(surface_group_id, surface_group_size, surface_group_members);
+
+    EpcPathsTrace trace;
+    trace.expected_prim_ids = &expected_prim_ids;
+    trace.direct_plane_points = &direct_plane_points;
+    trace.direct_plane_normals = &direct_plane_normals;
+    trace.surface_group_id = &surface_group_id;
+    trace.surface_group_size = &surface_group_size;
+    trace.surface_group_members = &surface_group_members;
+    trace.visibility_ignore_mode = visibility_ignore_mode;
+    trace.plane_tolerance = plane_tolerance;
+    return run_reflection_epc_paths(scene, source, receiver, active_ptr, max_bounces, trace);
+}
+
+std::vector<at::Tensor> reflection_epc_ray_paths_forward_native_impl(
+    SceneCache& scene, const at::Tensor& ray_o, const at::Tensor& ray_d, const at::Tensor* ray_tmax,
+    const at::Tensor& receiver, const at::Tensor* active_ptr, const at::Tensor* expected_prim_ids,
+    const at::Tensor* surface_group_id, const at::Tensor* surface_group_size, const at::Tensor* surface_group_members,
+    int64_t max_bounces, int64_t visibility_ignore_mode, double plane_tolerance) {
+    require_vec3f(ray_o, "ray_o");
+    require_vec3f(ray_d, "ray_d");
+    require_vec3f(receiver, "receiver");
+    require_same_batch(ray_o, ray_d, "reflection_epc_ray_paths");
+    require_same_batch(ray_o, receiver, "reflection_epc_ray_paths");
+    if (ray_tmax != nullptr) {
+        require_scalar_f(*ray_tmax, "ray_tmax");
+        if (ray_tmax->size(0) != ray_o.size(0))
+            throw std::runtime_error("ray_tmax must be empty or match the ray batch size.");
+    }
+    if (max_bounces < 1)
+        throw std::runtime_error("max_bounces must be at least 1.");
+    if (max_bounces > ReflEpcMaxBounces)
+        throw std::runtime_error("max_bounces exceeds the native EPC limit (ReflEpcMaxBounces).");
+    require_bounce_slots_fit_i32(ray_o.size(0), max_bounces, 3, "trace_refl_epc");
+    if (!(plane_tolerance >= 0.0) || !std::isfinite(plane_tolerance))
+        throw std::runtime_error("plane_tolerance must be finite and non-negative.");
+    if (expected_prim_ids != nullptr)
+        require_epc_expected_prim_ids(*expected_prim_ids, ray_o.size(0), max_bounces);
+    const bool any_group_table =
+        surface_group_id != nullptr || surface_group_size != nullptr || surface_group_members != nullptr;
+    if (any_group_table) {
+        if (surface_group_id == nullptr || surface_group_size == nullptr || surface_group_members == nullptr)
+            throw std::runtime_error(
+                "surface_group_id, surface_group_size, and surface_group_members must be given together.");
+        require_epc_surface_groups(*surface_group_id, *surface_group_size, *surface_group_members);
+    }
+    if (visibility_ignore_mode != ReflEpcVisibilityIgnorePrimitive && !any_group_table)
+        throw std::runtime_error("visibility_ignore_mode='surface_group' requires surface group tables.");
+
+    EpcPathsTrace trace;
+    trace.expected_prim_ids = expected_prim_ids;
+    trace.surface_group_id = surface_group_id;
+    trace.surface_group_size = surface_group_size;
+    trace.surface_group_members = surface_group_members;
+    trace.ray_d = &ray_d;
+    trace.ray_tmax = ray_tmax;
+    trace.visibility_ignore_mode = visibility_ignore_mode;
+    trace.plane_tolerance = plane_tolerance;
+    return run_reflection_epc_paths(scene, ray_o, receiver, active_ptr, max_bounces, trace);
+}
+
 py::tuple reflection_epc_paths_forward_op(int64_t scene_handle, at::Tensor source, at::Tensor receiver,
                                           py::object active_obj, at::Tensor expected_prim_ids,
                                           at::Tensor direct_plane_points, at::Tensor direct_plane_normals,
@@ -1206,6 +1433,29 @@ py::tuple reflection_epc_paths_forward_op(int64_t scene_handle, at::Tensor sourc
                                                  direct_plane_points, direct_plane_normals, surface_group_id,
                                                  surface_group_size, surface_group_members, max_bounces,
                                                  visibility_ignore_mode, plane_tolerance));
+}
+
+py::tuple reflection_epc_ray_paths_forward_op(int64_t scene_handle, at::Tensor ray_o, at::Tensor ray_d,
+                                              py::object ray_tmax_obj, at::Tensor receiver, py::object active_obj,
+                                              py::object expected_prim_ids_obj, py::object surface_group_id_obj,
+                                              py::object surface_group_size_obj, py::object surface_group_members_obj,
+                                              int64_t max_bounces, int64_t visibility_ignore_mode,
+                                              double plane_tolerance) {
+    at::Tensor ray_tmax_storage;
+    at::Tensor active_storage;
+    at::Tensor expected_storage;
+    at::Tensor group_id_storage;
+    at::Tensor group_size_storage;
+    at::Tensor group_members_storage;
+    return tensor_vector_to_tuple(
+        reflection_epc_ray_paths_forward_native_impl(*get_scene(scene_handle), ray_o, ray_d,
+                                                     optional_tensor(ray_tmax_obj, ray_tmax_storage), receiver,
+                                                     optional_tensor(active_obj, active_storage),
+                                                     optional_tensor(expected_prim_ids_obj, expected_storage),
+                                                     optional_tensor(surface_group_id_obj, group_id_storage),
+                                                     optional_tensor(surface_group_size_obj, group_size_storage),
+                                                     optional_tensor(surface_group_members_obj, group_members_storage),
+                                                     max_bounces, visibility_ignore_mode, plane_tolerance));
 }
 
 py::tuple trace_refl_epc_field_backward_op(int64_t scene_handle, at::Tensor source, at::Tensor receiver,

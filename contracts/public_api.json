@@ -176,6 +176,7 @@
               "geometry": {"vjp": "supported", "jvp": "supported"},
               "source": {"vjp": "supported", "jvp": "supported"},
               "receiver": {"vjp": "supported", "jvp": "supported"},
+              "ray": {"vjp": "unsupported", "jvp": "unsupported"},
               "material": {"vjp": "supported", "jvp": "supported"}
             }
           }
@@ -370,9 +371,10 @@
               "geometry": {"vjp": "unsupported", "jvp": "unsupported"},
               "source": {"vjp": "unsupported", "jvp": "unsupported"},
               "receiver": {"vjp": "unsupported", "jvp": "unsupported"},
-              "material": {"vjp": "not_applicable", "jvp": "not_applicable"}
+              "ray": {"vjp": "unsupported", "jvp": "unsupported"},
+              "material": {"vjp": "unsupported", "jvp": "unsupported"}
             },
-            "note": "The public Torch EPC-field path is forward-only because its native derivatives do not differentiate the physical Fresnel and polarization forward computation."
+            "note": "The public Torch EPC-field path is forward-only because its native derivatives do not differentiate the physical Fresnel and polarization forward computation; ReflEpcFieldOptions material and wavelength inputs are forward-only too."
           }
         },
         "reflection_accumulation": {

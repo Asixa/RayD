@@ -10,6 +10,7 @@ import torch
 
 from . import runtime as _runtime
 from .multipath import _dfr_input_tensors, _lazy_geometry_guard, _reject_forward_only_ad, _require_native_dispatcher
+from .multipath import epc_field_option_tensors as _epc_field_option_tensors
 from .multipath import accum_refl_native as _accum_refl
 from .multipath import accum_dfr_chain_native as _accum_dfr_chain
 from .multipath import accum_dfr_coherent_direct_native as _accum_dfr_coherent_direct
@@ -36,6 +37,7 @@ from .geometry import (
     Intersection,
     Ray,
     RayFlags,
+    ReflEpcFieldOptions,
     ReflEpcOptions,
     ReflMaterial,
     TraceBackend,
@@ -609,35 +611,108 @@ class Scene:
             scene, mesh_vertices[0], ray.o, ray.d, ray.tmax, active, int(max_bounces), mesh_vertices=mesh_vertices
         )
 
+    @overload
     def trace_refl_epc_field(
-        self, source: torch.Tensor, receiver: torch.Tensor, max_bounces: int, active: torch.Tensor | None = None
+        self,
+        source: torch.Tensor,
+        receiver: torch.Tensor,
+        max_bounces: int,
+        options: ReflEpcFieldOptions | None = None,
+        active: torch.Tensor | None = None,
+    ) -> ReflEpcField | None: ...
+
+    @overload
+    def trace_refl_epc_field(
+        self,
+        source: Ray,
+        receiver: torch.Tensor,
+        max_bounces: int,
+        options: ReflEpcFieldOptions | None = None,
+        active: torch.Tensor | None = None,
+    ) -> ReflEpcField | None: ...
+
+    def trace_refl_epc_field(
+        self,
+        source: torch.Tensor | Ray,
+        receiver: torch.Tensor,
+        max_bounces: int,
+        options: ReflEpcFieldOptions | None = None,
+        active: torch.Tensor | None = None,
     ) -> ReflEpcField | None:
+        """Equivalent-path-corrected reflected field toward each receiver.
+
+        ``source`` is a ``(N, 3)`` source-position tensor, traced toward its
+        receiver and no further, or a ``Ray``, traced along its direction up to
+        its ``tmax`` as in Dr.Jit. ``options`` sets the per-slot material, the
+        source polarization, ``omega``, and ``wavelength``; ``None`` keeps the
+        fixed material of earlier releases. The call is forward-only.
+        """
         self._require_synced("trace_refl_epc_field")
+        if options is not None and not isinstance(options, ReflEpcFieldOptions):
+            raise TypeError("Scene.trace_refl_epc_field() expects rayd.torch.ReflEpcFieldOptions or None as options.")
         mesh_vertices = self._mesh_vertex_tensors()
-        if _has_reverse_or_forward_ad(*mesh_vertices, source, receiver):
+        inputs = (source.o, source.d, source.tmax) if isinstance(source, Ray) else (source,)
+        inputs += tuple(value for value in _epc_field_option_tensors(options) if value is not None)
+        if _has_reverse_or_forward_ad(*mesh_vertices, *inputs, receiver):
             raise RuntimeError(
                 "Scene.trace_refl_epc_field() is forward-only and does not support reverse-mode AD or JVP."
             )
         if self._multi is not None:
-            return self._multi.trace_refl_epc_field(source, receiver, int(max_bounces), active)
+            return self._multi.trace_refl_epc_field(source, receiver, int(max_bounces), options, active)
         scene = self._require_native_scene()
         return _trace_refl_epc_field(
-            scene, mesh_vertices[0], source, receiver, active, int(max_bounces), mesh_vertices=mesh_vertices
+            scene,
+            mesh_vertices[0],
+            source,
+            receiver,
+            active,
+            int(max_bounces),
+            mesh_vertices=mesh_vertices,
+            options=options,
         )
 
+    @overload
     def trace_refl_epc(
         self,
         source: torch.Tensor,
         receiver: torch.Tensor,
         max_bounces: int,
-        options: ReflEpcOptions,
+        options: ReflEpcOptions | None = None,
+        active: torch.Tensor | None = None,
+    ) -> ReflEpc: ...
+
+    @overload
+    def trace_refl_epc(
+        self,
+        source: Ray,
+        receiver: torch.Tensor,
+        max_bounces: int,
+        options: ReflEpcOptions | None = None,
+        active: torch.Tensor | None = None,
+    ) -> ReflEpc: ...
+
+    def trace_refl_epc(
+        self,
+        source: torch.Tensor | Ray,
+        receiver: torch.Tensor,
+        max_bounces: int,
+        options: ReflEpcOptions | None = None,
         active: torch.Tensor | None = None,
     ) -> ReflEpc:
+        """Equivalent-path-corrected reflection paths toward each receiver.
+
+        With a ``(N, 3)`` source-position tensor the path reflects the source
+        across the planes in ``options``, which then needs every plane and
+        surface-group table. With a ``Ray`` the path follows the ray, as in
+        Dr.Jit, and ``options`` may be ``None``. The call is forward-only.
+        """
         self._require_synced("trace_refl_epc")
         if self._multi is not None:
             self._multi.unsupported("trace_refl_epc")
+        if options is None:
+            options = ReflEpcOptions()
         if not isinstance(options, ReflEpcOptions):
-            raise TypeError("Scene.trace_refl_epc() requires rayd.torch.ReflEpcOptions.")
+            raise TypeError("Scene.trace_refl_epc() expects rayd.torch.ReflEpcOptions or None as options.")
         scene = self._require_native_scene()
         mesh_vertices = self._mesh_vertex_tensors()
         if _has_reverse_or_forward_ad(*mesh_vertices):

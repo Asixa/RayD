@@ -163,9 +163,12 @@ py::tuple trace_reflections_backward_optional_op(int64_t, at::Tensor, at::Tensor
                                                  py::object);
 py::tuple trace_reflections_jvp_optional_op(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor,
                                             at::Tensor, at::Tensor, py::object, py::object, py::object, at::Tensor);
-py::tuple trace_refl_epc_field_forward_op(int64_t, at::Tensor, at::Tensor, py::object, int64_t);
+py::tuple trace_refl_epc_field_forward_op(int64_t, at::Tensor, at::Tensor, py::object, int64_t, py::object, py::object,
+                                          py::object, py::object, py::object, py::object, py::object, double, double);
 py::tuple reflection_epc_paths_forward_op(int64_t, at::Tensor, at::Tensor, py::object, at::Tensor, at::Tensor,
                                           at::Tensor, at::Tensor, at::Tensor, at::Tensor, int64_t, int64_t, double);
+py::tuple reflection_epc_ray_paths_forward_op(int64_t, at::Tensor, at::Tensor, py::object, at::Tensor, py::object,
+                                              py::object, py::object, py::object, py::object, int64_t, int64_t, double);
 py::tuple trace_refl_epc_field_backward_op(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor,
                                            at::Tensor, py::object, py::object, py::object, bool, bool, bool);
 py::tuple trace_refl_epc_field_jvp_op(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor,
@@ -513,10 +516,18 @@ OptionalTensorList trace_reflections_jvp_optional_dispatch(ScenePtr scene, at::T
 }
 
 OptionalTensorList trace_refl_epc_field_forward_dispatch(ScenePtr scene, at::Tensor source, at::Tensor receiver,
-                                                         OptionalTensor active, int64_t max_bounces) {
+                                                         OptionalTensor active, int64_t max_bounces,
+                                                         OptionalTensor ray_d, OptionalTensor ray_tmax,
+                                                         OptionalTensor slot_eta_r, OptionalTensor slot_mu_r,
+                                                         OptionalTensor slot_sigma, OptionalTensor slot_gain,
+                                                         OptionalTensor tx_polarization, double omega,
+                                                         double wavelength) {
     py::gil_scoped_acquire gil;
     return tuple_to_optional_tensor_list(
-        trace_refl_epc_field_forward_op(handle(scene), source, receiver, to_py_optional(active), max_bounces));
+        trace_refl_epc_field_forward_op(handle(scene), source, receiver, to_py_optional(active), max_bounces,
+                                        to_py_optional(ray_d), to_py_optional(ray_tmax), to_py_optional(slot_eta_r),
+                                        to_py_optional(slot_mu_r), to_py_optional(slot_sigma),
+                                        to_py_optional(slot_gain), to_py_optional(tx_polarization), omega, wavelength));
 }
 
 OptionalTensorList reflection_epc_paths_forward_dispatch(ScenePtr scene, at::Tensor source, at::Tensor receiver,
@@ -531,6 +542,22 @@ OptionalTensorList reflection_epc_paths_forward_dispatch(ScenePtr scene, at::Ten
         reflection_epc_paths_forward_op(handle(scene), source, receiver, to_py_optional(active), expected_prim_ids,
                                         direct_plane_points, direct_plane_normals, surface_group_id, surface_group_size,
                                         surface_group_members, max_bounces, visibility_ignore_mode, plane_tolerance));
+}
+
+OptionalTensorList reflection_epc_ray_paths_forward_dispatch(ScenePtr scene, at::Tensor ray_o, at::Tensor ray_d,
+                                                             OptionalTensor ray_tmax, at::Tensor receiver,
+                                                             OptionalTensor active, OptionalTensor expected_prim_ids,
+                                                             OptionalTensor surface_group_id,
+                                                             OptionalTensor surface_group_size,
+                                                             OptionalTensor surface_group_members, int64_t max_bounces,
+                                                             int64_t visibility_ignore_mode, double plane_tolerance) {
+    py::gil_scoped_acquire gil;
+    return tuple_to_optional_tensor_list(
+        reflection_epc_ray_paths_forward_op(handle(scene), ray_o, ray_d, to_py_optional(ray_tmax), receiver,
+                                            to_py_optional(active), to_py_optional(expected_prim_ids),
+                                            to_py_optional(surface_group_id), to_py_optional(surface_group_size),
+                                            to_py_optional(surface_group_members), max_bounces, visibility_ignore_mode,
+                                            plane_tolerance));
 }
 
 OptionalTensorList trace_refl_epc_field_backward_dispatch(
@@ -921,12 +948,18 @@ TORCH_LIBRARY_FRAGMENT(rayd_torch, m) {
           "tape_hit_points, Tensor tape_normals, Tensor? tangent_vertices, Tensor? tangent_ray_o, Tensor? "
           "tangent_ray_d, Tensor image_sources) -> Tensor?[]");
     m.def("trace_refl_epc_field_forward(" RAYD_TORCH_SCHEMA_SCENE
-          " scene, Tensor source, Tensor receiver, Tensor? active, int max_bounces) -> Tensor?[]");
+          " scene, Tensor source, Tensor receiver, Tensor? active, int max_bounces, Tensor? ray_d, Tensor? ray_tmax, "
+          "Tensor? slot_eta_r, Tensor? slot_mu_r, Tensor? slot_sigma, Tensor? slot_gain, Tensor? tx_polarization, "
+          "float omega, float wavelength) -> Tensor?[]");
     m.def("reflection_epc_paths_forward(" RAYD_TORCH_SCHEMA_SCENE
           " scene, Tensor source, Tensor receiver, Tensor? active, Tensor expected_prim_ids, Tensor "
           "direct_plane_points, Tensor direct_plane_normals, Tensor surface_group_id, Tensor surface_group_size, "
           "Tensor surface_group_members, int max_bounces, int visibility_ignore_mode=1, float plane_tolerance=1e-5) -> "
           "Tensor?[]");
+    m.def("reflection_epc_ray_paths_forward(" RAYD_TORCH_SCHEMA_SCENE
+          " scene, Tensor ray_o, Tensor ray_d, Tensor? ray_tmax, Tensor receiver, Tensor? active, Tensor? "
+          "expected_prim_ids, Tensor? surface_group_id, Tensor? surface_group_size, Tensor? surface_group_members, "
+          "int max_bounces, int visibility_ignore_mode, float plane_tolerance) -> Tensor?[]");
     m.def("trace_refl_epc_field_backward(" RAYD_TORCH_SCHEMA_SCENE
           " scene, Tensor source, Tensor receiver, Tensor active, Tensor tape_prim_id, Tensor tape_barycentric, Tensor "
           "tape_t, Tensor? grad_field_real, Tensor? grad_field_imag, Tensor? grad_path_length, bool "
@@ -1076,6 +1109,7 @@ TORCH_LIBRARY_IMPL(rayd_torch, CUDA, m) {
     m.impl("trace_reflections_jvp_optional", TORCH_FN(trace_reflections_jvp_optional_dispatch));
     m.impl("trace_refl_epc_field_forward", TORCH_FN(trace_refl_epc_field_forward_dispatch));
     m.impl("reflection_epc_paths_forward", TORCH_FN(reflection_epc_paths_forward_dispatch));
+    m.impl("reflection_epc_ray_paths_forward", TORCH_FN(reflection_epc_ray_paths_forward_dispatch));
     m.impl("trace_refl_epc_field_backward", TORCH_FN(trace_refl_epc_field_backward_dispatch));
     m.impl("trace_refl_epc_field_jvp", TORCH_FN(trace_refl_epc_field_jvp_dispatch));
     m.impl("reflection_dedup_forward", TORCH_FN(reflection_dedup_forward_dispatch));

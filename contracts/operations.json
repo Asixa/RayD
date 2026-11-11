@@ -176,13 +176,17 @@
             "drjit": {"vjp": "supported", "jvp": "supported"},
             "torch": {"vjp": "unsupported", "jvp": "unsupported"}
           },
+          "ray": {
+            "drjit": {"vjp": "unsupported", "jvp": "unsupported"},
+            "torch": {"vjp": "unsupported", "jvp": "unsupported"}
+          },
           "material": {
             "drjit": {"vjp": "supported", "jvp": "supported"},
-            "torch": {"vjp": "not_applicable", "jvp": "not_applicable"}
+            "torch": {"vjp": "unsupported", "jvp": "unsupported"}
           }
         },
         "backend_notes": {
-          "torch": "The public Torch EPC-field path is forward-only because its native derivatives do not differentiate the physical Fresnel and polarization forward computation."
+          "torch": "The public Torch EPC-field path is forward-only because its native derivatives do not differentiate the physical Fresnel and polarization forward computation; ReflEpcFieldOptions material and wavelength inputs are forward-only too."
         }
       }
     },

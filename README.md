@@ -182,8 +182,9 @@ transform, instance id, and scene-global primitive range over a shared OptiX
 GAS. This first slice retains per-instance world-space geometry/edge caches;
 the CUDA trace fallback refreshes those caches instead of an IAS, and Torch
 rejects every `Scene(devices=...)` orchestrator, including one-device chunking.
-Torch wraps its existing
-`torch.ops.rayd_torch.reflection_epc_paths_forward` and
+Torch wraps its
+`torch.ops.rayd_torch.reflection_epc_paths_forward` (source positions),
+`reflection_epc_ray_paths_forward` (a `Ray`), and
 `reflection_accumulation_forward` dispatcher operations with backend-native
 options and result records.
 

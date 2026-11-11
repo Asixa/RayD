@@ -99,16 +99,27 @@ record exchange format.
 ## Multipath
 
 - `Scene.trace_reflections(ray, max_bounces, active=None)` returns `ReflectionChain`; the forward path uses a RayD-source-ported single OptiX launch with the bounce loop inside raygen.
-- `Scene.trace_refl_epc(source, receiver, max_bounces, options, active=None)` returns
-  forward-only `ReflEpc` path geometry configured by `ReflEpcOptions`.
-- `Scene.trace_refl_epc_field(source, receiver, max_bounces, active=None)` returns
-  `ReflEpcField`; the forward path uses RayD-source-ported reflection EPC plus
-  EPC field kernels. Its simplified default material is fixed to `eta_r=4`,
-  `mu_r=1`, `sigma=0`, and `gain=1`, with an x-polarized source, so a valid
-  reflected path produces a non-zero field without a second material API.
-  This Torch method is forward-only and rejects reverse-mode or forward-mode AD
-  inputs until its native derivatives cover the same Fresnel, polarization, and
-  multi-bounce computation as the primal.
+- `Scene.trace_refl_epc(source, receiver, max_bounces, options=None, active=None)` returns forward-only `ReflEpc`
+  path geometry configured by `ReflEpcOptions`. `source` is either a `(N, 3)` source-position tensor or a `Ray`,
+  dispatched on type:
+  - Source positions reflect each source across the planes in `options`, which must then carry
+    `expected_prim_ids`, `direct_plane_points`, `direct_plane_normals`, and the three surface-group tables.
+  - A `Ray` gives Dr.Jit's semantics: the trace follows the ray from its origin, `tmax` bounds the first segment, and
+    each hit must match the slot's `expected_prim_ids` entry when one is given (`-1` leaves a slot free). The direct
+    planes must stay `None`, the surface-group tables are optional, and `options=None` traces without constraints. A
+    row whose origin or direction is not finite, whose direction is zero, or whose finite `tmax` is not positive is
+    inactive, as in Dr.Jit.
+- `Scene.trace_refl_epc_field(source, receiver, max_bounces, options=None, active=None)` returns `ReflEpcField`,
+  whose `field_re`/`field_im` are the x component of the reflected field. The forward path uses RayD-source-ported
+  reflection EPC plus EPC field kernels. With source positions the path is traced from each source toward its
+  receiver and no further; with a `Ray` it is traced along the ray up to its `tmax`, as in Dr.Jit. `options` is an
+  `rt.ReflEpcFieldOptions(slot_eta_r=None, slot_mu_r=None, slot_sigma=None, slot_gain=None, tx_polarization=None,
+  omega=2*pi*299792458, wavelength=1.0)`. The per-slot material tensors have shape `(N, max_bounces)` and
+  `tx_polarization` has shape `(1, 3)` or `(N, 3)`. A tensor left at `None` keeps the fixed material of earlier
+  releases (`eta_r=4`, `mu_r=1`, `sigma=0`, `gain=1`, x-polarized source), so `options=None` returns bit-for-bit the
+  earlier result. This Torch method is forward-only: it rejects reverse-mode or forward-mode AD on the geometry, the
+  source or ray, the receiver, and every option tensor, because its native derivatives do not cover the Fresnel,
+  polarization, and multi-bounce computation of the primal.
 - `Scene.accum_refl(ray, tx_position, grid, material, max_bounces, options=None, active=None,
   tx_polarization=None)` returns forward-only `AccumResult`; `AccumGrid`, `ReflMaterial`, and `AccumOptions` mirror
   the native accumulation contract. `AccumOptions.accumulation_strategy` takes `rt.AccumStrategy`: `AUTO` (stage and
@@ -153,14 +164,27 @@ Torch kernels cannot honour:
   `include_los`. Dr.Jit-only: `k`, `cell_area`, `seed`, `rr_depth`, `rr_prob`, and `stop_threshold`.
 - `ReflEpcOptions`: `expected_prim_ids`, `surface_group_id`, `surface_group_size`, `surface_group_members`,
   `visibility_ignore_mode`, and `plane_tolerance` are shared. Torch-only: `direct_plane_points` and
-  `direct_plane_normals`, which Torch requires. Dr.Jit-only: `surface_max_group_size` and `final_ignore_group_ids`.
+  `direct_plane_normals`, which a source-position trace requires and a `Ray` trace rejects. Dr.Jit-only:
+  `surface_max_group_size` and `final_ignore_group_ids`.
+- `ReflEpcFieldOptions`: Torch has `slot_eta_r`, `slot_mu_r`, `slot_sigma`, `slot_gain`, `tx_polarization`, `omega`,
+  and `wavelength`, with Dr.Jit's names and default `omega` and `wavelength`; its slot tensors are `(N,
+  max_bounces)` where Dr.Jit takes flat `N * max_bounces` arrays. A material tensor left at `None` selects the earlier
+  fixed material, where Dr.Jit requires every slot array. The Torch record is not a `ReflEpcOptions` and omits:
+  - the `ReflEpcOptions` fields Dr.Jit inherits (`expected_prim_ids`, the surface-group tables,
+    `surface_max_group_size`, `visibility_ignore_mode`, `plane_tolerance`, `final_ignore_group_ids`): the Torch field
+    traces an unconstrained path; constrained paths belong to `trace_refl_epc`.
+  - `slot_plane_point` and `slot_plane_normal`: Dr.Jit's position overload reflects across these planes and its `Ray`
+    overload evaluates the field with these normals; the Torch field takes both the path and the normals from the
+    triangles it hits, in both overloads.
+  - `return_geom`, `return_endpoints`, `return_hit_points`, `return_normals`, `return_resolved_prim_ids`, and
+    `return_surface_group_ids`: `ReflEpcField` has no geometry or endpoint outputs to switch on.
 - Torch has no reflection export mode, so it has no `ReflectionExportMode` enum.
 
 ### Known naming mismatches
 
 These names still differ between the backends and are left for a later round:
 
-- Torch `ReflEpcOptions.direct_plane_points`/`direct_plane_normals` (per-path `[N, 3]` tensors that Torch requires)
+- Torch `ReflEpcOptions.direct_plane_points`/`direct_plane_normals` (per-path `[N, max_bounces, 3]` tensors)
   correspond to Dr.Jit `ReflEpcFieldOptions.slot_plane_point`/`slot_plane_normal`, which live on the field options
   record, not on `ReflEpcOptions`, and use a singular name. Renaming either side changes a native record field (the
   Torch tensors are `include/rayd/reflection.h` request fields).
@@ -195,11 +219,13 @@ multipath execution paths. Current completion risk is performance parity, not
 placeholder kernel coverage.
 
 The Torch EPC path wrapper intentionally reflects the fields available from its
-dispatcher operation: it accepts `source` and `receiver` tensors and returns
-`valid`, `path_length`, resolved IDs, surface-group IDs, hit points, and
-normals. Dr.Jit's same-named method accepts a `Ray` and exposes additional
-diagnostic fields with backend-native names. The two APIs share the operation
-vocabulary but are not record-shape aliases.
+dispatcher operations: it accepts source positions or a `Ray` plus `receiver`
+tensors and returns `valid`, `path_length`, resolved IDs, surface-group IDs, hit
+points, and normals. Dr.Jit's same-named method accepts only a `Ray` and exposes
+additional diagnostic fields with backend-native names. The two APIs share the
+operation vocabulary but are not record-shape aliases. The first parameter of
+both Torch EPC methods is named `source` whatever its type; Dr.Jit names it `ray`
+in its `Ray` overloads and `source` in its position overloads.
 
 ## Tensor ABI
 
