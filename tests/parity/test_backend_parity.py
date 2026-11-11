@@ -239,7 +239,7 @@ class EdgeQueryParityTests(_ParityBase):
                         top_t = scene_t.nearest_edges(bs.torch_rows(points), k, self.bool_t(active))
                         top_d = scene_d.nearest_edges(bs.drjit_vec3(self.mods, points), k, self.mods.cuda.Bool(active))
                         self.assertEqual((top_t.query_count, top_t.k), (int(top_d.query_count), int(top_d.k)))
-                        self.equal("nearest_edges", "is_valid", top_t.is_valid, top_d.is_valid)
+                        self.equal("nearest_edges", "valid", top_t.valid, top_d.valid)
                         self.close("nearest_edges", "distances", top_t.distances, top_d.distances)
                         wider = scene_t.nearest_edges(bs.torch_rows(points), k + 1, self.bool_t(active))
                         slots = _untied_slots(wider.distances, k)
@@ -249,7 +249,7 @@ class EdgeQueryParityTests(_ParityBase):
                         for name in ("global_edge_ids", "edge_ids", "shape_ids", "is_boundary"):
                             self.equal("nearest_edges", name, getattr(top_t, name), getattr(top_d, name), slots)
                         inactive = ~np.asarray(active)
-                        self.assertFalse(bs.host(top_t.is_valid).reshape(64, k)[inactive].any())
+                        self.assertFalse(bs.host(top_t.valid).reshape(64, k)[inactive].any())
 
     def test_edge_mask_filters_the_same_edges(self):
         for spec in (bs.closed_box(), bs.grid_sheet(), bs.non_manifold_fan()):
@@ -306,10 +306,7 @@ class VisibilityParityTests(_ParityBase):
 
                 visible_t = scene_t.visible(bs.torch_rows(start), bs.torch_rows(end_a), self.bool_t(active))
                 visible_d = scene_d.visible(
-                    bs.drjit_vec3(self.mods, start),
-                    bs.drjit_vec3(self.mods, end_a),
-                    self.mods.cuda.Int([]),
-                    self.mods.cuda.Bool(active),
+                    bs.drjit_vec3(self.mods, start), bs.drjit_vec3(self.mods, end_a), self.mods.cuda.Bool(active)
                 )
                 self.equal("visible", "visible", visible_t, visible_d.visible)
                 blocked = ~bs.host(visible_t) & np.asarray(active)
@@ -555,8 +552,8 @@ class StandaloneGeometryParityTests(_ParityBase):
         active = [index % 6 != 5 for index in range(128)]
         hit_t = grid_t.intersect(bs.torch_ray(self.rt, origins, directions), active=self.bool_t(active))
         hit_d = grid_d.intersect(bs.drjit_ray(self.mods, origins, directions), active=self.mods.cuda.Bool(active))
-        self.assertGreater(int(bs.host(hit_t.hit_mask).sum()), 16)
-        self.equal("sdf.intersect", "hit_mask", hit_t.hit_mask, hit_d.hit_mask)
+        self.assertGreater(int(bs.host(hit_t.valid).sum()), 16)
+        self.equal("sdf.intersect", "valid", hit_t.valid, hit_d.valid)
         self.equal("sdf.intersect", "steps", hit_t.steps, hit_d.steps)
         for name in ("t", "position", "normal"):
             self.close("sdf.intersect", name, getattr(hit_t, name), getattr(hit_d, name))
@@ -724,7 +721,7 @@ class KnownDivergenceTests(_ParityBase):
         scene_d = bs.drjit_scene(self.mods, spec)
         self.assertEqual(scene_t.edge_bvh_backend, "cuda")
         self.assertEqual(scene_d.edge_bvh_backend, "drjit")
-        self.assertEqual(scene_t.trace_backend, scene_d.trace_backend_name())
+        self.assertEqual(scene_t.trace_backend, scene_d.trace_backend)
 
     def test_edge_mask_commit_point_differs(self):
         # Torch applies set_edge_mask() immediately; Dr.Jit queues it and refuses queries until sync().

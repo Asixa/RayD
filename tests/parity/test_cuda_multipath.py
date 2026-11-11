@@ -56,10 +56,7 @@ def _accumulate(scene, states, grid, material, *, direct=256, suffix=0):
         states=states,
         grid=grid,
         material=material,
-        wavelength=1.0,
-        direct_samples=direct,
-        suffix_samples=suffix,
-        seed=17,
+        options=rt.DfrOptions(wavelength=1.0, direct_samples=direct, suffix_samples=suffix, seed=17),
     )
 
 

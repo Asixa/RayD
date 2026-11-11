@@ -20,6 +20,7 @@ PUBLIC_API_PATH = ROOT / "contracts" / "public_api.json"
 TORCH_PACKAGE = ROOT / "python" / "rayd" / "_impl"
 MULTI_PATH = TORCH_PACKAGE / "multi.py"
 SCENE_PATH = TORCH_PACKAGE / "scene.py"
+GEOMETRY_PATH = TORCH_PACKAGE / "geometry.py"
 AUTOGRAD_PATH = TORCH_PACKAGE / "multipath.py"
 LIBRARY_PATH = ROOT / "src" / "bindings" / "library.cpp"
 DIFFRACTION_OPS_PATH = ROOT / "src" / "diffraction" / "diffraction.cpp"
@@ -178,12 +179,14 @@ class Adr0038LaneWindowTests(unittest.TestCase):
 
     def test_the_declared_defaults_are_the_public_python_defaults(self) -> None:
         self.assertEqual(self.window["defaults"], {"lane_offset": 0, "lane_count": -1})
-        for path, function in (
-            (SCENE_PATH, "accum_dfr_direct"),
-            (SCENE_PATH, "accum_dfr"),
-            (AUTOGRAD_PATH, "accum_dfr_direct_native"),
-            (AUTOGRAD_PATH, "accum_dfr_chain_native"),
-        ):
+        # The public Scene methods take the lane window through their options
+        # records; the native autograd entry points still take it flat.
+        for name in ("DfrOptions", "DfrCoherentOptions"):
+            with self.subTest(options=name):
+                found = dataclass_defaults(GEOMETRY_PATH, name)
+                self.assertEqual(found["lane_offset"], self.window["defaults"]["lane_offset"])
+                self.assertEqual(found["lane_count"], self.window["defaults"]["lane_count"])
+        for path, function in ((AUTOGRAD_PATH, "accum_dfr_direct_native"), (AUTOGRAD_PATH, "accum_dfr_chain_native")):
             with self.subTest(function=f"{path.name}:{function}"):
                 found = defaults_of(path, function)
                 self.assertEqual(found["lane_offset"], self.window["defaults"]["lane_offset"])

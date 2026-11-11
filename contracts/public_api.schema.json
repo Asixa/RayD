@@ -10,7 +10,6 @@
     "derivative_statuses",
     "naming_conventions",
     "apis",
-    "aliases",
     "backends",
     "trace"
   ],
@@ -96,7 +95,6 @@
         "additionalProperties": false
       }
     },
-    "aliases": {"type": "object"},
     "backends": {
       "type": "object",
       "required": ["drjit", "torch"],

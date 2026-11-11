@@ -306,9 +306,9 @@ class Share2AdParityTests(unittest.TestCase):
         self.assertAlmostEqual(float(field_t.path_length[0]), expected_length, delta=_FORWARD_ATOL)
         self.assertAlmostEqual(float(field_d.path_length[0]), expected_length, delta=_FORWARD_ATOL)
         self.assertAlmostEqual(float(field_t.path_length[0]), float(field_d.path_length[0]), delta=_FORWARD_ATOL)
-        self.assertGreater(abs(complex(float(field_t.field_real[0]), float(field_t.field_imag[0]))), 1.0e-6)
-        self.assertAlmostEqual(float(field_t.field_real[0]), float(field_d.field_x_re[0]), delta=_FIELD_ABS)
-        self.assertAlmostEqual(float(field_t.field_imag[0]), float(field_d.field_x_im[0]), delta=_FIELD_ABS)
+        self.assertGreater(abs(complex(float(field_t.field_re[0]), float(field_t.field_im[0]))), 1.0e-6)
+        self.assertAlmostEqual(float(field_t.field_re[0]), float(field_d.field_x_re[0]), delta=_FIELD_ABS)
+        self.assertAlmostEqual(float(field_t.field_im[0]), float(field_d.field_x_im[0]), delta=_FIELD_ABS)
 
     def test_utd_direct_gain_forward_vjp_jvp(self):
         dr_backend, rt, cuda = _load_backends()
@@ -328,7 +328,10 @@ class Share2AdParityTests(unittest.TestCase):
                 valid=torch.tensor([True], device="cuda"),
             )
             return scene_t.accum_dfr_direct(
-                states=states_t, grid=grid_t, material=material, wavelength=0.125, seed=17, direct_samples=64
+                states=states_t,
+                grid=grid_t,
+                material=material,
+                options=rt.DfrOptions(wavelength=0.125, seed=17, direct_samples=64),
             ).power
 
         power_t = torch_power(gain_t)
@@ -368,9 +371,9 @@ class Share2AdParityTests(unittest.TestCase):
         options_d.max_order = 1
         options_d.direct_samples = 64
         options_d.keller_samples = 0
-        options_d.strategy_mask = dr_backend.RAYD_DFR_DIRECT
-        options_d.sample_sequence = dr_backend.RAYD_DFR_HASH
-        options_d.receiver_model = dr_backend.RAYD_DFR_MATCHED_ISO
+        options_d.strategy_mask = dr_backend.DfrStrategy.DIRECT
+        options_d.sample_sequence = dr_backend.DfrSampleSequence.HASH
+        options_d.receiver_model = dr_backend.DfrReceiverModel.MATCHED_ISO
 
         gain_d = ad.Float([1.2])
         dr.enable_grad(gain_d)

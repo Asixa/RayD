@@ -121,13 +121,13 @@ class Adr0037OperationContractTests(unittest.TestCase):
         policy = self.operation["numeric_policy"]
         self.assertEqual(policy["miss_sentinel"], self.operations["miss_sentinels"]["distance"])
         self.assertEqual(self.result["miss"]["t"], self.operations["miss_sentinels"]["distance"])
-        self.assertIs(self.result["miss"]["hit_mask"], False)
+        self.assertIs(self.result["miss"]["valid"], False)
         self.assertEqual(self.result["miss"]["position"], 0.0)
         self.assertEqual(self.result["miss"]["normal"], 0.0)
 
     def test_result_fields_match_both_public_result_types(self) -> None:
         source = read(TORCH_PACKAGE / "geometry.py")
-        start = source.index("class SdfIntersection:")
+        start = source.index("class SdfIntersection(")
         block = source[start : source.index("@dataclass", start)]
         fields = re.findall(r"^    ([a-z][a-z0-9_]*): torch\.Tensor$", block, re.M)
         self.assertEqual(fields, self.result["canonical_fields"])

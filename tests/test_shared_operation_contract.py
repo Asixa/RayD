@@ -66,7 +66,7 @@ class SharedOperationContractTests(unittest.TestCase):
     def test_forward_only_variants_are_not_reported_as_not_applicable(self):
         derivatives = CONTRACT["derivative_capabilities"]
         forward_only = {
-            ("reflection_accumulation", "accumulate_reflections", "torch"),
+            ("reflection_accumulation", "accum_refl", "torch"),
             ("diffraction_direct", "trace_dfr_paths", "torch"),
             ("diffraction_direct", "accum_dfr_coherent_direct", "drjit"),
             ("diffraction_direct", "accum_dfr_coherent_direct", "torch"),
@@ -112,13 +112,12 @@ class SharedOperationContractTests(unittest.TestCase):
         constants = CONTRACT["constants"]
         self.assertEqual(constants["invalid_signed_id"], -1)
         self.assertEqual(constants["invalid_unsigned_id"], 0xFFFFFFFF)
-        self.assertEqual(constants["ray_flags"], {"None": 0, "Geometric": 1, "ShadingN": 2, "UV": 4, "All": 7})
+        self.assertEqual(constants["ray_flags"], {"Empty": 0, "Geometric": 1, "ShadingN": 2, "UV": 4, "All": 7})
 
     def test_intersection_field_order_matches_torch_public_result(self):
         source = (ROOT / "python" / "rayd" / "_impl" / "geometry.py").read_text(encoding="utf-8")
-        block = source[
-            source.index("class Intersection:") : source.index("    def is_valid", source.index("class Intersection:"))
-        ]
+        start = source.index("class Intersection(")
+        block = source[start : source.index("    def is_valid", start)]
         fields = re.findall(r"^    ([a-z][a-z0-9_]*): torch\.Tensor$", block, re.MULTILINE)
         self.assertEqual(fields, CONTRACT["result_contracts"]["intersection"]["canonical_fields"])
 
