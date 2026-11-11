@@ -218,7 +218,11 @@ from the sign of the cotangent. Two faults:
 **Decision.** Only a term at its pole (`|cot| > 1e3`; inside the threshold the pole term has `|cot| > 5e5`)
 takes the limit; any other term is its raw product. Within the float band the pole term takes the side the
 geometric tests choose for a point exactly on the boundary: the lit side for the reflection terms (2, 3), the
-shadow side for the incident terms (0, 1) (`beta_term_boundary_side`). The corner even/odd split evaluates the
+shadow side for the incident terms (0, 1) (`beta_term_boundary_side`). Under grazing incidence (`phi'` on a
+face plane, within 1e-6 rad) the incident and reflection boundaries of that face coincide and their two terms share
+one boundary; they keep the side the cotangent's sign gives, as before, so the pair stays consistent (a
+double-diffraction leg between two edges of one face is grazing by construction, and a receiver grid on that
+face's plane met it on a whole row of samples). The corner even/odd split evaluates the
 mirrored term on the other side, so on the boundary the odd part is the full half-step and the even part the
 average. Outside +-2e-6 rad nothing changes.
 
