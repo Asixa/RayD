@@ -154,3 +154,47 @@ soft v) edge-basis components (the pair assembles `-direct + face * op`, so a pe
 and `face_s_axis` is removed. The host harness (`tests/diffraction/test_utd_reference.py`) passes
 unchanged, including the normal-exit, label and reciprocity cases; the corner row is 2.565e-8 on host,
 precise GPU and fast-math GPU alike.
+
+## Amendment: corner-weight refit against full-wave references (2026-11-11)
+
+The owner-accepted refit of the corner-mend constants, now done with the corrected finite-edge factor.
+
+**Reference.** Channel's Tidy3D reference set (Channel `tests/data/fullwave/`,
+`benchmarks/scenarios/fullwave_reference.v1.json`, recorded in Channel ADR-050's amendment): a PEC beam
+(four 90-degree wedges, 8.3-wavelength edges), a zero-thickness PEC half-plane, a PEC cube, the
+three-cube layout and a dielectric cube at 5 GHz, z and horizontal dipoles, 13 observation planes. The
+maps are calibrated to the exact unit-dipole field (+-0.4 % magnitude, under 4 degrees of FDTD phase
+drift); samples are labelled lit, shadow, transition (near an ISB/RSB) and corner (Keller stationary
+point within `0.15 sqrt(lambda L)` of an edge end).
+
+**Procedure.** A host build of `utd.h` with `C_BLEND`, the sigmoid width and the locality factor as
+runtime values evaluated the order-1 rows of the fit scenes (beam z/y, half-plane z/y, cube z); it
+matches Channel's diffraction component to 1e-3 of the peak at the 99th percentile. The total field
+was the Channel solve with its diffraction part replaced. Objective: mean per-region RMS dB magnitude
+error over the fit planes, plus the p95 excess of adjacent-sample jumps across ISB/RSB support edges
+(Channel `analyze_boundaries`). Held out: cube x-polarized, three cubes, dielectric cube.
+
+| `C_BLEND` / width | mean RMS dB (fit) | ISB/RSB p95 excess mean / max |
+| --- | ---: | ---: |
+| 0.35 / 0.03 (before) | 1.246 | -0.05 / +0.71 dB |
+| 1.0 / 0.03 | 0.999 | +0.00 / +0.59 dB |
+| 3.0 / 0.03 | 0.920 | +0.07 / +0.65 dB |
+| infinity / 0.03 (adopted) | 0.902 | +0.10 / +0.75 dB |
+| infinity / 0.2 | 0.775 | +1.19 / +4.15 dB |
+
+- The error falls monotonically as `C_BLEND` grows: the blend that relaxed the odd (GO-step) part to
+  `T_mono` deep in the shadow was compensating the old aperture factor and now makes the shadow 1-4 dB
+  too dark. It is removed (`t_used = even * truncEven + odd * gammaOdd`).
+- A wider sigmoid lowers the magnitude error further but puts 4-10 dB steps on shadow boundaries near
+  edge ends (the interior GO step is no longer fully compensated); a narrower one leaves a seam on the
+  corner-cone extension. The width stays 0.03.
+- The locality factor (4) moved the objective by under 0.01 dB between 4 and 16 and is not refitted.
+
+**Result (Channel full solve, coupled legs included).** Mean per-region RMS dB error, fit planes
+1.246 -> 0.963 (shadow 2.09 -> 1.49, corner 1.30 -> 1.06, transition 0.99 -> 0.78, lit 0.69 -> 0.58);
+held-out planes 2.126 -> 1.965 (shadow 5.24 -> 4.32). The full-solve gain is smaller than the host
+estimate (0.902) because Channel's coupled R-D/D-R legs evaluate the same corner model and move too.
+ISB/RSB jump excess stays within +-0.8 dB on every single-object plane. Per-case tables, gaps and the
+regression gate are in Channel ADR-050's amendment. The MC path (`gammaOdd = truncEven = 1`) is
+bit-identical; the Dr.Jit `diffraction_paths` and `diffraction_accumulation` PTX are regenerated
+(byte-reproducible, marked verified). `tests/diffraction/test_utd_reference.py` passes unchanged.
