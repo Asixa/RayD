@@ -120,7 +120,7 @@
       "header_sha256": "629a2828a5bae0d7ed69eab009a7addf5b32d0f4dbfb16cf9203dedbaedd701c",
       "option": "RAYD_REGENERATE_DIFFRACTION_PATHS_PTX",
       "regeneration_verified": true,
-      "source_sha256": "fe02724ebfad86c9cffeb1cfd15944ef5b40d284309448a88d18e29c48728887",
+      "source_sha256": "8e3153291c3b812fe331285a0e73bc16c3ef40d9a305070cfc04ef6e18cd1763",
       "sources": [
         "include/rayd/contracts.h",
         "include/rayd/jit/core.h",

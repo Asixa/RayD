@@ -72,7 +72,8 @@ __device__ __forceinline__ void exact_state(const AxialEdgeVisibilityParams& par
         return;
     }
 
-    const Vec3f tx = {params.tx[0], params.tx[1], params.tx[2]};
+    const Vec3f tx = params.state_source != nullptr ? load_aos3(params.state_source, state)
+                                                    : Vec3f{params.tx[0], params.tx[1], params.tx[2]};
     const Vec3f edge_position = load_aos3(params.edge_position, state);
     const Vec3f edge_direction = load_aos3(params.edge_direction, state);
     const float edge_t_min = params.edge_t_min[state];

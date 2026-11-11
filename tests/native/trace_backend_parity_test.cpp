@@ -206,6 +206,30 @@ void test_axial_edge_visibility_parity(const ScenePair& scenes) {
     auto empty = axial_request(12, 0);
     require(rayd::torch::axial_edge_visibility_forward(scenes.cuda, empty).any_visible.numel() == 0,
             "empty CUDA axial-edge request");
+
+    // Per-state sources: every state traces to its own source, bitwise as a single-source request for that source.
+    auto per_state = axial_request(13, states);
+    const at::Tensor sources =
+        at::tensor({-4.7f, 0.3f, 0.2f, 4.1f, -0.6f, 1.4f, 0.2f, 4.4f, -0.3f}, at::TensorOptions().dtype(at::kFloat))
+            .reshape({3, 3})
+            .to(floats());
+    const at::Tensor owner = at::arange(states, ints()).remainder(3).to(at::kLong);
+    per_state.state_source = sources.index_select(0, owner).contiguous();
+    for (const auto* scene : {&scenes.optix, &scenes.cuda}) {
+        const at::Tensor batched = rayd::torch::axial_edge_visibility_forward(*scene, per_state).any_visible;
+        for (int64_t source = 0; source < 3; ++source) {
+            auto single = per_state;
+            single.state_source.reset();
+            single.tx = sources[source].contiguous();
+            const at::Tensor reference = rayd::torch::axial_edge_visibility_forward(*scene, single).any_visible;
+            const at::Tensor rows = (owner == source).nonzero().reshape({-1});
+            require_equal(batched.index_select(0, rows), reference.index_select(0, rows),
+                          "axial-edge per-state source matches its single-source request");
+        }
+    }
+    require_equal(rayd::torch::axial_edge_visibility_forward(scenes.optix, per_state).any_visible,
+                  rayd::torch::axial_edge_visibility_forward(scenes.cuda, per_state).any_visible,
+                  "axial-edge per-state source any_visible");
 }
 
 rayd::torch::SegmentPenetrationRequest penetration_request(const rayd::torch::SceneResource& scene,
@@ -561,6 +585,88 @@ void test_diffraction_parity() {
             }
         }
     }
+    // Per-state transmitter indices: the states of both transmitters in one launch export exactly the rows of the two
+    // single-transmitter launches, each with its own polarization and tx_id.
+    {
+        const at::Tensor pols = polarizations[2].second;
+        const int64_t states = fixture.state_limit;
+        auto single_state = [&](int64_t tx) {
+            rayd::torch::DiffractionState state = fixture.state;
+            state.src = tx_pos[tx].reshape({1, 3}).expand({states, 3}).contiguous();
+            return state;
+        };
+        auto cat = [](const at::Tensor& a, const at::Tensor& b) { return at::cat({a, b}, 0).contiguous(); };
+        const auto s0 = single_state(0);
+        const auto s1 = single_state(1);
+        rayd::torch::DiffractionState joined = s0;
+        joined.edge_index = cat(s0.edge_index, s1.edge_index);
+        joined.edge_pos = cat(s0.edge_pos, s1.edge_pos);
+        joined.edge_dir = cat(s0.edge_dir, s1.edge_dir);
+        joined.edge_t_min = cat(s0.edge_t_min, s1.edge_t_min);
+        joined.edge_t_max = cat(s0.edge_t_max, s1.edge_t_max);
+        joined.n0 = cat(s0.n0, s1.n0);
+        joined.n1 = cat(s0.n1, s1.n1);
+        joined.prim0 = cat(s0.prim0, s1.prim0);
+        joined.prim1 = cat(s0.prim1, s1.prim1);
+        joined.exterior_angle = cat(s0.exterior_angle, s1.exterior_angle);
+        joined.src = cat(s0.src, s1.src);
+        joined.src_power = cat(s0.src_power, s1.src_power);
+        auto run_one = [&](const rayd::torch::SceneResource& scene, const rayd::torch::DiffractionState& state,
+                           const at::Tensor& active, int64_t limit, const at::Tensor& tx, const at::Tensor& pol,
+                           const std::optional<at::Tensor>& source_index) {
+            rayd::torch::DiffractionPathConfig config;
+            config.tx_pos = tx;
+            config.tx_pol = pol;
+            config.rx_pos = receivers;
+            config.active = active;
+            config.state = state;
+            config.material = material;
+            config.state_limit = limit;
+            config.capacity = rx_count * limit;
+            config.wavelength = 0.125;
+            config.layout = rayd::torch::DiffractionPathLayout::SourceLane;
+            config.state_source_index = source_index;
+            return rayd::torch::diffraction_paths_order1_forward(scene, config);
+        };
+        const at::Tensor index = at::cat({at::zeros({states}, ints()), at::ones({states}, ints())}).contiguous();
+        const at::Tensor joined_active = cat(fixture.active, fixture.active);
+        std::optional<rayd::torch::DiffractionPathResult> optix_batched;
+        for (const auto* scene : {&optix_scene, &cuda_scene}) {
+            const auto batched = run_one(*scene, joined, joined_active, 2 * states, tx_pos, pols, index);
+            require(batched.count.item<int>() > 2 * states, "per-state source fixture exports too few paths");
+            const at::Tensor lanes =
+                at::arange(rx_count * 2 * states, ints()).to(at::kLong).reshape({rx_count, 2, states});
+            for (int64_t tx = 0; tx < 2; ++tx) {
+                const auto single =
+                    run_one(*scene, tx == 0 ? s0 : s1, fixture.active, states, tx_pos[tx].reshape({1, 3}).contiguous(),
+                            pols[tx].reshape({1, 3}).contiguous(), std::nullopt);
+                const at::Tensor rows = lanes.select(1, tx).reshape({-1});
+                const std::string name = "per-state source tx " + std::to_string(tx);
+                require_equal(batched.valid.index_select(0, rows), single.valid, name + " valid");
+                const at::Tensor valid = single.valid;
+                require_equal(batched.tx_id.index_select(0, rows).masked_select(valid),
+                              at::full_like(single.tx_id, static_cast<int>(tx)).masked_select(valid), name + " tx_id");
+                require_equal(batched.rx_id.index_select(0, rows).masked_select(valid),
+                              single.rx_id.masked_select(valid), name + " rx_id");
+                require_equal(path_field(batched).index_select(0, rows).index({valid}),
+                              path_field(single).index({valid}), name + " field");
+                require_equal(batched.delay.index_select(0, rows).masked_select(valid),
+                              single.delay.masked_select(valid), name + " delay");
+            }
+            if (scene == &optix_scene) {
+                optix_batched = batched;
+            } else {
+                require_paths_parity(*optix_batched, batched, rayd::torch::DiffractionPathLayout::SourceLane, rx_count,
+                                     "per-state source diffraction paths");
+            }
+        }
+        // An index outside the polarization rows exports nothing for that state.
+        const at::Tensor bad = at::full({2 * states}, 2, ints());
+        require(run_one(cuda_scene, joined, joined_active, 2 * states, tx_pos, pols, bad).count.item<int>() == 0 &&
+                    run_one(optix_scene, joined, joined_active, 2 * states, tx_pos, pols, bad).count.item<int>() == 0,
+                "out-of-range per-state transmitter indices must export nothing");
+    }
+
     // The CUDA backend must not collapse every polarization to +x.
     require((*x_field - *hard_field).abs().max().item<double>() > 1.0e-3 * x_field->abs().max().item<double>(),
             "z polarization must change the CUDA diffraction field");
@@ -633,6 +739,7 @@ void test_diffraction_parity() {
                                        cuda_coherent.multi_y_im, cuda_coherent.multi_z_re, cuda_coherent.multi_z_im}),
                             name + " field");
     }
+}
 
 std::vector<rayd::torch::MeshInput> dynamic_meshes(std::vector<rayd::torch::MeshInput> meshes) {
     for (auto& mesh : meshes)

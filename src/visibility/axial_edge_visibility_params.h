@@ -20,6 +20,7 @@ struct AxialEdgeVisibilityParams {
     const float* edge_t_min = nullptr;
     const float* edge_t_max = nullptr;
     const std::uint8_t* active = nullptr;
+    const float* state_source = nullptr;
     int state_count = 0;
     float sample_fractions[AxialEdgeVisibilitySampleCount] = {};
     std::uint8_t* out_any_visible = nullptr;

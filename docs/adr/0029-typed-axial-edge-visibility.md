@@ -96,3 +96,13 @@ before the atomic downstream pin/switch/delete gate.
 Removing `cudaEventSynchronize` from the common launch-parameter staging ring
 is a separate Phase 12 optimization. It is not part of this ownership move. (It
 has since landed; see the status note.)
+
+## Amendment: per-state sources (2026-11-11)
+
+`AxialEdgeVisibilityRequest` gains an optional contiguous float32 `[N, 3]`
+`state_source`. When present each state's four exact samples are traced to its
+own source instead of `tx`; the sample points, traversal and early-outs are
+unchanged, so a state's result is bitwise the result of a single-source request
+with `tx` equal to its source. `tx` is still required and validated. Omitting
+the field is bitwise the previous launch. This lets a caller check the states of
+every transmitter in one launch. Both trace backends implement it.

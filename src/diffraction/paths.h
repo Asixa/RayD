@@ -139,6 +139,27 @@ template <typename Params, typename = void> struct has_tx_polarization : std::fa
 template <typename Params>
 struct has_tx_polarization<Params, std::void_t<decltype(std::declval<const Params&>().tx_pol_aos)>> : std::true_type {};
 
+template <typename Params, typename = void> struct has_state_source_index : std::false_type {};
+template <typename Params>
+struct has_state_source_index<Params, std::void_t<decltype(std::declval<const Params&>().state_source_index)>>
+    : std::true_type {};
+
+// Transmitter of a state: its per-state index when one is given, else the lane transmitter. Returns false when the
+// per-state index is outside the polarization rows; params without per-state indices always keep the lane transmitter.
+template <typename Params>
+RAYD_HOST_DEVICE bool path_source_tx(const Params& params, int state_idx, int lane_tx, int& source_tx) {
+    if constexpr (has_state_source_index<Params>::value) {
+        if (params.state_source_index != nullptr) {
+            source_tx = params.state_source_index[state_idx];
+            return source_tx >= 0 && source_tx < params.tx_pol_count;
+        }
+    }
+    (void)params;
+    (void)state_idx;
+    source_tx = lane_tx;
+    return true;
+}
+
 template <typename Params, typename = void> struct has_isb_taper : std::false_type {};
 template <typename Params>
 struct has_isb_taper<Params, std::void_t<decltype(std::declval<const Params&>().isb_taper_width_scale)>>
@@ -326,6 +347,10 @@ RAYD_DEVICE void trace_paths_order1_algo(const Params& params, std::uint32_t lan
     if (tx_idx >= params.tx_count || state_idx >= params.state_count || !state_active(params, state_idx)) {
         return;
     }
+    int source_tx = tx_idx;
+    if (!path_source_tx(params, state_idx, tx_idx, source_tx)) {
+        return;
+    }
 
     const Vec3f source = state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
     const Vec3f edge_pos =
@@ -359,7 +384,7 @@ RAYD_DEVICE void trace_paths_order1_algo(const Params& params, std::uint32_t lan
 
     const utd::PairInputs pair = direct_pair_inputs(params, state_idx, source, edge_pos, edge_dir, t_min, t_max);
     const utd::PairOutputs utd_out =
-        utd::compute_pair_contribution(pair, to_utd(receiver), params.k, paths_material_params(params, tx_idx));
+        utd::compute_pair_contribution(pair, to_utd(receiver), params.k, paths_material_params(params, source_tx));
     const float field_norm = utd::cplx_abs_sqr(utd_out.vectorField.x) + utd::cplx_abs_sqr(utd_out.vectorField.y) +
                              utd::cplx_abs_sqr(utd_out.vectorField.z);
     if (!(field_norm > 1.0e-30f) || !is_finite(field_norm)) {
@@ -376,7 +401,7 @@ RAYD_DEVICE void trace_paths_order1_algo(const Params& params, std::uint32_t lan
         math::length_f32(math::subtract(edge_point, source)) + math::length_f32(math::subtract(receiver, edge_point));
 
     params.out_valid[out_idx] = 1u;
-    params.out_tx_id[out_idx] = tx_idx;
+    params.out_tx_id[out_idx] = source_tx;
     params.out_rx_id[out_idx] = rx_idx;
     params.out_order[out_idx] = 1;
     params.out_edge0[out_idx] = params.state_edge_index[state_idx];
@@ -447,6 +472,10 @@ RAYD_DEVICE void trace_paths_target_export_algo(const Params& params, std::uint3
     if (!paths_order1_lane(params, lane, state_idx, rx_idx, tx_idx)) {
         return;
     }
+    int source_tx = tx_idx;
+    if (!path_source_tx(params, state_idx, tx_idx, source_tx)) {
+        return;
+    }
 
     const Vec3f source = state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
     const Vec3f edge_point = paths_edge_point(params, state_idx, rx_idx);
@@ -468,7 +497,7 @@ RAYD_DEVICE void trace_paths_target_export_algo(const Params& params, std::uint3
         direct_pair_inputs(params, state_idx, source, edge_pos, edge_dir, params.state_edge_t_min[state_idx],
                            params.state_edge_t_max[state_idx]);
     const utd::PairOutputs utd_out =
-        utd::compute_pair_contribution(pair, to_utd(receiver), params.k, paths_material_params(params, tx_idx));
+        utd::compute_pair_contribution(pair, to_utd(receiver), params.k, paths_material_params(params, source_tx));
     const float field_norm = utd::cplx_abs_sqr(utd_out.vectorField.x) + utd::cplx_abs_sqr(utd_out.vectorField.y) +
                              utd::cplx_abs_sqr(utd_out.vectorField.z);
     if (!(field_norm > 1.0e-30f) || !is_finite(field_norm)) {
@@ -485,7 +514,7 @@ RAYD_DEVICE void trace_paths_target_export_algo(const Params& params, std::uint3
         math::length_f32(math::subtract(edge_point, source)) + math::length_f32(math::subtract(receiver, edge_point));
 
     params.out_valid[out_idx] = 1u;
-    params.out_tx_id[out_idx] = tx_idx;
+    params.out_tx_id[out_idx] = source_tx;
     params.out_rx_id[out_idx] = rx_idx;
     params.out_order[out_idx] = 1;
     params.out_edge0[out_idx] = params.state_edge_index[state_idx];

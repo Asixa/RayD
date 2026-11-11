@@ -96,6 +96,14 @@ All notable changes to RayD are documented in this file.
 
 ### Added
 
+- Typed `AxialEdgeVisibilityRequest::state_source` (optional float32 `[N, 3]`)
+  traces each state's samples to its own source, and typed
+  `DiffractionPathConfig::state_source_index` (optional int32 `[state_limit]`)
+  gives each order-1 exporter state its own transmitter for the incident
+  polarization and the exported `tx_id`, with one transmitter lane. One call
+  then serves the states of every transmitter. Both are additive; omitting them
+  is bitwise the previous behaviour, and the Dr.Jit diffraction-paths PTX is
+  unchanged.
 - Added `python -m rayd.torch.doctor` and `python -m rayd.drjit.doctor`. They print
   the OS, Python, driver, each GPU's name, compute capability and free memory, the
   installed build's GPU targets and the framework it was compiled against, the
