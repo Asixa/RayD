@@ -549,7 +549,7 @@ def run_rayd_path_reflection_trace(args: argparse.Namespace) -> dict[str, Any]:
     scene = make_rayd_parallel_reflector_scene()
     ray = make_reflection_trace_rays_cuda(args.ray_count)
     options = rd.ReflectionTraceOptions()
-    options.export_mode = rd.REFLECTION_EXPORT_MINIMAL
+    options.export_mode = rd.ReflectionExportMode.MINIMAL
     options.return_trailing = False
 
     def call_kernel():
@@ -667,10 +667,10 @@ def run_rayd_path_diffraction_export(args: argparse.Namespace) -> dict[str, Any]
     options.max_order = 1
     options.max_paths = args.state_count
     options.max_rx = 1
-    options.strategy_mask = rd.RAYD_DFR_DIRECT
+    options.strategy_mask = rd.DfrStrategy.DIRECT
     options.sample_count = 1
     options.return_geom = 1
-    options.receiver_model = rd.RAYD_DFR_MATCHED_ISO
+    options.receiver_model = rd.DfrReceiverModel.MATCHED_ISO
 
     tx = cuda.Array3f([0.0], [0.0], [1.0])
     rx = cuda.Array3f([0.0], [0.0], [-1.0])
@@ -998,7 +998,7 @@ def run_rayd_reflection(args: argparse.Namespace) -> dict[str, Any]:
     grid.resolution0 = args.grid_side
     grid.resolution1 = args.grid_side
 
-    material = rd.Material()
+    material = rd.ReflMaterial()
     material.eta_r = dr.full(cuda.Float, 4.0, prim_count)
     material.sigma = dr.full(cuda.Float, 0.0, prim_count)
     material.gain = dr.full(cuda.Float, 1.0, prim_count)
@@ -1017,7 +1017,7 @@ def run_rayd_reflection(args: argparse.Namespace) -> dict[str, Any]:
 
     def call_kernel():
         rd.native_launch_audit_clear()
-        return scene.accumulate_reflections(ray, tx, grid, material, args.max_bounces, options)
+        return scene.accum_refl(ray, tx, grid, material, args.max_bounces, options)
 
     def materialize(result):
         dr.eval(result.reflection_power, result.reflection_count)
@@ -1115,9 +1115,9 @@ def run_rayd_diffraction(args: argparse.Namespace) -> dict[str, Any]:
     options.direct_samples = args.dfr_samples
     options.keller_samples = 0
     options.suffix_samples = 0
-    options.strategy_mask = rd.RAYD_DFR_DIRECT
-    options.sample_sequence = rd.RAYD_DFR_HASH
-    options.receiver_model = rd.RAYD_DFR_MATCHED_ISO
+    options.strategy_mask = rd.DfrStrategy.DIRECT
+    options.sample_sequence = rd.DfrSampleSequence.HASH
+    options.receiver_model = rd.DfrReceiverModel.MATCHED_ISO
     options.collect_edge_use = True
     options.collect_debug_counts = True
 

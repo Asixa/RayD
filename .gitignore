@@ -14,6 +14,8 @@ scripts/*
 !scripts/build_local.sh
 !scripts/format_code.py
 !scripts/validate_release_tag.py
+!scripts/gen_drjit_stub.sh
+!scripts/drjit_stub_patterns.txt
 dev_notes.md
 dist/
 tmp/

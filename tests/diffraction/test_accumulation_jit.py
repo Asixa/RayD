@@ -69,9 +69,9 @@ class DfrAccumulationTests(unittest.TestCase):
             options.direct_samples = 512
             options.keller_samples = 256
             options.suffix_samples = 0
-            options.strategy_mask = pj.RAYD_DFR_DIRECT | pj.RAYD_DFR_KELLER
-            options.sample_sequence = pj.RAYD_DFR_SOBOL
-            options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+            options.strategy_mask = pj.DfrStrategy.DIRECT | pj.DfrStrategy.KELLER
+            options.sample_sequence = pj.DfrSampleSequence.SOBOL
+            options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
             options.collect_edge_use = True
             options.collect_debug_counts = True
 
@@ -145,7 +145,7 @@ class DfrAccumulationTests(unittest.TestCase):
             options.wavelength = 0.125
             options.k = 50.26548245743669
             options.max_order = 1
-            options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+            options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
             options.select_diffraction_point = True
             options.prefilter_visibility = True
             options.collect_debug_counts = True
@@ -160,14 +160,14 @@ class DfrAccumulationTests(unittest.TestCase):
             result.multi_field_z = cuda.Complex2f([6.0, 0.0], [0.0, 6.0])
             result.direct_count = cuda.Int([7, 8])
             result.multi_count = cuda.Int([9, 10])
-            result.visibility_reject_count = cuda.Int([11, 12])
-            result.utd_reject_count = cuda.Int([13, 14])
+            result.vis_rejects = cuda.Int([11, 12])
+            result.utd_rejects = cuda.Int([13, 14])
 
             dr.eval(
                 result.direct_field_x.real,
                 result.multi_field_z.imag,
                 result.direct_count,
-                result.utd_reject_count,
+                result.utd_rejects,
             )
 
             print(json.dumps({
@@ -180,7 +180,7 @@ class DfrAccumulationTests(unittest.TestCase):
                 "direct_field_x_real0": float(result.direct_field_x.real[0]),
                 "multi_field_z_imag1": float(result.multi_field_z.imag[1]),
                 "direct_count0": int(result.direct_count[0]),
-                "utd_reject1": int(result.utd_reject_count[1]),
+                "utd_reject1": int(result.utd_rejects[1]),
             }))
             """
         )
@@ -311,7 +311,7 @@ class DfrAccumulationTests(unittest.TestCase):
             options.tx_pol_y = 0.0
             options.tx_pol_z = 0.0
             options.max_order = 1
-            options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+            options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
             options.collect_debug_counts = True
 
             states = scene.build_dfr_coherent_tx_states(
@@ -333,10 +333,10 @@ class DfrAccumulationTests(unittest.TestCase):
             for prefilter in (True, False):
                 options.prefilter_visibility = prefilter
                 result = scene.accum_dfr_coherent_direct(states, grid, material, options, True)
-                dr.eval(result.direct_count, result.visibility_reject_count)
+                dr.eval(result.direct_count, result.vis_rejects)
                 counts[str(prefilter)] = {
                     "direct": [int(v) for v in result.direct_count],
-                    "rejected": [int(v) for v in result.visibility_reject_count],
+                    "rejected": [int(v) for v in result.vis_rejects],
                 }
             print(json.dumps({"default_prefilter": pj.DfrCoherentOptions().prefilter_visibility, "counts": counts}))
             """
@@ -494,7 +494,7 @@ class DfrAccumulationTests(unittest.TestCase):
             options.wavelength = 0.125
             options.k = 50.26548245743669
             options.max_order = 1
-            options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+            options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
 
             scene.accum_dfr_coherent_direct(states, grid, material, options, True)
             """,
@@ -559,7 +559,7 @@ class DfrAccumulationTests(unittest.TestCase):
             options.wavelength = 0.125
             options.k = 50.26548245743669
             options.max_order = 1
-            options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+            options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
             options.select_diffraction_point = True
             options.prefilter_visibility = True
             options.collect_debug_counts = True
@@ -570,8 +570,8 @@ class DfrAccumulationTests(unittest.TestCase):
                 result.direct_field_x.real,
                 result.direct_field_x.imag,
                 result.direct_count,
-                result.visibility_reject_count,
-                result.utd_reject_count,
+                result.vis_rejects,
+                result.utd_rejects,
             )
             audit = pj.native_launch_audit()
 
@@ -582,8 +582,8 @@ class DfrAccumulationTests(unittest.TestCase):
                     dr.sqr(result.direct_field_x.imag[0])
                 )),
                 "direct_count": int(result.direct_count[0]),
-                "visibility_reject_count": int(result.visibility_reject_count[0]),
-                "utd_reject_count": int(result.utd_reject_count[0]),
+                "vis_rejects": int(result.vis_rejects[0]),
+                "utd_rejects": int(result.utd_rejects[0]),
                 "audit": audit,
             }))
             """
@@ -592,8 +592,8 @@ class DfrAccumulationTests(unittest.TestCase):
         self.assertEqual(data["cells"], 1)
         self.assertGreater(data["field_abs"], 0.0)
         self.assertGreater(data["direct_count"], 0)
-        self.assertGreaterEqual(data["visibility_reject_count"], 0)
-        self.assertGreaterEqual(data["utd_reject_count"], 0)
+        self.assertGreaterEqual(data["vis_rejects"], 0)
+        self.assertGreaterEqual(data["utd_rejects"], 0)
 
     def test_diffraction_path_export_abi_fields_are_bound(self):
         data = run_json(
@@ -610,10 +610,10 @@ class DfrAccumulationTests(unittest.TestCase):
             options.max_order = 1
             options.max_paths = 8
             options.max_rx = 3
-            options.strategy_mask = pj.RAYD_DFR_DIRECT
+            options.strategy_mask = pj.DfrStrategy.DIRECT
             options.sample_count = 64
             options.return_geom = 1
-            options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+            options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
 
             result = pj.DfrPaths()
             result.capacity = 2
@@ -715,9 +715,9 @@ class DfrAccumulationTests(unittest.TestCase):
             options.max_order = 1
             options.direct_samples = 64
             options.keller_samples = 0
-            options.strategy_mask = pj.RAYD_DFR_DIRECT
-            options.sample_sequence = pj.RAYD_DFR_HASH
-            options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+            options.strategy_mask = pj.DfrStrategy.DIRECT
+            options.sample_sequence = pj.DfrSampleSequence.HASH
+            options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
             options.collect_edge_use = True
             options.collect_debug_counts = True
 
@@ -744,9 +744,9 @@ class DfrAccumulationTests(unittest.TestCase):
             keller_options.max_order = 1
             keller_options.direct_samples = 0
             keller_options.keller_samples = 64
-            keller_options.strategy_mask = pj.RAYD_DFR_KELLER
-            keller_options.sample_sequence = pj.RAYD_DFR_HASH
-            keller_options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+            keller_options.strategy_mask = pj.DfrStrategy.KELLER
+            keller_options.sample_sequence = pj.DfrSampleSequence.HASH
+            keller_options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
             keller_options.collect_edge_use = True
             keller_options.collect_debug_counts = True
 
@@ -874,9 +874,9 @@ class DfrAccumulationTests(unittest.TestCase):
                 options.max_order = 1
                 options.direct_samples = 64
                 options.keller_samples = 0
-                options.strategy_mask = pj.RAYD_DFR_DIRECT
-                options.sample_sequence = pj.RAYD_DFR_HASH
-                options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+                options.strategy_mask = pj.DfrStrategy.DIRECT
+                options.sample_sequence = pj.DfrSampleSequence.HASH
+                options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
                 options.collect_edge_use = True
                 options.collect_debug_counts = True
 
@@ -977,9 +977,9 @@ class DfrAccumulationTests(unittest.TestCase):
                 options.direct_samples = 64
                 options.keller_samples = 0
                 options.suffix_samples = 0
-                options.strategy_mask = pj.RAYD_DFR_DIRECT
-                options.sample_sequence = pj.RAYD_DFR_HASH
-                options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+                options.strategy_mask = pj.DfrStrategy.DIRECT
+                options.sample_sequence = pj.DfrSampleSequence.HASH
+                options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
 
                 result = scene.accum_dfr_direct(states, grid, material, options, True)
                 loss = dr.sum(result.power)
@@ -1075,9 +1075,9 @@ class DfrAccumulationTests(unittest.TestCase):
                 options.direct_samples = 0
                 options.keller_samples = 64
                 options.suffix_samples = 0
-                options.strategy_mask = pj.RAYD_DFR_KELLER
-                options.sample_sequence = pj.RAYD_DFR_HASH
-                options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+                options.strategy_mask = pj.DfrStrategy.KELLER
+                options.sample_sequence = pj.DfrSampleSequence.HASH
+                options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
 
                 result = scene.accum_dfr_direct(states, grid, material, options, True)
                 loss = dr.sum(result.power)
@@ -1147,9 +1147,9 @@ class DfrAccumulationTests(unittest.TestCase):
                 options.max_order = 1
                 options.direct_samples = 64
                 options.keller_samples = 0
-                options.strategy_mask = pj.RAYD_DFR_DIRECT
-                options.sample_sequence = pj.RAYD_DFR_HASH
-                options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+                options.strategy_mask = pj.DfrStrategy.DIRECT
+                options.sample_sequence = pj.DfrSampleSequence.HASH
+                options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
                 options.collect_edge_use = True
                 options.collect_debug_counts = True
                 return options
@@ -1293,9 +1293,9 @@ class DfrAccumulationTests(unittest.TestCase):
                 options.max_order = 1
                 options.direct_samples = 0
                 options.keller_samples = 64
-                options.strategy_mask = pj.RAYD_DFR_KELLER
-                options.sample_sequence = pj.RAYD_DFR_HASH
-                options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+                options.strategy_mask = pj.DfrStrategy.KELLER
+                options.sample_sequence = pj.DfrSampleSequence.HASH
+                options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
                 options.collect_edge_use = True
                 options.collect_debug_counts = True
 
@@ -1399,9 +1399,9 @@ class DfrAccumulationTests(unittest.TestCase):
                 options.direct_samples = 0
                 options.keller_samples = 0
                 options.suffix_samples = 16
-                options.strategy_mask = pj.RAYD_DFR_SUFFIX_REFL
-                options.sample_sequence = pj.RAYD_DFR_HASH
-                options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+                options.strategy_mask = pj.DfrStrategy.SUFFIX_REFL
+                options.sample_sequence = pj.DfrSampleSequence.HASH
+                options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
 
                 result = scene.accum_dfr_direct(states, grid, material, options, True)
                 loss = dr.sum(result.power)
@@ -1523,9 +1523,9 @@ class DfrAccumulationTests(unittest.TestCase):
                 options.direct_samples = 0
                 options.keller_samples = 0
                 options.suffix_samples = 16
-                options.strategy_mask = pj.RAYD_DFR_SUFFIX_REFL
-                options.sample_sequence = pj.RAYD_DFR_HASH
-                options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+                options.strategy_mask = pj.DfrStrategy.SUFFIX_REFL
+                options.sample_sequence = pj.DfrSampleSequence.HASH
+                options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
 
                 result = scene.accum_dfr_direct(states, grid, material, options, True)
                 loss = dr.sum(result.power)
@@ -1629,9 +1629,9 @@ class DfrAccumulationTests(unittest.TestCase):
                 options.direct_samples = 0
                 options.keller_samples = 0
                 options.suffix_samples = 16
-                options.strategy_mask = pj.RAYD_DFR_SUFFIX_REFL
-                options.sample_sequence = pj.RAYD_DFR_HASH
-                options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+                options.strategy_mask = pj.DfrStrategy.SUFFIX_REFL
+                options.sample_sequence = pj.DfrSampleSequence.HASH
+                options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
 
                 result = scene.accum_dfr_direct(states, grid, material, options, True)
                 loss = dr.sum(result.power)
@@ -1721,10 +1721,10 @@ class DfrAccumulationTests(unittest.TestCase):
             options.max_order = 1
             options.max_paths = 4
             options.max_rx = 1
-            options.strategy_mask = pj.RAYD_DFR_DIRECT
+            options.strategy_mask = pj.DfrStrategy.DIRECT
             options.sample_count = 4
             options.return_geom = 1
-            options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+            options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
 
             pj.native_launch_audit_clear()
             result = scene.trace_dfr_paths(
@@ -1824,10 +1824,10 @@ class DfrAccumulationTests(unittest.TestCase):
                 options.max_order = 1
                 options.max_paths = 4
                 options.max_rx = 1
-                options.strategy_mask = pj.RAYD_DFR_DIRECT
+                options.strategy_mask = pj.DfrStrategy.DIRECT
                 options.sample_count = 4
                 options.return_geom = 1
-                options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+                options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
 
                 rx = ad.Array3f([0.0], [0.0], [rx_z])
                 if enable_grad:
@@ -1939,9 +1939,9 @@ class DfrAccumulationTests(unittest.TestCase):
             options.direct_samples = 0
             options.keller_samples = 0
             options.suffix_samples = 16
-            options.strategy_mask = pj.RAYD_DFR_SUFFIX_REFL
-            options.sample_sequence = pj.RAYD_DFR_HASH
-            options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+            options.strategy_mask = pj.DfrStrategy.SUFFIX_REFL
+            options.sample_sequence = pj.DfrSampleSequence.HASH
+            options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
             options.collect_debug_counts = True
 
             result = scene.accum_dfr_direct(
@@ -2038,9 +2038,9 @@ class DfrAccumulationTests(unittest.TestCase):
             options.direct_samples = 0
             options.keller_samples = 0
             options.suffix_samples = 16
-            options.strategy_mask = pj.RAYD_DFR_SUFFIX_REFL
-            options.sample_sequence = pj.RAYD_DFR_HASH
-            options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+            options.strategy_mask = pj.DfrStrategy.SUFFIX_REFL
+            options.sample_sequence = pj.DfrSampleSequence.HASH
+            options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
             options.collect_debug_counts = True
 
             result = scene.accum_dfr_direct(
@@ -2120,9 +2120,9 @@ class DfrAccumulationTests(unittest.TestCase):
             options.max_order = 1
             options.direct_samples = 8
             options.keller_samples = 8
-            options.strategy_mask = pj.RAYD_DFR_DIRECT | pj.RAYD_DFR_KELLER
-            options.sample_sequence = pj.RAYD_DFR_HASH
-            options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+            options.strategy_mask = pj.DfrStrategy.DIRECT | pj.DfrStrategy.KELLER
+            options.sample_sequence = pj.DfrSampleSequence.HASH
+            options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
             options.collect_edge_use = True
             options.collect_debug_counts = True
 
@@ -2218,9 +2218,9 @@ class DfrAccumulationTests(unittest.TestCase):
             options.max_order = 2
             options.direct_samples = 32
             options.keller_samples = 256
-            options.strategy_mask = pj.RAYD_DFR_DIRECT | pj.RAYD_DFR_KELLER
-            options.sample_sequence = pj.RAYD_DFR_HASH
-            options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+            options.strategy_mask = pj.DfrStrategy.DIRECT | pj.DfrStrategy.KELLER
+            options.sample_sequence = pj.DfrSampleSequence.HASH
+            options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
             options.collect_edge_use = True
             options.collect_debug_counts = True
 
@@ -2334,9 +2334,9 @@ class DfrAccumulationTests(unittest.TestCase):
                 options.max_order = 2
                 options.direct_samples = 32
                 options.keller_samples = 32
-                options.strategy_mask = pj.RAYD_DFR_DIRECT | pj.RAYD_DFR_KELLER
-                options.sample_sequence = pj.RAYD_DFR_HASH
-                options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+                options.strategy_mask = pj.DfrStrategy.DIRECT | pj.DfrStrategy.KELLER
+                options.sample_sequence = pj.DfrSampleSequence.HASH
+                options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
                 options.collect_edge_use = True
                 options.collect_debug_counts = True
 
@@ -2467,9 +2467,9 @@ class DfrAccumulationTests(unittest.TestCase):
                 options.direct_samples = 64
                 options.keller_samples = 0
                 options.suffix_samples = 0
-                options.strategy_mask = pj.RAYD_DFR_DIRECT
-                options.sample_sequence = pj.RAYD_DFR_HASH
-                options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+                options.strategy_mask = pj.DfrStrategy.DIRECT
+                options.sample_sequence = pj.DfrSampleSequence.HASH
+                options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
                 options.collect_debug_counts = True
 
                 result = scene.accum_dfr(initial, recursive, grid, material, options, True)
@@ -2597,9 +2597,9 @@ class DfrAccumulationTests(unittest.TestCase):
                 options.direct_samples = 0
                 options.keller_samples = 0
                 options.suffix_samples = 32
-                options.strategy_mask = pj.RAYD_DFR_SUFFIX_REFL
-                options.sample_sequence = pj.RAYD_DFR_HASH
-                options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+                options.strategy_mask = pj.DfrStrategy.SUFFIX_REFL
+                options.sample_sequence = pj.DfrSampleSequence.HASH
+                options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
                 options.collect_edge_use = True
                 options.collect_debug_counts = True
 
@@ -2734,9 +2734,9 @@ class DfrAccumulationTests(unittest.TestCase):
                 options.direct_samples = 0
                 options.keller_samples = 0
                 options.suffix_samples = 32
-                options.strategy_mask = pj.RAYD_DFR_SUFFIX_REFL
-                options.sample_sequence = pj.RAYD_DFR_HASH
-                options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+                options.strategy_mask = pj.DfrStrategy.SUFFIX_REFL
+                options.sample_sequence = pj.DfrSampleSequence.HASH
+                options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
                 options.collect_edge_use = True
                 options.collect_debug_counts = True
 
@@ -2857,9 +2857,9 @@ class DfrAccumulationTests(unittest.TestCase):
             options.max_order = 3
             options.direct_samples = 64
             options.keller_samples = 256
-            options.strategy_mask = pj.RAYD_DFR_DIRECT | pj.RAYD_DFR_KELLER
-            options.sample_sequence = pj.RAYD_DFR_HASH
-            options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+            options.strategy_mask = pj.DfrStrategy.DIRECT | pj.DfrStrategy.KELLER
+            options.sample_sequence = pj.DfrSampleSequence.HASH
+            options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
             options.collect_edge_use = True
             options.collect_debug_counts = True
 
@@ -2974,9 +2974,9 @@ class DfrAccumulationTests(unittest.TestCase):
                 options.max_order = 3
                 options.direct_samples = 64
                 options.keller_samples = 256
-                options.strategy_mask = pj.RAYD_DFR_DIRECT | pj.RAYD_DFR_KELLER
-                options.sample_sequence = pj.RAYD_DFR_HASH
-                options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+                options.strategy_mask = pj.DfrStrategy.DIRECT | pj.DfrStrategy.KELLER
+                options.sample_sequence = pj.DfrSampleSequence.HASH
+                options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
                 options.collect_edge_use = True
                 options.collect_debug_counts = True
 
@@ -3108,9 +3108,9 @@ class DfrAccumulationTests(unittest.TestCase):
                 options.direct_samples = 0
                 options.keller_samples = 0
                 options.suffix_samples = 32
-                options.strategy_mask = pj.RAYD_DFR_SUFFIX_REFL
-                options.sample_sequence = pj.RAYD_DFR_HASH
-                options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+                options.strategy_mask = pj.DfrStrategy.SUFFIX_REFL
+                options.sample_sequence = pj.DfrSampleSequence.HASH
+                options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
                 options.collect_edge_use = True
                 options.collect_debug_counts = True
 

@@ -137,8 +137,8 @@ class OversizedBatchTests(unittest.TestCase):
             grid.resolution0 = 70000
             grid.resolution1 = 70000
             grid.coord0_min, grid.coord0_max, grid.coord1_min, grid.coord1_max = 0.0, 1.0, 0.0, 1.0
-            error = error_of(lambda: scene.accumulate_reflections(probe_ray(), cuda.Array3f([0.0], [0.0], [-1.0]),
-                                                                   grid, pj.Material(), 2))
+            error = error_of(lambda: scene.accum_refl(probe_ray(), cuda.Array3f([0.0], [0.0], [-1.0]),
+                                                                   grid, pj.ReflMaterial(), 2))
             print(json.dumps({"error": error, "healthy": healthy()}))
             """
         )

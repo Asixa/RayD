@@ -109,7 +109,7 @@ its = scene.intersect(rd.Ray(
 ))
 
 out = {{"optix_available": rd.optix_available(),
-       "trace_backend_name": scene.trace_backend_name(),
+       "trace_backend_name": scene.trace_backend,
        "edge_bvh_backend": scene.edge_bvh_backend,
        "intersect_valid": bools(its.is_valid()),
        "is_ready": bool(scene.is_ready()),
@@ -146,7 +146,7 @@ def topk_query(name, point, k):
     out["queries"][name] = {{
         "query_count": int(res.query_count),
         "k": int(res.k),
-        "is_valid": bools(res.is_valid),
+        "is_valid": bools(res.valid),
         "shape_ids": ints(res.shape_ids),
         "edge_ids": ints(res.edge_ids),
         "global_edge_ids": ints(res.global_edge_ids),
@@ -302,7 +302,7 @@ class TraceBackendGateBlockedTests(unittest.TestCase):
                     "prim_ids": [int(b.global_prim_ids[0]) for b in trace.bounces],
                 }
             print(json.dumps({
-                "trace_backend": scene.trace_backend_name(),
+                "trace_backend": scene.trace_backend,
                 "results": results,
             }))
             """,
@@ -351,7 +351,7 @@ class TraceBackendGateAvailableTests(unittest.TestCase):
             "optix_available": caps["optix_available"],
             "intersect": caps["intersect"],
             "integration": list(caps["integration"]),
-            "trace_backend_name": scene.trace_backend_name(),
+            "trace_backend_name": scene.trace_backend,
             "edge_bvh_backend": scene.edge_bvh_backend,
         }))
         """
@@ -380,7 +380,7 @@ class TraceBackendGateAvailableTests(unittest.TestCase):
 
         res = scene.nearest_edge(cuda.Array3f([0.5], [-0.2], [0.0]))
         out = {
-            "trace_backend_name": scene.trace_backend_name(),
+            "trace_backend_name": scene.trace_backend,
             "nearest_global_edge_id": [int(v) for v in list(res.global_edge_id)],
         }
         try:
@@ -428,7 +428,7 @@ class TraceBackendGateAvailableTests(unittest.TestCase):
             "shadow_test": caps["shadow_test"],
             "visibility": caps["visibility"],
             "integration": list(caps["integration"]),
-            "trace_backend_name": scene.trace_backend_name(),
+            "trace_backend_name": scene.trace_backend,
         }))
         """
         data = _run_json(script)

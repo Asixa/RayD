@@ -618,6 +618,7 @@ std::string Mesh::to_string() const {
 #include <array>
 #include <algorithm>
 #include <cctype>
+#include <stdexcept>
 #include <chrono>
 #include <sstream>
 #include <string>
@@ -631,32 +632,21 @@ std::string Mesh::to_string() const {
 namespace rayd {
 
 namespace {
-std::string normalize_edge_backend_value(const std::string& value) {
-    std::string normalized = value;
-    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
-                   [](unsigned char ch) -> char { return static_cast<char>(std::tolower(ch)); });
-    return normalized;
-}
-
-/// Resolve an edge backend name to a concrete EdgeBVHBackend. "auto" selects the native BVH traversal, which answers
-/// point, ray, and top-k queries faster than the OptiX custom-AABB backend at every measured edge and query count.
+/// Resolve an edge backend name to a concrete EdgeBVHBackend. Matching is exact and case-sensitive. "auto" selects the
+/// native BVH traversal, which answers point, ray, and top-k queries faster than the OptiX custom-AABB backend at every
+/// measured edge and query count. An unknown name is an invalid argument (Python ValueError).
 EdgeBVHBackend parse_edge_backend(const std::string& value) {
-    const std::string normalized = normalize_edge_backend_value(value);
-    if (normalized.empty() || normalized == "auto") {
+    if (value == "auto" || value == "drjit") {
         return EdgeBVHBackend::DrJit;
     }
-    if (normalized == "optix" || normalized == "custom_aabb") {
+    if (value == "optix") {
         return EdgeBVHBackend::Optix;
     }
-    if (normalized == "drjit" || normalized == "dr_jit" || normalized == "software") {
-        return EdgeBVHBackend::DrJit;
-    }
-    if (normalized == "optix_drjit" || normalized == "hybrid" || normalized == "mixed" || normalized == "optix_ray" ||
-        normalized == "ray_optix") {
+    if (value == "optix_drjit") {
         return EdgeBVHBackend::OptixDrJit;
     }
-    throw std::runtime_error("Invalid edge_bvh_backend. Expected one of: 'auto', 'drjit', 'optix', "
-                             "'optix_drjit'.");
+    throw std::invalid_argument("Invalid edge_bvh_backend '" + value +
+                                "'. Expected one of: 'auto', 'drjit', 'optix', 'optix_drjit'.");
 }
 
 const char* edge_backend_name(EdgeBVHBackend backend) {
@@ -696,27 +686,27 @@ bool edge_backend_uses_optix_topk(EdgeBVHBackend backend) {
 /// context and to CUDA otherwise;
 /// explicit OptiX availability is enforced later, at build().
 TraceBackendKind resolve_trace_backend_kind(const std::string& value) {
-    const std::string normalized = normalize_edge_backend_value(value);
-    if (normalized.empty() || normalized == "auto") {
+    if (value == "auto") {
         if (optix_available())
             return TraceBackendKind::Optix;
         warn_optix_auto_fallback_once();
         return TraceBackendKind::Cuda;
     }
-    if (normalized == "optix") {
+    if (value == "optix") {
         return TraceBackendKind::Optix;
     }
-    if (normalized == "none") {
+    if (value == "none") {
         return TraceBackendKind::None;
     }
-    if (normalized == "cuda") {
+    if (value == "cuda") {
         return TraceBackendKind::Cuda;
     }
-    if (normalized == "embree") {
-        throw std::runtime_error("trace_backend 'embree' is not implemented yet "
-                                 "(planned: Embree in P5)");
+    if (value == "embree") {
+        throw std::invalid_argument("trace_backend 'embree' is not implemented yet "
+                                    "(planned: Embree in P5)");
     }
-    throw std::runtime_error("Invalid trace_backend. Expected one of: 'auto', 'optix', 'cuda', 'none'.");
+    throw std::invalid_argument("Invalid trace_backend '" + value +
+                                "'. Expected one of: 'auto', 'optix', 'cuda', 'none'.");
 }
 
 template <bool Detached> NearestPointEdgeT<Detached> initialize_nearest_point_edge_result(int query_count) {

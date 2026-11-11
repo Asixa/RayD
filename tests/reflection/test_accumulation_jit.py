@@ -45,7 +45,7 @@ class ReflectionAccumulationTests(unittest.TestCase):
             grid.resolution0 = 1
             grid.resolution1 = 1
 
-            material = pj.Material()
+            material = pj.ReflMaterial()
             material.eta_r = cuda.Float([4.0])
             material.sigma = cuda.Float([0.0])
             material.gain = cuda.Float([1.0])
@@ -66,7 +66,7 @@ class ReflectionAccumulationTests(unittest.TestCase):
             options.wedge_capacity = 4
 
             pj.native_launch_audit_clear()
-            result = scene.accumulate_reflections(
+            result = scene.accum_refl(
                 ray, tx, grid, material, 1, options
             )
             dr.eval(result.reflection_power,
@@ -108,7 +108,7 @@ class ReflectionAccumulationTests(unittest.TestCase):
                 "wedge_initial_dir_z0": float(result.wedge_events.initial_directions.z[0]),
                 "trace_reflections_launches": audit["trace_reflections"]["optix_launch"],
                 "accumulate_reflections_launches": (
-                    audit["accumulate_reflections"]["optix_launch"]
+                    audit["accum_refl"]["optix_launch"]
                 ),
             }))
             """
@@ -166,7 +166,7 @@ class ReflectionAccumulationTests(unittest.TestCase):
             grid.resolution0 = 1
             grid.resolution1 = 1
 
-            material = pj.Material()
+            material = pj.ReflMaterial()
             material.eta_r = cuda.Float([4.0])
             material.sigma = cuda.Float([0.0])
             material.gain = cuda.Float([1.0])
@@ -187,7 +187,7 @@ class ReflectionAccumulationTests(unittest.TestCase):
             options.wedge_capacity = n
 
             pj.native_launch_audit_clear()
-            result = scene.accumulate_reflections(
+            result = scene.accum_refl(
                 ray, tx, grid, material, 1, options
             )
             dr.eval(result.reflection_count,
@@ -202,7 +202,7 @@ class ReflectionAccumulationTests(unittest.TestCase):
                 "wedge_count": int(result.wedge_events.count[0]),
                 "power": float(result.reflection_power[0]),
                 "accumulate_reflections_launches": (
-                    audit["accumulate_reflections"]["optix_launch"]
+                    audit["accum_refl"]["optix_launch"]
                 ),
             }))
             """
@@ -248,7 +248,7 @@ class ReflectionAccumulationTests(unittest.TestCase):
             grid.resolution0 = 1
             grid.resolution1 = 1
 
-            material = pj.Material()
+            material = pj.ReflMaterial()
             material.eta_r = cuda.Float([4.0])
             material.sigma = cuda.Float([0.0])
             material.gain = cuda.Float([1.0])
@@ -266,7 +266,7 @@ class ReflectionAccumulationTests(unittest.TestCase):
             options.wedge_capacity = 4
             options.wedge_sample_stride = 2
 
-            result = scene.accumulate_reflections(
+            result = scene.accum_refl(
                 ray, tx, grid, material, 1, options
             )
             dr.eval(result.wedge_events.count,
@@ -326,7 +326,7 @@ class ReflectionAccumulationTests(unittest.TestCase):
                 grid.resolution0 = 1
                 grid.resolution1 = 1
 
-                material = pj.MaterialAD()
+                material = pj.ReflMaterialAD()
                 material.eta_r = ad.Float([4.0])
                 material.sigma = ad.Float([0.0])
                 material.gain = ad.Float([1.0])
@@ -339,7 +339,7 @@ class ReflectionAccumulationTests(unittest.TestCase):
                 options.solid_angle_per_ray = 1.0
                 options.cell_area = 1.0
 
-                result = scene.accumulate_reflections(
+                result = scene.accum_refl(
                     ray, ad.Array3f([0.0], [0.0], [-1.0]), grid, material, 1, options
                 )
                 loss = dr.sum(result.reflection_power)
@@ -404,21 +404,21 @@ class ReflectionAccumulationTests(unittest.TestCase):
             options.solid_angle_per_ray = 1.0
             options.cell_area = 1.0
 
-            material = pj.Material()
+            material = pj.ReflMaterial()
             material.eta_r = cuda.Float([4.0])
             material.sigma = cuda.Float([0.0])
             material.gain = cuda.Float([1.0])
             material.mu_r = cuda.Float([1.0])
             material.valid = cuda.Bool([True])
 
-            material_ad = pj.MaterialAD()
+            material_ad = pj.ReflMaterialAD()
             material_ad.eta_r = ad.Float([4.0])
             material_ad.sigma = ad.Float([0.0])
             material_ad.gain = ad.Float([1.0])
             material_ad.mu_r = ad.Float([1.0])
             material_ad.valid = ad.Bool([True])
 
-            detached = scene.accumulate_reflections(
+            detached = scene.accum_refl(
                 pj.Ray(cuda.Array3f([0.0], [0.0], [-1.0]),
                        cuda.Array3f([0.0], [0.0], [1.0])),
                 cuda.Array3f([0.0], [0.0], [-1.0]),
@@ -428,7 +428,7 @@ class ReflectionAccumulationTests(unittest.TestCase):
                 options,
                 True,
             )
-            differentiable = scene.accumulate_reflections(
+            differentiable = scene.accum_refl(
                 pj.RayAD(ad.Array3f([0.0], [0.0], [-1.0]),
                          ad.Array3f([0.0], [0.0], [1.0])),
                 ad.Array3f([0.0], [0.0], [-1.0]),
@@ -487,7 +487,7 @@ class ReflectionAccumulationTests(unittest.TestCase):
             grid.resolution0 = 1
             grid.resolution1 = 1
 
-            material = pj.Material()
+            material = pj.ReflMaterial()
             material.eta_r = cuda.Float([4.0])
             material.sigma = cuda.Float([0.0])
             material.gain = cuda.Float([1.0])
@@ -499,7 +499,7 @@ class ReflectionAccumulationTests(unittest.TestCase):
             options.k = 0.5
             options.cell_area = 1.0
 
-            result = scene.accumulate_reflections(
+            result = scene.accum_refl(
                 ray, tx, grid, material, 1, options, True, tx_pol
             )
             dr.eval(result.reflection_field_x.real,

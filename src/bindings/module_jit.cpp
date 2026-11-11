@@ -3,8 +3,6 @@
 
 #include <rayd/jit/core.h>
 
-#include <algorithm>
-#include <cctype>
 #include <stdexcept>
 
 #include <nanobind/stl/string.h>
@@ -29,24 +27,32 @@ using namespace rayd;
 
 namespace {
 
-/// True for legacy spellings of the combined OptiX/Dr.Jit edge backend.
-bool is_deprecated_combined_edge_backend(const std::string& value) {
-    std::string normalized = value;
-    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
-                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    return normalized == "hybrid" || normalized == "mixed" || normalized == "optix_ray" || normalized == "ray_optix";
+/// Canonical name of a resolved triangle trace backend.
+const char* trace_backend_name(TraceBackendKind kind) {
+    switch (kind) {
+    case TraceBackendKind::Optix:
+        return "optix";
+    case TraceBackendKind::Cuda:
+        return "cuda";
+    default:
+        return "none";
+    }
 }
 
-/// Construct a Scene while preserving one release cycle for legacy backend aliases.
-void construct_scene(Scene* scene, const std::string& edge_bvh_backend, const std::string& trace_backend) {
-    if (is_deprecated_combined_edge_backend(edge_bvh_backend) &&
-        PyErr_WarnEx(PyExc_DeprecationWarning,
-                     "edge_bvh_backend='hybrid' and its legacy aliases are deprecated; "
-                     "use 'optix_drjit' instead.",
-                     2) < 0) {
-        throw nb::python_error();
-    }
-    new (scene) Scene(edge_bvh_backend, trace_backend);
+/// Reject a non-positive Scene.trace_reflections() bounce count as a Python ValueError.
+void require_positive_max_bounces(int max_bounces) {
+    if (max_bounces < 1)
+        throw nb::value_error("Scene.trace_reflections(): max_bounces must be positive.");
+}
+
+/// Property getter exposing the int option field \p field as the Python enum \p Enum.
+template <typename Enum, typename Class> auto enum_field_getter(int Class::* field) {
+    return [field](const Class& self) { return static_cast<Enum>(self.*field); };
+}
+
+/// Property setter storing the Python enum \p Enum into the int option field \p field.
+template <typename Enum, typename Class> auto enum_field_setter(int Class::* field) {
+    return [field](Class& self, Enum value) { self.*field = static_cast<int>(value); };
 }
 
 /// Number of Dr.Jit-compatible CUDA devices; throws if none are available.
@@ -158,6 +164,12 @@ void require_detached_scene_geometry(const Scene& scene, const char* operation) 
                                  "JVP: the scene geometry carries derivatives. Build the scene from detached "
                                  "vertices or call it under drjit.suspend_grad().");
     }
+}
+
+/// True when \p obj is an instance of a Dr.Jit CUDA AD array type.
+bool is_ad_drjit_array(nb::handle obj) {
+    const std::string type_name = nb::cast<std::string>(nb::str(obj.type()));
+    return type_name.find("drjit.cuda.ad.") != std::string::npos;
 }
 
 /// Load an input of a query whose result is discrete. Such a query has no derivative, so a grad-enabled value is
@@ -303,9 +315,6 @@ NB_MODULE(_C, m) {
     m.def(
         "current_device", []() { return checked_cuda_device_count() > 0 ? jit_cuda_device() : 0; },
         "Return the current thread's active Dr.Jit CUDA device index.");
-    m.attr("REFLECTION_EXPORT_FULL") = nb::int_(static_cast<int>(RAYD_REFLECTION_EXPORT_FULL));
-    m.attr("REFLECTION_EXPORT_MINIMAL") = nb::int_(static_cast<int>(RAYD_REFLECTION_EXPORT_MINIMAL));
-    m.attr("REFLECTION_EXPORT_COUNT_ONLY") = nb::int_(static_cast<int>(RAYD_REFLECTION_EXPORT_COUNT_ONLY));
     m.def("native_launch_audit_clear", &native_launch_audit_clear, "Clear grouped native launch audit counters.");
     m.def(
         "native_launch_audit",
@@ -317,7 +326,7 @@ NB_MODULE(_C, m) {
             result["sync"] = native_stage_dict(snapshot.sync);
             result["intersect"] = native_stage_dict(snapshot.intersect);
             result["trace_reflections"] = native_stage_dict(snapshot.trace_reflections);
-            result["accumulate_reflections"] = native_stage_dict(snapshot.accumulate_reflections);
+            result["accum_refl"] = native_stage_dict(snapshot.accumulate_reflections);
             result["accum_dfr"] = native_stage_dict(snapshot.accum_dfr);
             result["surfel_trace"] = native_stage_dict(snapshot.surfel_trace);
             return result;
@@ -410,7 +419,7 @@ NB_MODULE(_C, m) {
             .def_ro("global_prim_id", &SceneGeometry::global_prim_id);
 
         nb::enum_<RayFlags>(m, "RayFlags", nb::is_arithmetic())
-            .value("None", RayFlags::None)
+            .value("Empty", RayFlags::None)
             .value("Geometric", RayFlags::Geometric)
             .value("ShadingN", RayFlags::ShadingN)
             .value("UV", RayFlags::UV)
@@ -488,12 +497,18 @@ NB_MODULE(_C, m) {
             .def_rw("channel_chunk", &SurfelRenderOptions::channel_chunk)
             .def_rw("background_rgb", &SurfelRenderOptions::background_rgb);
 
+        nb::enum_<ReflectionExportMode>(m, "ReflectionExportMode", nb::is_arithmetic())
+            .value("FULL", RAYD_REFLECTION_EXPORT_FULL)
+            .value("MINIMAL", RAYD_REFLECTION_EXPORT_MINIMAL)
+            .value("COUNT_ONLY", RAYD_REFLECTION_EXPORT_COUNT_ONLY);
+
         nb::class_<ReflectionTraceOptions>(m, "ReflectionTraceOptions")
             .def(nb::init<>())
             .def_rw("deduplicate", &ReflectionTraceOptions::deduplicate)
             .def_rw("canonical_prim_table", &ReflectionTraceOptions::canonical_prim_table)
             .def_rw("image_source_tolerance", &ReflectionTraceOptions::image_source_tolerance)
-            .def_rw("export_mode", &ReflectionTraceOptions::export_mode)
+            .def_prop_rw("export_mode", enum_field_getter<ReflectionExportMode>(&ReflectionTraceOptions::export_mode),
+                         enum_field_setter<ReflectionExportMode>(&ReflectionTraceOptions::export_mode))
             .def_rw("return_trailing", &ReflectionTraceOptions::return_trailing);
 
         nb::class_<ReflEpcOptions>(m, "ReflEpcOptions")
@@ -598,7 +613,7 @@ NB_MODULE(_C, m) {
         nb::class_<SdfIntersection>(m, "SdfIntersection")
             .def("is_valid", &SdfIntersection::is_valid)
             .def_ro("t", &SdfIntersection::t)
-            .def_ro("hit_mask", &SdfIntersection::hit_mask)
+            .def_ro("valid", &SdfIntersection::hit_mask)
             .def_ro("position", &SdfIntersection::position)
             .def_ro("normal", &SdfIntersection::normal)
             .def_ro("steps", &SdfIntersection::steps);
@@ -606,7 +621,7 @@ NB_MODULE(_C, m) {
         nb::class_<SdfIntersectionAD>(m, "SdfIntersectionAD")
             .def("is_valid", &SdfIntersectionAD::is_valid)
             .def_ro("t", &SdfIntersectionAD::t)
-            .def_ro("hit_mask", &SdfIntersectionAD::hit_mask)
+            .def_ro("valid", &SdfIntersectionAD::hit_mask)
             .def_ro("position", &SdfIntersectionAD::position)
             .def_ro("normal", &SdfIntersectionAD::normal)
             .def_ro("steps", &SdfIntersectionAD::steps);
@@ -723,7 +738,7 @@ NB_MODULE(_C, m) {
             .def_rw("wedge_capacity", &AccumOptions::wedge_capacity)
             .def_rw("wedge_sample_stride", &AccumOptions::wedge_sample_stride);
 
-        nb::class_<Material>(m, "Material")
+        nb::class_<Material>(m, "ReflMaterial")
             .def(nb::init<>())
             .def_rw("eta_r", &Material::eta_r)
             .def_rw("sigma", &Material::sigma)
@@ -731,7 +746,7 @@ NB_MODULE(_C, m) {
             .def_rw("mu_r", &Material::mu_r)
             .def_rw("valid", &Material::valid);
 
-        nb::class_<MaterialAD>(m, "MaterialAD")
+        nb::class_<MaterialAD>(m, "ReflMaterialAD")
             .def(nb::init<>())
             .def_rw("eta_r", &MaterialAD::eta_r)
             .def_rw("sigma", &MaterialAD::sigma)
@@ -787,12 +802,17 @@ NB_MODULE(_C, m) {
             .def_ro("reflection_count", &AccumResultAD::reflection_count)
             .def_ro("wedge_events", &AccumResultAD::wedge_events);
 
-        m.attr("RAYD_DFR_DIRECT") = nb::int_(static_cast<int>(RAYD_DFR_DIRECT));
-        m.attr("RAYD_DFR_KELLER") = nb::int_(static_cast<int>(RAYD_DFR_KELLER));
-        m.attr("RAYD_DFR_SUFFIX_REFL") = nb::int_(static_cast<int>(RAYD_DFR_SUFFIX_REFL));
-        m.attr("RAYD_DFR_HASH") = nb::int_(static_cast<int>(RAYD_DFR_HASH));
-        m.attr("RAYD_DFR_SOBOL") = nb::int_(static_cast<int>(RAYD_DFR_SOBOL));
-        m.attr("RAYD_DFR_MATCHED_ISO") = nb::int_(static_cast<int>(RAYD_DFR_MATCHED_ISO));
+        nb::enum_<DfrStrategyMask>(m, "DfrStrategy", nb::is_flag(), nb::is_arithmetic())
+            .value("DIRECT", RAYD_DFR_DIRECT)
+            .value("KELLER", RAYD_DFR_KELLER)
+            .value("SUFFIX_REFL", RAYD_DFR_SUFFIX_REFL);
+
+        nb::enum_<DfrSampleSequence>(m, "DfrSampleSequence", nb::is_arithmetic())
+            .value("HASH", RAYD_DFR_HASH)
+            .value("SOBOL", RAYD_DFR_SOBOL);
+
+        nb::enum_<DfrReceiverModel>(m, "DfrReceiverModel", nb::is_arithmetic())
+            .value("MATCHED_ISO", RAYD_DFR_MATCHED_ISO);
 
         nb::class_<DfrGrid>(m, "DfrGrid")
             .def(nb::init<>())
@@ -816,9 +836,12 @@ NB_MODULE(_C, m) {
             .def_rw("direct_samples", &DfrOptions::direct_samples)
             .def_rw("keller_samples", &DfrOptions::keller_samples)
             .def_rw("suffix_samples", &DfrOptions::suffix_samples)
-            .def_rw("strategy_mask", &DfrOptions::strategy_mask)
-            .def_rw("sample_sequence", &DfrOptions::sample_sequence)
-            .def_rw("receiver_model", &DfrOptions::receiver_model)
+            .def_prop_rw("strategy_mask", enum_field_getter<DfrStrategyMask>(&DfrOptions::strategy_mask),
+                         enum_field_setter<DfrStrategyMask>(&DfrOptions::strategy_mask))
+            .def_prop_rw("sample_sequence", enum_field_getter<DfrSampleSequence>(&DfrOptions::sample_sequence),
+                         enum_field_setter<DfrSampleSequence>(&DfrOptions::sample_sequence))
+            .def_prop_rw("receiver_model", enum_field_getter<DfrReceiverModel>(&DfrOptions::receiver_model),
+                         enum_field_setter<DfrReceiverModel>(&DfrOptions::receiver_model))
             .def_rw("collect_edge_use", &DfrOptions::collect_edge_use)
             .def_rw("collect_debug_counts", &DfrOptions::collect_debug_counts);
 
@@ -827,7 +850,8 @@ NB_MODULE(_C, m) {
             .def_rw("wavelength", &DfrCoherentOptions::wavelength)
             .def_rw("k", &DfrCoherentOptions::k)
             .def_rw("max_order", &DfrCoherentOptions::max_order)
-            .def_rw("receiver_model", &DfrCoherentOptions::receiver_model)
+            .def_prop_rw("receiver_model", enum_field_getter<DfrReceiverModel>(&DfrCoherentOptions::receiver_model),
+                         enum_field_setter<DfrReceiverModel>(&DfrCoherentOptions::receiver_model))
             .def_rw("select_diffraction_point", &DfrCoherentOptions::select_diffraction_point)
             .def_rw("prefilter_visibility", &DfrCoherentOptions::prefilter_visibility)
             .def_rw("collect_debug_counts", &DfrCoherentOptions::collect_debug_counts)
@@ -1101,8 +1125,8 @@ NB_MODULE(_C, m) {
             .def_rw("multi_field_z", &DfrCoherentAccum::multi_field_z)
             .def_rw("direct_count", &DfrCoherentAccum::direct_count)
             .def_rw("multi_count", &DfrCoherentAccum::multi_count)
-            .def_rw("visibility_reject_count", &DfrCoherentAccum::visibility_reject_count)
-            .def_rw("utd_reject_count", &DfrCoherentAccum::utd_reject_count);
+            .def_rw("vis_rejects", &DfrCoherentAccum::visibility_reject_count)
+            .def_rw("utd_rejects", &DfrCoherentAccum::utd_reject_count);
 
         nb::class_<DfrCoherentAccumAD>(m, "DfrCoherentAccumAD")
             .def(nb::init<>())
@@ -1115,8 +1139,8 @@ NB_MODULE(_C, m) {
             .def_rw("multi_field_z", &DfrCoherentAccumAD::multi_field_z)
             .def_rw("direct_count", &DfrCoherentAccumAD::direct_count)
             .def_rw("multi_count", &DfrCoherentAccumAD::multi_count)
-            .def_rw("visibility_reject_count", &DfrCoherentAccumAD::visibility_reject_count)
-            .def_rw("utd_reject_count", &DfrCoherentAccumAD::utd_reject_count);
+            .def_rw("vis_rejects", &DfrCoherentAccumAD::visibility_reject_count)
+            .def_rw("utd_rejects", &DfrCoherentAccumAD::utd_reject_count);
 
         nb::class_<DfrPathOptions>(m, "DfrPathOptions")
             .def(nb::init<>())
@@ -1126,10 +1150,12 @@ NB_MODULE(_C, m) {
             .def_rw("max_order", &DfrPathOptions::max_order)
             .def_rw("max_paths", &DfrPathOptions::max_paths)
             .def_rw("max_rx", &DfrPathOptions::max_rx)
-            .def_rw("strategy_mask", &DfrPathOptions::strategy_mask)
+            .def_prop_rw("strategy_mask", enum_field_getter<DfrStrategyMask>(&DfrPathOptions::strategy_mask),
+                         enum_field_setter<DfrStrategyMask>(&DfrPathOptions::strategy_mask))
             .def_rw("sample_count", &DfrPathOptions::sample_count)
             .def_rw("return_geom", &DfrPathOptions::return_geom)
-            .def_rw("receiver_model", &DfrPathOptions::receiver_model);
+            .def_prop_rw("receiver_model", enum_field_getter<DfrReceiverModel>(&DfrPathOptions::receiver_model),
+                         enum_field_setter<DfrReceiverModel>(&DfrPathOptions::receiver_model));
 
         nb::class_<DfrPaths>(m, "DfrPaths")
             .def(nb::init<>())
@@ -1358,7 +1384,8 @@ NB_MODULE(_C, m) {
         nb::class_<NearestEdgesTopK>(m, "NearestEdgesTopK")
             .def_ro("query_count", &NearestEdgesTopK::query_count)
             .def_ro("k", &NearestEdgesTopK::k)
-            .def_ro("is_valid", &NearestEdgesTopK::is_valid)
+            .def_ro("valid", &NearestEdgesTopK::is_valid)
+            .def("is_valid", [](const NearestEdgesTopK& self) { return self.is_valid; })
             .def_ro("distances", &NearestEdgesTopK::distances)
             .def_ro("points", &NearestEdgesTopK::points)
             .def_ro("edge_t", &NearestEdgesTopK::edge_t)
@@ -1371,7 +1398,8 @@ NB_MODULE(_C, m) {
         nb::class_<NearestEdgesTopKAD>(m, "NearestEdgesTopKAD")
             .def_ro("query_count", &NearestEdgesTopKAD::query_count)
             .def_ro("k", &NearestEdgesTopKAD::k)
-            .def_ro("is_valid", &NearestEdgesTopKAD::is_valid)
+            .def_ro("valid", &NearestEdgesTopKAD::is_valid)
+            .def("is_valid", [](const NearestEdgesTopKAD& self) { return self.is_valid; })
             .def_ro("distances", &NearestEdgesTopKAD::distances)
             .def_ro("points", &NearestEdgesTopKAD::points)
             .def_ro("edge_t", &NearestEdgesTopKAD::edge_t)
@@ -1738,7 +1766,12 @@ NB_MODULE(_C, m) {
 
     bind_section("scene", [&]() {
         nb::class_<Scene>(m, "Scene")
-            .def("__init__", &construct_scene, "edge_bvh_backend"_a = "auto", "trace_backend"_a = "auto")
+            .def(
+                "__init__",
+                [](Scene* scene, const std::string& trace_backend, const std::string& edge_bvh_backend) {
+                    new (scene) Scene(edge_bvh_backend, trace_backend);
+                },
+                nb::kw_only(), "trace_backend"_a = "auto", "edge_bvh_backend"_a = "auto")
             .def("add_mesh", &Scene::add_mesh, "mesh"_a, "dynamic"_a = false)
             .def("add_instance", &Scene::add_instance, "geometry_id"_a, "transform"_a, "dynamic"_a = true)
             .def("build", &Scene::build)
@@ -1753,18 +1786,8 @@ NB_MODULE(_C, m) {
             .def_prop_ro("last_sync_profile", &Scene::last_sync_profile)
             .def("edge_info", &Scene::edge_info)
             .def_prop_ro("edge_bvh_backend", &Scene::edge_bvh_backend)
-            .def(
-                "trace_backend_name",
-                [](const Scene& scene) -> std::string {
-                    switch (scene.trace_backend_kind()) {
-                    case TraceBackendKind::Optix:
-                        return "optix";
-                    case TraceBackendKind::Cuda:
-                        return "cuda";
-                    default:
-                        return "none";
-                    }
-                },
+            .def_prop_ro(
+                "trace_backend", [](const Scene& scene) { return trace_backend_name(scene.trace_backend_kind()); },
                 "Canonical name of the resolved triangle trace backend "
                 "('optix', 'cuda', or 'none').")
             .def(
@@ -1780,7 +1803,7 @@ NB_MODULE(_C, m) {
                     // paths + accumulation / EPC).
                     const bool multipath = has_trace;
                     nb::dict caps;
-                    caps["trace_backend"] = has_optix ? "optix" : (has_cuda ? "cuda" : "none");
+                    caps["trace_backend"] = trace_backend_name(kind);
                     caps["optix_available"] = optix_available();
                     caps["edge_backend"] = scene.edge_bvh_backend();
                     nb::list integration;
@@ -1850,6 +1873,7 @@ NB_MODULE(_C, m) {
                 "trace_reflections",
                 [](const Scene& scene, const Ray& ray, int max_bounces, rayd::Mask active,
                    bool symbolic) -> nb::object {
+                    require_positive_max_bounces(max_bounces);
                     if (symbolic) {
                         return nb::cast(scene.trace_bounces<true>(ray, max_bounces, active));
                     }
@@ -1860,6 +1884,7 @@ NB_MODULE(_C, m) {
                 "trace_reflections",
                 [](const Scene& scene, const RayAD& ray, int max_bounces, rayd::MaskAD active,
                    bool symbolic) -> nb::object {
+                    require_positive_max_bounces(max_bounces);
                     if (symbolic) {
                         return nb::cast(scene.trace_bounces<false>(ray, max_bounces, active));
                     }
@@ -1870,6 +1895,7 @@ NB_MODULE(_C, m) {
                 "trace_reflections",
                 [](const Scene& scene, const Ray& ray, int max_bounces, const ReflectionTraceOptions& options,
                    rayd::Mask active, bool symbolic) -> nb::object {
+                    require_positive_max_bounces(max_bounces);
                     if (symbolic) {
                         return nb::cast(scene.trace_bounces<true>(ray, max_bounces, options, active));
                     }
@@ -1880,6 +1906,7 @@ NB_MODULE(_C, m) {
                 "trace_reflections",
                 [](const Scene& scene, const RayAD& ray, int max_bounces, const ReflectionTraceOptions& options,
                    rayd::MaskAD active, bool symbolic) -> nb::object {
+                    require_positive_max_bounces(max_bounces);
                     if (symbolic) {
                         return nb::cast(scene.trace_bounces<false>(ray, max_bounces, options, active));
                     }
@@ -1891,6 +1918,7 @@ NB_MODULE(_C, m) {
                 [](const Scene& scene, const Ray& ray, int max_bounces, bool deduplicate,
                    const Int& canonical_prim_table, float image_source_tolerance, rayd::Mask active,
                    bool symbolic) -> nb::object {
+                    require_positive_max_bounces(max_bounces);
                     ReflectionTraceOptions options;
                     options.deduplicate = deduplicate;
                     options.canonical_prim_table = canonical_prim_table;
@@ -1907,6 +1935,7 @@ NB_MODULE(_C, m) {
                 [](const Scene& scene, const RayAD& ray, int max_bounces, bool deduplicate,
                    const Int& canonical_prim_table, float image_source_tolerance, rayd::MaskAD active,
                    bool symbolic) -> nb::object {
+                    require_positive_max_bounces(max_bounces);
                     ReflectionTraceOptions options;
                     options.deduplicate = deduplicate;
                     options.canonical_prim_table = canonical_prim_table;
@@ -1920,81 +1949,71 @@ NB_MODULE(_C, m) {
                 "image_source_tolerance"_a = 1e-5f, "active"_a = true, "symbolic"_a = true)
             .def(
                 "trace_refl_epc",
-                [](const Scene& scene, const Ray& ray, nb::handle receiver_obj, int max_bounces, nb::object options_obj,
-                   rayd::Mask active) {
+                [](const Scene& scene, const Ray& ray, nb::handle receiver_obj, int max_bounces,
+                   const ReflEpcOptions* options, rayd::Mask active) {
                     require_no_derivatives(receiver_obj, "Scene.trace_refl_epc()", "receiver");
                     require_detached_scene_geometry(scene, "Scene.trace_refl_epc()");
                     const Vector3f receiver = nb::cast<Vector3f>(receiver_obj);
-                    ReflEpcOptions options;
-                    if (!options_obj.is_none()) {
-                        bool parsed_options = false;
-                        if (nb::inst_check(options_obj)) {
-                            try {
-                                if (nb::type_info(options_obj.type()) == typeid(ReflEpcOptions)) {
-                                    options = *nb::inst_ptr<ReflEpcOptions>(options_obj);
-                                    parsed_options = true;
-                                }
-                            } catch (...) {
-                                PyErr_Clear();
-                            }
-                        }
-                        if (!parsed_options) {
-                            active = nb::cast<rayd::Mask>(options_obj);
-                        }
-                    }
-                    return scene.trace_refl_epc<true>(ray, receiver, max_bounces, options, active);
+                    return scene.trace_refl_epc<true>(ray, receiver, max_bounces,
+                                                      options != nullptr ? *options : ReflEpcOptions(), active);
                 },
-                nb::arg("ray").noconvert(), nb::arg("receiver"), "max_bounces"_a, "options"_a = nb::none(),
-                "active"_a = true)
+                nb::arg("ray").noconvert(), nb::arg("receiver"), "max_bounces"_a,
+                nb::arg("options").none() = nb::none(), "active"_a = true)
+            .def(
+                "trace_refl_epc_field",
+                [](const Scene& scene, nb::handle ray_obj, nb::handle receiver_obj, int max_bounces,
+                   const ReflEpcFieldOptions& options, nb::handle active_obj) -> nb::object {
+                    // A RayAD with detached field options: promote the options so the AD trace runs.
+                    if (!nb::isinstance<RayAD>(ray_obj))
+                        throw nb::next_overload();
+                    const RayAD ray = nb::cast<RayAD>(ray_obj);
+                    const Vector3fAD receiver = nb::cast<Vector3fAD>(receiver_obj);
+                    const rayd::MaskAD active = nb::cast<rayd::MaskAD>(active_obj);
+                    const ReflEpcFieldOptionsAD options_ad = refl_epc_field_options_ad_from_detached(options);
+                    return nb::cast(scene.trace_refl_epc_field<false>(ray, receiver, max_bounces, options_ad, active));
+                },
+                nb::arg("ray"), nb::arg("receiver"), "max_bounces"_a, "options"_a, "active"_a = true)
             .def(
                 "trace_refl_epc_field",
                 [](const Scene& scene, nb::handle source_obj, nb::handle receiver_obj, int max_bounces,
                    const ReflEpcFieldOptions& options, nb::handle active_obj) -> nb::object {
-                    auto is_ad_drjit = [](nb::handle obj) {
-                        const std::string type_name = nb::cast<std::string>(nb::str(obj.type()));
-                        return type_name.find("drjit.cuda.ad.") != std::string::npos;
-                    };
-                    if (nb::isinstance<RayAD>(source_obj)) {
-                        const RayAD ray = nb::cast<RayAD>(source_obj);
-                        const Vector3fAD receiver = nb::cast<Vector3fAD>(receiver_obj);
-                        const rayd::MaskAD active = nb::cast<rayd::MaskAD>(active_obj);
-                        const ReflEpcFieldOptionsAD options_ad = refl_epc_field_options_ad_from_detached(options);
-                        return nb::cast(
-                            scene.trace_refl_epc_field<false>(ray, receiver, max_bounces, options_ad, active));
-                    }
-                    if (is_ad_drjit(source_obj) || is_ad_drjit(receiver_obj) || is_ad_drjit(active_obj)) {
-                        const Vector3fAD tx_position = nb::cast<Vector3fAD>(source_obj);
-                        const Vector3fAD receiver = nb::cast<Vector3fAD>(receiver_obj);
-                        const rayd::MaskAD active = nb::cast<rayd::MaskAD>(active_obj);
-                        const ReflEpcFieldOptionsAD options_ad = refl_epc_field_options_ad_from_detached(options);
-                        return nb::cast(
-                            scene.trace_refl_epc_field<false>(tx_position, receiver, max_bounces, options_ad, active));
-                    }
-                    throw nb::next_overload();
+                    // Any AD point input with detached field options selects the AD transmitter-position trace.
+                    if (!is_ad_drjit_array(source_obj) && !is_ad_drjit_array(receiver_obj) &&
+                        !is_ad_drjit_array(active_obj))
+                        throw nb::next_overload();
+                    const Vector3fAD source = nb::cast<Vector3fAD>(source_obj);
+                    const Vector3fAD receiver = nb::cast<Vector3fAD>(receiver_obj);
+                    const rayd::MaskAD active = nb::cast<rayd::MaskAD>(active_obj);
+                    const ReflEpcFieldOptionsAD options_ad = refl_epc_field_options_ad_from_detached(options);
+                    return nb::cast(
+                        scene.trace_refl_epc_field<false>(source, receiver, max_bounces, options_ad, active));
                 },
                 nb::arg("source"), nb::arg("receiver"), "max_bounces"_a, "options"_a, "active"_a = true)
             .def(
                 "trace_refl_epc_field",
+                [](const Scene& scene, nb::handle ray_obj, nb::handle receiver_obj, int max_bounces,
+                   const ReflEpcFieldOptionsAD& options, nb::handle active_obj) -> nb::object {
+                    // A RayAD whose receiver or mask still needs conversion to its AD type.
+                    if (!nb::isinstance<RayAD>(ray_obj))
+                        throw nb::next_overload();
+                    const RayAD ray = nb::cast<RayAD>(ray_obj);
+                    const Vector3fAD receiver = nb::cast<Vector3fAD>(receiver_obj);
+                    const rayd::MaskAD active = nb::cast<rayd::MaskAD>(active_obj);
+                    return nb::cast(scene.trace_refl_epc_field<false>(ray, receiver, max_bounces, options, active));
+                },
+                nb::arg("ray"), nb::arg("receiver"), "max_bounces"_a, "options"_a, "active"_a = true)
+            .def(
+                "trace_refl_epc_field",
                 [](const Scene& scene, nb::handle source_obj, nb::handle receiver_obj, int max_bounces,
                    const ReflEpcFieldOptionsAD& options, nb::handle active_obj) -> nb::object {
-                    auto is_ad_drjit = [](nb::handle obj) {
-                        const std::string type_name = nb::cast<std::string>(nb::str(obj.type()));
-                        return type_name.find("drjit.cuda.ad.") != std::string::npos;
-                    };
-                    if (nb::isinstance<RayAD>(source_obj)) {
-                        const RayAD ray = nb::cast<RayAD>(source_obj);
-                        const Vector3fAD receiver = nb::cast<Vector3fAD>(receiver_obj);
-                        const rayd::MaskAD active = nb::cast<rayd::MaskAD>(active_obj);
-                        return nb::cast(scene.trace_refl_epc_field<false>(ray, receiver, max_bounces, options, active));
-                    }
-                    if (is_ad_drjit(source_obj) || is_ad_drjit(receiver_obj) || is_ad_drjit(active_obj)) {
-                        const Vector3fAD tx_position = nb::cast<Vector3fAD>(source_obj);
-                        const Vector3fAD receiver = nb::cast<Vector3fAD>(receiver_obj);
-                        const rayd::MaskAD active = nb::cast<rayd::MaskAD>(active_obj);
-                        return nb::cast(
-                            scene.trace_refl_epc_field<false>(tx_position, receiver, max_bounces, options, active));
-                    }
-                    throw nb::next_overload();
+                    // AD transmitter-position trace whose point inputs still need conversion to their AD types.
+                    if (!is_ad_drjit_array(source_obj) && !is_ad_drjit_array(receiver_obj) &&
+                        !is_ad_drjit_array(active_obj))
+                        throw nb::next_overload();
+                    const Vector3fAD source = nb::cast<Vector3fAD>(source_obj);
+                    const Vector3fAD receiver = nb::cast<Vector3fAD>(receiver_obj);
+                    const rayd::MaskAD active = nb::cast<rayd::MaskAD>(active_obj);
+                    return nb::cast(scene.trace_refl_epc_field<false>(source, receiver, max_bounces, options, active));
                 },
                 nb::arg("source"), nb::arg("receiver"), "max_bounces"_a, "options"_a, "active"_a = true)
             .def(
@@ -2007,11 +2026,11 @@ NB_MODULE(_C, m) {
                 "active"_a = true)
             .def(
                 "trace_refl_epc_field",
-                [](const Scene& scene, const Vector3fAD& tx_position, const Vector3fAD& receiver, int max_bounces,
+                [](const Scene& scene, const Vector3fAD& source, const Vector3fAD& receiver, int max_bounces,
                    const ReflEpcFieldOptionsAD& options, rayd::MaskAD active) {
-                    return scene.trace_refl_epc_field<false>(tx_position, receiver, max_bounces, options, active);
+                    return scene.trace_refl_epc_field<false>(source, receiver, max_bounces, options, active);
                 },
-                nb::arg("tx_position").noconvert(), nb::arg("receiver").noconvert(), "max_bounces"_a, "options"_a,
+                nb::arg("source").noconvert(), nb::arg("receiver").noconvert(), "max_bounces"_a, "options"_a,
                 "active"_a = true)
             .def(
                 "trace_refl_epc_field",
@@ -2022,22 +2041,22 @@ NB_MODULE(_C, m) {
                 nb::arg("ray").noconvert(), nb::arg("receiver"), "max_bounces"_a, "options"_a, "active"_a = true)
             .def(
                 "trace_refl_epc_field",
-                [](const Scene& scene, const Vector3f& tx_position, const Vector3f& receiver, int max_bounces,
+                [](const Scene& scene, const Vector3f& source, const Vector3f& receiver, int max_bounces,
                    const ReflEpcFieldOptions& options, rayd::Mask active) {
-                    return scene.trace_refl_epc_field<true>(tx_position, receiver, max_bounces, options, active);
+                    return scene.trace_refl_epc_field<true>(source, receiver, max_bounces, options, active);
                 },
-                nb::arg("tx_position"), nb::arg("receiver"), "max_bounces"_a, "options"_a, "active"_a = true)
+                nb::arg("source"), nb::arg("receiver"), "max_bounces"_a, "options"_a, "active"_a = true)
             .def(
-                "accumulate_reflections",
+                "accum_refl",
                 [](const Scene& scene, nb::handle ray_obj, nb::handle tx_position_obj, const AccumGrid& grid,
                    nb::handle material_obj, int max_bounces, const AccumOptions& options, nb::handle active_obj,
                    nb::handle tx_polarization_obj) -> nb::object {
                     if (nb::isinstance<Ray>(ray_obj)) {
                         // A detached Ray selects the forward-only evaluation; differentiation needs a RayAD.
-                        require_no_derivatives(tx_position_obj, "Scene.accumulate_reflections() with a detached Ray",
+                        require_no_derivatives(tx_position_obj, "Scene.accum_refl() with a detached Ray",
                                                "tx_position");
-                        require_no_derivatives(tx_polarization_obj,
-                                               "Scene.accumulate_reflections() with a detached Ray", "tx_polarization");
+                        require_no_derivatives(tx_polarization_obj, "Scene.accum_refl() with a detached Ray",
+                                               "tx_polarization");
                         const Ray ray = nb::cast<Ray>(ray_obj);
                         const Vector3f tx_position = nb::cast<Vector3f>(tx_position_obj);
                         const Vector3f tx_polarization = nb::cast<Vector3f>(tx_polarization_obj);
@@ -2220,8 +2239,8 @@ NB_MODULE(_C, m) {
                 nb::arg("ray").noconvert(), "active"_a = true)
             .def(
                 "visible",
-                [](const Scene& scene, nb::handle start_obj, nb::handle end_obj, const Int& ignore_prim_ids,
-                   nb::handle active_obj) -> nb::object {
+                [](const Scene& scene, nb::handle start_obj, nb::handle end_obj, nb::handle active_obj,
+                   const Int& ignore_prim_ids) -> nb::object {
                     const std::string module_name = nb::cast<std::string>(start_obj.type().attr("__module__"));
                     const std::string type_name = nb::cast<std::string>(start_obj.type().attr("__name__"));
 
@@ -2240,7 +2259,7 @@ NB_MODULE(_C, m) {
                     }
                     throw nb::next_overload();
                 },
-                nb::arg("start"), nb::arg("end"), "ignore_prim_ids"_a = Int(), "active"_a = true)
+                nb::arg("start"), nb::arg("end"), "active"_a = true, nb::kw_only(), "ignore_prim_ids"_a = Int())
             .def(
                 "visible_pair",
                 [](const Scene& scene, nb::handle start_obj, nb::handle end_a_obj, nb::handle end_b_obj,
@@ -2268,36 +2287,36 @@ NB_MODULE(_C, m) {
                 nb::arg("start"), nb::arg("end_a"), nb::arg("end_b"), "ignore_prim_ids"_a = Int(), "active"_a = true)
             .def(
                 "visible_edge",
-                [](const Scene& scene, nb::handle src_obj, nb::handle edge_pos_obj, nb::handle edge_dir_obj,
-                   nb::handle edge_t_min_obj, nb::handle edge_t_max_obj, const std::vector<float>& sample_fractions,
-                   nb::handle active_obj) -> nb::object {
-                    const std::string module_name = nb::cast<std::string>(src_obj.type().attr("__module__"));
-                    const std::string type_name = nb::cast<std::string>(src_obj.type().attr("__name__"));
+                [](const Scene& scene, nb::handle source_obj, nb::handle edge_position_obj,
+                   nb::handle edge_direction_obj, nb::handle edge_t_min_obj, nb::handle edge_t_max_obj,
+                   const std::vector<float>& sample_fractions, nb::handle active_obj) -> nb::object {
+                    const std::string module_name = nb::cast<std::string>(source_obj.type().attr("__module__"));
+                    const std::string type_name = nb::cast<std::string>(source_obj.type().attr("__name__"));
 
                     if (module_name == "drjit.cuda.ad" && type_name == "Array3f") {
-                        Vector3fAD src = nb::cast<Vector3fAD>(src_obj);
-                        Vector3fAD edge_pos = nb::cast<Vector3fAD>(edge_pos_obj);
-                        Vector3fAD edge_dir = nb::cast<Vector3fAD>(edge_dir_obj);
+                        Vector3fAD source = nb::cast<Vector3fAD>(source_obj);
+                        Vector3fAD edge_position = nb::cast<Vector3fAD>(edge_position_obj);
+                        Vector3fAD edge_direction = nb::cast<Vector3fAD>(edge_direction_obj);
                         FloatAD edge_t_min = nb::cast<FloatAD>(edge_t_min_obj);
                         FloatAD edge_t_max = nb::cast<FloatAD>(edge_t_max_obj);
                         rayd::MaskAD active = nb::cast<rayd::MaskAD>(active_obj);
-                        return nb::cast(scene.visible_edge<false>(src, edge_pos, edge_dir, edge_t_min, edge_t_max,
-                                                                  sample_fractions, active));
+                        return nb::cast(scene.visible_edge<false>(source, edge_position, edge_direction, edge_t_min,
+                                                                  edge_t_max, sample_fractions, active));
                     }
 
                     if (module_name == "drjit.cuda" && type_name == "Array3f") {
-                        const Vector3f src = cast_detached_query_input<Vector3f>(src_obj);
-                        const Vector3f edge_pos = cast_detached_query_input<Vector3f>(edge_pos_obj);
-                        const Vector3f edge_dir = cast_detached_query_input<Vector3f>(edge_dir_obj);
+                        const Vector3f source = cast_detached_query_input<Vector3f>(source_obj);
+                        const Vector3f edge_position = cast_detached_query_input<Vector3f>(edge_position_obj);
+                        const Vector3f edge_direction = cast_detached_query_input<Vector3f>(edge_direction_obj);
                         const Float edge_t_min = cast_detached_query_input<Float>(edge_t_min_obj);
                         const Float edge_t_max = cast_detached_query_input<Float>(edge_t_max_obj);
                         rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
-                        return nb::cast(scene.visible_edge<true>(src, edge_pos, edge_dir, edge_t_min, edge_t_max,
-                                                                 sample_fractions, active));
+                        return nb::cast(scene.visible_edge<true>(source, edge_position, edge_direction, edge_t_min,
+                                                                 edge_t_max, sample_fractions, active));
                     }
                     throw nb::next_overload();
                 },
-                nb::arg("src"), nb::arg("edge_pos"), nb::arg("edge_dir"), "edge_t_min"_a, "edge_t_max"_a,
+                nb::arg("source"), nb::arg("edge_position"), nb::arg("edge_direction"), "edge_t_min"_a, "edge_t_max"_a,
                 "sample_fractions"_a = std::vector<float>{0.f, 0.25f, 0.5f, 0.75f, 1.f}, "active"_a = true)
             .def(
                 "visible_chain",
@@ -2324,36 +2343,36 @@ NB_MODULE(_C, m) {
                 nb::arg("points"), "chain_length"_a, "ignore_prim_per_segment"_a = Int(), "active"_a = true)
             .def(
                 "nearest_edge",
-                [](const Scene& scene, nb::handle point_obj, nb::handle active_obj) -> nb::object {
-                    const std::string module_name = nb::cast<std::string>(point_obj.type().attr("__module__"));
-                    const std::string type_name = nb::cast<std::string>(point_obj.type().attr("__name__"));
+                [](const Scene& scene, nb::handle query_obj, nb::handle active_obj) -> nb::object {
+                    const std::string module_name = nb::cast<std::string>(query_obj.type().attr("__module__"));
+                    const std::string type_name = nb::cast<std::string>(query_obj.type().attr("__name__"));
 
                     if (module_name == "drjit.cuda.ad" && type_name == "Array3f") {
-                        Vector3fAD point = nb::cast<Vector3fAD>(point_obj);
+                        Vector3fAD point = nb::cast<Vector3fAD>(query_obj);
                         rayd::MaskAD active = nb::cast<rayd::MaskAD>(active_obj);
                         return nb::cast(scene.nearest_edge<false>(point, active));
                     }
 
                     if (module_name == "drjit.cuda" && type_name == "Array3f") {
-                        Vector3f point_detached = nb::cast<Vector3f>(point_obj);
+                        Vector3f point_detached = nb::cast<Vector3f>(query_obj);
                         rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
                         return nb::cast(scene.nearest_edge<true>(point_detached, active));
                     }
                     throw nb::next_overload();
                 },
-                nb::arg("point"), "active"_a = true)
+                nb::arg("query"), "active"_a = true)
             .def(
                 "nearest_edge",
                 [](const Scene& scene, const Ray& ray, rayd::Mask active) {
                     return scene.nearest_edge<true>(ray, active);
                 },
-                nb::arg("ray").noconvert(), "active"_a = true)
+                nb::arg("query").noconvert(), "active"_a = true)
             .def(
                 "nearest_edge",
                 [](const Scene& scene, const RayAD& ray, rayd::MaskAD active) {
                     return scene.nearest_edge<false>(ray, active);
                 },
-                nb::arg("ray").noconvert(), "active"_a = true)
+                nb::arg("query").noconvert(), "active"_a = true)
             .def(
                 "nearest_edges",
                 [](const Scene& scene, nb::handle point_obj, int k, nb::handle active_obj) -> nb::object {
@@ -2387,10 +2406,10 @@ NB_MODULE(_C, m) {
                 [](MixedScene* scene, const std::string& trace_backend, const std::string& edge_bvh_backend) {
                     new (scene) MixedScene(edge_bvh_backend, trace_backend);
                 },
-                "trace_backend"_a = "auto", "edge_bvh_backend"_a = "auto")
+                nb::kw_only(), "trace_backend"_a = "auto", "edge_bvh_backend"_a = "auto")
             .def("add_mesh", &MixedScene::add_mesh, "mesh"_a, "dynamic"_a = false)
             .def("add_sdf", &MixedScene::add_sdf, "grid"_a, "options"_a = SdfTraceOptions())
-            .def("add_surfel", &MixedScene::add_surfel, "cloud"_a, "options"_a = SurfelTraceOptions())
+            .def("add_surfel", &MixedScene::add_surfel, "surfel"_a, "options"_a = SurfelTraceOptions())
             .def("build", &MixedScene::build)
             .def("is_ready", &MixedScene::is_ready)
             .def_prop_ro("num_meshes", &MixedScene::num_meshes)

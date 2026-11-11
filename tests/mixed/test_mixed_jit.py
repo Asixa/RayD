@@ -60,7 +60,7 @@ class DrJitMixedSceneTests(unittest.TestCase):
                 ad.Array3f(ad.Float([0.0, 0.0, 0.0]), ad.Float([0.0, 0.0, 0.0]), ad.Float([1.0, 1.0, 1.0])),
             )
             hit = scene.intersect(ray)
-            minimal = scene.intersect(ray, flags=getattr(rt.RayFlags, "None"))
+            minimal = scene.intersect(ray, flags=rt.RayFlags.Empty)
             active = cuda.Bool([True, False, True])
             masked_hit = scene.intersect(ray, active)
             masked_visibility = scene.visible(ray.o, ray.o + 4.0 * ray.d, active).visible
