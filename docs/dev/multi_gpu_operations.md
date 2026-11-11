@@ -958,7 +958,6 @@ compile-flag policy from drifting apart.
 ```bash
 python -m unittest \
     tests.test_adr0038_multi_device \
-    tests.test_multi_device_benchmark_evidence \
     tests.test_multi_device_diffraction_paths \
     tests.test_multi_device_coherent_accum \
     tests.test_shared_operation_contract \

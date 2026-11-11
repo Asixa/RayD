@@ -256,7 +256,7 @@ Current status notes:
 - the former `LBVH + top-level SAH` HLBVH experiment was removed after it made large-scene queries much slower; its historical measurements are retained below
 - the dead GPU-prepared flat-treelet prototype was removed; the supported treelet path keeps its host-prepared schedule and launches GPU treelet optimization kernels
 - the shared edge core owns the backend-neutral OptiX AABB kernel, LBVH/treelet build stages, dirty-ancestor/dirty-level/refit launchers, compact-BVH CUDA traversal, and exact-distance launchers; every API takes raw pointers, caller-owned buffers, and an explicit stream
-- Dr.Jit still owns CUB/allocation, LBVH/treelet host orchestration, and host compaction, and calls the shared compact-BVH traversal for its queries; Torch persistent compact-BVH ownership and public top-k/visibility integration landed in F1 (`src/scene/scene.cpp`, `tests/test_f1_torch_global_geometry_contract.py`)
+- Dr.Jit still owns CUB/allocation, LBVH/treelet host orchestration, and host compaction, and calls the shared compact-BVH traversal for its queries; Torch persistent compact-BVH ownership and public top-k/visibility integration landed in F1 (`src/scene/scene.cpp`)
 
 Supported custom-BVH configuration after BVH-3 convergence:
 
@@ -310,7 +310,6 @@ former owner.
 - Production files under `include/` and `src/` must not use another filename containing `math`; choose a domain responsibility such as `utd.h`, `edge_distance.h`, or `derivatives.cuh`.
 - Every maintained Python, C, C++, CUDA source, and header starts with `Copyright Xingyu Chen.` followed by one plain-English sentence describing the file. Use `#` for Python and `//` for native code, keep the sentence concise, and do not put an ADR identifier in the file header.
 - Generated headers under `generated/` are exempt from manual file headers. Regenerate them from their governed sources instead of editing them by hand.
-- `tests/test_concept_axis_layout.py` and `tests/test_source_file_standards.py` enforce these rules. Update the implementation and the tests together when the maintained source surface changes.
 
 ## Code Formatting and Duplication Control
 

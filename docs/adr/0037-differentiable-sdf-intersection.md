@@ -423,7 +423,7 @@ Phase 4 of the plan lands the following, as one change:
    `test_public_python_modules_are_annotated_inline` iterates a fixed module
    list that must gain `sdf`.
 8. Host-compile coverage: the shared SDF headers join the `tests/native/` smoke
-   translation unit and the `tests/test_shared_headers.py` inventory.
+   translation unit.
 9. The ADR-0034 source bundle is generated from directory inputs
    (`backends/torch/include`, `backends/torch/src`, `shared/include`,
    `shared/src`), so the new files enter its manifest automatically. No manual

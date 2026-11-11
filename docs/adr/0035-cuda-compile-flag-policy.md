@@ -48,8 +48,7 @@ The per-translation-unit numeric flag assignment is a contract, recorded in
 disagree in either direction.
 
 Compiler flags are deliberately **not** fields of `NumericPolicy`. That struct's
-field order is locked by `tests/test_rt_contract_headers.py` and
-`tests/test_numeric_policy_contract.py`, it is consumed as a device-side
+field order is locked by `tests/test_numeric_policy_contract.py`, it is consumed as a device-side
 `constexpr` value, and a compile flag is a property of a translation unit rather
 than of a backend profile. The two artifacts point at each other instead.
 
