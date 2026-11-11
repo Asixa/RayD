@@ -630,33 +630,28 @@ template <typename T> UTD_DINLINE void fresnel_boersma(T x, ComplexT<T>& val, Co
     snd = cplx(xPos ? f2R : -f2R, xPos ? f2I : -f2I);
 }
 
+// Axial coordinate (from edgeOrigin along edgeDir) of the first-order diffraction point: the Fermat point on the
+// infinite edge line. Unfolding the two radial half-planes into one plane makes the path a straight line, so with
+// axial offsets a_s, a_t and radial distances rho_s, rho_t of source and target the point is
+// (rho_t a_s + rho_s a_t) / (rho_s + rho_t). The form is symmetric in source and target. Returns NaN when the edge
+// direction is degenerate or both points lie on the edge line.
 template <typename T>
 UTD_DINLINE T first_order_diffraction_parameter(Vec3T<T> sourcePos, Vec3T<T> targetPos, Vec3T<T> edgeOrigin,
                                                 Vec3T<T> edgeDir) {
-    Vec3T<T> zeta = safe_normalize(edgeDir, v3_const<T>(0.f, 0.f, 1.f));
-    Vec3T<T> targetOffset = f3_sub(targetPos, edgeOrigin);
-    Vec3T<T> sourceOffset = f3_sub(sourcePos, edgeOrigin);
-    Vec3T<T> targetProjection = f3_mul(zeta, f3_dot(targetOffset, zeta));
-    Vec3T<T> sourceProjection = f3_mul(zeta, f3_dot(sourceOffset, zeta));
-    Vec3T<T> targetRadial = f3_sub(targetOffset, targetProjection);
-    Vec3T<T> sourceRadial = f3_sub(sourceOffset, sourceProjection);
-    T targetRadialNorm = safe_length(targetRadial);
-    T sourceRadialNorm = safe_length(sourceRadial);
-    Vec3T<T> v1 = f3_div(targetRadial, fmaxf(targetRadialNorm, T(UTD_SMALL_EPS)));
-    Vec3T<T> v2 = f3_div(sourceRadial, fmaxf(sourceRadialNorm, T(UTD_SMALL_EPS)));
-    T theta = UTD_PI - safe_acos(f3_dot(v1, v2));
-    Vec3T<T> rotationAxis = f3_cross(sourceRadial, targetRadial);
-    T rotationAxisNorm = safe_length(rotationAxis);
-    rotationAxis = rotationAxisNorm > UTD_SMALL_EPS ? f3_div(rotationAxis, rotationAxisNorm + T(UTD_EPS)) : zeta;
-    Vec3T<T> coplanarTarget = rotate_vector_around_axis(targetOffset, rotationAxis, theta);
-    Vec3T<T> sourceToTarget = f3_sub(coplanarTarget, sourceOffset);
-    T sourceToTargetNorm = safe_length(sourceToTarget);
-    Vec3T<T> u0 = f3_div(sourceToTarget, fmaxf(sourceToTargetNorm, T(UTD_SMALL_EPS)));
-    Vec3T<T> u1 = f3_cross(sourceOffset, u0);
-    Vec3T<T> u2 = f3_cross(zeta, u0);
-    T u2Norm = safe_length(u2);
-    T sign = T(scalar_value(f3_dot(u1, u2)) >= 0.f ? 1.f : -1.f);
-    return sign * safe_length(u1) / fmaxf(u2Norm, T(UTD_SMALL_EPS));
+    const T edgeNorm = safe_length(edgeDir);
+    if (!(scalar_value(edgeNorm) > UTD_SMALL_EPS) || !isfinite(scalar_value(edgeNorm)))
+        return T(NAN);
+    const Vec3T<T> zeta = f3_div(edgeDir, edgeNorm);
+    const Vec3T<T> sourceOffset = f3_sub(sourcePos, edgeOrigin);
+    const Vec3T<T> targetOffset = f3_sub(targetPos, edgeOrigin);
+    const T sourceAxial = f3_dot(sourceOffset, zeta);
+    const T targetAxial = f3_dot(targetOffset, zeta);
+    const T sourceRadius = safe_length(f3_sub(sourceOffset, f3_mul(zeta, sourceAxial)));
+    const T targetRadius = safe_length(f3_sub(targetOffset, f3_mul(zeta, targetAxial)));
+    const T radialSum = sourceRadius + targetRadius;
+    if (!(scalar_value(radialSum) > 0.f) || !isfinite(scalar_value(radialSum)))
+        return T(NAN);
+    return (targetRadius * sourceAxial + sourceRadius * targetAxial) / radialSum;
 }
 
 template <typename T> struct FiniteEdgePointSelectionT {
@@ -713,7 +708,8 @@ template <typename T>
 UTD_DINLINE Complex3T<T> direct_source_vector(Vec3T<T> sourcePos, Vec3T<T> targetPos, T k, MaterialParamsT<T> mat) {
     Vec3T<T> rayDir = safe_normalize(f3_sub(targetPos, sourcePos), v3_const<T>(0.f, 0.f, 1.f));
     Vec3T<T> txPol = {mat.txPolX, mat.txPolY, mat.txPolZ};
-    Vec3T<T> polDir = stable_perp_basis(rayDir, txPol);
+    // Short-dipole radiation: the unnormalised transverse projection keeps the sin(theta) pattern and its axial zero.
+    Vec3T<T> polDir = project_to_wedge_plane(txPol, rayDir);
     return cplx_scale_real(polDir, direct_source_field(sourcePos, targetPos, k));
 }
 
@@ -1302,6 +1298,28 @@ UTD_DINLINE void fresnel_reflection_face(T cosTheta, T etaR, T muR, T sigma, T o
     rTM = cplx_div(cplx_sub(cplx_mul_real(eta, ct), a), cplx_add(cplx_mul_real(eta, ct), a));
 }
 
+// Perpendicular (s) axis of a face reflection, normal x direction. Along the normal that cross product is rounding
+// noise and its direction meaningless; below kFaceAxisTolerance the caller's fallback transverse axis is used, which
+// is the limit of the s axis there because normal-incidence reflection is isotropic (r_TM = -r_TE).
+constexpr float kFaceAxisTolerance = 1.0e-4f;
+
+template <typename T> UTD_DINLINE Vec3T<T> face_s_axis(Vec3T<T> normal, Vec3T<T> direction, Vec3T<T> fallback) {
+    Vec3T<T> raw = f3_cross(normal, direction);
+    return scalar_value(safe_length(raw)) > kFaceAxisTolerance ? raw : fallback;
+}
+
+// Angle-of-incidence cosines of the two face reflection coefficients in the finite-conductivity wedge coefficient.
+// Luebbers takes face 0 at the incidence angle phi' and face n at the observation angle n pi - phi; that choice is
+// neither reciprocal (phi <-> phi') nor invariant under relabelling the faces. The mean of the incidence and
+// observation sines is both, equals Luebbers' value on each reflection shadow boundary (phi + phi' = pi for face 0,
+// (n pi - phi) + (n pi - phi') = pi for face n), where the reflection term carries the GO step, and becomes grazing
+// only when source and observer both graze the face.
+template <typename T> UTD_DINLINE void reciprocal_face_cosines(T phi, T phiP, T n, T& face0Cos, T& face1Cos) {
+    const T npi = n * UTD_PI;
+    face0Cos = fminf(fmaxf(T(0.5f) * (fabsf(sinf(phi)) + fabsf(sinf(phiP))), T(1.0e-6f)), T(1.f));
+    face1Cos = fminf(fmaxf(T(0.5f) * (fabsf(sinf(npi - phi)) + fabsf(sinf(npi - phiP))), T(1.0e-6f)), T(1.f));
+}
+
 template <typename T>
 UTD_DINLINE JonesOperatorT<T> face_reflection_operator(FaceMaterialParamsT<T> fm, T cosTheta, Vec3T<T> normal,
                                                        Vec3T<T> inHat, Vec3T<T> outHat, Basis3T<T> inEdgeBasis,
@@ -1313,9 +1331,9 @@ UTD_DINLINE JonesOperatorT<T> face_reflection_operator(FaceMaterialParamsT<T> fm
     JonesOperatorT<T> diagOp =
         useFr ? JonesOperatorT<T>{cplx_mul(gain, rTE), cplx_zero<T>(), cplx_zero<T>(), cplx_mul(gain, rTM)}
               : JonesOperatorT<T>{cplx(-fm.gain, T(0)), cplx_zero<T>(), cplx_zero<T>(), cplx(-fm.gain, T(0))};
-    Vec3T<T> faceSIn = f3_cross(normal, inHat);
-    Vec3T<T> faceSOutRaw = f3_cross(normal, outHat);
+    Vec3T<T> faceSIn = face_s_axis(normal, inHat, inEdgeBasis.v);
     Vec3T<T> fallbackOut = stable_perp_basis(outHat, faceSIn);
+    Vec3T<T> faceSOutRaw = face_s_axis(normal, outHat, fallbackOut);
     Vec3T<T> faceSOut = f3_dot(faceSOutRaw, fallbackOut) < 0.0f ? f3_neg(faceSOutRaw) : faceSOutRaw;
     Basis3T<T> fIn = basis_from_first_vector(inHat, faceSIn, stable_perp_basis(inHat, v3_const<T>(0, 0, 1)));
     Basis3T<T> fOut = basis_from_first_vector(outHat, faceSOut, fallbackOut);
@@ -1442,6 +1460,13 @@ UTD_DINLINE JonesOperatorT<T> assemble_diff_operator(ComplexT<T> free_term, Comp
 // deterministic path re-anchors the edge to the exact Fermat point and passes
 // stationaryAtOrigin = true (the stationary parameter is then the origin of the
 // re-anchored [lineMin, lineMax] extent).
+// Signed Fresnel phase of an edge coordinate. fresnel_boersma integrates over the phase t = (pi/2) v^2 of the
+// standard Fresnel variable v = sigma * (u - u*), so the edge aperture integral int_0^v exp(j pi tau^2 / 2) dtau is
+// fresnel_boersma(sign(v) * (pi/2) v^2).
+template <typename T> UTD_DINLINE T edge_fresnel_phase(T v) {
+    return T(0.5f * UTD_PI) * v * fabsf(v);
+}
+
 template <typename T>
 UTD_DINLINE ComplexT<T> finite_wedge_truncation_factor_bounds(PairInputsT<T> state, Vec3T<T> tgtPos, T k, T lineMin,
                                                               T lineMax, bool stationaryAtOrigin) {
@@ -1470,8 +1495,8 @@ UTD_DINLINE ComplexT<T> finite_wedge_truncation_factor_bounds(PairInputsT<T> sta
 
     ComplexT<T> fMin, fMin1, fMin2;
     ComplexT<T> fMax, fMax1, fMax2;
-    fresnel_boersma(scale * (lineMin - stationaryU), fMin, fMin1, fMin2);
-    fresnel_boersma(scale * (lineMax - stationaryU), fMax, fMax1, fMax2);
+    fresnel_boersma(edge_fresnel_phase(scale * (lineMin - stationaryU)), fMin, fMin1, fMin2);
+    fresnel_boersma(edge_fresnel_phase(scale * (lineMax - stationaryU)), fMax, fMax1, fMax2);
     ComplexT<T> delta = cplx_sub(fMax, fMin);
     return cplx_mul(c_const<T>(0.5f, 0.5f), cplx_conj(delta));
 }
@@ -1532,8 +1557,8 @@ UTD_DINLINE T finite_wedge_monotone_truncation(PairInputsT<T> state, Vec3T<T> tg
 
     ComplexT<T> fMin, fMin1, fMin2;
     ComplexT<T> fMax, fMax1, fMax2;
-    fresnel_boersma(scale * (lineMin - stationaryU), fMin, fMin1, fMin2);
-    fresnel_boersma(scale * (lineMax - stationaryU), fMax, fMax1, fMax2);
+    fresnel_boersma(edge_fresnel_phase(scale * (lineMin - stationaryU)), fMin, fMin1, fMin2);
+    fresnel_boersma(edge_fresnel_phase(scale * (lineMax - stationaryU)), fMax, fMax1, fMax2);
 
     // F(+-inf) = +-(0.5+0.5j). Each tail measures the smooth background the
     // finite aperture removes past the corresponding edge end.
@@ -1770,16 +1795,15 @@ UTD_DINLINE Complex3T<T> compute_pair_vector_at_angles(
     bool f1HasMat = state.face1Material.present > 0.5f;
     bool useStoredFaceOps = mat.omega <= 0.f;
 
+    T face0Cos, face1Cos;
+    reciprocal_face_cosines(phi, phiP, state.wedgeN, face0Cos, face1Cos);
     JonesOperatorT<T> f0Op =
         (f0HasMat && !useStoredFaceOps)
-            ? face_reflection_operator(state.face0Material, fminf(fmaxf(fabsf(sinf(phiP)), T(1.0e-6f)), T(1.f)),
-                                       state.n0, inEB.k, outEB.k, inEB, outEB, mat.omega)
+            ? face_reflection_operator(state.face0Material, face0Cos, state.n0, inEB.k, outEB.k, inEB, outEB, mat.omega)
             : fallback_face_operator(state.face0Operator, state.n0, inEB.k, outEB.k, inEB, outEB);
     JonesOperatorT<T> f1Op =
         (f1HasMat && !useStoredFaceOps)
-            ? face_reflection_operator(state.face1Material,
-                                       fminf(fmaxf(fabsf(sinf(state.wedgeN * UTD_PI - phi)), T(1.0e-6f)), T(1.f)),
-                                       state.nn, inEB.k, outEB.k, inEB, outEB, mat.omega)
+            ? face_reflection_operator(state.face1Material, face1Cos, state.nn, inEB.k, outEB.k, inEB, outEB, mat.omega)
             : fallback_face_operator(state.face1Operator, state.nn, inEB.k, outEB.k, inEB, outEB);
 
     DiffractionOperatorTermsT<T> terms = useFace ? compute_op_terms_3d(phi, phiP, state.wedgeN, k, s, sP, sb, gammaOdd,
