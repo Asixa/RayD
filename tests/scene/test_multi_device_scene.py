@@ -82,7 +82,7 @@ def _covered_op_results(scene: rt.Scene, inputs: dict) -> dict[str, torch.Tensor
     points = inputs["points"]
     active = inputs["active"]
 
-    reduced = scene.intersect(ray, flags=getattr(rt.RayFlags, "None"))
+    reduced = scene.intersect(ray, flags=rt.RayFlags.Empty)
     full = scene.intersect(ray, flags=rt.RayFlags.All)
     masked = scene.intersect(ray, active)
     nearest_point = scene.nearest_edge(points)
@@ -115,7 +115,7 @@ def _covered_op_results(scene: rt.Scene, inputs: dict) -> dict[str, torch.Tensor
         "nearest_edge_ray.shape_id": nearest_ray.shape_id,
         "nearest_edge_ray.edge_id": nearest_ray.edge_id,
         "nearest_edge_ray.global_edge_id": nearest_ray.global_edge_id,
-        "nearest_edges.is_valid": topk.is_valid,
+        "nearest_edges.valid": topk.valid,
         "nearest_edges.distances": topk.distances,
         "nearest_edges.points": topk.points,
         "nearest_edges.edge_t": topk.edge_t,
@@ -135,8 +135,8 @@ def _covered_op_results(scene: rt.Scene, inputs: dict) -> dict[str, torch.Tensor
         "trace_reflections.t": reflections.t,
         "trace_reflections.prim_ids": reflections.prim_ids,
         "trace_reflections.image_sources": reflections.image_sources,
-        "trace_refl_epc_field.field_real": epc.field_real,
-        "trace_refl_epc_field.field_imag": epc.field_imag,
+        "trace_refl_epc_field.field_re": epc.field_re,
+        "trace_refl_epc_field.field_im": epc.field_im,
         "trace_refl_epc_field.path_length": epc.path_length,
         "trace_refl_epc_field.valid": epc.valid,
         "trace_refl_epc_field.resolved_prim_ids": epc.resolved_prim_ids,
@@ -358,9 +358,7 @@ class SingleDeviceStaysOnThePreExistingPathTests(MultiDeviceResultMixin, unittes
             states=_dfr_states(device),
             grid=_dfr_grid(),
             material=_dfr_material(device),
-            wavelength=1.0,
-            direct_samples=_ACCUM_SAMPLES,
-            seed=17,
+            options=rt.DfrOptions(wavelength=1.0, direct_samples=_ACCUM_SAMPLES, seed=17),
         )
         scene = _accum_scene(device, devices=[0], options=rt.MultiDeviceOptions(warm_up=False, chunk_rays=2048))
         self.assertIsNotNone(scene._multi)
@@ -368,9 +366,7 @@ class SingleDeviceStaysOnThePreExistingPathTests(MultiDeviceResultMixin, unittes
             states=_dfr_states(device),
             grid=_dfr_grid(),
             material=_dfr_material(device),
-            wavelength=1.0,
-            direct_samples=_ACCUM_SAMPLES,
-            seed=17,
+            options=rt.DfrOptions(wavelength=1.0, direct_samples=_ACCUM_SAMPLES, seed=17),
         )
         self.assertEqual(scene._multi.last_chunk_plan.chunk_count, _ACCUM_SAMPLES // 2048)
         self.assertGreater(float(reference.power.sum().item()), 0.0)
@@ -427,10 +423,8 @@ class MultiDeviceSceneTests(MultiDeviceResultMixin, unittest.TestCase):
     def test_result_headers_and_types_survive_the_gather(self):
         scene = self._multi_scene([9.0, 1.0])
         self.assertEqual(_covered_op_headers(self.single, self.inputs), _covered_op_headers(scene, self.inputs))
-        reduced = scene.intersect(self.inputs["ray"], flags=getattr(rt.RayFlags, "None"))
-        self.assertEqual(
-            type(reduced), type(self.single.intersect(self.inputs["ray"], flags=getattr(rt.RayFlags, "None")))
-        )
+        reduced = scene.intersect(self.inputs["ray"], flags=rt.RayFlags.Empty)
+        self.assertEqual(type(reduced), type(self.single.intersect(self.inputs["ray"], flags=rt.RayFlags.Empty)))
         self.assertEqual(tuple(reduced.p.shape), (0, 3))
         self.assertEqual(
             type(scene.trace_reflections(self.inputs["ray"], max_bounces=2)),
@@ -1170,10 +1164,8 @@ class MultiDeviceAccumulationTests(AccumulationMixin, unittest.TestCase):
             states=_dfr_states(self.device) if states is None else states,
             grid=self.grid,
             material=_dfr_material(self.device) if material is None else material,
-            wavelength=1.0,
-            direct_samples=samples,
-            seed=17,
             **kwargs,
+            options=rt.DfrOptions(wavelength=1.0, direct_samples=samples, seed=17),
         )
 
     def test_two_device_accum_matches_single_device_at_several_weightings(self):
@@ -1199,9 +1191,11 @@ class MultiDeviceAccumulationTests(AccumulationMixin, unittest.TestCase):
         states = _dfr_states(self.device)
         material = _dfr_material(self.device)
         coherent_reference = single.accum_dfr_coherent_direct(
-            states=states, grid=self.grid, material=material, wavelength=1.0
+            states=states, grid=self.grid, material=material, options=rt.DfrCoherentOptions(wavelength=1.0)
         )
-        coherent = scene.accum_dfr_coherent_direct(states=states, grid=self.grid, material=material, wavelength=1.0)
+        coherent = scene.accum_dfr_coherent_direct(
+            states=states, grid=self.grid, material=material, options=rt.DfrCoherentOptions(wavelength=1.0)
+        )
         self.assertEqual(scene._multi.last_dispatch, "master")
         self.assertEqual(coherent.grid_cell_count, coherent_reference.grid_cell_count)
         for name in coherent.__dataclass_fields__:
@@ -1232,7 +1226,7 @@ class MultiDeviceAccumulationTests(AccumulationMixin, unittest.TestCase):
                 states=states,
                 material=material,
                 active=active,
-                layout=rt.DfrPathLayout.SourceLane,
+                options=rt.DfrPathOptions(layout=rt.DfrPathLayout.SourceLane),
             )
 
         reference = trace(self.single)
@@ -1287,7 +1281,7 @@ class MultiDeviceAccumulationTests(AccumulationMixin, unittest.TestCase):
                 states=states,
                 material=material,
                 active=active,
-                layout=rt.DfrPathLayout.SourceLane,
+                options=rt.DfrPathOptions(layout=rt.DfrPathLayout.SourceLane),
             )
 
     def test_source_lane_rejects_nonmaster_state_before_remote_copy(self):
@@ -1304,7 +1298,7 @@ class MultiDeviceAccumulationTests(AccumulationMixin, unittest.TestCase):
                 states=foreign_states,
                 material=_dfr_material(self.device),
                 active=active,
-                layout=rt.DfrPathLayout.SourceLane,
+                options=rt.DfrPathOptions(layout=rt.DfrPathLayout.SourceLane),
             )
 
     def test_forward_only_diffraction_rejects_tracked_inputs_before_sharding(self):
@@ -1321,7 +1315,7 @@ class MultiDeviceAccumulationTests(AccumulationMixin, unittest.TestCase):
                 states=tracked_states,
                 material=_dfr_material(self.device),
                 active=active,
-                layout=rt.DfrPathLayout.SourceLane,
+                options=rt.DfrPathOptions(layout=rt.DfrPathLayout.SourceLane),
             )
         with self.assertRaisesRegex(RuntimeError, "forward-only"):
             scene.accum_dfr_coherent_direct(states=tracked_states, grid=self.grid, material=_dfr_material(self.device))
@@ -1330,10 +1324,12 @@ class MultiDeviceAccumulationTests(AccumulationMixin, unittest.TestCase):
         states = _repeat_dfr_states(_dfr_states(self.device), 2)
         material = _dfr_material(self.device)
         reference = self.single.accum_dfr_coherent_direct(
-            states=states, grid=self.grid, material=material, wavelength=1.0
+            states=states, grid=self.grid, material=material, options=rt.DfrCoherentOptions(wavelength=1.0)
         )
         scene = self._scene()
-        merged = scene.accum_dfr_coherent_direct(states=states, grid=self.grid, material=material, wavelength=1.0)
+        merged = scene.accum_dfr_coherent_direct(
+            states=states, grid=self.grid, material=material, options=rt.DfrCoherentOptions(wavelength=1.0)
+        )
         self.assertEqual(scene._multi.last_dispatch, "lane-sharded")
         self.assertGreater(float(reference.direct_field_x_re.abs().sum().item()), 0.0, "vacuous coherent fixture")
         for name in (
@@ -1353,7 +1349,7 @@ class MultiDeviceAccumulationTests(AccumulationMixin, unittest.TestCase):
             torch.testing.assert_close(
                 getattr(merged, name), getattr(reference, name), rtol=1e-4, atol=1e-9, msg=f"{name} mismatch"
             )
-        for name in ("direct_count", "multi_count", "visibility_reject_count", "utd_reject_count"):
+        for name in ("direct_count", "multi_count", "vis_rejects", "utd_rejects"):
             self.assertTrue(torch.equal(getattr(merged, name), getattr(reference, name)), f"{name} mismatch")
 
     def test_the_lane_windows_partition_the_caller_s_window(self):
@@ -1456,11 +1452,7 @@ class MultiDeviceAccumulationTests(AccumulationMixin, unittest.TestCase):
                 recursive_states=recursive,
                 grid=rt.DfrGrid(axis=2, position=-1.0, resolution0=2, resolution1=2),
                 material=_dfr_material(self.device),
-                wavelength=0.125,
-                seed=17,
-                direct_samples=2048,
-                keller_samples=2048,
-                max_order=2,
+                options=rt.DfrOptions(wavelength=0.125, seed=17, direct_samples=2048, keller_samples=2048, max_order=2),
             )
 
         reference = accum(single)

@@ -326,9 +326,9 @@ def _query(scene: Any, dimensions: dict[str, Any], query: Any) -> Any:
 
 def _materialize(result: Any, dimensions: dict[str, Any], dr: Any) -> None:
     if dimensions["query_kind"] == "point":
-        dr.eval(result.is_valid, result.distances, result.points, result.edge_points, result.global_edge_ids)
+        dr.eval(result.valid, result.distances, result.points, result.edge_points, result.global_edge_ids)
     else:
-        dr.eval(result.is_valid(), result.distance, result.point, result.edge_point, result.global_edge_id)
+        dr.eval(result.valid(), result.distance, result.point, result.edge_point, result.global_edge_id)
 
 
 def _launch_counts(history: list[dict[str, Any]], native: dict[str, Any]) -> dict[str, int]:
@@ -415,9 +415,9 @@ def _collect_launch_audit(
 
 def _correctness(result: Any, dimensions: dict[str, Any], dr: Any) -> dict[str, float]:
     if dimensions["query_kind"] == "point":
-        valid, distance, point, edge_point = result.is_valid, result.distances, result.points, result.edge_points
+        valid, distance, point, edge_point = result.valid, result.distances, result.points, result.edge_points
     else:
-        valid, distance, point, edge_point = result.is_valid(), result.distance, result.point, result.edge_point
+        valid, distance, point, edge_point = result.valid(), result.distance, result.point, result.edge_point
     derived = dr.sqrt(dr.squared_norm(point - edge_point))
     absolute = dr.select(valid, dr.abs(derived - distance), 0.0)
     relative = dr.select(valid, absolute / dr.maximum(dr.abs(distance), 1.0e-8), 0.0)
@@ -428,9 +428,9 @@ def _correctness(result: Any, dimensions: dict[str, Any], dr: Any) -> dict[str, 
 def _loss(scene: Any, dimensions: dict[str, Any], query: Any, dr: Any) -> Any:
     result = _query(scene, dimensions, query)
     if dimensions["query_kind"] == "point":
-        values = dr.select(result.is_valid, result.distances, 0.0)
+        values = dr.select(result.valid, result.distances, 0.0)
     else:
-        values = dr.select(result.is_valid(), result.distance, 0.0)
+        values = dr.select(result.valid(), result.distance, 0.0)
     return dr.sum(values) / max(dr.width(values), 1)
 
 
@@ -447,9 +447,9 @@ def _ad_errors(
     tangent = (0.37, -0.23, 0.11)
     fixed = _query(scene, dimensions, _make_query(dimensions, query_data, cuda, rayd))
     if dimensions["query_kind"] == "point":
-        valid, distance, point, edge_point = fixed.is_valid, fixed.distances, fixed.points, fixed.edge_points
+        valid, distance, point, edge_point = fixed.valid, fixed.distances, fixed.points, fixed.edge_points
     else:
-        valid, distance, point, edge_point = fixed.is_valid(), fixed.distance, fixed.point, fixed.edge_point
+        valid, distance, point, edge_point = fixed.valid(), fixed.distance, fixed.point, fixed.edge_point
     delta = point - edge_point
     directional = dr.dot(delta, cuda.Array3f(*tangent)) / dr.maximum(distance, 1.0e-8)
     reference_values = dr.select(valid & (distance > 1.0e-8), directional, 0.0)

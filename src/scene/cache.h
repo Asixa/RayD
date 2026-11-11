@@ -17,6 +17,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -270,9 +271,10 @@ struct SceneHandle : torch::CustomClassHolder {
     bool owns_handle = true;
 };
 
-std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes);
+// `operation` names the entry point that builds the scene, such as "Scene.build()", and prefixes its errors.
+std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes, std::string_view operation);
 std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes, TraceBackend trace_backend,
-                                               EdgeBackend edge_backend);
+                                               EdgeBackend edge_backend, std::string_view operation);
 int64_t create_scene(std::vector<MeshRecord> meshes);
 // A registered scene kept alive and locked for the duration of one op. Registered scenes are shared-owned, so
 // destroying the Python scene while an op (or a backward pass on an autograd thread) still uses it only drops the

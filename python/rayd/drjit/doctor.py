@@ -27,7 +27,7 @@ def _resolve_backends(report: diagnostics.Report, disabled: bool) -> None:
     scene = rd.Scene()
     scene.add_mesh(mesh)
     scene.build()
-    trace = scene.trace_backend_name()
+    trace = scene.trace_backend
     report.fact("auto trace backend", trace)
     report.fact("auto edge backend", scene.edge_bvh_backend)
     if trace == "optix":

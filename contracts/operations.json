@@ -187,7 +187,7 @@
       }
     },
     "reflection_accumulation": {
-      "accumulate_reflections": {
+      "accum_refl": {
         "primal": {"drjit": true, "torch": true},
         "input_domains": {
           "geometry": {
@@ -350,7 +350,7 @@
       "vacuum_permittivity": 8.854187817e-12
     },
     "ray_flags": {
-      "None": 0,
+      "Empty": 0,
       "Geometric": 1,
       "ShadingN": 2,
       "UV": 4,
@@ -487,20 +487,20 @@
       "complex_encoding": {"drjit": "native_complex", "torch": "real_imag_components"}
     },
     "sdf_intersection": {
-      "canonical_fields": ["t", "hit_mask", "position", "normal", "steps"],
+      "canonical_fields": ["t", "valid", "position", "normal", "steps"],
       "field_types": {
         "t": "float32[N]",
-        "hit_mask": "bool[N]",
+        "valid": "bool[N]",
         "position": "float32[N, 3]",
         "normal": "float32[N, 3]",
         "steps": "int32[N]"
       },
       "differentiable_fields": ["t", "position", "normal"],
       "backend_fields": {
-        "drjit": ["t", "hit_mask", "position", "normal", "steps"],
-        "torch": ["t", "hit_mask", "position", "normal", "steps"]
+        "drjit": ["t", "valid", "position", "normal", "steps"],
+        "torch": ["t", "valid", "position", "normal", "steps"]
       },
-      "miss": {"t": "inf", "hit_mask": false, "position": 0.0, "normal": 0.0},
+      "miss": {"t": "inf", "valid": false, "position": 0.0, "normal": 0.0},
       "miss_inertness": "A missed lane is bitwise inert: position and normal are exact positive zero, every gradient and tangent is exact positive zero, and the lane contributes no atomic to any shared gradient buffer.",
       "non_finite_policy": "t = inf on a miss is the only non-finite value any output or derivative may carry."
     }
@@ -537,7 +537,7 @@
       "shardability": {"class": "per_ray", "torch_multi_device": "sharded"},
       "integration": {"drjit": ["jit_symbolic"], "torch": ["eager_native"]},
       "derivative_variants": ["intersect"],
-      "inputs": ["ray", "active_mask", "ray_flags"],
+      "inputs": ["ray", "active", "flags"],
       "result": "intersection",
       "id_spaces": {"shape_id": "scene-shape", "local_prim_id": "shape-local", "global_prim_id": "scene-global"},
       "ad": "fixed-winner forward/VJP/JVP for continuous geometry fields",
@@ -554,7 +554,7 @@
       "shardability": {"class": "per_ray", "torch_multi_device": "sharded"},
       "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
       "derivative_variants": ["nearest_edge"],
-      "inputs": ["point", "active_mask"],
+      "inputs": ["query", "active"],
       "result": "nearest_edge_point",
       "id_spaces": {"edge_id": "shape-local", "global_edge_id": "scene-global"},
       "ad": "fixed-winner forward/VJP/JVP"
@@ -563,7 +563,7 @@
       "shardability": {"class": "per_ray", "torch_multi_device": "sharded"},
       "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
       "derivative_variants": ["nearest_edge"],
-      "inputs": ["ray", "active_mask"],
+      "inputs": ["query", "active"],
       "result": "nearest_edge_ray",
       "ray_domain": "[0, tmax] when tmax is finite",
       "degenerate_rows": {
@@ -578,7 +578,7 @@
       "shardability": {"class": "per_ray", "torch_multi_device": "sharded"},
       "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
       "derivative_variants": ["nearest_edges"],
-      "inputs": ["point", "k", "active_mask", "edge_mask"],
+      "inputs": ["point", "k", "active"],
       "result": "nearest_edge_point[k]",
       "limits": {"min_k": 1, "max_k": 16},
       "ordering": "ascending distance, deterministic global_edge_id tie break",
@@ -588,7 +588,7 @@
       "shardability": {"class": "per_ray", "torch_multi_device": "sharded"},
       "integration": {"drjit": ["jit_symbolic", "eager_native"], "torch": ["eager_native"]},
       "derivative_variants": ["visible"],
-      "inputs": ["start", "end", "active_mask"],
+      "inputs": ["start", "end", "active"],
       "result": "bool",
       "ray_domain": "finite segment with endpoint offsets",
       "non_finite_endpoints": "a segment with a NaN or infinite endpoint is not visible (false), like an inactive lane, on both backends",
@@ -598,7 +598,7 @@
       "shardability": {"class": "per_ray", "torch_multi_device": "sharded"},
       "integration": {"drjit": ["jit_symbolic", "eager_native"], "torch": ["eager_native"]},
       "derivative_variants": ["visible_pair"],
-      "inputs": ["start", "end_a", "end_b", "active_mask"],
+      "inputs": ["start", "end_a", "end_b", "ignore_prim_ids", "active"],
       "result": "bool_pair",
       "ray_domain": "two finite segments with endpoint offsets",
       "ad": "discrete result; no geometry derivative"
@@ -607,7 +607,7 @@
       "shardability": {"class": "per_ray", "torch_multi_device": "sharded"},
       "integration": {"drjit": ["jit_symbolic", "eager_native"], "torch": ["eager_native"]},
       "derivative_variants": ["visible_edge"],
-      "inputs": ["source", "edge_position", "edge_direction", "edge_t_min", "edge_t_max", "sample_fractions", "active_mask"],
+      "inputs": ["source", "edge_position", "edge_direction", "edge_t_min", "edge_t_max", "sample_fractions", "active"],
       "result": "bool",
       "limits": {"min_samples": 1, "max_samples": 16},
       "ad": "discrete result; no geometry derivative"
@@ -616,7 +616,7 @@
       "shardability": {"class": "per_ray", "torch_multi_device": "sharded"},
       "integration": {"drjit": ["jit_symbolic", "eager_native"], "torch": ["eager_native"]},
       "derivative_variants": ["visible_chain"],
-      "inputs": ["points", "chain_length", "ignore_prim_per_segment", "active_mask"],
+      "inputs": ["points", "chain_length", "ignore_prim_per_segment", "active"],
       "result": "chain_visibility_and_first_blocker",
       "id_space": "scene-global primitive IDs",
       "ad": "discrete result; no geometry derivative"
@@ -625,7 +625,7 @@
       "shardability": {"class": "variant_specific", "torch_multi_device": "variant_specific", "note": "trace_reflections and trace_refl_epc_field are per_ray/sharded. trace_refl_epc is per_ray/unsupported. Chain deduplication is a separate batch_coupled operation that the replicated layer does not wrap.", "variant_shardability": {"trace_reflections": {"class": "per_ray", "torch_multi_device": "sharded"}, "trace_refl_epc": {"class": "per_ray", "torch_multi_device": "unsupported"}, "trace_refl_epc_field": {"class": "per_ray", "torch_multi_device": "sharded"}}},
       "integration": {"drjit": ["jit_symbolic", "eager_native"], "torch": ["eager_native"]},
       "derivative_variants": ["trace_reflections", "trace_refl_epc", "trace_refl_epc_field"],
-      "inputs": ["source", "receiver", "max_depth", "active_mask"],
+      "inputs": ["ray", "source", "receiver", "max_bounces", "options", "active"],
       "result": "reflection_chain",
       "id_space": "scene-global primitive IDs",
       "ad": "Variant- and input-domain-specific fixed-path derivatives; see the derivative manifest."
@@ -633,8 +633,8 @@
     "reflection_accumulation": {
       "shardability": {"class": "grid_reduce", "torch_multi_device": "sharded", "note": "Torch shards warp-aligned ray-batch windows and sums the seven float grids plus reflection_count on the master in device order. Bounded WedgeEvents are not reducible: wedge collection preserves its global capacity, overflow, slot-order, and ray-index contract through one master launch, and rejects simultaneous chunking, a memory budget, or offload."},
       "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
-      "derivative_variants": ["accumulate_reflections"],
-      "inputs": ["reflection_chain", "material", "frequency"],
+      "derivative_variants": ["accum_refl"],
+      "inputs": ["ray", "tx_position", "grid", "material", "max_bounces", "options", "active", "tx_polarization"],
       "result": "complex_field_and_power",
       "ad": "Dr.Jit supports fixed-path VJP/JVP; the Torch high-level path is forward-only."
     },
@@ -642,7 +642,7 @@
       "shardability": {"class": "variant_specific", "torch_multi_device": "sharded", "note": "accum_dfr_direct and accum_dfr_coherent_direct are grid_reduce variants that shard through lane windows. trace_dfr_paths is a source_lane variant that concatenates transmitter-aligned blocks without compaction.", "variant_shardability": {"trace_dfr_paths": {"class": "source_lane", "torch_multi_device": "sharded"}, "accum_dfr_direct": {"class": "grid_reduce", "torch_multi_device": "sharded"}, "accum_dfr_coherent_direct": {"class": "grid_reduce", "torch_multi_device": "sharded"}}},
       "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
       "derivative_variants": ["trace_dfr_paths", "accum_dfr_direct", "accum_dfr_coherent_direct"],
-      "inputs": ["diffraction_states", "material", "grid", "frequency"],
+      "inputs": ["tx_positions", "rx_positions", "states", "grid", "material", "options", "active"],
       "result": "diffraction_accumulation",
       "state_weighting": "accum_dfr_direct sums over states: Monte-Carlo lane l draws state l % S and weighs edge_length * S / samples on both backends. accum_dfr_coherent_direct owns one lane per (state, cell) pair, and that lane weighs its whole edge length.",
       "ad": "Variant-specific fixed-path derivatives; path export and coherent accumulation are forward-only."
@@ -651,7 +651,7 @@
       "shardability": {"class": "grid_reduce", "torch_multi_device": "sharded", "note": "accum_dfr shards through the lane window."},
       "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
       "derivative_variants": ["accum_dfr"],
-      "inputs": ["diffraction_states", "material", "grid", "frequency", "max_depth"],
+      "inputs": ["initial_states", "recursive_states", "grid", "material", "options", "active", "recursive_active"],
       "result": "diffraction_paths_or_accumulation",
       "state_weighting": "accum_dfr sums over its S initial states on both backends: Monte-Carlo lane l draws initial state l % S and its contribution is weighted by S / samples, in the primal and the fixed-path VJP/JVP. Each further event draws one recursive state per lane uniformly with weight 1.",
       "ad": "fixed-path forward/VJP/JVP"

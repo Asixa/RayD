@@ -57,8 +57,8 @@ class PublicApiContractTests(unittest.TestCase):
 
     def test_intersection_is_valid_uses_native_kernel(self):
         source = (ROOT / "python" / "rayd" / "_impl" / "geometry.py").read_text()
-        start = source.index("class Intersection")
-        end = source.index("@dataclass(frozen=True)\nclass NearestPointEdge")
+        start = source.index("class Intersection(")
+        end = source.index("class NearestPointEdge(", start)
         intersection_source = source[start:end]
         self.assertIn("core_ops().intersection_valid", intersection_source)
         self.assertLess(

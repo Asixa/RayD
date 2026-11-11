@@ -33,7 +33,7 @@ class TorchSdfOperationTests(unittest.TestCase):
         direction = torch.tensor(((0.0, 0.0, 1.0),), dtype=torch.float32, device="cuda")
         ray = rt.Ray(origin, direction)
         hit = self.grid.intersect(ray)
-        self.assertEqual(hit.hit_mask.tolist(), [True])
+        self.assertEqual(hit.valid.tolist(), [True])
         self.assertAlmostEqual(hit.t.item(), 1.0, places=3)
         self.assertEqual(
             self.grid.visible(origin.detach(), torch.tensor(((0.0, 0.0, 1.0),), device="cuda")).tolist(), [False]

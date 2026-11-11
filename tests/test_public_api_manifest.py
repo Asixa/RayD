@@ -292,7 +292,6 @@ class PublicApiManifestTests(unittest.TestCase):
                 "derivative_statuses",
                 "naming_conventions",
                 "apis",
-                "aliases",
                 "backends",
                 "trace",
             },
@@ -346,7 +345,7 @@ class PublicApiManifestTests(unittest.TestCase):
             for name, metadata in rich["apis"].items():
                 self.assertEqual(metadata["category"], MANIFEST["apis"][name]["category"])
                 self.assertEqual(metadata["stability"], MANIFEST["apis"][name]["stability"])
-            self.assertEqual(rich["aliases"], MANIFEST["aliases"])
+            self.assertNotIn("aliases", rich)
             self.assertEqual(rich["trace"], MANIFEST["trace"])
 
     def test_trace_axis_records_the_optix_and_cuda_backends(self):
@@ -368,11 +367,10 @@ class PublicApiManifestTests(unittest.TestCase):
             },
         )
 
-    def test_hybrid_is_only_a_deprecated_compatibility_alias(self):
-        aliases = MANIFEST["aliases"]["edge_bvh_backend"]
-        self.assertEqual(aliases["hybrid"]["canonical"], "optix_drjit")
-        self.assertEqual(aliases["hybrid"]["stability"], "deprecated")
-        self.assertIn("unrelated", aliases["hybrid"]["summary"])
+    def test_edge_bvh_backend_values_have_no_aliases(self):
+        # Backend strings match exactly; the manifest records no alias table.
+        self.assertNotIn("aliases", MANIFEST)
+        self.assertNotIn("aliases", SCHEMA["properties"])
 
     def test_complete_typing_markers_are_shipped(self):
         """Both packages stay PEP 561 typed distributions.
@@ -554,7 +552,7 @@ class PublicApiManifestTests(unittest.TestCase):
                 "trace_reflections",
                 "trace_refl_epc_field",
                 "trace_dfr_paths",
-                "accumulate_reflections",
+                "accum_refl",
                 "accum_dfr_direct",
                 "accum_dfr",
             },

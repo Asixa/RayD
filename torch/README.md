@@ -59,7 +59,10 @@ print(scene.trace_backend, scene.edge_bvh_backend)
 ```
 
 Pass `trace_backend="optix"` or `"cuda"` and
-`edge_bvh_backend="optix"` or `"cuda"` to require a backend. An explicit
+`edge_bvh_backend="optix"` or `"cuda"` to require a backend (or the
+`rt.TraceBackend` / `rt.EdgeBVHBackend` enum members, which compare equal to
+those strings). Both selectors are keyword-only and match exactly and
+case-sensitively; an unknown value raises `ValueError`. An explicit
 OptiX request fails with the reason if OptiX is unavailable; runtime pipeline,
 allocation, and CUDA errors are never converted into a fallback.
 `RAYD_DISABLE_OPTIX=1` is the deployment and test kill switch and silences the
@@ -93,14 +96,17 @@ The march is relaxed, recovers from overshoot by bisecting the bracketing sign
 change, and clips the traced interval to the ray/box overlap, so an origin
 inside the box is a supported case. `t`, `position`, and `normal` carry
 gradients and tangents to the grid values, the box transform, and the rays under
-the frozen-winner implicit function theorem; `hit_mask` and `steps` carry none.
+the frozen-winner implicit function theorem; `valid` and `steps` carry none.
 Missed lanes report `t = +inf` and are bitwise inert: zero outputs, zero
 derivatives, and no atomic contribution. The operation performs no
 device-to-host copy and no stream synchronization, including for its
 resolution-derived `eps_hit` default.
 
-The primitive is standalone and Torch-only: no OptiX, no `Scene` membership, no
-mixing with triangle geometry, and no silhouette gradients in v1. See
+The functional `sdf_intersect` form is Torch-only; the method form
+`SdfGrid.intersect(ray, options=rt.SdfTraceOptions(...), active)` matches the
+Dr.Jit `SdfGrid.intersect`. The primitive needs no OptiX and no `Scene`
+membership, joins triangle geometry only through `MixedScene`, and has no
+silhouette gradients. See
 [`docs/adr/0037-differentiable-sdf-intersection.md`](../docs/adr/0037-differentiable-sdf-intersection.md).
 
 ## Tensor ABI

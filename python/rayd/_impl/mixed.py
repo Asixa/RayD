@@ -10,12 +10,15 @@ from collections.abc import Callable
 import torch
 
 from .geometry import (
+    EdgeBVHBackend,
     Intersection,
     Ray,
     RayFlags,
     ReflectionChain,
     SdfIntersection,
+    TraceBackend,
     _CONTRACT_VALUES,
+    _DeferredIntersection,
     _require_float_cuda_tensor,
 )
 from .scene import Mesh, Scene
@@ -80,13 +83,21 @@ def _mask_intersection_fields(candidate: Intersection, flags: RayFlags) -> Inter
     )
 
 
-class _MixedIntersection:
-    __slots__ = ("_full", "_load_full", "_winner", "t")
+class _MixedIntersection(_DeferredIntersection):
+    __slots__ = ("_full", "_load_full", "_winner")
 
     def __init__(self, candidate_t: list[torch.Tensor], load_full: list[Callable[[], Intersection]]) -> None:
         self._load_full = load_full
-        self.t, self._winner = torch.min(torch.stack(tuple(candidate_t)), dim=0)
+        t, self._winner = torch.min(torch.stack(tuple(candidate_t)), dim=0)
+        # `t` is the inherited, read-only dataclass slot.
+        object.__setattr__(self, "t", t)
         self._full: Intersection | None = None
+
+    def _loaded_t(self) -> torch.Tensor | None:
+        return self.t
+
+    def _loaded_full(self) -> Intersection | None:
+        return self._full
 
     def _ensure_full(self) -> Intersection:
         if self._full is None:
@@ -101,39 +112,39 @@ class _MixedIntersection:
         return torch.isfinite(self.t)
 
     @property
-    def p(self) -> torch.Tensor:
+    def p(self) -> torch.Tensor:  # type: ignore[override]
         return self._ensure_full().p
 
     @property
-    def n(self) -> torch.Tensor:
+    def n(self) -> torch.Tensor:  # type: ignore[override]
         return self._ensure_full().n
 
     @property
-    def geo_n(self) -> torch.Tensor:
+    def geo_n(self) -> torch.Tensor:  # type: ignore[override]
         return self._ensure_full().geo_n
 
     @property
-    def uv(self) -> torch.Tensor:
+    def uv(self) -> torch.Tensor:  # type: ignore[override]
         return self._ensure_full().uv
 
     @property
-    def barycentric(self) -> torch.Tensor:
+    def barycentric(self) -> torch.Tensor:  # type: ignore[override]
         return self._ensure_full().barycentric
 
     @property
-    def shape_id(self) -> torch.Tensor:
+    def shape_id(self) -> torch.Tensor:  # type: ignore[override]
         return self._ensure_full().shape_id
 
     @property
-    def prim_id(self) -> torch.Tensor:
+    def prim_id(self) -> torch.Tensor:  # type: ignore[override]
         return self._ensure_full().prim_id
 
     @property
-    def local_prim_id(self) -> torch.Tensor:
+    def local_prim_id(self) -> torch.Tensor:  # type: ignore[override]
         return self._ensure_full().local_prim_id
 
     @property
-    def global_prim_id(self) -> torch.Tensor:
+    def global_prim_id(self) -> torch.Tensor:  # type: ignore[override]
         return self._ensure_full().global_prim_id
 
 
@@ -145,7 +156,12 @@ class MixedScene:
     instance forwards directly to ``Scene``. Diffraction is intentionally absent.
     """
 
-    def __init__(self, trace_backend: str = "auto", edge_bvh_backend: str = "auto") -> None:
+    def __init__(
+        self,
+        *,
+        trace_backend: TraceBackend | str = TraceBackend.AUTO,
+        edge_bvh_backend: EdgeBVHBackend | str = EdgeBVHBackend.AUTO,
+    ) -> None:
         self._mesh_scene = Scene(trace_backend=trace_backend, edge_bvh_backend=edge_bvh_backend)
         self._mesh_count = 0
         self._mesh_face_count = 0
@@ -251,9 +267,7 @@ class MixedScene:
     def _sdf_candidate(
         self, grid: SdfGrid, options: SdfTraceOptions, ray: Ray, active: torch.Tensor, index: int, flags: RayFlags
     ) -> tuple[torch.Tensor, Callable[[], Intersection]]:
-        hit = grid.intersect(
-            ray, active=active, max_steps=options.max_steps, relaxation=options.relaxation, eps_hit=options.eps_hit
-        )
+        hit = grid.intersect(ray, options, active)
         return self._sdf_candidate_from_hit(hit, ray, index, flags)
 
     def _sdf_candidate_from_hit(
@@ -353,13 +367,7 @@ class MixedScene:
                 index += 1
                 continue
             batch, options = batch_entry
-            hits = batch.intersect(
-                ray,
-                active=lane_active,
-                max_steps=options.max_steps,
-                relaxation=options.relaxation,
-                eps_hit=options.eps_hit,
-            )
+            hits = batch.intersect(ray, options, lane_active)
             for local_index, hit in enumerate(hits):
                 candidate, load_candidate = self._sdf_candidate_from_hit(hit, ray, index + local_index, flags)
                 candidate_t.append(candidate)
@@ -369,7 +377,7 @@ class MixedScene:
             candidate, load_candidate = self._surfel_candidate(scene, ray, lane_active, index, flags)
             candidate_t.append(candidate)
             load_full.append(load_candidate)
-        return _MixedIntersection(candidate_t, load_full)  # type: ignore[return-value]
+        return _MixedIntersection(candidate_t, load_full)
 
     def visible(self, start: torch.Tensor, end: torch.Tensor, active: torch.Tensor | None = None) -> torch.Tensor:
         _require_float_cuda_tensor(start, "start", 3)
@@ -384,14 +392,7 @@ class MixedScene:
         if self._mesh_count:
             result = result & self._mesh_scene.visible(start, end, lane_active)
         for grid, options in self._sdfs:
-            result = result & grid.visible(
-                start,
-                end,
-                lane_active,
-                max_steps=options.max_steps,
-                relaxation=options.relaxation,
-                eps_hit=options.eps_hit,
-            )
+            result = result & grid.visible(start, end, options, lane_active)
         for scene in self._surfels:
             result = result & scene.visible(start, end, lane_active)
         return result
@@ -404,7 +405,7 @@ class MixedScene:
         lane_active = _require_active(active, ray.o.shape[0], ray.o.device)
         opaque = torch.zeros_like(lane_active)
         if self._mesh_count:
-            opaque = opaque | self._mesh_scene.intersect(ray, lane_active, RayFlags(0)).is_valid()
+            opaque = opaque | self._mesh_scene.intersect(ray, lane_active, RayFlags.Empty).is_valid()
         result = torch.ones((ray.o.shape[0],), dtype=ray.o.dtype, device=ray.o.device)
         for scene in self._surfels:
             result = result * scene.transmittance(ray, lane_active)

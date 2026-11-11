@@ -79,7 +79,7 @@ class CoherentMultiStateTests(unittest.TestCase):
             cell_area=0.25,
         )
         return scene.accum_dfr_coherent_direct(
-            states=_states(rows), grid=grid, material=material, wavelength=WAVELENGTH
+            states=_states(rows), grid=grid, material=material, options=rt.DfrCoherentOptions(wavelength=WAVELENGTH)
         )
 
     def _scene(self, trace_backend: str):
@@ -140,7 +140,10 @@ class CoherentMultiStateTests(unittest.TestCase):
         for trace_backend in ("optix", "cuda"):
             scene = self._scene(trace_backend)
             results[trace_backend] = scene.accum_dfr_direct(
-                states=_states(rows), grid=grid, material=material, wavelength=WAVELENGTH, seed=29, direct_samples=37
+                states=_states(rows),
+                grid=grid,
+                material=material,
+                options=rt.DfrOptions(wavelength=WAVELENGTH, seed=29, direct_samples=37),
             )
         self.assertEqual(int(results["cuda"].direct_count.sum()), 37)
         self.assertEqual(int(results["optix"].direct_count.sum()), 37)

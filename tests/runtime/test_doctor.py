@@ -239,7 +239,7 @@ class DrJitOptixFallbackWarningTests(unittest.TestCase):
             scene.build()
             return scene
 
-        print("BACKENDS", build().trace_backend_name(), build().trace_backend_name())
+        print("BACKENDS", build().trace_backend, build().trace_backend)
     """
     WARNING = "RayD: OptiX is unavailable on CUDA device"
 

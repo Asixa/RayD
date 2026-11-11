@@ -213,11 +213,15 @@ from . import runtime as _runtime
 from .geometry import (
     AccumOptions,
     AccumResult,
+    AccumStrategy,
     AxialEdgeVisibility,
     DfrAccum,
     DfrCoherentAccum,
+    DfrCoherentOptions,
     DfrMaterial,
+    DfrOptions,
     DfrPathLayout,
+    DfrPathOptions,
     DfrPaths,
     DfrStates,
     Intersection,
@@ -877,7 +881,7 @@ def _resolved_reflection_accum_options(
 ) -> AccumOptions:
     """Pin auto strategy to the choice the unsplit batch would make."""
 
-    if int(options.accumulation_strategy) != 0:
+    if options.accumulation_strategy != AccumStrategy.AUTO:
         return options
     depth_count = max(int(max_bounces) + 1, 1)
     sample_count = int(ray_count) * depth_count
@@ -886,7 +890,7 @@ def _resolved_reflection_accum_options(
     staged = (
         sample_count <= 2**31 - 1 and sample_count >= staged_min and sample_count >= grid_cell_count * staged_per_cell
     )
-    return replace(options, accumulation_strategy=2 if staged else 1)
+    return replace(options, accumulation_strategy=AccumStrategy.STAGED if staged else AccumStrategy.ATOMIC)
 
 
 def _merge_source_lane_paths(parts: Sequence[tuple[int, DfrPaths]], *, capacity: int, master: torch.device) -> DfrPaths:
@@ -2331,12 +2335,15 @@ class _ReplicatedScene:
             transfer_row_bytes=100,
         )
 
-    def nearest_edge(self, point):
-        if isinstance(point, Ray):
-            total = int(point.o.shape[0])
+    def nearest_edge(self, query, active):
+        if isinstance(query, Ray):
+            total = int(query.o.shape[0])
 
             def shard_ray(device, start, stop):
-                return (self._shard_ray(point, start, stop, device),)
+                return (
+                    self._shard_ray(query, start, stop, device),
+                    self._slice_rows(active, "active", total, start, stop, device),
+                )
 
             def call_ray(replica, arguments):
                 return replica.nearest_edge(*arguments)
@@ -2349,14 +2356,17 @@ class _ReplicatedScene:
                 call_ray,
                 _field_reader(_NEAREST_RAY_EDGE_FIELDS),
                 lambda rows, columns: NearestRayEdge(*columns),
-                lambda: self.master().nearest_edge(point),
+                lambda: self.master().nearest_edge(query, active),
                 transfer_row_bytes=76,
             )
 
-        total = int(point.shape[0])
+        total = int(query.shape[0])
 
         def shard(device, start, stop):
-            return (self._slice(point, start, stop, device),)
+            return (
+                self._slice(query, start, stop, device),
+                self._slice_rows(active, "active", total, start, stop, device),
+            )
 
         def call(replica, arguments):
             return replica.nearest_edge(*arguments)
@@ -2369,7 +2379,7 @@ class _ReplicatedScene:
             call,
             _field_reader(_NEAREST_POINT_EDGE_FIELDS),
             lambda rows, columns: NearestPointEdge(*columns),
-            lambda: self.master().nearest_edge(point),
+            lambda: self.master().nearest_edge(query, active),
             transfer_row_bytes=44,
         )
 
@@ -2622,7 +2632,7 @@ class _ReplicatedScene:
 
     # -- grid_reduce operations --------------------------------------------
 
-    def accumulate_reflections(
+    def accum_refl(
         self,
         *,
         ray: Ray,
@@ -2637,7 +2647,7 @@ class _ReplicatedScene:
         """Shard the ray batch and merge partial reflection grids on the master."""
 
         self.require_healthy()
-        operation = "accumulate_reflections"
+        operation = "accum_refl"
         total = int(ray.o.shape[0])
         grid_cell_count = int(grid.resolution0) * int(grid.resolution1)
         self._require_master_tensors(
@@ -2678,7 +2688,7 @@ class _ReplicatedScene:
 
         def master() -> AccumResult:
             self.last_dispatch = "master"
-            return self.master().accumulate_reflections(
+            return self.master().accum_refl(
                 ray, tx_position, grid, material, max_bounces, options, active, tx_polarization
             )
 
@@ -2690,14 +2700,14 @@ class _ReplicatedScene:
         if options.collect_wedges:
             if self.chunked:
                 raise NotImplementedError(
-                    "Scene.accumulate_reflections() cannot combine wedge collection with "
+                    "Scene.accum_refl() cannot combine wedge collection with "
                     "MultiDeviceOptions chunking, a memory budget, or offload: WedgeEvents has one "
                     "global capacity, overflow counter, slot order, and ray-index space."
                 )
             return master()
         if self.options.offload is not None:
             raise NotImplementedError(
-                "Scene.accumulate_reflections() returns one reduced grid and does not support "
+                "Scene.accum_refl() returns one reduced grid and does not support "
                 "MultiDeviceOptions.offload; use chunk_rays or tape_memory_budget_bytes without offload."
             )
         if total == 0:
@@ -2722,7 +2732,7 @@ class _ReplicatedScene:
         resolved_options = _resolved_reflection_accum_options(options, total, max_bounces, grid_cell_count)
         staged_bytes = (
             _REFL_ACCUM_STAGED_BYTES_PER_RAY_DEPTH * max(int(max_bounces) + 1, 1)
-            if int(resolved_options.accumulation_strategy) == 2
+            if resolved_options.accumulation_strategy == AccumStrategy.STAGED
             else 0
         )
         row_bytes = _REFL_ACCUM_INPUT_AND_SOA_BYTES + staged_bytes
@@ -2764,7 +2774,7 @@ class _ReplicatedScene:
                     continue
                 begin, stop = chunks[step]
                 replica, device, _shard_begin, _shard_count = shards[index]
-                result = replica.accumulate_reflections(
+                result = replica.accum_refl(
                     self._shard_ray(ray, begin, stop, device),
                     self._slice_rows(tx_position, "tx_position", total, begin, stop, device),
                     grid,
@@ -2931,14 +2941,13 @@ class _ReplicatedScene:
 
     def trace_dfr_paths(
         self,
-        *,
         tx_positions: torch.Tensor,
         rx_positions: torch.Tensor,
         states: DfrStates,
         material: DfrMaterial,
+        options: DfrPathOptions,
+        *,
         active: torch.Tensor,
-        max_paths: int,
-        wavelength: float,
     ) -> DfrPaths:
         """Export fixed source-lane rows from transmitter-aligned shards.
 
@@ -2952,7 +2961,8 @@ class _ReplicatedScene:
         operation = "trace_dfr_paths"
         tx_count = int(tx_positions.shape[0])
         rx_count = int(rx_positions.shape[0])
-        state_limit = min(states.state_count, int(max_paths))
+        options = replace(options, layout=DfrPathLayout.SourceLane)
+        state_limit = min(states.state_count, int(options.max_paths))
         if state_limit < 0:
             raise RuntimeError("state_limit must be non-negative.")
         _validate_source_lane_devices(tx_positions, rx_positions, states, material, self.master_device)
@@ -2964,16 +2974,7 @@ class _ReplicatedScene:
 
         def master() -> DfrPaths:
             self.last_dispatch = "master"
-            return self.master().trace_dfr_paths(
-                tx_positions=tx_positions,
-                rx_positions=rx_positions,
-                states=states,
-                material=material,
-                active=active,
-                max_paths=max_paths,
-                wavelength=wavelength,
-                layout=DfrPathLayout.SourceLane,
-            )
+            return self.master().trace_dfr_paths(tx_positions, rx_positions, states, material, options, active=active)
 
         if self.chunked:
             raise NotImplementedError(
@@ -3009,59 +3010,27 @@ class _ReplicatedScene:
         results = []
         for replica, start, shard_tx, shard_rx, shard_states, shard_material, shard_active in inputs:
             result = replica.trace_dfr_paths(
-                tx_positions=shard_tx,
-                rx_positions=shard_rx,
-                states=shard_states,
-                material=shard_material,
-                active=shard_active,
-                max_paths=max_paths,
-                wavelength=wavelength,
-                layout=DfrPathLayout.SourceLane,
+                shard_tx, shard_rx, shard_states, shard_material, options, active=shard_active
             )
             results.append((start, result))
 
         self.last_dispatch = "sharded"
         return _merge_source_lane_paths(results, capacity=capacity, master=self.master_device)
 
-    def accum_dfr_direct(
-        self,
-        *,
-        states: DfrStates,
-        grid,
-        material: DfrMaterial,
-        active,
-        wavelength: float,
-        direct_samples: int,
-        keller_samples: int,
-        suffix_samples: int,
-        seed: int,
-        lane_offset: int,
-        lane_count: int,
-    ) -> DfrAccum:
+    def accum_dfr_direct(self, states: DfrStates, grid, material: DfrMaterial, options: DfrOptions, active) -> DfrAccum:
         def scatter(device):
             return (_states_to(states, device), _material_to(material, device), _to(active, device))
 
         def call(replica, moved, begin, count):
             shard_states, shard_material, shard_active = moved
-            return replica.accum_dfr_direct(
-                states=shard_states,
-                grid=grid,
-                material=shard_material,
-                active=shard_active,
-                wavelength=wavelength,
-                direct_samples=direct_samples,
-                keller_samples=keller_samples,
-                suffix_samples=suffix_samples,
-                seed=seed,
-                lane_offset=begin,
-                lane_count=count,
-            )
+            window = replace(options, lane_offset=begin, lane_count=count)
+            return replica.accum_dfr_direct(shard_states, grid, shard_material, window, shard_active)
 
         return self._run_lane_shards(
             "accum_dfr_direct",
-            int(direct_samples) + int(keller_samples) + int(suffix_samples),
-            lane_offset,
-            lane_count,
+            int(options.direct_samples) + int(options.keller_samples) + int(options.suffix_samples),
+            int(options.lane_offset),
+            int(options.lane_count),
             scatter,
             call,
             requires_grad=_states_require_grad(states) or _material_requires_grad(material),
@@ -3070,17 +3039,7 @@ class _ReplicatedScene:
         )
 
     def accum_dfr_coherent_direct(
-        self,
-        *,
-        states: DfrStates,
-        grid,
-        material: DfrMaterial,
-        active,
-        wavelength: float,
-        select_diffraction_point: bool,
-        prefilter_visibility: bool,
-        lane_offset: int,
-        lane_count: int,
+        self, states: DfrStates, grid, material: DfrMaterial, options: DfrCoherentOptions, active
     ) -> DfrCoherentAccum:
         """Shard the deterministic `(state, grid-cell)` lane space."""
 
@@ -3089,24 +3048,15 @@ class _ReplicatedScene:
 
         def call(replica, moved, begin, count):
             shard_states, shard_material, shard_active = moved
-            return replica.accum_dfr_coherent_direct(
-                states=shard_states,
-                grid=grid,
-                material=shard_material,
-                active=shard_active,
-                wavelength=wavelength,
-                select_diffraction_point=select_diffraction_point,
-                prefilter_visibility=prefilter_visibility,
-                lane_offset=begin,
-                lane_count=count,
-            )
+            window = replace(options, lane_offset=begin, lane_count=count)
+            return replica.accum_dfr_coherent_direct(shard_states, grid, shard_material, window, shard_active)
 
         grid_cell_count = int(grid.resolution0) * int(grid.resolution1)
         return self._run_lane_shards(
             "accum_dfr_coherent_direct",
             int(states.state_count) * grid_cell_count,
-            lane_offset,
-            lane_count,
+            int(options.lane_offset),
+            int(options.lane_count),
             scatter,
             call,
             grid_cell_count=grid_cell_count,
@@ -3121,21 +3071,13 @@ class _ReplicatedScene:
 
     def accum_dfr(
         self,
-        *,
         initial_states: DfrStates,
         recursive_states: DfrStates,
         grid,
         material: DfrMaterial,
+        options: DfrOptions,
         active,
         recursive_active,
-        wavelength: float,
-        direct_samples: int,
-        keller_samples: int,
-        suffix_samples: int,
-        seed: int,
-        max_order: int,
-        lane_offset: int,
-        lane_count: int,
     ) -> DfrAccum:
         def scatter(device):
             return (
@@ -3148,28 +3090,14 @@ class _ReplicatedScene:
 
         def call(replica, moved, begin, count):
             initial, recursive, shard_material, shard_active, shard_recursive = moved
-            return replica.accum_dfr(
-                initial_states=initial,
-                recursive_states=recursive,
-                grid=grid,
-                material=shard_material,
-                active=shard_active,
-                recursive_active=shard_recursive,
-                wavelength=wavelength,
-                direct_samples=direct_samples,
-                keller_samples=keller_samples,
-                suffix_samples=suffix_samples,
-                seed=seed,
-                max_order=max_order,
-                lane_offset=begin,
-                lane_count=count,
-            )
+            window = replace(options, lane_offset=begin, lane_count=count)
+            return replica.accum_dfr(initial, recursive, grid, shard_material, window, shard_active, shard_recursive)
 
         return self._run_lane_shards(
             "accum_dfr",
-            int(direct_samples) + int(keller_samples) + int(suffix_samples),
-            lane_offset,
-            lane_count,
+            int(options.direct_samples) + int(options.keller_samples) + int(options.suffix_samples),
+            int(options.lane_offset),
+            int(options.lane_count),
             scatter,
             call,
             requires_grad=_states_require_grad(initial_states)
@@ -3247,7 +3175,7 @@ _NEAREST_RAY_EDGE_FIELDS = (
     "global_edge_id",
 )
 _NEAREST_EDGES_TOPK_FIELDS = (
-    "is_valid",
+    "valid",
     "distances",
     "points",
     "edge_t",
@@ -3260,7 +3188,7 @@ _NEAREST_EDGES_TOPK_FIELDS = (
 _SEGMENT_PAIR_FIELDS = ("visible_a", "visible_b")
 _AXIAL_EDGE_FIELDS = ("any_visible",)
 _SEGMENT_CHAIN_FIELDS = ("all_visible", "first_blocked_segment", "first_blocked_prim")
-_REFL_EPC_FIELD_FIELDS = ("field_real", "field_imag", "path_length", "valid", "resolved_prim_ids")
+_REFL_EPC_FIELD_FIELDS = ("field_re", "field_im", "path_length", "valid", "resolved_prim_ids")
 
 # Reflection accumulation's seven float grids and scalar count are additive.
 # Wedge payloads are not: they retain one global bounded atomic buffer and only
@@ -3322,6 +3250,6 @@ _DFR_COHERENT_ACCUM_FIELDS = (
     "multi_field_z_im",
     "direct_count",
     "multi_count",
-    "visibility_reject_count",
-    "utd_reject_count",
+    "vis_rejects",
+    "utd_rejects",
 )

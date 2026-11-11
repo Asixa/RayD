@@ -62,7 +62,7 @@ class VisibilityAndTopKTests(unittest.TestCase):
             ignore = cuda.Int([-1, 0, -1])
             active = cuda.Bool([True, True, False])
 
-            vis = scene.visible(start, end, ignore, active)
+            vis = scene.visible(start, end, active, ignore_prim_ids=ignore)
             pair = scene.visible_pair(
                 start,
                 end,
@@ -82,7 +82,7 @@ class VisibilityAndTopKTests(unittest.TestCase):
 
             rd.native_launch_audit_clear()
             with dr.scoped_set_flag(dr.JitFlag.KernelHistory, True):
-                lazy = scene.visible(start, end, ignore, active)
+                lazy = scene.visible(start, end, active, ignore_prim_ids=ignore)
                 lazy_hist = dr.kernel_history()
                 values = [bool(v) for v in list(lazy.visible)]
                 consume_hist = dr.kernel_history()
@@ -131,7 +131,7 @@ class VisibilityAndTopKTests(unittest.TestCase):
             ignore9 = cuda.Int([-1, -1, -1, -1, -1, -1, -1, -1, 0])
 
             pair = scene.visible_pair(start, end, end_b, ignore9)
-            seg = scene.visible(start, end, ignore9)
+            seg = scene.visible(start, end, ignore_prim_ids=ignore9)
 
             chain_points = cuda.Array3f([0.0, 0.0], [0.0, 0.0], [-1.0, 1.0])
             chain_length = cuda.Int([1])
@@ -352,7 +352,7 @@ class VisibilityAndTopKTests(unittest.TestCase):
             ignore = cuda.Int([-1])
 
             rd.native_launch_audit_clear()
-            vis = scene.visible(start, end, ignore)
+            vis = scene.visible(start, end, ignore_prim_ids=ignore)
             audit = rd.native_launch_audit()
 
             print(json.dumps({
@@ -584,7 +584,7 @@ class VisibilityAndTopKTests(unittest.TestCase):
             print(json.dumps({
                 "query_count": int(result.query_count),
                 "k": int(result.k),
-                "valid": [bool(v) for v in list(result.is_valid)],
+                "valid": [bool(v) for v in list(result.valid)],
                 "global_edge_ids": [int(v) for v in list(result.global_edge_ids)],
                 "distances": [float(v) for v in list(result.distances)],
             }))

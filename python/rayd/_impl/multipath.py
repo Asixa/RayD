@@ -658,22 +658,54 @@ def _needs_nearest_edge_ad(point: torch.Tensor, *vertices: torch.Tensor) -> bool
     return False
 
 
+def _mask_inactive_point_edges(result: NearestPointEdge, active: torch.Tensor | None) -> NearestPointEdge:
+    """Give inactive rows the point nearest-edge miss sentinels.
+
+    The point query's native operation has no mask input, so an inactive row is
+    searched and then overwritten with the contract's miss values (distance
+    inf, every id -1, edge_t and edge_point 0), which is what `nearest_edges`
+    and the ray query report for an inactive row. Gradients of an inactive row
+    are zero.
+    """
+    if active is None:
+        return result
+    count = int(result.distance.shape[0])
+    if (
+        not isinstance(active, torch.Tensor)
+        or active.dtype != torch.bool
+        or active.device != result.distance.device
+        or tuple(active.shape) != (count,)
+    ):
+        raise ValueError("Scene.nearest_edge(): active must be a CUDA bool tensor with shape (N,) on the query device.")
+    row = active[:, None]
+    miss_id = torch.full_like(result.edge_id, -1)
+    return NearestPointEdge(
+        torch.where(active, result.distance, torch.full_like(result.distance, float("inf"))),
+        torch.where(row, result.edge_point, torch.zeros_like(result.edge_point)),
+        torch.where(active, result.edge_t, torch.zeros_like(result.edge_t)),
+        torch.where(active, result.shape_id, torch.full_like(result.shape_id, -1)),
+        torch.where(active, result.edge_id, miss_id),
+        torch.where(active, result.global_edge_id, torch.full_like(result.global_edge_id, -1)),
+    )
+
+
 def nearest_edge(
     scene_handle: int,
     vertices: torch.Tensor,
     point: torch.Tensor,
+    active: torch.Tensor | None = None,
     mesh_vertices: tuple[torch.Tensor, ...] | None = None,
 ) -> NearestPointEdge:
     _require_native_dispatcher()
     tracked_vertices = (vertices,) if mesh_vertices is None else tuple(mesh_vertices)
     if not _needs_nearest_edge_ad(point, *tracked_vertices):
         values = torch.ops.rayd_torch.nearest_edge_forward_noad(scene_handle, point)
-        return NearestPointEdge(*values)
+        return _mask_inactive_point_edges(NearestPointEdge(*values), active)
     if len(tracked_vertices) > 1:
         values = _NearestEdgeMeshesFunction.apply(scene_handle, point, *tracked_vertices)
-        return NearestPointEdge(*values[:6])
+        return _mask_inactive_point_edges(NearestPointEdge(*values[:6]), active)
     values = _NearestEdgeFunction.apply(scene_handle, vertices, point)
-    return NearestPointEdge(*values[:6])
+    return _mask_inactive_point_edges(NearestPointEdge(*values[:6]), active)
 
 
 def _flatten_topk_point(point: torch.Tensor, k: int) -> torch.Tensor:
@@ -1362,7 +1394,7 @@ def trace_refl_epc_native(
     return ReflEpc(int(source.shape[0]), int(max_bounces), *values)
 
 
-def accumulate_reflections_native(
+def accum_refl_native(
     scene_handle: int,
     ray_o: torch.Tensor,
     ray_d: torch.Tensor,
@@ -1389,9 +1421,7 @@ def accumulate_reflections_native(
         material.gain,
         material.valid,
     ):
-        raise RuntimeError(
-            "Scene.accumulate_reflections() is forward-only and does not support reverse-mode AD or JVP."
-        )
+        raise RuntimeError("Scene.accum_refl() is forward-only and does not support reverse-mode AD or JVP.")
     if tx_polarization is None:
         tx_polarization = torch.zeros_like(tx_position)
         tx_polarization[:, 0] = 1.0

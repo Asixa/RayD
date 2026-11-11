@@ -360,9 +360,8 @@ class DrJitParityTests(unittest.TestCase):
             rx_positions=rx_t,
             states=states_t,
             material=material_t,
+            options=rt.DfrPathOptions(max_paths=4, wavelength=0.125),
             active=active_t,
-            max_paths=4,
-            wavelength=0.125,
         )
 
         scene_d = _rayd_dfr_scene(dr_backend, cuda)
@@ -373,10 +372,10 @@ class DrJitParityTests(unittest.TestCase):
         options.max_order = 1
         options.max_paths = 4
         options.max_rx = 1
-        options.strategy_mask = dr_backend.RAYD_DFR_DIRECT
+        options.strategy_mask = dr_backend.DfrStrategy.DIRECT
         options.sample_count = 1
         options.return_geom = 1
-        options.receiver_model = dr_backend.RAYD_DFR_MATCHED_ISO
+        options.receiver_model = dr_backend.DfrReceiverModel.MATCHED_ISO
         out_d = scene_d.trace_dfr_paths(
             cuda.Array3f([0.0], [0.0], [1.0]),
             cuda.Array3f([0.0], [0.0], [-1.0]),
@@ -414,7 +413,10 @@ class DrJitParityTests(unittest.TestCase):
             cell_area=4.0,
         )
         out_t = scene_t.accum_dfr_direct(
-            states=states_t, grid=grid_t, material=material_t, wavelength=0.125, seed=17, direct_samples=64
+            states=states_t,
+            grid=grid_t,
+            material=material_t,
+            options=rt.DfrOptions(wavelength=0.125, seed=17, direct_samples=64),
         )
 
         scene_d = _rayd_dfr_scene(dr_backend, cuda)
@@ -436,9 +438,9 @@ class DrJitParityTests(unittest.TestCase):
         options.max_order = 1
         options.direct_samples = 64
         options.keller_samples = 0
-        options.strategy_mask = dr_backend.RAYD_DFR_DIRECT
-        options.sample_sequence = dr_backend.RAYD_DFR_HASH
-        options.receiver_model = dr_backend.RAYD_DFR_MATCHED_ISO
+        options.strategy_mask = dr_backend.DfrStrategy.DIRECT
+        options.sample_sequence = dr_backend.DfrSampleSequence.HASH
+        options.receiver_model = dr_backend.DfrReceiverModel.MATCHED_ISO
         options.collect_edge_use = True
         options.collect_debug_counts = True
         out_d = scene_d.accum_dfr_direct(
@@ -480,10 +482,7 @@ class DrJitParityTests(unittest.TestCase):
             states=_torch_dfr_states(rt, src_power=2.0),
             grid=grid_t,
             material=_torch_dfr_material(rt),
-            wavelength=0.125,
-            seed=23,
-            direct_samples=0,
-            keller_samples=64,
+            options=rt.DfrOptions(wavelength=0.125, seed=23, direct_samples=0, keller_samples=64),
         )
 
         scene_d = _rayd_dfr_scene(dr_backend, cuda)
@@ -505,9 +504,9 @@ class DrJitParityTests(unittest.TestCase):
         options.max_order = 1
         options.direct_samples = 0
         options.keller_samples = 64
-        options.strategy_mask = dr_backend.RAYD_DFR_KELLER
-        options.sample_sequence = dr_backend.RAYD_DFR_HASH
-        options.receiver_model = dr_backend.RAYD_DFR_MATCHED_ISO
+        options.strategy_mask = dr_backend.DfrStrategy.KELLER
+        options.sample_sequence = dr_backend.DfrSampleSequence.HASH
+        options.receiver_model = dr_backend.DfrReceiverModel.MATCHED_ISO
         options.collect_edge_use = True
         options.collect_debug_counts = True
         out_d = scene_d.accum_dfr_direct(
@@ -538,11 +537,7 @@ class DrJitParityTests(unittest.TestCase):
             states=_torch_suffix_states(rt),
             grid=_torch_dfr_grid(rt, axis=1, position=-2.0),
             material=_torch_dfr_material(rt),
-            wavelength=0.125,
-            seed=41,
-            direct_samples=0,
-            keller_samples=0,
-            suffix_samples=16,
+            options=rt.DfrOptions(wavelength=0.125, seed=41, direct_samples=0, keller_samples=0, suffix_samples=16),
         )
 
         scene_d = _rayd_suffix_scene(dr_backend, cuda)
@@ -555,9 +550,9 @@ class DrJitParityTests(unittest.TestCase):
         options.direct_samples = 0
         options.keller_samples = 0
         options.suffix_samples = 16
-        options.strategy_mask = dr_backend.RAYD_DFR_SUFFIX_REFL
-        options.sample_sequence = dr_backend.RAYD_DFR_HASH
-        options.receiver_model = dr_backend.RAYD_DFR_MATCHED_ISO
+        options.strategy_mask = dr_backend.DfrStrategy.SUFFIX_REFL
+        options.sample_sequence = dr_backend.DfrSampleSequence.HASH
+        options.receiver_model = dr_backend.DfrReceiverModel.MATCHED_ISO
         options.collect_debug_counts = True
         out_d = scene_d.accum_dfr_direct(
             _rayd_suffix_states(dr_backend, cuda),
@@ -582,11 +577,7 @@ class DrJitParityTests(unittest.TestCase):
             recursive_states=_torch_recursive_dfr_states(rt, count=1),
             grid=_torch_dfr_grid(rt),
             material=_torch_dfr_material(rt),
-            wavelength=0.125,
-            seed=41,
-            direct_samples=32,
-            keller_samples=256,
-            max_order=2,
+            options=rt.DfrOptions(wavelength=0.125, seed=41, direct_samples=32, keller_samples=256, max_order=2),
         )
 
         scene_d = _rayd_dfr_scene(dr_backend, cuda)
@@ -598,9 +589,9 @@ class DrJitParityTests(unittest.TestCase):
         options.max_order = 2
         options.direct_samples = 32
         options.keller_samples = 256
-        options.strategy_mask = dr_backend.RAYD_DFR_DIRECT | dr_backend.RAYD_DFR_KELLER
-        options.sample_sequence = dr_backend.RAYD_DFR_HASH
-        options.receiver_model = dr_backend.RAYD_DFR_MATCHED_ISO
+        options.strategy_mask = dr_backend.DfrStrategy.DIRECT | dr_backend.DfrStrategy.KELLER
+        options.sample_sequence = dr_backend.DfrSampleSequence.HASH
+        options.receiver_model = dr_backend.DfrReceiverModel.MATCHED_ISO
         options.collect_edge_use = True
         options.collect_debug_counts = True
         out_d = scene_d.accum_dfr(
@@ -627,11 +618,7 @@ class DrJitParityTests(unittest.TestCase):
             recursive_states=_torch_recursive_dfr_states(rt, count=2),
             grid=_torch_dfr_grid(rt),
             material=_torch_dfr_material(rt),
-            wavelength=0.125,
-            seed=43,
-            direct_samples=64,
-            keller_samples=256,
-            max_order=3,
+            options=rt.DfrOptions(wavelength=0.125, seed=43, direct_samples=64, keller_samples=256, max_order=3),
         )
 
         scene_d = _rayd_dfr_scene(dr_backend, cuda)
@@ -643,9 +630,9 @@ class DrJitParityTests(unittest.TestCase):
         options.max_order = 3
         options.direct_samples = 64
         options.keller_samples = 256
-        options.strategy_mask = dr_backend.RAYD_DFR_DIRECT | dr_backend.RAYD_DFR_KELLER
-        options.sample_sequence = dr_backend.RAYD_DFR_HASH
-        options.receiver_model = dr_backend.RAYD_DFR_MATCHED_ISO
+        options.strategy_mask = dr_backend.DfrStrategy.DIRECT | dr_backend.DfrStrategy.KELLER
+        options.sample_sequence = dr_backend.DfrSampleSequence.HASH
+        options.receiver_model = dr_backend.DfrReceiverModel.MATCHED_ISO
         options.collect_edge_use = True
         options.collect_debug_counts = True
         out_d = scene_d.accum_dfr(
@@ -671,9 +658,7 @@ class DrJitParityTests(unittest.TestCase):
             states=_torch_dfr_states(rt, src_power=2.0),
             grid=_torch_dfr_grid(rt),
             material=_torch_dfr_material(rt),
-            wavelength=0.125,
-            select_diffraction_point=True,
-            prefilter_visibility=True,
+            options=rt.DfrCoherentOptions(wavelength=0.125, select_diffraction_point=True, prefilter_visibility=True),
         )
 
         scene_d = _rayd_dfr_scene(dr_backend, cuda)
@@ -681,7 +666,7 @@ class DrJitParityTests(unittest.TestCase):
         options.wavelength = 0.125
         options.k = 50.26548245743669
         options.max_order = 1
-        options.receiver_model = dr_backend.RAYD_DFR_MATCHED_ISO
+        options.receiver_model = dr_backend.DfrReceiverModel.MATCHED_ISO
         options.select_diffraction_point = True
         options.prefilter_visibility = True
         options.collect_debug_counts = True

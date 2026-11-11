@@ -43,12 +43,18 @@ jobs:
     env:
       PYTHON: ${{ inputs.python || 'python' }}
       PYTHONPATH: ${{ github.workspace }}/python
-      OPTIX_CACHE_PATH: ${{ runner.temp }}/rayd-optix-${{ github.run_id }}-${{ github.run_attempt }}
-      RAYD_CI_BUILD_ROOT: ${{ runner.temp }}/rayd-build-${{ github.run_id }}-${{ github.run_attempt }}
-      RAYD_CI_BUILD_MARKER: ${{ runner.temp }}/rayd-build-${{ github.run_id }}-${{ github.run_attempt }}.marker
 
     steps:
       - uses: actions/checkout@v5
+
+      - name: Set per-run build and OptiX cache paths
+        shell: bash
+        # The runner context is not available in job-level env, so the paths under RUNNER_TEMP are exported here.
+        run: |
+          run_tag="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          echo "OPTIX_CACHE_PATH=$RUNNER_TEMP/rayd-optix-$run_tag" >> "$GITHUB_ENV"
+          echo "RAYD_CI_BUILD_ROOT=$RUNNER_TEMP/rayd-build-$run_tag" >> "$GITHUB_ENV"
+          echo "RAYD_CI_BUILD_MARKER=$RUNNER_TEMP/rayd-build-$run_tag.marker" >> "$GITHUB_ENV"
 
       - name: Report the runner's GPUs
         shell: bash

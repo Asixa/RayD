@@ -65,7 +65,7 @@ class SdfIntersectionRef:
     """Provides the pure-PyTorch SDF intersection test oracle."""
 
     t: Tensor  # [N], `+inf` on miss
-    hit_mask: Tensor  # [N] bool
+    valid: Tensor  # [N] bool
     position: Tensor  # [N, 3], `+0.0` on miss
     normal: Tensor  # [N, 3], `+0.0` on miss
     steps: Tensor  # [N] int32
@@ -245,7 +245,7 @@ def reattach(grid: SdfGridRef, origins: Tensor, directions: Tensor, tape: Tape) 
     zero = torch.zeros_like(hit_point)
     return SdfIntersectionRef(
         t=torch.where(tape.hit, t, torch.full_like(t, float("inf"))),
-        hit_mask=tape.hit,
+        valid=tape.hit,
         position=torch.where(lane, hit_point, zero),
         normal=torch.where(lane, normal, zero),
         steps=tape.steps,

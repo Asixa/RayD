@@ -3,14 +3,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, overload
 
 import torch
 
 from . import runtime as _runtime
 from .multipath import _dfr_input_tensors, _lazy_geometry_guard, _reject_forward_only_ad, _require_native_dispatcher
-from .multipath import accumulate_reflections_native as _accumulate_reflections
+from .multipath import accum_refl_native as _accum_refl
 from .multipath import accum_dfr_chain_native as _accum_dfr_chain
 from .multipath import accum_dfr_coherent_direct_native as _accum_dfr_coherent_direct
 from .multipath import accum_dfr_direct_native as _accum_dfr_direct
@@ -25,15 +25,20 @@ from .multipath import visible as _visible
 from .geometry import (
     AccumGrid,
     AccumOptions,
+    DfrCoherentOptions,
     DfrGrid,
     DfrMaterial,
+    DfrOptions,
     DfrPathLayout,
+    DfrPathOptions,
     DfrStates,
+    EdgeBVHBackend,
     Intersection,
     Ray,
     RayFlags,
     ReflEpcOptions,
     ReflMaterial,
+    TraceBackend,
     _LazyIntersection,
     _ReducedIntersection,
 )
@@ -58,7 +63,7 @@ if TYPE_CHECKING:
         ReflEpc,
         ReflEpcField,
         ReflectionChain,
-        SceneGlobalGeometry,
+        SceneGeometry,
         SegmentChainVisibility,
         SegmentPairVisibility,
     )
@@ -141,6 +146,24 @@ def _native_scene_tensor(value: torch.Tensor) -> torch.Tensor:
     return value
 
 
+_BACKEND_CODES = {"auto": 0, "optix": 1, "cuda": 2}
+
+
+def _resolve_backend(value: object, enum: type[TraceBackend] | type[EdgeBVHBackend], name: str) -> str:
+    try:
+        return enum(value).value
+    except ValueError:
+        allowed = ", ".join(repr(member.value) for member in enum)
+        raise ValueError(f"{name} must be one of {allowed}; got {value!r}.") from None
+
+
+def _require_options(value: object, expected: type, operation: str) -> None:
+    if not isinstance(value, expected):
+        raise TypeError(
+            f"Scene.{operation}() expects rayd.torch.{expected.__name__} options, got {type(value).__name__}."
+        )
+
+
 def _has_reverse_or_forward_ad(*values: torch.Tensor) -> bool:
     if torch.autograd.forward_ad._current_level < 0:
         return any(value.requires_grad for value in values)
@@ -161,22 +184,24 @@ def _has_forward_ad(*values: torch.Tensor) -> bool:
 
 
 class Scene:
+    """Triangle-mesh scene with OptiX/CUDA acceleration structures.
+
+    Under ``MultiDeviceOptions(offload=...)`` the per-ray queries stream their
+    chunks to the offload hook and return ``None``; their annotations say so.
+    """
+
     def __init__(
         self,
-        trace_backend: str = "auto",
-        edge_bvh_backend: str = "auto",
         *,
+        trace_backend: TraceBackend | str = TraceBackend.AUTO,
+        edge_bvh_backend: EdgeBVHBackend | str = EdgeBVHBackend.AUTO,
         devices: Sequence[int | str | torch.device] | None = None,
         options: _multi.MultiDeviceOptions | None = None,
     ) -> None:
-        trace_backends = {"auto": 0, "optix": 1, "cuda": 2}
-        edge_backends = {"auto": 0, "optix": 1, "cuda": 2}
-        if trace_backend not in trace_backends:
-            raise ValueError("trace_backend must be 'auto', 'optix', or 'cuda'.")
-        if edge_bvh_backend not in edge_backends:
-            raise ValueError("edge_bvh_backend must be 'auto', 'optix', or 'cuda'.")
-        self._trace_backend_code = trace_backends[trace_backend]
-        self._edge_backend_code = edge_backends[edge_bvh_backend]
+        trace_backend = _resolve_backend(trace_backend, TraceBackend, "trace_backend")
+        edge_bvh_backend = _resolve_backend(edge_bvh_backend, EdgeBVHBackend, "edge_bvh_backend")
+        self._trace_backend_code = _BACKEND_CODES[trace_backend]
+        self._edge_backend_code = _BACKEND_CODES[edge_bvh_backend]
         self._meshes: list[tuple[Mesh, bool]] = []
         self._geometry_owner_ids: list[int] = []
         self._instance_transforms: list[torch.Tensor] = []
@@ -432,10 +457,9 @@ class Scene:
     def _forward_intersection(scene, ray: Ray, active, flags: int) -> Intersection:
         if flags == 0:
             t = torch.ops.rayd_torch.intersect_forward_t(scene, ray.o, ray.d, ray.tmax, active)
-            # The lazy stand-ins answer the `Intersection` field surface without
-            # materializing the fields nobody asked for, so the public result
-            # type of an intersection query stays `Intersection`.
-            return _ReducedIntersection(scene, t)  # type: ignore[return-value]
+            # The lazy `Intersection` subclasses answer the field surface without
+            # materializing the fields nobody asked for.
+            return _ReducedIntersection(scene, t)
         values = torch.ops.rayd_torch.intersect_forward_flags(scene, ray.o, ray.d, ray.tmax, active, flags)
         return Intersection(*values)
 
@@ -464,7 +488,7 @@ class Scene:
             values = torch.ops.rayd_torch.intersect_ad_flags(scene, vertices, ray.o, ray.d, ray.tmax, active, flags)
             return Intersection(*values)
 
-        return _LazyIntersection(load_t, load_full)  # type: ignore[return-value]
+        return _LazyIntersection(load_t, load_full)
 
     def is_ready(self) -> bool:
         return self._ready and (self._multi is None or not self._multi.is_poisoned)
@@ -494,7 +518,9 @@ class Scene:
         scene = self._require_native_scene()
         return int(scene.version())
 
-    def intersect(self, ray: Ray, active: torch.Tensor | None = None, flags: RayFlags = RayFlags.All) -> Intersection:
+    def intersect(
+        self, ray: Ray, active: torch.Tensor | None = None, flags: RayFlags = RayFlags.All
+    ) -> Intersection | None:
         self._require_synced("intersect")
         if self._multi is not None:
             return self._multi.intersect(ray, active, int(flags))
@@ -514,11 +540,11 @@ class Scene:
                 t, _tape_prim, _geometry_version = torch.ops.rayd_torch.intersect_forward_tape_h(
                     self._native_handle, vertices, ray.o, ray.d, ray.tmax
                 )
-                return _ReducedIntersection(scene, t)  # type: ignore[return-value]
+                return _ReducedIntersection(scene, t)
             if flags_value != 0:
                 return self._lazy_intersection(scene, vertices, ray, active, flags_value)
             t = torch.ops.rayd_torch.intersect_ad_t(scene, vertices, ray.o, ray.d, ray.tmax, active)
-            return _ReducedIntersection(scene, t)  # type: ignore[return-value]
+            return _ReducedIntersection(scene, t)
         mesh_vertices = self._mesh_vertex_tensors()
         if not _has_reverse_or_forward_ad(*mesh_vertices, ray.o, ray.d, ray.tmax):
             return self._forward_intersection(scene, ray, active, flags_value)
@@ -528,38 +554,49 @@ class Scene:
                 if flags_value != 0:
                     return self._lazy_intersection(scene, vertices, ray, active, flags_value)
                 t = torch.ops.rayd_torch.intersect_ad_t(scene, vertices, ray.o, ray.d, ray.tmax, active)
-                return _ReducedIntersection(scene, t)  # type: ignore[return-value]
+                return _ReducedIntersection(scene, t)
             return _intersect(scene, vertices, ray.o, ray.d, ray.tmax, active, flags_value)
         return _intersect(
             scene, mesh_vertices[0], ray.o, ray.d, ray.tmax, active, flags_value, mesh_vertices=mesh_vertices
         )
 
     @overload
-    def nearest_edge(self, point: torch.Tensor) -> NearestPointEdge: ...
+    def nearest_edge(self, query: torch.Tensor, active: torch.Tensor | None = None) -> NearestPointEdge | None: ...
 
     @overload
-    def nearest_edge(self, point: Ray) -> NearestRayEdge: ...
+    def nearest_edge(self, query: Ray, active: torch.Tensor | None = None) -> NearestRayEdge | None: ...
 
-    def nearest_edge(self, point: torch.Tensor | Ray) -> NearestPointEdge | NearestRayEdge:
+    def nearest_edge(
+        self, query: torch.Tensor | Ray, active: torch.Tensor | None = None
+    ) -> NearestPointEdge | NearestRayEdge | None:
+        """Nearest scene edge to each query point, or along each query ray.
+
+        ``active`` masks rows exactly as in ``nearest_edges``: an inactive row
+        returns the miss sentinels.
+        """
         self._require_synced("nearest_edge")
         if self._multi is not None:
-            return self._multi.nearest_edge(point)
+            return self._multi.nearest_edge(query, active)
         scene = self._require_native_scene()
         mesh_vertices = self._mesh_vertex_tensors()
-        if isinstance(point, Ray):
+        if isinstance(query, Ray):
             return _nearest_edge_ray(
-                scene, mesh_vertices[0], point.o, point.d, point.tmax, None, mesh_vertices=mesh_vertices
+                scene, mesh_vertices[0], query.o, query.d, query.tmax, active, mesh_vertices=mesh_vertices
             )
-        return _nearest_edge(scene, mesh_vertices[0], point, mesh_vertices=mesh_vertices)
+        return _nearest_edge(scene, mesh_vertices[0], query, active, mesh_vertices=mesh_vertices)
 
-    def visible(self, start: torch.Tensor, end: torch.Tensor, active: torch.Tensor | None = None) -> torch.Tensor:
+    def visible(
+        self, start: torch.Tensor, end: torch.Tensor, active: torch.Tensor | None = None
+    ) -> torch.Tensor | None:
         self._require_synced("visible")
         if self._multi is not None:
             return self._multi.visible(start, end, active)
         scene = self._require_native_scene()
         return _visible(scene, start, end, active)
 
-    def trace_reflections(self, ray: Ray, max_bounces: int, active: torch.Tensor | None = None) -> ReflectionChain:
+    def trace_reflections(
+        self, ray: Ray, max_bounces: int, active: torch.Tensor | None = None
+    ) -> ReflectionChain | None:
         self._require_synced("trace_reflections")
         if isinstance(max_bounces, bool) or int(max_bounces) < 1:
             # The chain is computed lazily, so reject the count here instead of on first field access.
@@ -574,7 +611,7 @@ class Scene:
 
     def trace_refl_epc_field(
         self, source: torch.Tensor, receiver: torch.Tensor, max_bounces: int, active: torch.Tensor | None = None
-    ) -> ReflEpcField:
+    ) -> ReflEpcField | None:
         self._require_synced("trace_refl_epc_field")
         mesh_vertices = self._mesh_vertex_tensors()
         if _has_reverse_or_forward_ad(*mesh_vertices, source, receiver):
@@ -607,7 +644,7 @@ class Scene:
             raise RuntimeError("Scene.trace_refl_epc() is forward-only and does not support reverse-mode AD or JVP.")
         return _trace_refl_epc(scene, source, receiver, max_bounces=int(max_bounces), options=options, active=active)
 
-    def accumulate_reflections(
+    def accum_refl(
         self,
         ray: Ray,
         tx_position: torch.Tensor,
@@ -618,14 +655,14 @@ class Scene:
         active: torch.Tensor | None = None,
         tx_polarization: torch.Tensor | None = None,
     ) -> AccumResult:
-        self._require_synced("accumulate_reflections")
+        self._require_synced("accum_refl")
         if not isinstance(grid, AccumGrid):
-            raise TypeError("Scene.accumulate_reflections() expects rayd.torch.AccumGrid.")
+            raise TypeError("Scene.accum_refl() expects rayd.torch.AccumGrid.")
         if not isinstance(material, ReflMaterial):
-            raise TypeError("Scene.accumulate_reflections() expects rayd.torch.ReflMaterial.")
+            raise TypeError("Scene.accum_refl() expects rayd.torch.ReflMaterial.")
         resolved_options = AccumOptions() if options is None else options
         if not isinstance(resolved_options, AccumOptions):
-            raise TypeError("Scene.accumulate_reflections() expects rayd.torch.AccumOptions.")
+            raise TypeError("Scene.accum_refl() expects rayd.torch.AccumOptions.")
         mesh_vertices = self._mesh_vertex_tensors()
         ad_inputs = [
             *mesh_vertices,
@@ -641,11 +678,9 @@ class Scene:
         ]
         ad_inputs.extend(value for value in (active, tx_polarization) if value is not None)
         if _has_reverse_or_forward_ad(*ad_inputs):
-            raise RuntimeError(
-                "Scene.accumulate_reflections() is forward-only and does not support reverse-mode AD or JVP."
-            )
+            raise RuntimeError("Scene.accum_refl() is forward-only and does not support reverse-mode AD or JVP.")
         if self._multi is not None:
-            return self._multi.accumulate_reflections(
+            return self._multi.accum_refl(
                 ray=ray,
                 tx_position=tx_position,
                 grid=grid,
@@ -656,7 +691,7 @@ class Scene:
                 tx_polarization=tx_polarization,
             )
         scene = self._require_native_scene()
-        return _accumulate_reflections(
+        return _accum_refl(
             scene,
             ray.o,
             ray.d,
@@ -676,29 +711,33 @@ class Scene:
 
     def trace_dfr_paths(
         self,
-        *,
         tx_positions: torch.Tensor,
         rx_positions: torch.Tensor,
         states: DfrStates,
         material: DfrMaterial | None = None,
+        options: DfrPathOptions | None = None,
+        *,
         active: torch.Tensor,
-        max_paths: int | None = None,
-        wavelength: float = 1.0,
-        layout: DfrPathLayout | None = None,
     ) -> DfrPaths:
+        """Export first-order diffraction paths for every (tx, rx, state) lane.
+
+        ``active`` is required (ADR-0031): a contiguous CUDA bool tensor with one
+        entry per exported state.
+        """
         self._require_synced("trace_dfr_paths")
+        options = DfrPathOptions() if options is None else options
+        _require_options(options, DfrPathOptions, "trace_dfr_paths")
         if material is None:
             material = self._default_dfr_material(like=states.edge_pos)
-        if max_paths is None:
-            max_paths = states.state_count
-        if layout is None:
+        max_paths = states.state_count if options.max_paths is None else int(options.max_paths)
+        if options.layout is None:
             resolved_layout = DfrPathLayout.SourceLane if self._multi is not None else DfrPathLayout.Compact
         else:
             try:
-                resolved_layout = DfrPathLayout(layout)
+                resolved_layout = DfrPathLayout(options.layout)
             except (TypeError, ValueError) as error:
                 raise ValueError(
-                    f"Scene.trace_dfr_paths(): layout must be a DfrPathLayout value, got {layout!r}."
+                    f"Scene.trace_dfr_paths(): layout must be a DfrPathLayout value, got {options.layout!r}."
                 ) from error
         _reject_forward_only_ad(
             "Scene.trace_dfr_paths()",
@@ -713,15 +752,8 @@ class Scene:
                     "Scene.trace_dfr_paths() on a multi-device scene requires DfrPathLayout.SourceLane "
                     "so every output row retains its global (tx, rx, state) identity."
                 )
-            return self._multi.trace_dfr_paths(
-                tx_positions=tx_positions,
-                rx_positions=rx_positions,
-                states=states,
-                material=material,
-                active=active,
-                max_paths=int(max_paths),
-                wavelength=float(wavelength),
-            )
+            resolved = replace(options, max_paths=max_paths, layout=resolved_layout)
+            return self._multi.trace_dfr_paths(tx_positions, rx_positions, states, material, resolved, active=active)
         scene = self._require_native_scene()
         return _trace_dfr_paths(
             scene,
@@ -730,111 +762,63 @@ class Scene:
             states,
             material,
             active=active,
-            max_paths=int(max_paths),
-            wavelength=float(wavelength),
+            max_paths=max_paths,
+            wavelength=float(options.wavelength),
             layout=resolved_layout,
         )
 
     def accum_dfr_direct(
         self,
-        *,
-        states: DfrStates | None = None,
-        grid: DfrGrid | None = None,
+        states: DfrStates,
+        grid: DfrGrid,
         material: DfrMaterial | None = None,
+        options: DfrOptions | None = None,
         active: torch.Tensor | None = None,
-        wavelength: float = 1.0,
-        direct_samples: int = 0,
-        keller_samples: int = 0,
-        suffix_samples: int = 0,
-        seed: int = 0,
-        lane_offset: int = 0,
-        lane_count: int = -1,
     ) -> DfrAccum:
         self._require_synced("accum_dfr_direct")
         scene = self._require_native_scene()
-        if states is None:
-            raise TypeError("Scene.accum_dfr_direct() requires RayD-style DfrStates and DfrGrid.")
-        if grid is None:
-            raise TypeError("Scene.accum_dfr_direct() requires DfrGrid when states are provided.")
+        options = DfrOptions() if options is None else options
+        _require_options(options, DfrOptions, "accum_dfr_direct")
         if material is None:
             material = self._default_dfr_material(like=states.edge_pos)
         if self._multi is not None:
             # Sharded over the Monte-Carlo lane space, not over a batch axis:
             # every device runs the same states over its own sample window.
-            return self._multi.accum_dfr_direct(
-                states=states,
-                grid=grid,
-                material=material,
-                active=active,
-                wavelength=float(wavelength),
-                direct_samples=int(direct_samples),
-                keller_samples=int(keller_samples),
-                suffix_samples=int(suffix_samples),
-                seed=int(seed),
-                lane_offset=int(lane_offset),
-                lane_count=int(lane_count),
-            )
+            return self._multi.accum_dfr_direct(states, grid, material, options, active)
         return _accum_dfr_direct(
             scene,
             states,
             grid,
             material,
             active=active,
-            wavelength=float(wavelength),
-            direct_samples=int(direct_samples),
-            keller_samples=int(keller_samples),
-            suffix_samples=int(suffix_samples),
-            seed=int(seed),
-            lane_offset=int(lane_offset),
-            lane_count=int(lane_count),
+            wavelength=float(options.wavelength),
+            direct_samples=int(options.direct_samples),
+            keller_samples=int(options.keller_samples),
+            suffix_samples=int(options.suffix_samples),
+            seed=int(options.seed),
+            lane_offset=int(options.lane_offset),
+            lane_count=int(options.lane_count),
         )
 
     def accum_dfr(
         self,
-        initial_states: DfrStates | None = None,
-        recursive_states: DfrStates | None = None,
-        grid: DfrGrid | None = None,
+        initial_states: DfrStates,
+        recursive_states: DfrStates,
+        grid: DfrGrid,
         material: DfrMaterial | None = None,
+        options: DfrOptions | None = None,
         active: torch.Tensor | None = None,
         recursive_active: torch.Tensor | None = None,
-        wavelength: float = 1.0,
-        direct_samples: int = 0,
-        keller_samples: int = 0,
-        suffix_samples: int = 0,
-        seed: int = 0,
-        max_order: int = 2,
-        lane_offset: int = 0,
-        lane_count: int = -1,
-        **kwargs: object,
     ) -> DfrAccum:
         self._require_synced("accum_dfr")
-        if initial_states is None and recursive_states is None:
-            return self.accum_dfr_direct(
-                lane_offset=int(lane_offset),
-                lane_count=int(lane_count),
-                **kwargs,  # type: ignore[arg-type]
-            )
         scene = self._require_native_scene()
-        if initial_states is None or recursive_states is None or grid is None:
-            raise TypeError("Scene.accum_dfr() requires initial_states, recursive_states, and grid.")
+        options = DfrOptions() if options is None else options
+        _require_options(options, DfrOptions, "accum_dfr")
         if material is None:
             material = self._default_dfr_material(like=initial_states.edge_pos)
         if self._multi is not None:
             return self._multi.accum_dfr(
-                initial_states=initial_states,
-                recursive_states=recursive_states,
-                grid=grid,
-                material=material,
-                active=active,
-                recursive_active=recursive_active,
-                wavelength=float(wavelength),
-                direct_samples=int(direct_samples),
-                keller_samples=int(keller_samples),
-                suffix_samples=int(suffix_samples),
-                seed=int(seed),
-                max_order=int(max_order),
-                lane_offset=int(lane_offset),
-                lane_count=int(lane_count),
+                initial_states, recursive_states, grid, material, options, active, recursive_active
             )
         return _accum_dfr_chain(
             scene,
@@ -844,47 +828,34 @@ class Scene:
             material,
             active=active,
             recursive_active=recursive_active,
-            wavelength=float(wavelength),
-            direct_samples=int(direct_samples),
-            keller_samples=int(keller_samples),
-            suffix_samples=int(suffix_samples),
-            seed=int(seed),
-            max_order=int(max_order),
-            lane_offset=int(lane_offset),
-            lane_count=int(lane_count),
+            wavelength=float(options.wavelength),
+            direct_samples=int(options.direct_samples),
+            keller_samples=int(options.keller_samples),
+            suffix_samples=int(options.suffix_samples),
+            seed=int(options.seed),
+            max_order=int(options.max_order),
+            lane_offset=int(options.lane_offset),
+            lane_count=int(options.lane_count),
         )
 
     def accum_dfr_coherent_direct(
         self,
-        *,
         states: DfrStates,
         grid: DfrGrid,
         material: DfrMaterial | None = None,
+        options: DfrCoherentOptions | None = None,
         active: torch.Tensor | None = None,
-        wavelength: float = 1.0,
-        select_diffraction_point: bool = True,
-        prefilter_visibility: bool = True,
-        lane_offset: int = 0,
-        lane_count: int = -1,
     ) -> DfrCoherentAccum:
         self._require_synced("accum_dfr_coherent_direct")
+        options = DfrCoherentOptions() if options is None else options
+        _require_options(options, DfrCoherentOptions, "accum_dfr_coherent_direct")
         if material is None:
             material = self._default_dfr_material(like=states.edge_pos)
         _reject_forward_only_ad(
             "Scene.accum_dfr_coherent_direct()", *self._mesh_vertex_tensors(), *_dfr_input_tensors(states, material)
         )
         if self._multi is not None:
-            return self._multi.accum_dfr_coherent_direct(
-                states=states,
-                grid=grid,
-                material=material,
-                active=active,
-                wavelength=float(wavelength),
-                select_diffraction_point=bool(select_diffraction_point),
-                prefilter_visibility=bool(prefilter_visibility),
-                lane_offset=int(lane_offset),
-                lane_count=int(lane_count),
-            )
+            return self._multi.accum_dfr_coherent_direct(states, grid, material, options, active)
         scene = self._require_native_scene()
         return _accum_dfr_coherent_direct(
             scene,
@@ -892,11 +863,11 @@ class Scene:
             grid,
             material,
             active=active,
-            wavelength=float(wavelength),
-            select_diffraction_point=bool(select_diffraction_point),
-            prefilter_visibility=bool(prefilter_visibility),
-            lane_offset=int(lane_offset),
-            lane_count=int(lane_count),
+            wavelength=float(options.wavelength),
+            select_diffraction_point=bool(options.select_diffraction_point),
+            prefilter_visibility=bool(options.prefilter_visibility),
+            lane_offset=int(options.lane_offset),
+            lane_count=int(options.lane_count),
         )
 
     def update_mesh_vertices(self, mesh_id: int, positions: torch.Tensor) -> None:
@@ -979,7 +950,7 @@ class Scene:
     def has_pending_updates(self) -> bool:
         return bool(self._pending_updates or (self._multi is not None and self._multi.is_poisoned))
 
-    def nearest_edges(self, point: torch.Tensor, k: int, active: torch.Tensor | None = None) -> NearestEdgesTopK:
+    def nearest_edges(self, point: torch.Tensor, k: int, active: torch.Tensor | None = None) -> NearestEdgesTopK | None:
         self._require_synced("nearest_edges")
         if self._multi is not None:
             return self._multi.nearest_edges(point, int(k), active)
@@ -1005,12 +976,12 @@ class Scene:
             return
         scene.set_edge_mask(mask)
 
-    def global_geometry(self) -> SceneGlobalGeometry:
+    def global_geometry(self) -> SceneGeometry:
         self._require_synced("global_geometry")
-        from .geometry import SceneGlobalGeometry
+        from .geometry import SceneGeometry
 
         scene = self._require_native_scene()
-        return SceneGlobalGeometry(*scene.global_geometry())
+        return SceneGeometry(*scene.global_geometry())
 
     def visible_pair(
         self,
@@ -1019,7 +990,7 @@ class Scene:
         end_b: torch.Tensor,
         ignore_prim_ids: torch.Tensor | None = None,
         active: torch.Tensor | None = None,
-    ) -> SegmentPairVisibility:
+    ) -> SegmentPairVisibility | None:
         self._require_synced("visible_pair")
         if self._multi is not None:
             return self._multi.visible_pair(start, end_a, end_b, ignore_prim_ids, active)
@@ -1038,7 +1009,7 @@ class Scene:
         edge_t_max: torch.Tensor,
         sample_fractions: Iterable[float] = (0.0, 0.25, 0.5, 0.75, 1.0),
         active: torch.Tensor | None = None,
-    ) -> AxialEdgeVisibility:
+    ) -> AxialEdgeVisibility | None:
         self._require_synced("visible_edge")
         if self._multi is not None:
             return self._multi.visible_edge(
@@ -1065,7 +1036,7 @@ class Scene:
         chain_length: torch.Tensor,
         ignore_prim_per_segment: torch.Tensor | None = None,
         active: torch.Tensor | None = None,
-    ) -> SegmentChainVisibility:
+    ) -> SegmentChainVisibility | None:
         self._require_synced("visible_chain")
         if self._multi is not None:
             return self._multi.visible_chain(points, chain_length, ignore_prim_per_segment, active)

@@ -38,7 +38,7 @@ except ImportError:  # pragma: no cover - supports direct script execution.
 _cleanup_drjit = partial(cleanup_drjit, dr)
 
 
-RAYD_FLAGS_NONE = getattr(pj.RayFlags, "None")
+RAYD_FLAGS_NONE = pj.RayFlags.Empty
 
 
 FORWARD_PERFORMANCE_MODES = {
@@ -49,7 +49,7 @@ FORWARD_PERFORMANCE_MODES = {
     ),
     "reduced": (
         "Smallest public high-level intersection path on each backend "
-        "(t only; RayD: Scene.intersect(flags=RayFlags.None), "
+        "(t only; RayD: Scene.intersect(flags=RayFlags.Empty), "
         "Mitsuba: Scene.ray_intersect(ray, RayFlags.Minimal, coherent=False))."
     ),
 }

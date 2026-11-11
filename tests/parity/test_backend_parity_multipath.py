@@ -190,12 +190,12 @@ class _MultipathBase(unittest.TestCase):
         options.max_order = max_order
         options.direct_samples, options.keller_samples, options.suffix_samples = direct, keller, suffix
         options.strategy_mask = (
-            (pj.RAYD_DFR_DIRECT if direct else 0)
-            | (pj.RAYD_DFR_KELLER if keller else 0)
-            | (pj.RAYD_DFR_SUFFIX_REFL if suffix else 0)
+            (pj.DfrStrategy.DIRECT if direct else pj.DfrStrategy(0))
+            | (pj.DfrStrategy.KELLER if keller else pj.DfrStrategy(0))
+            | (pj.DfrStrategy.SUFFIX_REFL if suffix else pj.DfrStrategy(0))
         )
-        options.sample_sequence = pj.RAYD_DFR_HASH
-        options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+        options.sample_sequence = pj.DfrSampleSequence.HASH
+        options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
         options.collect_edge_use = True
         options.collect_debug_counts = True
         return options
@@ -387,11 +387,11 @@ class ReflectionParityTests(_MultipathBase):
             cuda.Bool([True] * count),
         )
         self.assertTrue(bs.host(field_t.valid).all())
-        self.assertGreater(float(np.abs(bs.host(field_t.field_real)).min()), 1.0e-4)
+        self.assertGreater(float(np.abs(bs.host(field_t.field_re)).min()), 1.0e-4)
         self.equal("trace_refl_epc_field", "valid", field_t.valid, field_d.valid)
         self.close("trace_refl_epc_field", "path_length", field_t.path_length, field_d.path_length)
-        self.close("trace_refl_epc_field", "field_re", field_t.field_real, field_d.field_x_re, FIELD_ABS, FIELD_REL)
-        self.close("trace_refl_epc_field", "field_im", field_t.field_imag, field_d.field_x_im, FIELD_ABS, FIELD_REL)
+        self.close("trace_refl_epc_field", "field_re", field_t.field_re, field_d.field_x_re, FIELD_ABS, FIELD_REL)
+        self.close("trace_refl_epc_field", "field_im", field_t.field_im, field_d.field_x_im, FIELD_ABS, FIELD_REL)
         for name in ("field_y_re", "field_y_im", "field_z_re", "field_z_im"):
             self.close("trace_refl_epc_field", name, np.zeros(count), getattr(field_d, name), FIELD_ABS, 0.0)
 
@@ -413,7 +413,7 @@ class ReflectionParityTests(_MultipathBase):
             gain=self.t_tensor([1.0] * faces),
             valid=self.t_tensor([True] * faces, self.torch.bool),
         )
-        material_d = pj.Material()
+        material_d = pj.ReflMaterial()
         material_d.eta_r, material_d.sigma = cuda.Float(eta), cuda.Float([0.01] * faces)
         material_d.mu_r, material_d.gain = cuda.Float([1.0] * faces), cuda.Float([1.0] * faces)
         material_d.valid = cuda.Bool([True] * faces)
@@ -438,7 +438,7 @@ class ReflectionParityTests(_MultipathBase):
         options_d.cell_area = ((high - low) / resolution) ** 2
         for bounces in (1, 2, 3, 5):
             with self.subTest(bounces=bounces):
-                out_t = scene_t.accumulate_reflections(
+                out_t = scene_t.accum_refl(
                     bs.torch_ray(self.rt, origins, directions, [10.0] * count),
                     bs.torch_rows(origins),
                     grid_t,
@@ -448,7 +448,7 @@ class ReflectionParityTests(_MultipathBase):
                     self.t_tensor(active, self.torch.bool),
                     bs.torch_rows(polarization),
                 )
-                out_d = scene_d.accumulate_reflections(
+                out_d = scene_d.accum_refl(
                     bs.drjit_ray(self.mods, origins, directions, [10.0] * count),
                     bs.drjit_vec3(self.mods, origins),
                     grid_d,
@@ -506,16 +506,15 @@ class DiffractionParityTests(_MultipathBase):
             rx_positions=bs.torch_rows(rx),
             states=self.torch_states(rows),
             material=material_t,
+            options=self.rt.DfrPathOptions(max_paths=64, wavelength=WAVELENGTH),
             active=self.t_tensor(active, self.torch.bool),
-            max_paths=64,
-            wavelength=WAVELENGTH,
         )
         pj, cuda = self.mods.pj, self.mods.cuda
         options = pj.DfrPathOptions()
         options.wavelength, options.k, options.seed = WAVELENGTH, 2.0 * math.pi / WAVELENGTH, 17
         options.max_order, options.max_paths, options.max_rx = 1, 64, len(rx)
-        options.strategy_mask, options.sample_count, options.return_geom = pj.RAYD_DFR_DIRECT, 1, 1
-        options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+        options.strategy_mask, options.sample_count, options.return_geom = pj.DfrStrategy.DIRECT, 1, 1
+        options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
         paths_d = self.scene_d.trace_dfr_paths(
             bs.drjit_vec3(self.mods, tx),
             bs.drjit_vec3(self.mods, rx),
@@ -563,11 +562,13 @@ class DiffractionParityTests(_MultipathBase):
             states=self.torch_states(rows),
             grid=grid_t,
             material=material_t,
+            options=self.rt.DfrOptions(
+                wavelength=WAVELENGTH,
+                seed=seed,
+                direct_samples=samples.get("direct", 0),
+                keller_samples=samples.get("keller", 0),
+            ),
             active=self.t_tensor(active, self.torch.bool),
-            wavelength=WAVELENGTH,
-            seed=seed,
-            direct_samples=samples.get("direct", 0),
-            keller_samples=samples.get("keller", 0),
         )
         out_d = self.scene_d.accum_dfr_direct(
             self.drjit_states(rows),
@@ -612,9 +613,7 @@ class DiffractionParityTests(_MultipathBase):
             states=legacy._torch_suffix_states(self.rt),
             grid=legacy._torch_dfr_grid(self.rt, axis=1, position=-2.0),
             material=material_t,
-            wavelength=WAVELENGTH,
-            seed=41,
-            suffix_samples=16,
+            options=self.rt.DfrOptions(wavelength=WAVELENGTH, seed=41, suffix_samples=16),
         )
         out_d = legacy._rayd_suffix_scene(self.mods.pj, self.mods.cuda).accum_dfr_direct(
             legacy._rayd_suffix_states(self.mods.pj, self.mods.cuda),
@@ -638,11 +637,9 @@ class DiffractionParityTests(_MultipathBase):
                     recursive_states=legacy._torch_recursive_dfr_states(self.rt, count=recursive),
                     grid=grid_t,
                     material=material_t,
-                    wavelength=WAVELENGTH,
-                    seed=43,
-                    direct_samples=32,
-                    keller_samples=128,
-                    max_order=max_order,
+                    options=self.rt.DfrOptions(
+                        wavelength=WAVELENGTH, seed=43, direct_samples=32, keller_samples=128, max_order=max_order
+                    ),
                 )
                 out_d = self.scene_d.accum_dfr(
                     legacy._rayd_dfr_states(self.mods.pj, self.mods.cuda, src_power=2.0),
@@ -663,13 +660,13 @@ class DiffractionParityTests(_MultipathBase):
             states=self.torch_states(rows),
             grid=grid_t,
             material=material_t,
-            wavelength=WAVELENGTH,
-            select_diffraction_point=select,
-            prefilter_visibility=prefilter,
+            options=self.rt.DfrCoherentOptions(
+                wavelength=WAVELENGTH, select_diffraction_point=select, prefilter_visibility=prefilter
+            ),
         )
         options = pj.DfrCoherentOptions()
         options.wavelength, options.k, options.max_order = WAVELENGTH, 2.0 * math.pi / WAVELENGTH, 1
-        options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+        options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
         options.select_diffraction_point, options.prefilter_visibility = select, prefilter
         options.collect_debug_counts = True
         out_d = self.scene_d.accum_dfr_coherent_direct(
@@ -690,7 +687,7 @@ class DiffractionParityTests(_MultipathBase):
                     FIELD_ABS,
                     FIELD_REL,
                 )
-        for name in ("direct_count", "multi_count", "visibility_reject_count", "utd_reject_count"):
+        for name in ("direct_count", "multi_count", "vis_rejects", "utd_rejects"):
             self.equal(op, name, getattr(out_t, name), getattr(out_d, name))
 
     def test_accum_dfr_coherent_direct(self):

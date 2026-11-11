@@ -282,7 +282,7 @@ def _run_nearest_edges(dr, cuda, scene, query):
     discrete = {
         "query_count": int(res.query_count),
         "k": int(res.k),
-        "is_valid": _bools_as_ints(res.is_valid),
+        "is_valid": _bools_as_ints(res.valid),
         "shape_ids": _ints(res.shape_ids),
         "edge_ids": _ints(res.edge_ids),
         "global_edge_ids": _ints(res.global_edge_ids),

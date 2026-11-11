@@ -102,13 +102,6 @@ decisions take the next number after the highest one in the index above.
 Renumbering an existing ADR is rejected. ADR filenames are load-bearing in
 exact-string form:
 
-- `tests/test_adr0026_scattering_ownership.py` opens
-  `docs/adr/0026-generic-scattering-runtime-ownership.md` by path and also
-  asserts that filename appears as a link target.
-- `tests/test_adr0029_axial_edge_visibility.py` opens
-  `docs/adr/0029-typed-axial-edge-visibility.md` by path.
-- `tests/test_adr0033_segment_penetration.py` asserts
-  `docs/adr/0033-batched-segment-penetration.md` exists.
 - `CLAUDE.md` and the byte-identical `AGENTS.md` cite ADR filenames directly, as
   do `README.md`, `torch/README.md`, and
   `docs/torch/torch_gap_analysis.md`.

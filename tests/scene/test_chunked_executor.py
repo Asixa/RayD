@@ -66,7 +66,7 @@ def _chunked_ops(scene: rt.Scene, inputs: dict) -> dict[str, torch.Tensor]:
     """The three operations the plan names for chunked coverage, field by field."""
     ray = inputs["ray"]
     active = inputs["active"]
-    reduced = scene.intersect(ray, flags=getattr(rt.RayFlags, "None"))
+    reduced = scene.intersect(ray, flags=rt.RayFlags.Empty)
     full = scene.intersect(ray, active, flags=rt.RayFlags.All)
     chain = scene.trace_reflections(ray, max_bounces=2, active=active)
     visible = scene.visible(inputs["origins"], inputs["end"], active)
@@ -291,7 +291,7 @@ class ChunkedSingleDeviceTests(unittest.TestCase):
 
         scene = self._scene(chunk_rays=11, offload=consume)
         ray = self.inputs["ray"]
-        self.assertIsNone(scene.intersect(ray, flags=getattr(rt.RayFlags, "None")))
+        self.assertIsNone(scene.intersect(ray, flags=rt.RayFlags.Empty))
         self.assertIsNone(scene.trace_reflections(ray, max_bounces=2))
         self.assertIsNone(scene.visible(self.inputs["origins"], self.inputs["end"]))
         self.assertEqual(counts["n"], 9)

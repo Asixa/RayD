@@ -163,7 +163,7 @@ of changing the call.
 This reaches Torch builds made with CUDA 12.9 or newer. Prebuilt `rayd-torch` wheels
 and Torch builds with CUDA 12.8 emit no such intrinsic: a CUDA 12.8 build here has
 none in any of its 11 OptiX modules. No committed Dr.Jit PTX contains it either,
-and Dr.Jit `accumulate_reflections` passes on driver 572.16. The modules that use
+and Dr.Jit `accum_refl` passes on driver 572.16. The modules that use
 the square root were generated with CUDA 12.8 (ADR-0045), so regenerating them with
 CUDA 12.9 or newer would bring this requirement back to Dr.Jit.
 

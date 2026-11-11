@@ -122,9 +122,9 @@ COVERED_SUPPORTED = {
     ("trace_refl_epc_field", "source"),
     ("trace_refl_epc_field", "receiver"),
     ("trace_refl_epc_field", "material"),
-    ("accumulate_reflections", "geometry"),
-    ("accumulate_reflections", "source_receiver"),
-    ("accumulate_reflections", "material"),
+    ("accum_refl", "geometry"),
+    ("accum_refl", "source_receiver"),
+    ("accum_refl", "material"),
     ("trace_dfr_paths", "continuous_inputs"),
     ("accum_dfr_direct", "geometry"),
     ("accum_dfr_direct", "material"),
@@ -192,13 +192,13 @@ def _accum_objective(x):
     grid.axis, grid.position = 2, 0.6
     grid.coord0_min, grid.coord0_max, grid.coord1_min, grid.coord1_max = -4.0, 4.0, -4.0, 4.0
     grid.resolution0, grid.resolution1 = 1, 1
-    material = pj.MaterialAD()
+    material = pj.ReflMaterialAD()
     material.eta_r, material.sigma, material.gain = x["eta_r"], x["sigma"], x["gain"]
     material.mu_r, material.valid = ad.Float([1.0]), ad.Bool([True])
     options = pj.AccumOptions()
     options.wavelength, options.k = 0.5, 2.0 * math.pi / 0.5
     options.solid_angle_per_ray, options.cell_area = 0.01, 1.0
-    result = scene.accumulate_reflections(pj.RayAD(x["o"], x["d"]), x["tx"], grid, material, 1, options)
+    result = scene.accum_refl(pj.RayAD(x["o"], x["d"]), x["tx"], grid, material, 1, options)
     fx, fy, fz = result.reflection_field_x, result.reflection_field_y, result.reflection_field_z
     value = 1.0e4 * dr.sum(result.reflection_power)
     value += 300.0 * (dr.sum(fx.real) - 0.7 * dr.sum(fx.imag) + 0.3 * dr.sum(fy.real) + 0.5 * dr.sum(fz.imag))
@@ -263,12 +263,12 @@ def _dfr_options(*, direct=0, keller=0, suffix=0, max_order=1, seed=17):
     options.samples, options.max_order = direct + keller + suffix, max_order
     options.direct_samples, options.keller_samples, options.suffix_samples = direct, keller, suffix
     options.strategy_mask = (
-        (pj.RAYD_DFR_DIRECT if direct else 0)
-        | (pj.RAYD_DFR_KELLER if keller else 0)
-        | (pj.RAYD_DFR_SUFFIX_REFL if suffix else 0)
+        (pj.DfrStrategy.DIRECT if direct else 0)
+        | (pj.DfrStrategy.KELLER if keller else 0)
+        | (pj.DfrStrategy.SUFFIX_REFL if suffix else 0)
     )
-    options.sample_sequence = pj.RAYD_DFR_HASH
-    options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+    options.sample_sequence = pj.DfrSampleSequence.HASH
+    options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
     options.collect_edge_use = True
     options.collect_debug_counts = True
     return options
@@ -353,8 +353,8 @@ def _paths_objective(scene):
         options = pj.DfrPathOptions()
         options.wavelength, options.k, options.seed = 0.125, 2.0 * math.pi / 0.125, 17
         options.max_order, options.max_paths, options.max_rx, options.sample_count = 1, 8, 2, 1
-        options.strategy_mask, options.return_geom = pj.RAYD_DFR_DIRECT, 1
-        options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+        options.strategy_mask, options.return_geom = pj.DfrStrategy.DIRECT, 1
+        options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
         paths = scene.trace_dfr_paths(x["tx"], x["rx"], _dfr_states(x), _dfr_material(x), options, ad.Bool([True]))
         weight = dr.linspace(ad.Float, 0.5, 1.5, int(paths.capacity))
         terms = weight * paths.delay * 1.0e8 + weight * (paths.p0.x + paths.p0.y + paths.p0.z)
@@ -413,15 +413,15 @@ class DrJitReflectionFiniteDifferenceTests(unittest.TestCase):
         for seed, (domain, group) in enumerate(groups.items()):
             with self.subTest(domain=domain):
                 result = drjit_directional(self, DJ, _accum_objective, ACCUM_BASE, group, step=STEP, seed=seed)
-                assert_directional(self, result, label=f"drjit accumulate_reflections {domain}")
+                assert_directional(self, result, label=f"drjit accum_refl {domain}")
 
     # At exact normal incidence the s/p basis is undefined; the field derivative must still equal its limit from
     # tilted rays (and the central difference) in both operations that reflect a polarised field.
     def test_reflected_field_derivative_is_continuous_at_normal_incidence(self):
         normal = {**ACCUM_BASE, "o": ACCUM_BASE["tx"], "d": np.array([[0.0, 0.0, -1.0]], F32)}
-        with self.subTest(operation="accumulate_reflections"):
+        with self.subTest(operation="accum_refl"):
             result = drjit_directional(self, DJ, _accum_objective, normal, ("d",), step=STEP, seed=3)
-            assert_directional(self, result, label="drjit accumulate_reflections direction at normal incidence")
+            assert_directional(self, result, label="drjit accum_refl direction at normal incidence")
         epc = {**EPC_BASE, "tx": np.array([[0.0, 0.0, 1.0]], F32), "rx": np.array([[0.0, 0.0, 2.0]], F32)}
         field_only = functools.partial(_epc_field_objective, path_weight=0.0)
         with self.subTest(operation="trace_refl_epc_field"):
@@ -512,7 +512,7 @@ def _coherent(states, material):
     pj = DJ.pj
     options = pj.DfrCoherentOptions()
     options.wavelength, options.k, options.max_order = 0.125, 2.0 * math.pi / 0.125, 1
-    options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+    options.receiver_model = pj.DfrReceiverModel.MATCHED_ISO
     return _dfr_scene().accum_dfr_coherent_direct(states, _dfr_grid(resolution=1), material, options, True)
 
 
@@ -571,10 +571,10 @@ class DrJitMultipathDerivativeManifestTests(unittest.TestCase):
 
     def test_detached_records_refuse_grad_enabled_arrays(self):
         # Detached records and overloads would drop the derivative of a grad-enabled AD array in an implicit
-        # conversion; the conversion is refused and the AD variant (here MaterialAD, RayAD) must be used.
+        # conversion; the conversion is refused and the AD variant (here ReflMaterialAD, RayAD) must be used.
         ad, pj = DJ.ad, DJ.pj
         for record, field, value in (
-            (pj.Material(), "gain", ad.Float([0.9])),
+            (pj.ReflMaterial(), "gain", ad.Float([0.9])),
             (pj.DfrMaterial(), "gain", ad.Float([0.9])),
             (pj.DfrStates(), "src", ad.Array3f([0.0], [0.0], [1.0])),
             (pj.ReflEpcFieldOptions(), "slot_eta_r", ad.Float([4.0])),
@@ -584,7 +584,7 @@ class DrJitMultipathDerivativeManifestTests(unittest.TestCase):
                 setattr(record, field, value)  # an AD array without gradients still converts
                 with self.assertRaises(TypeError):
                     setattr(record, field, _grad_enabled(value))
-        material = pj.MaterialAD()
+        material = pj.ReflMaterialAD()
         material.gain = _grad_enabled(ad.Float([0.9]))
         self.assertTrue(DJ.dr.grad_enabled(material.gain))
 

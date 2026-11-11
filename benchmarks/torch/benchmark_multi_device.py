@@ -634,9 +634,7 @@ def measure_accum(config: Config, devices, args) -> dict:
                 states=states,
                 grid=grid,
                 material=material,
-                wavelength=1.0,
-                direct_samples=config.accum_samples,
-                seed=17,
+                options=rt.DfrOptions(wavelength=1.0, direct_samples=config.accum_samples, seed=17),
             ).power
         )
 

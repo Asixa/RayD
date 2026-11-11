@@ -188,4 +188,25 @@ Key field renames:
 | `tx_index` / `rx_index` | `tx_id` / `rx_id` |
 | `return_geometry` / `max_receivers` | `return_geom` / `max_rx` |
 
-See [`API_NAMING_STANDARD.md`](API_NAMING_STANDARD.md) for the active naming rules.
+## 8. 2026-11 Python API cleanup
+
+This round changes the API directly, with no compatibility aliases. `CHANGELOG.md` holds the complete migration
+tables for both backends; the Dr.Jit renames are:
+
+| Old | New |
+|---|---|
+| `Scene.accumulate_reflections(...)` | `Scene.accum_refl(...)` |
+| `audit["accumulate_reflections"]` (`native_launch_audit()`) | `audit["accum_refl"]` |
+| `Material` / `MaterialAD` (Python) | `ReflMaterial` / `ReflMaterialAD` |
+| `DfrCoherentAccum.visibility_reject_count` / `utd_reject_count` | `vis_rejects` / `utd_rejects` |
+| `Scene.trace_backend_name()` | `Scene.trace_backend` (property) |
+| `RAYD_DFR_DIRECT` / `KELLER` / `SUFFIX_REFL` | `DfrStrategy.DIRECT` / `KELLER` / `SUFFIX_REFL` |
+| `RAYD_DFR_HASH` / `RAYD_DFR_SOBOL` | `DfrSampleSequence.HASH` / `SOBOL` |
+| `RAYD_DFR_MATCHED_ISO` | `DfrReceiverModel.MATCHED_ISO` |
+| `REFLECTION_EXPORT_FULL` / `MINIMAL` / `COUNT_ONLY` | `ReflectionExportMode.FULL` / `MINIMAL` / `COUNT_ONLY` |
+| `RayFlags.None` | `RayFlags.Empty` |
+
+The C++ names (`Scene::accumulate_reflections`, `Material`, `visibility_reject_count`, the `RAYD_DFR_*` macros) are
+unchanged; only the Python binding names moved.
+
+See [`api_naming_standard.md`](api_naming_standard.md) for the active naming rules.

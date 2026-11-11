@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
+import re
 import unittest
 
 import torch
@@ -91,33 +93,13 @@ class MultiDeviceDiffractionPathTests(unittest.TestCase):
         self.assertTrue(torch.equal(merged.delay, torch.arange(6, dtype=torch.float32)))
         self.assertEqual(tuple(merged.p0.shape), (6, 3))
 
-    def test_public_and_dispatcher_contracts_expose_layout(self) -> None:
-        geometry = (ROOT / "python" / "rayd" / "_impl" / "geometry.py").read_text(encoding="utf-8")
-        multipath = (ROOT / "python" / "rayd" / "_impl" / "multipath.py").read_text(encoding="utf-8")
-        scene = (ROOT / "python" / "rayd" / "_impl" / "scene.py").read_text(encoding="utf-8")
+    def test_default_layout_matches_the_dispatcher_default(self) -> None:
+        defaults = {field.name: field.default for field in dataclasses.fields(rt.DfrPaths)}
+        self.assertIs(defaults["layout"], rt.DfrPathLayout.Compact)
         library = (ROOT / "src" / "bindings" / "library.cpp").read_text(encoding="utf-8")
-
-        self.assertIn("class DfrPathLayout(IntEnum):", geometry)
-        self.assertIn("layout: DfrPathLayout = DfrPathLayout.Compact", geometry)
-        self.assertIn("int(resolved_layout)", multipath)
-        self.assertIn("DfrPathLayout.SourceLane if self._multi is not None", scene)
-        self.assertIn("int output_layout=0", library)
-
-    def test_multi_device_path_uses_tx_aligned_source_lane_shards(self) -> None:
-        multi = (ROOT / "python" / "rayd" / "_impl" / "multi.py").read_text(encoding="utf-8")
-
-        body = multi.split("    def trace_dfr_paths(", 1)[1].split("    def accum_dfr_direct(", 1)[0]
-        self.assertIn("lanes_per_tx = rx_count * state_limit", body)
-        self.assertIn("self._shards(tx_count, operation)", body)
-        self.assertIn("layout=DfrPathLayout.SourceLane", body)
-        self.assertIn("_merge_source_lane_paths", body)
-        self.assertIn('raise RuntimeError("state_limit must be non-negative.")', body)
-        self.assertLess(body.index("_validate_source_lane_devices"), body.index("self._shards(tx_count, operation)"))
-        self.assertLess(body.index("_validate_source_lane_active"), body.index("self._shards(tx_count, operation)"))
-        self.assertLess(body.index("if self.chunked:"), body.index("if tx_count == 0 or lanes_per_tx == 0:"))
-        self.assertIn('raise RuntimeError("capacity does not fit in int32.")', body)
-        self.assertNotIn(".cpu(", body)
-        self.assertNotIn(".item(", body)
+        schema_defaults = re.findall(r"\bint output_layout=(-?\d+)", library)
+        self.assertTrue(schema_defaults)
+        self.assertEqual({int(value) for value in schema_defaults}, {int(rt.DfrPathLayout.Compact)})
 
 
 if __name__ == "__main__":

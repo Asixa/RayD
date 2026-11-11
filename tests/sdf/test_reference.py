@@ -96,7 +96,7 @@ class SdfReferenceForwardTests(unittest.TestCase):
         origins, directions = z_rays([0.0, 0.1, 0.2, 0.3], self.device, self.dtype)
         res = ref.intersect(grid, origins, directions)
 
-        self.assertTrue(bool(res.hit_mask.all()))
+        self.assertTrue(bool(res.valid.all()))
         expected = sphere_hit_t(origins, directions, grid.position, 0.5)
         torch.testing.assert_close(res.t, expected, atol=1e-3, rtol=0.0)
         torch.testing.assert_close(res.position, origins + res.t.unsqueeze(-1) * directions, atol=1e-6, rtol=0.0)
@@ -118,7 +118,7 @@ class SdfReferenceForwardTests(unittest.TestCase):
         origins, directions = z_rays([0.0, 0.1], self.device, self.dtype)
 
         res = ref.intersect(grid, origins, directions)
-        self.assertTrue(bool(res.hit_mask.all()))
+        self.assertTrue(bool(res.valid.all()))
         torch.testing.assert_close(res.t, torch.full((2,), 2.6, device=self.device), atol=1e-4, rtol=0.0)
         torch.testing.assert_close(
             res.normal, torch.tensor([[0.0, 0.0, -1.0]] * 2, device=self.device), atol=1e-5, rtol=0.0
@@ -130,7 +130,7 @@ class SdfReferenceForwardTests(unittest.TestCase):
         directions = torch.tensor([[0.0, 0.0, 1.0]], device=self.device, dtype=self.dtype)
 
         res = ref.intersect(grid, origins, directions)
-        self.assertTrue(bool(res.hit_mask.all()))
+        self.assertTrue(bool(res.valid.all()))
         torch.testing.assert_close(res.t, torch.full((1,), 0.5, device=self.device), atol=1e-3, rtol=0.0)
         # The gradient of a signed distance field points outward on both sides.
         torch.testing.assert_close(res.normal, directions, atol=5e-2, rtol=0.0)
@@ -144,7 +144,7 @@ class SdfReferenceForwardTests(unittest.TestCase):
         origins, directions = z_rays([0.0, 0.7, 5.0], self.device, self.dtype)
 
         res = ref.intersect(grid, origins, directions)
-        torch.testing.assert_close(res.hit_mask, torch.tensor([True, False, False], device=self.device))
+        torch.testing.assert_close(res.valid, torch.tensor([True, False, False], device=self.device))
         missed = res.t[1:].detach()
         self.assertTrue(bool((missed == float("inf")).all()))
         zero = torch.zeros(2, 3, device=self.device)
@@ -172,9 +172,9 @@ class SdfReferenceForwardTests(unittest.TestCase):
         grid = sphere_case(self.device, self.dtype, size=33)
         origins, directions = z_rays([0.0], self.device, self.dtype)
 
-        self.assertTrue(bool(ref.intersect(grid, origins, directions).hit_mask.all()))
+        self.assertTrue(bool(ref.intersect(grid, origins, directions).valid.all()))
         clipped = ref.intersect(grid, origins, directions, ref.TraceConfig(tmax=2.0))
-        self.assertFalse(bool(clipped.hit_mask.any()))
+        self.assertFalse(bool(clipped.valid.any()))
         self.assertEqual(float(clipped.t[0]), float("inf"))
 
     def test_non_eikonal_field_recovers_through_bisection(self) -> None:
@@ -186,7 +186,7 @@ class SdfReferenceForwardTests(unittest.TestCase):
         tape = ref.march(scaled, origins, directions, ref.TraceConfig())
         self.assertTrue(bool(tape.bisected.all()))
         res = ref.reattach(scaled, origins, directions, tape)
-        self.assertTrue(bool(res.hit_mask.all()))
+        self.assertTrue(bool(res.valid.all()))
         torch.testing.assert_close(res.t, sphere_hit_t(origins, directions, grid.position, 0.5), atol=1e-3, rtol=0.0)
 
     def test_rotated_non_uniform_box_clips_and_maps_axes(self) -> None:
@@ -216,7 +216,7 @@ class SdfReferenceForwardTests(unittest.TestCase):
         res = ref.intersect(
             grid, torch.cat([origins, blocked_o, outside_o]), torch.cat([directions, blocked_d, outside_d])
         )
-        torch.testing.assert_close(res.hit_mask, torch.tensor([True, False, False], device=self.device))
+        torch.testing.assert_close(res.valid, torch.tensor([True, False, False], device=self.device))
         torch.testing.assert_close(res.t[:1], torch.full((1,), 2.2, device=self.device), atol=2e-3, rtol=0.0)
         self.assertEqual(int(res.steps[2]), 0)
 
@@ -378,9 +378,9 @@ class SdfReferenceGradientTests(unittest.TestCase):
             tensor.requires_grad_(True)
 
         res = ref.intersect(ref.SdfGridRef(*tensors), *rays, ref.TraceConfig(max_steps=256))
-        self.assertTrue(bool(res.hit_mask.any()))
-        self.assertFalse(bool(res.hit_mask.all()))
-        finite_t = torch.where(res.hit_mask, res.t, torch.zeros_like(res.t))
+        self.assertTrue(bool(res.valid.any()))
+        self.assertFalse(bool(res.valid.all()))
+        finite_t = torch.where(res.valid, res.t, torch.zeros_like(res.t))
         self.assertTrue(bool(torch.isfinite(finite_t).all()))
         self.assertTrue(bool(torch.isfinite(res.position).all()))
         self.assertTrue(bool(torch.isfinite(res.normal).all()))

@@ -317,7 +317,7 @@ class SdfFiniteDifferenceTests(_DirectionalCase):
             eps_hit=cases.SDF_EPS_HIT,
             max_steps=cases.SDF_MAX_STEPS,
         )
-        self.assertTrue(bool(result.hit_mask.all()))
+        self.assertTrue(bool(result.valid.all()))
         local = (result.position - tensors["position"]) @ ref.rotation_matrix(tensors["rotation"])
         lattice = (local / tensors["scale"] + 0.5) * (cases.SDF_SIZE - 1)
         fraction = lattice - lattice.floor()

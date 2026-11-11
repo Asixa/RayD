@@ -82,15 +82,14 @@ actually satisfy; these are not, and are left unticked where they appear:
    job. Until a runner exists the acceptance set is run by hand:
    [`multi_gpu_operations.md`](multi_gpu_operations.md) §8.
 7. A defect this closeout found rather than fixed: Phase 0 (`f643336`)
-   falsified `tests/test_bvh4_shared_aabb.py::SharedEdgeAabbSourceTests::`
-   `test_torch_adapter_uses_shared_api_on_current_stream`. That test asserts the
-   Torch edge-AABB adapter calls `current_torch_cuda_context()` and launches on
+   falsified the BVH-4 source-shape test that required the Torch edge-AABB
+   adapter to call `current_torch_cuda_context()` and launch on
    `torch_ctx.stream`, which is exactly the ambient-device coupling Phase 0
    work item 4 removed in favour of a `c10::cuda::CUDAGuard` plus
    `getCurrentCUDAStream(out_aabbs.get_device())`. The shipped code is what the
-   plan asked for and the test states the pre-Phase-0 shape; the BVH-4 contract
-   owner has to decide how it should read now. Nothing in this closeout touched
-   either side, so Phase 0's first acceptance box stays unticked.
+   plan asked for and the test stated the pre-Phase-0 shape. The test was later
+   rewritten to the device-explicit shape, and has since been removed with the
+   other source-text governance tests, so nothing remains open here.
 
 ## 1. Headline decisions
 
@@ -226,14 +225,12 @@ Work items:
 Acceptance:
 
 - [ ] Full existing test suite passes unchanged (no numerical drift; golden
-      tests bitwise). **Open on one test.** The Torch suite passed at every
-      phase (198 → 310 OK) with no numerical drift and golden tests bitwise,
-      but work item 4 falsified
-      `tests/test_bvh4_shared_aabb.py::SharedEdgeAabbSourceTests::`
-      `test_torch_adapter_uses_shared_api_on_current_stream`, which asserts the
-      `current_torch_cuda_context()` shape the device-explicit rewrite replaced
-      (execution record item 7). It is a source-shape contract, not a numerical
-      one, and it is still red.
+      tests bitwise). The Torch suite passed at every phase (198 → 310 OK)
+      with no numerical drift and golden tests bitwise. Work item 4 falsified
+      one BVH-4 source-shape test that asserted the
+      `current_torch_cuda_context()` shape the device-explicit rewrite
+      replaced (execution record item 7). It was a source-shape contract, not
+      a numerical one; it was later rewritten and has since been removed.
 - [x] New cross-device rejection tests for the families that lacked them
       (table/ensemble/patch scattering, transmission, layer stack, wedge) —
       `tests/scattering/scattering_test.cpp`, extended to all six

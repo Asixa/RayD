@@ -164,9 +164,9 @@ def _rayd_dfr_case(rayd, cuda):
     options.max_order = 1
     options.direct_samples = 64
     options.keller_samples = 0
-    options.strategy_mask = rayd.RAYD_DFR_DIRECT
-    options.sample_sequence = rayd.RAYD_DFR_HASH
-    options.receiver_model = rayd.RAYD_DFR_MATCHED_ISO
+    options.strategy_mask = rayd.DfrStrategy.DIRECT
+    options.sample_sequence = rayd.DfrSampleSequence.HASH
+    options.receiver_model = rayd.DfrReceiverModel.MATCHED_ISO
     options.collect_edge_use = True
     options.collect_debug_counts = True
     return states, grid, material, options
@@ -180,10 +180,10 @@ def _rayd_dfr_path_options(rayd):
     options.max_order = 1
     options.max_paths = 4
     options.max_rx = 1
-    options.strategy_mask = rayd.RAYD_DFR_DIRECT
+    options.strategy_mask = rayd.DfrStrategy.DIRECT
     options.sample_count = 1
     options.return_geom = 1
-    options.receiver_model = rayd.RAYD_DFR_MATCHED_ISO
+    options.receiver_model = rayd.DfrReceiverModel.MATCHED_ISO
     return options
 
 
@@ -206,8 +206,8 @@ def main() -> None:
         raise SystemExit("CUDA torch is required")
 
     rayd, cuda, dr = _load_rayd(args.rayd_source, args.rayd_root)
-    rayd_flags_none = getattr(rayd.RayFlags, "None")
-    torch_flags_none = getattr(rt.RayFlags, "None")
+    rayd_flags_none = rayd.RayFlags.Empty
+    torch_flags_none = rt.RayFlags.Empty
     torch.manual_seed(17)
     verts, faces = _grid_data(args.grid)
     scene_t, torch_build_ms = _torch_scene(verts, faces, args.dynamic)
@@ -250,9 +250,7 @@ def main() -> None:
                     states=dfr_states_t,
                     grid=dfr_grid_t,
                     material=dfr_material_t,
-                    wavelength=0.125,
-                    direct_samples=64,
-                    seed=17,
+                    options=rt.DfrOptions(wavelength=0.125, direct_samples=64, seed=17),
                 ).power
             ),
             args.warmup,
@@ -265,9 +263,8 @@ def main() -> None:
                     rx_positions=dfr_rx_t,
                     states=dfr_states_t,
                     material=dfr_material_t,
+                    options=rt.DfrPathOptions(max_paths=4, wavelength=0.125),
                     active=dfr_active_t,
-                    max_paths=4,
-                    wavelength=0.125,
                 ).count
             ),
             args.warmup,

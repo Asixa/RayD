@@ -233,7 +233,7 @@ In the shipped layer:
   chunking, and offload fail loudly instead of changing placement.
 - `accum_dfr_coherent_direct` uses the deterministic lane window from section 5
   and the ordinary `grid_reduce` merge order from section 3.
-- `accumulate_reflections` shards warp-aligned ray-batch windows. Each launch
+- `accum_refl` shards warp-aligned ray-batch windows. Each launch
   retains the unsplit batch's atomic/staged strategy, and the seven float grids
   plus `reflection_count` are summed on the master in device order.
   `WedgeEvents` is deliberately not reduced: its bounded atomic buffer has one
@@ -461,7 +461,7 @@ variant map.
 `diffraction_direct` resolves `trace_dfr_paths` to
 `source_lane`/`sharded`, and both accumulation variants to
 `grid_reduce`/`sharded`. `reflection_accumulation` is reached through the new
-  Torch `Scene.accumulate_reflections()` method and shards its ray batch; wedge
+  Torch `Scene.accum_refl()` method and shards its ray batch; wedge
   collection retains one master launch because its bounded event buffer is not
   a reducible grid.
 `sdf_intersect` and `mixed_scene` remain `single_device`: the former is a
