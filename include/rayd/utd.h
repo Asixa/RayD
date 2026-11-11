@@ -805,21 +805,30 @@ template <typename T> UTD_DINLINE T shadow_a_threshold(T n) {
     return 8.0e-12f * fmaxf(n * n, T(1.0f));
 }
 
+// The cotangent-transition product of one term. On its GO boundary the cotangent has a pole and the product a
+// different finite limit on each side, +-n sqrt(pi kL) (1 + j), positive on the lit side. Only a term at its pole
+// takes that limit: on a boundary where the transition argument of another term vanishes too (its N rounds at the
+// tie) but its cotangent stays finite, that term is the finite raw product, about zero. Within float resolution of
+// the boundary the side cannot be told from the angles, so the term at its pole takes the limit of the side the
+// geometric tests choose for a point exactly on the boundary (`boundarySide`, +1 lit): the lit side of a
+// reflection boundary, because the in-face test of the reflection point includes the face's edge, and the shadow
+// side of an incident boundary, because a segment through the edge is blocked. The diffraction then completes the
+// GO field the solver keeps there.
 template <typename T>
 UTD_DINLINE ComplexT<T> cot_transition_product_value(T cotV, ComplexT<T> transition, T x, T x1, T kL, T n,
-                                                     float cotSign) {
+                                                     float cotSign, float boundarySide) {
     ComplexT<T> raw = cplx_mul_real(transition, cotV);
     T safeKL = fabsf(kL) > UTD_EPS ? kL : T(0.0f);
     T a = safeKL != 0.0f ? fmaxf(x / safeKL, T(0.0f)) : T(0.0f);
     T a1 = safeKL != 0.0f ? x1 / safeKL : T(0.0f);
     T threshold = shadow_a_threshold(n);
-    if (a > threshold) {
+    // Inside the threshold a term at its pole has |cot| > 2n / (4e-6 n) = 5e5.
+    if (a > threshold || !(fabsf(scalar_value(cotV)) > 1.0e3f)) {
         return raw;
     }
 
-    float fallbackSign = cotV >= 0.0f ? 1.0f : -1.0f;
     float a1Sign = a1 >= 0.0f ? 1.0f : -1.0f;
-    float limitSign = fabsf(scalar_value(a1)) > UTD_SMALL_EPS ? cotSign * a1Sign : fallbackSign;
+    float limitSign = fabsf(scalar_value(a1)) > UTD_SMALL_EPS ? cotSign * a1Sign : boundarySide;
     T limitScale = limitSign * n * sqrtf(UTD_PI * fmaxf(kL, T(0.0f)));
     ComplexT<T> limit = cplx(limitScale, limitScale);
     T blend = fminf(T(1.0f), a / fmaxf(threshold, T(1.0e-20f)));
@@ -847,11 +856,11 @@ UTD_DINLINE void beta_term_values(T beta, T n, T kL, float cotSign, bool plusBra
 }
 
 template <typename T>
-UTD_DINLINE void assemble_beta_term(T cotV, T c1, T c2, T x, T x1, T x2, T kL, T n, float cotSign, ComplexT<T> tr,
-                                    ComplexT<T> tr1, ComplexT<T> tr2, ComplexT<T>& val, ComplexT<T>& fst,
-                                    ComplexT<T>& snd) {
+UTD_DINLINE void assemble_beta_term(T cotV, T c1, T c2, T x, T x1, T x2, T kL, T n, float cotSign, float boundarySide,
+                                    ComplexT<T> tr, ComplexT<T> tr1, ComplexT<T> tr2, ComplexT<T>& val,
+                                    ComplexT<T>& fst, ComplexT<T>& snd) {
     ComplexT<T> forwardTransition = f_utd_value(x);
-    val = cot_transition_product_value(cotV, forwardTransition, x, x1, kL, n, cotSign);
+    val = cot_transition_product_value(cotV, forwardTransition, x, x1, kL, n, cotSign, boundarySide);
     fst = cplx_add(cplx_mul_real(tr, c1), cplx_mul_real(tr1, cotV * x1));
     snd = cplx_add(cplx_add(cplx_mul_real(tr, c2), cplx_mul_real(tr1, 2.f * c1 * x1)),
                    cplx_mul_real(cplx_add(cplx_mul_real(tr2, x1 * x1), cplx_mul_real(tr1, x2)), cotV));
@@ -904,9 +913,15 @@ template <typename T> UTD_DINLINE T reflection_nearest_boundary(T beta, T n) {
     return (fabsf(b - UTD_PI) <= fabsf(b - bFar)) ? T(UTD_PI) : (2.f * n - 1.f) * T(UTD_PI);
 }
 
+// Side a term takes exactly on its GO boundary: the shadow side for the incident terms (0, 1), the lit side for
+// the reflection terms (2, 3); see cot_transition_product_value.
+UTD_DINLINE float beta_term_boundary_side(int term) {
+    return term < 2 ? -1.f : 1.f;
+}
+
 template <typename T>
 UTD_DINLINE ComplexT<T> mend_beta_term_value(ComplexT<T> termValue, T beta, T bStar, T n, T kL, float cotSign,
-                                             bool plusBranch, T gammaOdd = T(1.f),
+                                             bool plusBranch, float boundarySide, T gammaOdd = T(1.f),
                                              ComplexT<T> truncEven = c_const<T>(1, 0), T isbWindow = T(0)) {
     // Fast path: MC / non-stationary callers pass gammaOdd = 1 and
     // truncEven = 1, so t_used == t_i. Returning the input verbatim keeps that
@@ -932,7 +947,7 @@ UTD_DINLINE ComplexT<T> mend_beta_term_value(ComplexT<T> termValue, T beta, T bS
     ComplexT<T> trM, tr1M, tr2M;
     f_utd_with_derivatives(xoM, trM, tr1M, tr2M);
     ComplexT<T> tvM, tfM, tsM;
-    assemble_beta_term(cvM, c1M, c2M, xoM, x1M, x2M, kL, n, cotSign, trM, tr1M, tr2M, tvM, tfM, tsM);
+    assemble_beta_term(cvM, c1M, c2M, xoM, x1M, x2M, kL, n, cotSign, -boundarySide, trM, tr1M, tr2M, tvM, tfM, tsM);
     ComplexT<T> odd = cplx_mul_real(cplx_sub(termValue, tvM), T(0.5f) * w);
     ComplexT<T> even = cplx_sub(termValue, odd);
     // ADR-017 ISB boundary taper: notch the odd (GO-step-carrying) part over
@@ -988,19 +1003,23 @@ UTD_DINLINE void diffraction_beta_groups_from_betas(T dP, T sP2, T n, T k, T s, 
     ComplexT<T> tv[4], tf[4], ts[4];
     for (int i = 0; i < 4; ++i) {
         float cotSign = (i == 0 || i == 2) ? +1.f : -1.f;
-        assemble_beta_term(cv[i], c1[i], c2[i], xv[i], x1[i], x2[i], kL, n, cotSign, tr[i], tr1[i], tr2[i], tv[i],
-                           tf[i], ts[i]);
+        assemble_beta_term(cv[i], c1[i], c2[i], xv[i], x1[i], x2[i], kL, n, cotSign, beta_term_boundary_side(i), tr[i],
+                           tr1[i], tr2[i], tv[i], tf[i], ts[i]);
     }
     // Corner even/odd finite-edge assembly on the term VALUES (F5d). Incident
     // group (i=0,1) about +-pi of dP; reflection group (i=2,3) about
     // {pi,(2n-1)pi} of sP2. Nearest boundary by |beta - bStar|.
     T bIncident = incident_nearest_boundary(dP);
     // ADR-017: the isbW notch applies to the incident-boundary terms ONLY.
-    tv[0] = mend_beta_term_value(tv[0], dP, bIncident, n, kL, +1.f, true, gammaOdd, truncEven, isbW);
-    tv[1] = mend_beta_term_value(tv[1], dP, bIncident, n, kL, -1.f, false, gammaOdd, truncEven, isbW);
+    tv[0] = mend_beta_term_value(tv[0], dP, bIncident, n, kL, +1.f, true, beta_term_boundary_side(0), gammaOdd,
+                                 truncEven, isbW);
+    tv[1] = mend_beta_term_value(tv[1], dP, bIncident, n, kL, -1.f, false, beta_term_boundary_side(1), gammaOdd,
+                                 truncEven, isbW);
     T bReflect = reflection_nearest_boundary(sP2, n);
-    tv[2] = mend_beta_term_value(tv[2], sP2, bReflect, n, kL, +1.f, true, gammaOdd, truncEven);
-    tv[3] = mend_beta_term_value(tv[3], sP2, bReflect, n, kL, -1.f, false, gammaOdd, truncEven);
+    tv[2] =
+        mend_beta_term_value(tv[2], sP2, bReflect, n, kL, +1.f, true, beta_term_boundary_side(2), gammaOdd, truncEven);
+    tv[3] =
+        mend_beta_term_value(tv[3], sP2, bReflect, n, kL, -1.f, false, beta_term_boundary_side(3), gammaOdd, truncEven);
     dG = cplx_add(tv[0], tv[1]);
     // Slope-derivative feeds carry no GO step -> smooth background only
     // (truncEven, no odd split). truncEven == 1 on the MC path is a no-op.
@@ -1056,17 +1075,21 @@ UTD_DINLINE void diffraction_beta_groups_3d_from_betas(T dP, T sP2, T n, T k, T 
     ComplexT<T> tv[4], tf[4], ts[4];
     for (int i = 0; i < 4; ++i) {
         float cotSign = (i == 0 || i == 2) ? +1.f : -1.f;
-        assemble_beta_term(cv[i], c1[i], c2[i], xv[i], x1[i], x2[i], kL, n, cotSign, tr[i], tr1[i], tr2[i], tv[i],
-                           tf[i], ts[i]);
+        assemble_beta_term(cv[i], c1[i], c2[i], xv[i], x1[i], x2[i], kL, n, cotSign, beta_term_boundary_side(i), tr[i],
+                           tr1[i], tr2[i], tv[i], tf[i], ts[i]);
     }
     // Corner even/odd finite-edge assembly on the term VALUES (F5d); 2D twin.
     T bIncident = incident_nearest_boundary(dP);
     // ADR-017: the isbW notch applies to the incident-boundary terms ONLY.
-    tv[0] = mend_beta_term_value(tv[0], dP, bIncident, n, kL, +1.f, true, gammaOdd, truncEven, isbW);
-    tv[1] = mend_beta_term_value(tv[1], dP, bIncident, n, kL, -1.f, false, gammaOdd, truncEven, isbW);
+    tv[0] = mend_beta_term_value(tv[0], dP, bIncident, n, kL, +1.f, true, beta_term_boundary_side(0), gammaOdd,
+                                 truncEven, isbW);
+    tv[1] = mend_beta_term_value(tv[1], dP, bIncident, n, kL, -1.f, false, beta_term_boundary_side(1), gammaOdd,
+                                 truncEven, isbW);
     T bReflect = reflection_nearest_boundary(sP2, n);
-    tv[2] = mend_beta_term_value(tv[2], sP2, bReflect, n, kL, +1.f, true, gammaOdd, truncEven);
-    tv[3] = mend_beta_term_value(tv[3], sP2, bReflect, n, kL, -1.f, false, gammaOdd, truncEven);
+    tv[2] =
+        mend_beta_term_value(tv[2], sP2, bReflect, n, kL, +1.f, true, beta_term_boundary_side(2), gammaOdd, truncEven);
+    tv[3] =
+        mend_beta_term_value(tv[3], sP2, bReflect, n, kL, -1.f, false, beta_term_boundary_side(3), gammaOdd, truncEven);
     dG = cplx_add(tv[0], tv[1]);
     // Slope-derivative feeds carry no GO step -> smooth background only
     // (truncEven, no odd split). truncEven == 1 on the MC path is a no-op.
@@ -1385,18 +1408,22 @@ UTD_DINLINE DiffractionOperatorTermsT<T> compute_op_terms_2d(T phi, T phiP, T we
     ComplexT<T> tv[4], tf[4], ts[4];
     for (int i = 0; i < 4; ++i) {
         float cotSign = (i == 0 || i == 2) ? +1.f : -1.f;
-        assemble_beta_term(cv[i], c1v[i], c2v[i], xv[i], x1v[i], x2v[i], kL, wedgeN, cotSign, tr[i], tr1[i], tr2[i],
-                           tv[i], tf[i], ts[i]);
+        assemble_beta_term(cv[i], c1v[i], c2v[i], xv[i], x1v[i], x2v[i], kL, wedgeN, cotSign,
+                           beta_term_boundary_side(i), tr[i], tr1[i], tr2[i], tv[i], tf[i], ts[i]);
     }
     // Corner even/odd finite-edge assembly on the term VALUES (F5d); the
     // .directDphiPrime / faceNDphiPrime derivative feeds below take truncEven
     // only (no odd split).
     T bIncident = incident_nearest_boundary(dPhi);
-    tv[0] = mend_beta_term_value(tv[0], dPhi, bIncident, wedgeN, kL, +1.f, true, gammaOdd, truncEven, isbW);
-    tv[1] = mend_beta_term_value(tv[1], dPhi, bIncident, wedgeN, kL, -1.f, false, gammaOdd, truncEven, isbW);
+    tv[0] = mend_beta_term_value(tv[0], dPhi, bIncident, wedgeN, kL, +1.f, true, beta_term_boundary_side(0), gammaOdd,
+                                 truncEven, isbW);
+    tv[1] = mend_beta_term_value(tv[1], dPhi, bIncident, wedgeN, kL, -1.f, false, beta_term_boundary_side(1), gammaOdd,
+                                 truncEven, isbW);
     T bReflect = reflection_nearest_boundary(sPhi, wedgeN);
-    tv[2] = mend_beta_term_value(tv[2], sPhi, bReflect, wedgeN, kL, +1.f, true, gammaOdd, truncEven);
-    tv[3] = mend_beta_term_value(tv[3], sPhi, bReflect, wedgeN, kL, -1.f, false, gammaOdd, truncEven);
+    tv[2] = mend_beta_term_value(tv[2], sPhi, bReflect, wedgeN, kL, +1.f, true, beta_term_boundary_side(2), gammaOdd,
+                                 truncEven);
+    tv[3] = mend_beta_term_value(tv[3], sPhi, bReflect, wedgeN, kL, -1.f, false, beta_term_boundary_side(3), gammaOdd,
+                                 truncEven);
     ComplexT<T> factor =
         cplx_mul_real(cplx_exp_phase(T(-0.25f * UTD_PI)), -1.f / (2.f * wedgeN * sqrtf(UTD_TWO_PI * k + T(UTD_EPS))));
     ComplexT<T> difV = cplx_add(tv[0], tv[1]);

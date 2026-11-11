@@ -198,3 +198,32 @@ ISB/RSB jump excess stays within +-0.8 dB on every single-object plane. Per-case
 regression gate are in Channel ADR-050's amendment. The MC path (`gammaOdd = truncEven = 1`) is
 bit-identical; the Dr.Jit `diffraction_paths` and `diffraction_accumulation` PTX are regenerated
 (byte-reproducible, marked verified). `tests/diffraction/test_utd_reference.py` passes unchanged.
+
+## Amendment: the coefficient exactly on a GO boundary (2026-11-11)
+
+**Context.** Channel's full-wave suite (Channel defect D6) found a receiver exactly on a reflection shadow
+boundary off by half the reflected field. `cot_transition_product_value` replaces a term's cotangent-transition
+product by its one-sided limit `+-n sqrt(pi kL) (1 + j)` when the transition argument `a` is below
+`shadow_a_threshold` (about 4e-6 n rad from the boundary), and takes the side from `sin(po)` or, within 1e-6 rad,
+from the sign of the cotangent. Two faults:
+
+1. On a boundary where the plus/minus branch index `N` rounds at its tie, the *other* term of the pair also has
+   `a` = 0 while its cotangent is finite (zero on a half-plane). It got the limit too, so a band of about
+   +-2e-6 rad around every boundary carried a spurious `+-n sqrt(pi kL)(1+j)`: the host harness showed the
+   coefficient at zero or at twice its lit value there instead of either side's value.
+2. Within 1e-6 rad the side came from float rounding of the angles, while the GO term on the same sample is
+   decided by Channel's in-face test (inclusive at the edge) or segment visibility (a segment through the edge
+   is blocked). The two disagreed at random.
+
+**Decision.** Only a term at its pole (`|cot| > 1e3`; inside the threshold the pole term has `|cot| > 5e5`)
+takes the limit; any other term is its raw product. Within the float band the pole term takes the side the
+geometric tests choose for a point exactly on the boundary: the lit side for the reflection terms (2, 3), the
+shadow side for the incident terms (0, 1) (`beta_term_boundary_side`). The corner even/odd split evaluates the
+mirrored term on the other side, so on the boundary the odd part is the full half-step and the even part the
+average. Outside +-2e-6 rad nothing changes.
+
+**Evidence.** `tests/diffraction/test_utd_reference.py::...exactly_on_a_boundary...`: a half-plane with the
+source at 60 degrees, the coefficient at the face-0 reflection boundary (120 deg) equals its lit-side value and
+at the incident boundary (240 deg) its shadow-side value, for both polarizations; on the previous header the
+four cases fail. Channel's boundary probe (a 10 m PEC or concrete half-plane, receivers 0 and 1e-6 m from the
+reflection boundary) is recorded in Channel's ADR for the full-wave fixes.

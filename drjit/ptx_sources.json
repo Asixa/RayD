@@ -69,10 +69,10 @@
         "vector"
       ],
       "header": "generated/drjit/ptx/diffraction_accumulation_ptx.h",
-      "header_sha256": "9a7fe671d20949260fa2817bca9c8a7040d5d78dc1ecef645eb2b336b18f13a3",
+      "header_sha256": "cb083d895edad7e38a9e3d3019fcf7bfc65fd78f1e8286d9fd56948c5923bd4d",
       "option": "RAYD_REGENERATE_DIFFRACTION_ACCUMULATION_PTX",
       "regeneration_verified": true,
-      "source_sha256": "f62d6050e429c6abef386538e39ac2c2e79675223242afbff85b5e42f8850a85",
+      "source_sha256": "8cd07b3d969a551ba8abdf7ed98defc2a9f129b9e508937c34f39262a44e30e1",
       "sources": [
         "include/rayd/contracts.h",
         "include/rayd/jit/core.h",
@@ -117,10 +117,10 @@
         "vector"
       ],
       "header": "generated/drjit/ptx/diffraction_paths_ptx.h",
-      "header_sha256": "8120e6092dc86a871b644e0932068c5cade4961111c07df6dd151d71b2cf2311",
+      "header_sha256": "579eb96c4218748963cfe1a7f2f0c97d6146fda4133d617443ccb800c0e62424",
       "option": "RAYD_REGENERATE_DIFFRACTION_PATHS_PTX",
       "regeneration_verified": true,
-      "source_sha256": "0413f2c740ed3a81abaf6c4d76eec8a2bf04f2fd6c8b4381705fe203a69f4655",
+      "source_sha256": "d502b0e9c26b34c293dcdc02172aff6dfc2b3effe66535bda332c284a175e79d",
       "sources": [
         "include/rayd/contracts.h",
         "include/rayd/jit/core.h",

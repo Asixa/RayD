@@ -214,6 +214,22 @@ class UtdReferenceTests(unittest.TestCase):
         # float32 inputs of 10 m scale: a few ulps of 10 m.
         self.assertLess(worst, 2e-5)
 
+    def test_a_receiver_exactly_on_a_boundary_takes_the_side_the_geometric_tests_choose(self):
+        # Half-plane, source at 60 deg: the face-0 reflection boundary is phi = 120 deg (lit below) and the
+        # incident boundary phi = 240 deg (lit below). Exactly on a boundary the angles cannot tell the side;
+        # the coefficient takes the lit side of the reflection boundary (the in-face test includes the edge)
+        # and the shadow side of the incident boundary (a segment through the edge is blocked).
+        delta = 1.0e-3
+        for boundary, lit_below, takes_lit in ((120.0, True, True), (240.0, True, False)):
+            for hard in (False, True):
+                on = self._field(2.0, 60.0, boundary, 40.0, 12.0, 400.0, hard, HALF_PLANE)
+                below = self._field(2.0, 60.0, boundary - delta, 40.0, 12.0, 400.0, hard, HALF_PLANE)
+                above = self._field(2.0, 60.0, boundary + delta, 40.0, 12.0, 400.0, hard, HALF_PLANE)
+                lit, shadow = (below, above) if lit_below else (above, below)
+                expected, other = (lit, shadow) if takes_lit else (shadow, lit)
+                with self.subTest(boundary=boundary, hard=hard):
+                    self.assertLess(abs(on - expected), 0.05 * abs(on - other))
+
     def test_direct_source_keeps_the_short_dipole_pattern(self):
         for theta in (90.0, 60.0, 30.0, 0.0):
             out = float(subprocess.run([self._exe, "d", str(theta)], capture_output=True, text=True, check=True).stdout)
