@@ -404,6 +404,16 @@ UNSUPPORTED_CASES = {
     ("trace_refl_epc_field", "receiver"): (
         lambda m: _mirror_scene().trace_refl_epc_field(_t([[0.0, 0.0, 1.0]]), _mark(_t([[0.5, 0.0, 1.0]]), m), 1),
     ),
+    ("trace_refl_epc_field", "ray"): (
+        lambda m: _mirror_scene().trace_refl_epc_field(
+            rt.Ray(_mark(_t([[0.0, 0.0, 1.0]]), m), _t([[0.25, 0.0, -1.0]])), _t([[0.5, 0.0, 1.0]]), 1
+        ),
+    ),
+    ("trace_refl_epc_field", "material"): (
+        lambda m: _mirror_scene().trace_refl_epc_field(
+            _t([[0.0, 0.0, 1.0]]), _t([[0.5, 0.0, 1.0]]), 1, rt.ReflEpcFieldOptions(slot_eta_r=_mark(_t([[4.0]]), m))
+        ),
+    ),
     ("accum_refl", "geometry"): (lambda m: _accumulate(_mirror_scene(m)),),
     ("accum_refl", "source_receiver"): (
         lambda m: _accumulate(_mirror_scene(), tx=_mark(_t([[0.0, 0.0, 1.0]]), m)),
