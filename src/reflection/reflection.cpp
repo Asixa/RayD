@@ -977,7 +977,7 @@ std::vector<at::Tensor> reflection_epc_paths_forward_native_impl(
     SceneCache& scene, const at::Tensor& source, const at::Tensor& receiver, const at::Tensor* active_ptr,
     const at::Tensor& expected_prim_ids, const at::Tensor& direct_plane_points, const at::Tensor& direct_plane_normals,
     const at::Tensor& surface_group_id, const at::Tensor& surface_group_size, const at::Tensor& surface_group_members,
-    int64_t max_bounces, int64_t visibility_ignore_mode, double plane_tolerance) {
+    int64_t max_bounces, int64_t visibility_ignore_mode, double plane_tolerance, double min_segment_length = 0.0) {
     require_vec3f(source, "source");
     require_vec3f(receiver, "receiver");
     require_same_batch(source, receiver, "reflection_epc_paths");
@@ -1005,6 +1005,8 @@ std::vector<at::Tensor> reflection_epc_paths_forward_native_impl(
     require_bounce_slots_fit_i32(source.size(0), max_bounces, 3, "trace_refl_epc");
     if (!(plane_tolerance >= 0.0) || !std::isfinite(plane_tolerance))
         throw std::runtime_error("plane_tolerance must be finite and non-negative.");
+    if (!(min_segment_length >= 0.0) || !std::isfinite(min_segment_length))
+        throw std::runtime_error("min_segment_length must be finite and non-negative.");
     if (expected_prim_ids.size(0) != source.size(0) || expected_prim_ids.size(1) != max_bounces)
         throw std::runtime_error("expected_prim_ids must have shape (N, max_bounces).");
     if (direct_plane_points.size(0) != source.size(0) || direct_plane_points.size(1) != max_bounces)
@@ -1156,6 +1158,7 @@ std::vector<at::Tensor> reflection_epc_paths_forward_native_impl(
     epc_params.n_rays = static_cast<int32_t>(ray_count);
     epc_params.max_bounces = static_cast<int32_t>(max_bounces);
     epc_params.plane_tolerance = static_cast<float>(plane_tolerance);
+    epc_params.min_segment_length = static_cast<float>(min_segment_length);
     epc_params.out_valid = mutable_mask_ptr(valid);
     epc_params.out_bounce_count = bounce_count.data_ptr<int>();
     epc_params.out_path_length = path_length.data_ptr<float>();
@@ -1897,7 +1900,7 @@ ReflectionEpcResult reflection_epc_paths_forward(const SceneResource& scene, con
                                                                 request.surface_group_size,
                                                                 request.surface_group_members, request.max_bounces,
                                                                 request.visibility_ignore_mode,
-                                                                request.plane_tolerance);
+                                                                request.plane_tolerance, request.min_segment_length);
     require_output_count<6>(values, "rayd::torch::reflection_epc_paths_forward");
     return {values[0], values[1], values[2], values[3], values[4], values[5]};
 }
