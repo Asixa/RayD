@@ -72,7 +72,7 @@
       "header_sha256": "c895cf5e7dea2cd7c4dc7d038274c192066d2938ed63bef578903d3130719795",
       "option": "RAYD_REGENERATE_DIFFRACTION_ACCUMULATION_PTX",
       "regeneration_verified": true,
-      "source_sha256": "0da44030803c6e3db037fc6f6dd553339c1125bf3e2d7e35951f366068e020d9",
+      "source_sha256": "d29b46ad8dc57966f520c049af7dad606374954fbf44ee2065abf8fb55aa2792",
       "sources": [
         "include/rayd/contracts.h",
         "include/rayd/jit/core.h",
@@ -120,7 +120,7 @@
       "header_sha256": "a09c736756272e684fc42ac052c4a2c5b42b05dda1208f60b5842e64ff48b483",
       "option": "RAYD_REGENERATE_DIFFRACTION_PATHS_PTX",
       "regeneration_verified": true,
-      "source_sha256": "2274cd096d6f9bbe6db5993ef5944281ef9bd215f80cedafa3d7e85f453cdacd",
+      "source_sha256": "51e94f3e650f21e21eeee93ddcb428303b7ebacb077bee430d9a510dc78532a9",
       "sources": [
         "include/rayd/contracts.h",
         "include/rayd/jit/core.h",

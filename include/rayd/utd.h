@@ -1315,6 +1315,21 @@ template <typename T> UTD_DINLINE void reciprocal_face_cosines(T phi, T phiP, T 
 // assembles -direct + face * op, so op = -R (a perfect conductor gives op = diag(-1, +1), i.e. D_h = d12 + d34 and
 // D_s = d12 - d34). The edge bases already carry the in/out ray geometry, so the operator is diagonal there and
 // needs no face-local s/p frame, whose orientation is undefined when the two rays are not a specular pair.
+// reciprocal_face_cosines for a source-edge pair and a target. phi and phi' do not depend on the axial position
+// along a straight edge, so any point of the edge line gives them; both are folded into the wedge domain the way
+// the pair coefficient folds them.
+template <typename T>
+UTD_DINLINE void pair_face_cosines(PairInputsT<T> state, Vec3T<T> targetPos, T& face0Cos, T& face1Cos) {
+    T phi, phiP, s, sP, sb;
+    compute_edge_geometry_3d(state.sourcePos, state.edgePos, state.edgeDir, state.n0, targetPos, phi, phiP, s, sP, sb);
+    const T npi = state.wedgeN * UTD_PI;
+    if (phi > npi)
+        phi = (phi - npi < 2.f * UTD_PI - phi) ? npi : T(0);
+    if (phiP > npi)
+        phiP = (phiP - npi < 2.f * UTD_PI - phiP) ? npi : T(0);
+    reciprocal_face_cosines(phi, phiP, state.wedgeN, face0Cos, face1Cos);
+}
+
 template <typename T>
 UTD_DINLINE JonesOperatorT<T> face_reflection_operator(FaceMaterialParamsT<T> fm, T cosTheta, T omega) {
     ComplexT<T> gain = cplx(fm.gain, T(0));
