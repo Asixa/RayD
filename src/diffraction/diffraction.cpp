@@ -1266,7 +1266,7 @@ DiffractionAccumulationOutputs diffraction_accumulation_forward_impl(
     params.prefilter_visibility = 0;
     params.collect_edge_use = 1;
     params.collect_debug_counts = 1;
-    params.omega = 2.0f * 3.14159265358979323846f * 299792458.0f;
+    params.omega = static_cast<float>(2.0 * 3.14159265358979323846 * 299792458.0 / wavelength);
     params.tx_pol_x = 1.0f;
     params.tx_pol_y = 0.0f;
     params.tx_pol_z = 0.0f;
@@ -2569,6 +2569,12 @@ CoherentDiffractionOutputs diffraction_coherent_accumulation_forward_impl(
     params.prefilter_visibility = prefilter_visibility ? 1 : 0;
     params.collect_debug_counts = 1;
     params.one_lane_per_state = 1;
+    // The typed config carries no polarization: a selected-point source radiates as a +x short dipole, the
+    // Dr.Jit coherent default. omega stays 0, which selects the face operators stored with the states.
+    params.omega = 0.0f;
+    params.tx_pol_x = 1.0f;
+    params.tx_pol_y = 0.0f;
+    params.tx_pol_z = 0.0f;
     params.out_direct_count = direct_count.data_ptr<int>();
     params.out_direct_field_x_re = direct_x_re.data_ptr<float>();
     params.out_direct_field_x_im = direct_x_im.data_ptr<float>();
