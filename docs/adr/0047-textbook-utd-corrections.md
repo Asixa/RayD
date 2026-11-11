@@ -135,3 +135,22 @@ Accepted by the owner, 2026-11-15: the symmetric face-angle rule (mean of the in
 observation sines), the refit of the corner-weight constants (`C_BLEND`, the corner sigmoid width)
 against the full-wave reference with the corrected finite-edge factor, and the resulting movement
 of every diffraction value.
+
+## Amendment: edge-fixed face operator (2026-11-15)
+
+Item 2's fallback axis was not enough. The face operator mapped `diag(r_TE, r_TM)` through a
+face-local s/p frame and aligned the outgoing s axis to the incoming one by the sign of their dot
+product. On the Keller cone the incident and diffracted rays are not a specular pair; for a geometry
+symmetric about the face (Channel's trace-backend parity fixture: a corner row whose stationary point
+lies 0.5 m past an edge end) the two s axes are exactly perpendicular, the sign came from rounding and
+flipped the whole face term. A standalone kernel gave 1.4e-6 with precise math and 2.6e-8 with
+`--use_fast_math`; Channel's OptiX and CUDA tracers fell on opposite sides (1.0e-6 versus 1.9e-8),
+which is why the CUDA value looked like the fast-math one.
+
+Decision: the operator is Luebbers' edge-fixed form, `op = -diag(r_TM, r_TE)` on the (hard u,
+soft v) edge-basis components (the pair assembles `-direct + face * op`, so a perfect conductor gives
+`D_h = d12 + d34`, `D_s = d12 - d34`), in `face_reflection_operator`, `slab_face_operator` and
+`slab_face_operator_dual`. The edge bases already carry the ray geometry, so no face frame is needed
+and `face_s_axis` is removed. The host harness (`tests/diffraction/test_utd_reference.py`) passes
+unchanged, including the normal-exit, label and reciprocity cases; the corner row is 2.565e-8 on host,
+precise GPU and fast-math GPU alike.
