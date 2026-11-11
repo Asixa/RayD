@@ -290,6 +290,15 @@ static __forceinline__ __device__ shared::rt::WedgeVisibilityEnd edge_visibility
                                             shared::math::make_vec3(n1.x, n1.y, n1.z), kDfrRayBias);
 }
 
+// Transmitter of a state: its per-state index when one is given, else the lane transmitter; -1 when out of range.
+static __forceinline__ __device__ int path_source_tx(int state_idx, int lane_tx) {
+    if (params.state_source_index == nullptr) {
+        return lane_tx;
+    }
+    const int tx = params.state_source_index[state_idx];
+    return tx >= 0 && tx < params.tx_pol_count ? tx : -1;
+}
+
 static __forceinline__ __device__ utd::MaterialParams paths_material_params(int tx_idx) {
     utd::MaterialParams mat;
     mat.useFresnel = 1;
@@ -322,6 +331,10 @@ template <bool SplitScene> static __forceinline__ __device__ void trace_paths_or
     const int rx_idx = pair_idx % rx_count;
     const int tx_idx = pair_idx / rx_count;
     if (tx_idx >= params.tx_count || state_idx >= params.state_count || !state_active(state_idx)) {
+        return;
+    }
+    const int source_tx = path_source_tx(state_idx, tx_idx);
+    if (source_tx < 0) {
         return;
     }
 
@@ -361,7 +374,7 @@ template <bool SplitScene> static __forceinline__ __device__ void trace_paths_or
 
     const utd::PairInputs pair = direct_pair_inputs(state_idx, source, edge_pos, edge_dir, t_min, t_max);
     const utd::PairOutputs utd_out =
-        utd::compute_pair_contribution(pair, to_utd(receiver), params.k, paths_material_params(tx_idx));
+        utd::compute_pair_contribution(pair, to_utd(receiver), params.k, paths_material_params(source_tx));
     const float field_norm = utd::cplx_abs_sqr(utd_out.vectorField.x) + utd::cplx_abs_sqr(utd_out.vectorField.y) +
                              utd::cplx_abs_sqr(utd_out.vectorField.z);
     if (!(field_norm > 1.0e-30f) || !isfinite(field_norm)) {
@@ -377,7 +390,7 @@ template <bool SplitScene> static __forceinline__ __device__ void trace_paths_or
 
     const float path_length = norm3(edge_point - source) + norm3(receiver - edge_point);
     params.out_valid[out_idx] = 1u;
-    params.out_tx_id[out_idx] = tx_idx;
+    params.out_tx_id[out_idx] = source_tx;
     params.out_rx_id[out_idx] = rx_idx;
     params.out_order[out_idx] = 1;
     params.out_edge0[out_idx] = read_i32(params.state_edge_index, params.state_edge_index_stride, state_idx);
@@ -469,6 +482,10 @@ static __forceinline__ __device__ void trace_paths_order1_target_export_primary_
     if (!paths_order1_lane(lane, state_idx, rx_idx, tx_idx)) {
         return;
     }
+    const int source_tx = path_source_tx(state_idx, tx_idx);
+    if (source_tx < 0) {
+        return;
+    }
 
     const float3 source = vec_from_storage(params.state_src_aos, params.state_src_stride0, params.state_src_stride1,
                                            params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
@@ -502,7 +519,7 @@ static __forceinline__ __device__ void trace_paths_order1_target_export_primary_
     const float amplitude = sqrtf(fmaxf(contribution, 0.f));
 
     params.out_valid[out_idx] = 1u;
-    params.out_tx_id[out_idx] = tx_idx;
+    params.out_tx_id[out_idx] = source_tx;
     params.out_rx_id[out_idx] = rx_idx;
     params.out_order[out_idx] = 1;
     params.out_edge0[out_idx] = read_i32(params.state_edge_index, params.state_edge_index_stride, state_idx);

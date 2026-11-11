@@ -61,6 +61,11 @@ struct DiffractionPathConfig {
     double wavelength = 0.0;
     double isb_taper_width_scale = 0.0;
     DiffractionPathLayout layout = DiffractionPathLayout::Compact;
+    // Optional contiguous int32 [state_limit] transmitter index per state. When present the launch covers
+    // rx_count * state_limit lanes, each state takes its incident polarization from tx_pol[index] and writes the index
+    // as the path's tx_id, so one launch serves states of every transmitter; a state whose index is outside
+    // [0, tx_pol rows) exports nothing.
+    std::optional<at::Tensor> state_source_index;
 };
 
 struct DiffractionPathResult {

@@ -455,7 +455,7 @@ DiffractionPathOutputs diffraction_paths_order1_forward_impl(
     at::Tensor state_prim1, at::Tensor state_exterior_angle, at::Tensor state_src, at::Tensor state_src_power,
     at::Tensor material_eta_r, at::Tensor material_sigma, at::Tensor material_mu_r, at::Tensor material_gain,
     at::Tensor material_valid, int64_t state_limit_arg, int64_t capacity, int output_layout, double wavelength,
-    double isb_taper_width_scale) {
+    double isb_taper_width_scale, const at::Tensor* state_source_index) {
     require_vec3f_strided(tx_pos, "tx_pos");
     require_vec3f_strided(tx_pol, "tx_pol");
     require_vec3f_strided(rx_pos, "rx_pos");
@@ -515,7 +515,18 @@ DiffractionPathOutputs diffraction_paths_order1_forward_impl(
         material_mu_r.size(0) != material_count || material_valid.size(0) != material_count)
         throw std::runtime_error("diffraction material tensors must have matching widths.");
 
-    const int64_t n_rays64 = tx_count * rx_count * state_limit;
+    if (state_source_index != nullptr) {
+        require_cuda(*state_source_index, "state_source_index");
+        require_contiguous(*state_source_index, "state_source_index");
+        require_dtype(*state_source_index, at::kInt, "state_source_index");
+        require_rank(*state_source_index, 1, "state_source_index");
+        if (state_source_index->size(0) != state_limit)
+            throw std::runtime_error("state_source_index must have shape [state_limit].");
+        require_scene_device(scene, *state_source_index, "state_source_index");
+    }
+    // With per-state transmitter indices every state carries its own source, so the launch spans one transmitter lane.
+    const int64_t lane_tx_count = state_source_index != nullptr ? 1 : tx_count;
+    const int64_t n_rays64 = lane_tx_count * rx_count * state_limit;
     if (n_rays64 > capacity)
         throw std::runtime_error("capacity must be at least tx_count * rx_count * state_limit.");
     const int32_t n_rays = checked_i32(n_rays64, "n_rays");
@@ -622,7 +633,7 @@ DiffractionPathOutputs diffraction_paths_order1_forward_impl(
     params.tx_pos_aos = tx_pos.data_ptr<float>();
     params.tx_pos_stride0 = stride_i32(tx_pos, 0, "tx_pos_stride0");
     params.tx_pos_stride1 = stride_i32(tx_pos, 1, "tx_pos_stride1");
-    params.tx_count = checked_i32(tx_count, "tx_count");
+    params.tx_count = checked_i32(lane_tx_count, "tx_count");
     params.tx_pol_aos = tx_pol.data_ptr<float>();
     params.tx_pol_stride0 = stride_i32(tx_pol, 0, "tx_pol_stride0");
     params.tx_pol_stride1 = stride_i32(tx_pol, 1, "tx_pol_stride1");
@@ -684,6 +695,7 @@ DiffractionPathOutputs diffraction_paths_order1_forward_impl(
     params.state_src_stride1 = stride_i32(state_src, 1, "state_src_stride1");
     params.state_src_power = cuda_backend ? cuda_state_src_power.data_ptr<float>() : state_src_power.data_ptr<float>();
     params.state_src_power_stride = stride_i32(state_src_power, 0, "state_src_power_stride");
+    params.state_source_index = state_source_index != nullptr ? state_source_index->data_ptr<int>() : nullptr;
     params.material_eta_r = material_eta_r.data_ptr<float>();
     params.material_eta_r_stride = stride_i32(material_eta_r, 0, "material_eta_r_stride");
     params.material_sigma = material_sigma.data_ptr<float>();
@@ -772,7 +784,7 @@ py::tuple diffraction_paths_order1_forward_op(
         std::move(state_prim1), std::move(state_exterior_angle), std::move(state_src), std::move(state_src_power),
         std::move(material_eta_r), std::move(material_sigma), std::move(material_mu_r), std::move(material_gain),
         std::move(material_valid), state_limit, capacity, checked_i32(output_layout, "output_layout"), wavelength,
-        isb_taper_width_scale));
+        isb_taper_width_scale, nullptr));
 }
 
 struct DiffractionAccumulationOutputs {
@@ -2683,7 +2695,9 @@ DiffractionPathResult diffraction_paths_order1_forward(const SceneResource& scen
         config.state.n1, config.state.prim0, config.state.prim1, config.state.exterior_angle, config.state.src,
         config.state.src_power, config.material.eta_r, config.material.sigma, config.material.mu_r,
         config.material.gain, config.material.valid, config.state_limit, config.capacity,
-        static_cast<int>(config.layout), config.wavelength, config.isb_taper_width_scale);
+        static_cast<int>(config.layout), config.wavelength, config.isb_taper_width_scale,
+        config.state_source_index.has_value() && config.state_source_index->defined() ? &*config.state_source_index
+                                                                                      : nullptr);
     return {result.count,      result.valid,      result.tx_id,      result.rx_id,      result.order,
             result.edge0,      result.edge1,      result.edge2,      result.delay,      result.field_x_re,
             result.field_x_im, result.field_y_re, result.field_y_im, result.field_z_re, result.field_z_im,

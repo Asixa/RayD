@@ -44,6 +44,9 @@ struct AxialEdgeVisibilityRequest {
     at::Tensor edge_t_max;
     std::optional<at::Tensor> active;
     AxialEdgeVisibilityConfig config;
+    // Optional contiguous float32 [state_count, 3] per-state source. When present each state traces its samples to
+    // its own source instead of `tx`, so one launch serves states of several transmitters; `tx` is still validated.
+    std::optional<at::Tensor> state_source;
 };
 
 struct AxialEdgeVisibilityResult {
