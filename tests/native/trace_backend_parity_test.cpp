@@ -633,6 +633,84 @@ void test_diffraction_parity() {
                                        cuda_coherent.multi_y_im, cuda_coherent.multi_z_re, cuda_coherent.multi_z_im}),
                             name + " field");
     }
+
+std::vector<rayd::torch::MeshInput> dynamic_meshes(std::vector<rayd::torch::MeshInput> meshes) {
+    for (auto& mesh : meshes)
+        mesh.dynamic = true;
+    return meshes;
+}
+
+// The vertices of every mesh after `step` deformations: the scattered triangles drift and the walls slide and grow.
+std::vector<at::Tensor> moved_vertices(const std::vector<rayd::torch::MeshInput>& meshes, int step) {
+    std::vector<at::Tensor> moved;
+    const float shift = 0.05f * static_cast<float>(step);
+    const at::Tensor drift = at::tensor({shift, -0.5f * shift, 0.25f * shift}, at::TensorOptions().dtype(at::kFloat));
+    moved.push_back((meshes[0].vertices + drift.to(floats())).contiguous());
+    moved.push_back((meshes[1].vertices * (1.0f + 0.01f * static_cast<float>(step)) + drift.to(floats())).contiguous());
+    return moved;
+}
+
+void require_scene_geometry_equal(const rayd::torch::SceneResource& refit, const rayd::torch::SceneResource& built,
+                                  const std::string& name) {
+    const auto left = rayd::torch::scene_edge_records(refit);
+    const auto right = rayd::torch::scene_edge_records(built);
+    require_equal(left.global_vertices, right.global_vertices, name + " global_vertices");
+    require_equal(left.global_faces, right.global_faces, name + " global_faces");
+    require_equal(left.tri_fn_x, right.tri_fn_x, name + " tri_fn_x");
+    require_equal(left.tri_fn_y, right.tri_fn_y, name + " tri_fn_y");
+    require_equal(left.tri_fn_z, right.tri_fn_z, name + " tri_fn_z");
+    require_equal(left.edge_v0, right.edge_v0, name + " edge_v0");
+    require_equal(left.edge_face1_global, right.edge_face1_global, name + " edge_face1_global");
+    constexpr int64_t rays = 8192;
+    std::mt19937 rng(37);
+    const rayd::torch::RayBatch batch = {uniform(rng, rays, 3, -4.8f, 4.8f), random_unit_rows(rng, rays), std::nullopt,
+                                         std::nullopt};
+    const auto a = rayd::torch::intersect_forward(refit, batch, 7);
+    const auto b = rayd::torch::intersect_forward(built, batch, 7);
+    require_equal(a.global_prim_id, b.global_prim_id, name + " intersect global_prim_id");
+    require_equal(a.t, b.t, name + " intersect t");
+    require_equal(a.n, b.n, name + " intersect n");
+}
+
+// A dynamic scene refit through update_mesh_vertices + sync_scene traces exactly like a scene built from scratch on
+// the moved vertices, through more commits than the periodic full rebuild of a refit GAS.
+void test_vertex_refit_matches_rebuild(rayd::torch::SceneTraceBackend backend, const std::string& label) {
+    std::mt19937 rng(11);
+    const auto base = scene_meshes(rng, 512);
+    auto scene = rayd::torch::create_scene(dynamic_meshes(base), {backend});
+    rayd::torch::sync_scene(scene); // nothing staged
+    const auto before = rayd::torch::scene_edge_records(scene).global_vertices;
+    for (int step = 1; step <= 18; ++step) {
+        const auto moved = moved_vertices(base, step);
+        for (size_t mesh = 0; mesh < moved.size(); ++mesh)
+            rayd::torch::update_mesh_vertices(scene, static_cast<int64_t>(mesh), moved[mesh]);
+        rayd::torch::sync_scene(scene);
+        if (step == 1 || step == 15 || step == 16 || step == 18) {
+            std::vector<rayd::torch::MeshInput> rebuilt = base;
+            for (size_t mesh = 0; mesh < moved.size(); ++mesh)
+                rebuilt[mesh].vertices = moved[mesh];
+            const auto fresh = rayd::torch::create_scene(rebuilt, {backend});
+            require_scene_geometry_equal(scene, fresh, label + " refit step " + std::to_string(step));
+        }
+    }
+    require_equal(before, rayd::torch::scene_edge_records(rayd::torch::create_scene(base, {backend})).global_vertices,
+                  label + " records taken before a commit keep their values");
+
+    bool refused = false;
+    try {
+        auto fixed = rayd::torch::create_scene(base, {backend});
+        rayd::torch::update_mesh_vertices(fixed, 0, moved_vertices(base, 1)[0]);
+    } catch (const std::exception&) {
+        refused = true;
+    }
+    require(refused, label + ": a mesh created without dynamic must refuse a vertex update");
+    refused = false;
+    try {
+        rayd::torch::update_mesh_vertices(scene, 1, base[1].vertices.narrow(0, 0, 3).contiguous());
+    } catch (const std::exception&) {
+        refused = true;
+    }
+    require(refused, label + ": a vertex update must keep the vertex count");
 }
 
 double median_ms(const std::function<void()>& work, int repetitions) {
@@ -682,6 +760,8 @@ int main() {
         std::cout << "[RUN] test_backend_selection_and_probe (OptiX "
                   << (probe.available ? "available" : "unavailable: " + probe.reason) << ")" << std::endl;
         test_backend_selection_and_probe(probe.available);
+        std::cout << "[RUN] test_vertex_refit_matches_rebuild (cuda)" << std::endl;
+        test_vertex_refit_matches_rebuild(rayd::torch::SceneTraceBackend::Cuda, "cuda");
         if (!probe.available) {
             std::cout << "[SKIP] OptiX is unavailable, so the OptiX/CUDA parity checks cannot run" << std::endl;
             return kSkipReturnCode;
@@ -695,6 +775,8 @@ int main() {
         test_intersection_parity(scenes);
         std::cout << "[RUN] test_diffraction_parity" << std::endl;
         test_diffraction_parity();
+        std::cout << "[RUN] test_vertex_refit_matches_rebuild (optix)" << std::endl;
+        test_vertex_refit_matches_rebuild(rayd::torch::SceneTraceBackend::Optix, "optix");
         const char* bench = std::getenv("RAYD_TRACE_BACKEND_BENCH");
         if (bench != nullptr && std::string(bench) == "1") {
             for (int triangles : {2048, 65536})

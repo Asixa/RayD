@@ -282,6 +282,34 @@ OptixAvailability optix_availability(int device_index) {
     return result;
 }
 
+namespace {
+
+// Holds a typed scene's state lock exclusively for one mutation.
+class ExclusiveSceneLock {
+  public:
+    explicit ExclusiveSceneLock(torch_backend::SceneCache& scene) : scene_(scene) { scene_.state_lock.lock(); }
+    ExclusiveSceneLock(const ExclusiveSceneLock&) = delete;
+    ExclusiveSceneLock& operator=(const ExclusiveSceneLock&) = delete;
+    ~ExclusiveSceneLock() { scene_.state_lock.unlock(); }
+
+  private:
+    torch_backend::SceneCache& scene_;
+};
+
+} // namespace
+
+void update_mesh_vertices(SceneResource& scene, std::int64_t mesh_index, const at::Tensor& vertices) {
+    auto& cache = detail::IntegrationAccess::scene_cache(scene);
+    ExclusiveSceneLock lock(cache);
+    torch_backend::update_mesh_vertices(cache, mesh_index, vertices);
+}
+
+void sync_scene(SceneResource& scene) {
+    auto& cache = detail::IntegrationAccess::scene_cache(scene);
+    ExclusiveSceneLock lock(cache);
+    torch_backend::sync_scene(cache);
+}
+
 SceneEdgeRecordsResult scene_edge_records(const SceneResource& scene) {
     auto& cache = detail::IntegrationAccess::scene_cache(scene);
     std::vector<at::Tensor> values = torch_backend::scene_edge_records(cache);
@@ -1715,9 +1743,7 @@ std::string scene_edge_backend(int64_t handle) {
     return get_scene_metadata(handle)->edge_backend == EdgeBackend::Cuda ? "cuda" : "optix";
 }
 
-void update_mesh_vertices(int64_t handle, int64_t mesh_id, at::Tensor vertices) {
-    ScenePin scene_pin = get_scene_for_update(handle);
-    SceneCache& scene = *scene_pin;
+void update_mesh_vertices(SceneCache& scene, int64_t mesh_id, at::Tensor vertices) {
     if (mesh_id < 0 || mesh_id >= static_cast<int64_t>(scene.meshes.size()))
         throw std::runtime_error("update_mesh_vertices(): invalid mesh id.");
     MeshRecord& mesh = scene.meshes[mesh_id];
@@ -1733,6 +1759,11 @@ void update_mesh_vertices(int64_t handle, int64_t mesh_id, at::Tensor vertices) 
     retire_if_read(scene, mesh.vertices);
     mesh.vertices = vertices.contiguous();
     mesh.pending_update = true;
+}
+
+void update_mesh_vertices(int64_t handle, int64_t mesh_id, at::Tensor vertices) {
+    ScenePin scene_pin = get_scene_for_update(handle);
+    update_mesh_vertices(*scene_pin, mesh_id, std::move(vertices));
 }
 
 void update_instance_transform(int64_t handle, int64_t mesh_id, at::Tensor vertices, at::Tensor transform) {
@@ -1760,9 +1791,7 @@ void update_instance_transform(int64_t handle, int64_t mesh_id, at::Tensor verti
     mesh.pending_transform = true;
 }
 
-void sync_scene(int64_t handle) {
-    ScenePin scene_pin = get_scene_for_update(handle);
-    SceneCache& scene = *scene_pin;
+void sync_scene(SceneCache& scene) {
     scene.last_sync_gas_updates = 0;
     scene.last_sync_ias_updates = 0;
     c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
@@ -1824,6 +1853,11 @@ void sync_scene(int64_t handle) {
     }
     scene.last_sync_gas_updates = gas_updates;
     scene.last_sync_ias_updates = ias_updates;
+}
+
+void sync_scene(int64_t handle) {
+    ScenePin scene_pin = get_scene_for_update(handle);
+    sync_scene(*scene_pin);
 }
 
 int64_t scene_version(c10::intrusive_ptr<SceneHandle> scene) {

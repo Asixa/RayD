@@ -102,6 +102,18 @@ struct SceneEdgeRecordsResult {
 
 SceneEdgeRecordsResult scene_edge_records(const SceneResource& scene);
 
+// Stages new vertices for mesh `mesh_index`, which must have been created with `MeshInput::dynamic`. The vertices
+// must be a CUDA float32 (V, 3) tensor on the scene device with the mesh's vertex count; the faces stay as built.
+// Queries keep tracing the committed geometry until sync_scene() commits the update.
+void update_mesh_vertices(SceneResource& scene, std::int64_t mesh_index, const at::Tensor& vertices);
+
+// Commits every staged vertex update on the caller's current stream: refits the updated meshes' triangle acceleration
+// structures (rebuilding one from scratch every 16th commit), repacks the scene geometry that scene_edge_records()
+// returns into new tensors, and invalidates edge query structures, which rebuild on their next use. Non-finite staged
+// vertices are refused before any structure changes, and the staged updates then stay pending. Results recorded
+// before the commit keep the tensors they were given. With nothing staged it returns without device work.
+void sync_scene(SceneResource& scene);
+
 struct RayBatch {
     at::Tensor ray_o;
     at::Tensor ray_d;
