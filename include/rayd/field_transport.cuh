@@ -231,21 +231,14 @@ __device__ __forceinline__ utd::JonesOperator slab_face_operator(float cos_theta
     utd::Complex r_te;
     utd::Complex r_tm;
     slab_fresnel(cos_theta, eps_r, sigma_e, mu_r, gain, thickness, frequency_hz, r_te, r_tm);
-    const utd::JonesOperator diagonal = {
-        r_te,
-        utd::cplx_zero(),
-        utd::cplx_zero(),
-        r_tm,
-    };
-    const utd::float3a face_in = utd::face_s_axis(normal, in_direction, in_edge.v);
-    const utd::float3a reference = utd::stable_perp_basis(out_direction, face_in);
-    const utd::float3a raw_out = utd::face_s_axis(normal, out_direction, reference);
-    const utd::float3a face_out = utd::f3_dot(raw_out, reference) < 0.0f ? utd::f3_neg(raw_out) : raw_out;
-    const utd::Basis3 input_basis =
-        utd::basis_from_first_vector(in_direction, face_in,
-                                     utd::stable_perp_basis(in_direction, utd::make_f3(0.0f, 0.0f, 1.0f)));
-    const utd::Basis3 output_basis = utd::basis_from_first_vector(out_direction, face_out, reference);
-    return utd::jop_in_basis(diagonal, input_basis, output_basis, in_edge, out_edge);
+    // Edge-fixed (Luebbers) form, as utd::face_reflection_operator: op = -diag(r_TM, r_TE) on (hard u, soft v). The
+    // geometry arguments are kept for the callers' signature; the edge bases already encode the ray geometry.
+    (void)normal;
+    (void)in_direction;
+    (void)out_direction;
+    (void)in_edge;
+    (void)out_edge;
+    return {utd::cplx_mul_real(r_tm, -1.0f), utd::cplx_zero(), utd::cplx_zero(), utd::cplx_mul_real(r_te, -1.0f)};
 }
 
 } // namespace rayd::shared::field_transport

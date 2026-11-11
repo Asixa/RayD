@@ -150,8 +150,7 @@ class UtdReferenceTests(unittest.TestCase):
             for hard in (False, True):
                 for phi in phis:
                     value = self._coefficient(n, phi_p, phi, s_p, s, 400.0, hard, geometry)
-                    reference = kouyoumjian_pathak(math.radians(phi), math.radians(phi_p), n, s * s_p / (s + s_p),
-                                                   hard)
+                    reference = kouyoumjian_pathak(math.radians(phi), math.radians(phi_p), n, s * s_p / (s + s_p), hard)
                     with self.subTest(s_p=s_p, s=s, hard=hard, phi=phi):
                         self.assertLess(abs(value - reference) / abs(reference), tolerance)
 
@@ -165,8 +164,10 @@ class UtdReferenceTests(unittest.TestCase):
 
     def test_long_edge_truncation_converges_to_the_infinite_edge(self):
         reference = kouyoumjian_pathak(math.radians(100.0), math.radians(30.0), 1.5, 1000.0 / 110.0, False)
-        errors = [abs(self._coefficient(1.5, 30.0, 100.0, 100.0, 10.0, half, False, WEDGE) / reference - 1.0)
-                  for half in (40.0, 400.0, 4000.0)]
+        errors = [
+            abs(self._coefficient(1.5, 30.0, 100.0, 100.0, 10.0, half, False, WEDGE) / reference - 1.0)
+            for half in (40.0, 400.0, 4000.0)
+        ]
         # The aperture tails fall as 1/half-length (not 1/sqrt), so each decade gains about 10x.
         self.assertLess(errors[1], 2e-3)
         self.assertLess(errors[2], 3e-4)
@@ -196,9 +197,12 @@ class UtdReferenceTests(unittest.TestCase):
         worst = 0.0
         for _ in range(200):
             v = [rng.uniform(-5.0, 5.0) for _ in range(12)]
-            out = float(subprocess.run([self._exe, "p", *(repr(x) for x in v)], capture_output=True, text=True,
-                                       check=True).stdout)
-            s, t, o, d = (v[i:i + 3] for i in (0, 3, 6, 9))
+            out = float(
+                subprocess.run(
+                    [self._exe, "p", *(repr(x) for x in v)], capture_output=True, text=True, check=True
+                ).stdout
+            )
+            s, t, o, d = (v[i : i + 3] for i in (0, 3, 6, 9))
             norm = math.sqrt(sum(x * x for x in d))
             z = [x / norm for x in d]
             so = [a - b for a, b in zip(s, o)]
@@ -212,8 +216,7 @@ class UtdReferenceTests(unittest.TestCase):
 
     def test_direct_source_keeps_the_short_dipole_pattern(self):
         for theta in (90.0, 60.0, 30.0, 0.0):
-            out = float(subprocess.run([self._exe, "d", str(theta)], capture_output=True, text=True,
-                                       check=True).stdout)
+            out = float(subprocess.run([self._exe, "d", str(theta)], capture_output=True, text=True, check=True).stdout)
             self.assertAlmostEqual(out, math.sin(math.radians(theta)), delta=2e-5)
 
 

@@ -1271,21 +1271,13 @@ __device__ __forceinline__ utd::JonesOperatorT<utd::Dual> slab_face_operator_dua
     utd::ComplexT<Dual> r_te;
     utd::ComplexT<Dual> r_tm;
     slab_fresnel_dual_rd(cos_theta, eps_r, sigma_e, mu_r, gain, thickness, frequency, r_te, r_tm);
-    const utd::JonesOperatorT<Dual> diagonal = {
-        r_te,
-        utd::cplx_zero<Dual>(),
-        utd::cplx_zero<Dual>(),
-        r_tm,
-    };
-    const utd::Vec3T<Dual> face_in = utd::face_s_axis(normal, in_direction, in_edge.v);
-    const utd::Vec3T<Dual> reference = utd::stable_perp_basis(out_direction, face_in);
-    const utd::Vec3T<Dual> raw_out = utd::face_s_axis(normal, out_direction, reference);
-    const utd::Vec3T<Dual> face_out = utd::f3_dot(raw_out, reference) < 0.0f ? utd::f3_neg(raw_out) : raw_out;
-    const utd::Basis3T<Dual> input_basis =
-        utd::basis_from_first_vector(in_direction, face_in,
-                                     utd::stable_perp_basis(in_direction, utd::v3_const<Dual>(0, 0, 1)));
-    const utd::Basis3T<Dual> output_basis = utd::basis_from_first_vector(out_direction, face_out, reference);
-    return utd::jop_in_basis(diagonal, input_basis, output_basis, in_edge, out_edge);
+    (void)normal;
+    (void)in_direction;
+    (void)out_direction;
+    (void)in_edge;
+    (void)out_edge;
+    return {utd::cplx_mul_real(r_tm, Dual(-1.0f)), utd::cplx_zero<Dual>(), utd::cplx_zero<Dual>(),
+            utd::cplx_mul_real(r_te, Dual(-1.0f))};
 }
 
 // Cotangent of the final complex3 field value, folded from the output
