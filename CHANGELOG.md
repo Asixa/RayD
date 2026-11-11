@@ -104,6 +104,10 @@ shim remains. The C++ boundary `rayd/integration.h` is unchanged. Of the `torch.
   the unfolding closed form. Every diffraction value moves; downstream diffraction baselines must be regenerated.
 - The wedge face reflection operator is built in the edge-fixed bases (`op = -diag(r_TM, r_TE)` on (hard, soft)),
   so the face term no longer takes its sign from rounding on the Keller cone.
+- The stationary-point corner model no longer relaxes the odd (GO-step) part of each boundary term towards the
+  finite-edge factor deep in the shadow (`C_BLEND` is removed); fitted against Tidy3D references of PEC wedges,
+  half-planes and cubes, it made the shadow 1-4 dB too dark. The corner sigmoid width stays 0.03. Deterministic and
+  path diffraction values that use the corner model move; the Monte Carlo path is unchanged.
 
 ### Added
 
