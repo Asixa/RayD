@@ -9,11 +9,13 @@
     @overload
     def __init__(self) -> None: ...
     @overload
-    def __init__(self, v: drjit.cuda.Array3f | drjit.cuda.ad.Array3f, f: drjit.cuda.Array3i, uv: drjit.cuda.Array2f | drjit.cuda.ad.Array2f = ..., f_uv: drjit.cuda.Array3i = ..., verbose: bool = False) -> None: ...
+    def __init__(self, v: drjit.cuda.Array3f | drjit.cuda.ad.Array3f, f: drjit.cuda.Array3i, uv: drjit.cuda.Array2f | drjit.cuda.ad.Array2f = ..., f_uv: drjit.cuda.Array3i = ..., verbose: bool = False) -> None:
+        \doc
 
 \.Scene\.trace_reflections$:
     @overload
-    def trace_reflections(self, ray: Ray, max_bounces: int, active: drjit.cuda.Bool | bool = True, symbolic: bool = True) -> ReflectionTrace | ReflectionChain: ...
+    def trace_reflections(self, ray: Ray, max_bounces: int, active: drjit.cuda.Bool | bool = True, symbolic: bool = True) -> ReflectionTrace | ReflectionChain:
+        \doc
     @overload
     def trace_reflections(self, ray: RayAD, max_bounces: int, active: drjit.cuda.ad.Bool | bool = True, symbolic: bool = True) -> ReflectionTraceAD | ReflectionChainAD: ...
     @overload
@@ -26,11 +28,13 @@
     def trace_reflections(self, ray: RayAD, max_bounces: int, deduplicate: bool = False, canonical_prim_table: drjit.cuda.Int = ..., image_source_tolerance: float = 1e-05, active: drjit.cuda.ad.Bool | bool = True, symbolic: bool = True) -> ReflectionTraceAD | ReflectionChainAD: ...
 
 \.Scene\.trace_refl_epc$:
-    def trace_refl_epc(self, ray: Ray, receiver: drjit.cuda.Array3f, max_bounces: int, options: ReflEpcOptions | None = None, active: drjit.cuda.Bool | bool = True) -> ReflEpc: ...
+    def trace_refl_epc(self, ray: Ray, receiver: drjit.cuda.Array3f, max_bounces: int, options: ReflEpcOptions | None = None, active: drjit.cuda.Bool | bool = True) -> ReflEpc:
+        \doc
 
 \.Scene\.trace_refl_epc_field$:
     @overload
-    def trace_refl_epc_field(self, ray: RayAD, receiver: drjit.cuda.Array3f | drjit.cuda.ad.Array3f, max_bounces: int, options: ReflEpcFieldOptions | ReflEpcFieldOptionsAD, active: drjit.cuda.Bool | drjit.cuda.ad.Bool | bool = True) -> ReflEpcFieldAD: ...
+    def trace_refl_epc_field(self, ray: RayAD, receiver: drjit.cuda.Array3f | drjit.cuda.ad.Array3f, max_bounces: int, options: ReflEpcFieldOptions | ReflEpcFieldOptionsAD, active: drjit.cuda.Bool | drjit.cuda.ad.Bool | bool = True) -> ReflEpcFieldAD:
+        \doc
     @overload
     def trace_refl_epc_field(self, ray: Ray, receiver: drjit.cuda.Array3f, max_bounces: int, options: ReflEpcFieldOptions, active: drjit.cuda.Bool | bool = True) -> ReflEpcField: ...
     @overload
@@ -40,67 +44,78 @@
 
 \.Scene\.accum_refl$:
     @overload
-    def accum_refl(self, ray: Ray, tx_position: drjit.cuda.Array3f, grid: AccumGrid, material: ReflMaterial, max_bounces: int, options: AccumOptions = ..., active: drjit.cuda.Bool | bool = True, tx_polarization: drjit.cuda.Array3f | tuple[float, float, float] = (1.0, 0.0, 0.0)) -> AccumResult: ...
+    def accum_refl(self, ray: Ray, tx_position: drjit.cuda.Array3f, grid: AccumGrid, material: ReflMaterial, max_bounces: int, options: AccumOptions = ..., active: drjit.cuda.Bool | bool = True, tx_polarization: drjit.cuda.Array3f | tuple[float, float, float] = (1.0, 0.0, 0.0)) -> AccumResult:
+        \doc
     @overload
     def accum_refl(self, ray: RayAD, tx_position: drjit.cuda.ad.Array3f, grid: AccumGrid, material: ReflMaterialAD, max_bounces: int, options: AccumOptions = ..., active: drjit.cuda.ad.Bool | bool = True, tx_polarization: drjit.cuda.ad.Array3f | tuple[float, float, float] = (1.0, 0.0, 0.0)) -> AccumResultAD: ...
 
 \.Scene\.accum_dfr_direct$:
     @overload
-    def accum_dfr_direct(self, states: DfrStates, grid: DfrGrid, material: DfrMaterial, options: DfrOptions = ..., active: drjit.cuda.Bool | bool = True) -> DfrAccum: ...
+    def accum_dfr_direct(self, states: DfrStates, grid: DfrGrid, material: DfrMaterial, options: DfrOptions = ..., active: drjit.cuda.Bool | bool = True) -> DfrAccum:
+        \doc
     @overload
     def accum_dfr_direct(self, states: DfrStatesAD, grid: DfrGrid, material: DfrMaterialAD, options: DfrOptions = ..., active: drjit.cuda.ad.Bool | bool = True) -> DfrAccumAD: ...
 
 \.Scene\.accum_dfr_coherent_direct$:
     @overload
-    def accum_dfr_coherent_direct(self, states: DfrCoherentUtdStates | DfrStates, grid: DfrGrid, material: DfrMaterial | None, options: DfrCoherentOptions = ..., active: drjit.cuda.Bool | bool = True) -> DfrCoherentAccum: ...
+    def accum_dfr_coherent_direct(self, states: DfrCoherentUtdStates | DfrStates, grid: DfrGrid, material: DfrMaterial | None, options: DfrCoherentOptions = ..., active: drjit.cuda.Bool | bool = True) -> DfrCoherentAccum:
+        \doc
     @overload
     def accum_dfr_coherent_direct(self, states: DfrCoherentUtdStatesAD | DfrStatesAD, grid: DfrGrid, material: DfrMaterialAD | None, options: DfrCoherentOptions = ..., active: drjit.cuda.ad.Bool | bool = True) -> DfrCoherentAccumAD: ...
 
 \.Scene\.build_dfr_coherent_tx_states$:
     @overload
-    def build_dfr_coherent_tx_states(self, edges: DfrCoherentEdge, tx_position: drjit.cuda.Array3f, material: DfrMaterial, options: DfrCoherentOptions = ..., active: drjit.cuda.Bool | bool = True) -> DfrCoherentUtdStates: ...
+    def build_dfr_coherent_tx_states(self, edges: DfrCoherentEdge, tx_position: drjit.cuda.Array3f, material: DfrMaterial, options: DfrCoherentOptions = ..., active: drjit.cuda.Bool | bool = True) -> DfrCoherentUtdStates:
+        \doc
     @overload
     def build_dfr_coherent_tx_states(self, edges: DfrCoherentEdgeAD, tx_position: drjit.cuda.ad.Array3f, material: DfrMaterialAD, options: DfrCoherentOptions = ..., active: drjit.cuda.ad.Bool | bool = True) -> DfrCoherentUtdStatesAD: ...
 
 \.Scene\.build_dfr_coherent_higher_candidates$:
     @overload
-    def build_dfr_coherent_higher_candidates(self, prev_states: DfrCoherentUtdStates, edges: DfrCoherentEdge, global_to_local_edge_index: drjit.cuda.Int, options: DfrCoherentOptions = ..., active: drjit.cuda.Bool | bool = True) -> DfrCoherentCandidatePairs: ...
+    def build_dfr_coherent_higher_candidates(self, prev_states: DfrCoherentUtdStates, edges: DfrCoherentEdge, global_to_local_edge_index: drjit.cuda.Int, options: DfrCoherentOptions = ..., active: drjit.cuda.Bool | bool = True) -> DfrCoherentCandidatePairs:
+        \doc
     @overload
     def build_dfr_coherent_higher_candidates(self, prev_states: DfrCoherentUtdStatesAD, edges: DfrCoherentEdgeAD, global_to_local_edge_index: drjit.cuda.ad.Int, options: DfrCoherentOptions = ..., active: drjit.cuda.ad.Bool | bool = True) -> DfrCoherentCandidatePairsAD: ...
 
 \.Scene\.accum_dfr$:
     @overload
-    def accum_dfr(self, initial_states: DfrStates, recursive_states: DfrStates, grid: DfrGrid, material: DfrMaterial, options: DfrOptions = ..., active: drjit.cuda.Bool | bool = True) -> DfrAccum: ...
+    def accum_dfr(self, initial_states: DfrStates, recursive_states: DfrStates, grid: DfrGrid, material: DfrMaterial, options: DfrOptions = ..., active: drjit.cuda.Bool | bool = True) -> DfrAccum:
+        \doc
     @overload
     def accum_dfr(self, initial_states: DfrStatesAD, recursive_states: DfrStatesAD, grid: DfrGrid, material: DfrMaterialAD, options: DfrOptions = ..., active: drjit.cuda.ad.Bool | bool = True) -> DfrAccumAD: ...
 
 \.Scene\.visible$:
     @overload
-    def visible(self, start: drjit.cuda.Array3f, end: drjit.cuda.Array3f, active: drjit.cuda.Bool | bool = True, *, ignore_prim_ids: drjit.cuda.Int = ...) -> SegmentVisibility: ...
+    def visible(self, start: drjit.cuda.Array3f, end: drjit.cuda.Array3f, active: drjit.cuda.Bool | bool = True, *, ignore_prim_ids: drjit.cuda.Int = ...) -> SegmentVisibility:
+        \doc
     @overload
     def visible(self, start: drjit.cuda.ad.Array3f, end: drjit.cuda.ad.Array3f, active: drjit.cuda.ad.Bool | bool = True, *, ignore_prim_ids: drjit.cuda.Int = ...) -> SegmentVisibilityAD: ...
 
 \.Scene\.visible_pair$:
     @overload
-    def visible_pair(self, start: drjit.cuda.Array3f, end_a: drjit.cuda.Array3f, end_b: drjit.cuda.Array3f, ignore_prim_ids: drjit.cuda.Int = ..., active: drjit.cuda.Bool | bool = True) -> SegmentPairVisibility: ...
+    def visible_pair(self, start: drjit.cuda.Array3f, end_a: drjit.cuda.Array3f, end_b: drjit.cuda.Array3f, ignore_prim_ids: drjit.cuda.Int = ..., active: drjit.cuda.Bool | bool = True) -> SegmentPairVisibility:
+        \doc
     @overload
     def visible_pair(self, start: drjit.cuda.ad.Array3f, end_a: drjit.cuda.ad.Array3f, end_b: drjit.cuda.ad.Array3f, ignore_prim_ids: drjit.cuda.Int = ..., active: drjit.cuda.ad.Bool | bool = True) -> SegmentPairVisibilityAD: ...
 
 \.Scene\.visible_edge$:
     @overload
-    def visible_edge(self, source: drjit.cuda.Array3f, edge_position: drjit.cuda.Array3f, edge_direction: drjit.cuda.Array3f, edge_t_min: drjit.cuda.Float, edge_t_max: drjit.cuda.Float, sample_fractions: Sequence[float] = [0.0, 0.25, 0.5, 0.75, 1.0], active: drjit.cuda.Bool | bool = True) -> AxialEdgeVisibility: ...
+    def visible_edge(self, source: drjit.cuda.Array3f, edge_position: drjit.cuda.Array3f, edge_direction: drjit.cuda.Array3f, edge_t_min: drjit.cuda.Float, edge_t_max: drjit.cuda.Float, sample_fractions: Sequence[float] = [0.0, 0.25, 0.5, 0.75, 1.0], active: drjit.cuda.Bool | bool = True) -> AxialEdgeVisibility:
+        \doc
     @overload
     def visible_edge(self, source: drjit.cuda.ad.Array3f, edge_position: drjit.cuda.ad.Array3f, edge_direction: drjit.cuda.ad.Array3f, edge_t_min: drjit.cuda.ad.Float, edge_t_max: drjit.cuda.ad.Float, sample_fractions: Sequence[float] = [0.0, 0.25, 0.5, 0.75, 1.0], active: drjit.cuda.ad.Bool | bool = True) -> AxialEdgeVisibilityAD: ...
 
 \.Scene\.visible_chain$:
     @overload
-    def visible_chain(self, points: drjit.cuda.Array3f, chain_length: drjit.cuda.Int, ignore_prim_per_segment: drjit.cuda.Int = ..., active: drjit.cuda.Bool | bool = True) -> SegmentChainVisibility: ...
+    def visible_chain(self, points: drjit.cuda.Array3f, chain_length: drjit.cuda.Int, ignore_prim_per_segment: drjit.cuda.Int = ..., active: drjit.cuda.Bool | bool = True) -> SegmentChainVisibility:
+        \doc
     @overload
     def visible_chain(self, points: drjit.cuda.ad.Array3f, chain_length: drjit.cuda.Int, ignore_prim_per_segment: drjit.cuda.Int = ..., active: drjit.cuda.ad.Bool | bool = True) -> SegmentChainVisibilityAD: ...
 
 \.Scene\.nearest_edge$:
     @overload
-    def nearest_edge(self, query: drjit.cuda.Array3f, active: drjit.cuda.Bool | bool = True) -> NearestPointEdge: ...
+    def nearest_edge(self, query: drjit.cuda.Array3f, active: drjit.cuda.Bool | bool = True) -> NearestPointEdge:
+        \doc
     @overload
     def nearest_edge(self, query: drjit.cuda.ad.Array3f, active: drjit.cuda.ad.Bool | bool = True) -> NearestPointEdgeAD: ...
     @overload
@@ -110,7 +125,8 @@
 
 \.Scene\.nearest_edges$:
     @overload
-    def nearest_edges(self, point: drjit.cuda.Array3f, k: int, active: drjit.cuda.Bool | bool = True) -> NearestEdgesTopK: ...
+    def nearest_edges(self, point: drjit.cuda.Array3f, k: int, active: drjit.cuda.Bool | bool = True) -> NearestEdgesTopK:
+        \doc
     @overload
     def nearest_edges(self, point: drjit.cuda.ad.Array3f, k: int, active: drjit.cuda.ad.Bool | bool = True) -> NearestEdgesTopKAD: ...
 
@@ -119,10 +135,12 @@
         \doc
 
 \.Scene\.triangle_edge_indices$:
-    def triangle_edge_indices(self, prim_id: drjit.cuda.Int, global_: bool = True) -> tuple[drjit.cuda.Int, drjit.cuda.Int, drjit.cuda.Int]: ...
+    def triangle_edge_indices(self, prim_id: drjit.cuda.Int, global_: bool = True) -> tuple[drjit.cuda.Int, drjit.cuda.Int, drjit.cuda.Int]:
+        \doc
 
 \.Scene\.edge_adjacent_faces$:
-    def edge_adjacent_faces(self, edge_id: drjit.cuda.Int, global_: bool = True) -> tuple[drjit.cuda.Int, drjit.cuda.Int]: ...
+    def edge_adjacent_faces(self, edge_id: drjit.cuda.Int, global_: bool = True) -> tuple[drjit.cuda.Int, drjit.cuda.Int]:
+        \doc
 
 \.native_launch_audit$:
     def native_launch_audit() -> dict[str, dict[str, object]]:
