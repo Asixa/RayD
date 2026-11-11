@@ -1021,8 +1021,10 @@ RAYD_HOST_DEVICE unsigned int hash_u32(unsigned int value) {
     return value;
 }
 
+// The lane is hashed before it meets the stream and seed words, so seeds closer together
+// than the lane count draw unrelated values instead of permuting one set.
 RAYD_HOST_DEVICE float uniform01(unsigned int ray_index, unsigned int depth, unsigned int seed) {
-    const unsigned int hash = hash_u32(ray_index ^ (depth * 0x9e3779b9u) ^ seed);
+    const unsigned int hash = hash_u32(hash_u32(ray_index) ^ (depth * 0x9e3779b9u) ^ seed);
     return static_cast<float>(hash & 0x00ffffffu) * (1.0f / 16777216.0f);
 }
 

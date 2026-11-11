@@ -301,8 +301,10 @@ static __forceinline__ __device__ unsigned int hash_u32(unsigned int x) {
     return x;
 }
 
+// The lane is hashed before it meets the stream and seed words, so seeds closer together
+// than the lane count draw unrelated values instead of permuting one set.
 static __forceinline__ __device__ float uniform01(unsigned int lane, unsigned int stream, unsigned int seed) {
-    const unsigned int h = hash_u32(lane ^ (stream * 0x9e3779b9u) ^ seed);
+    const unsigned int h = hash_u32(hash_u32(lane) ^ (stream * 0x9e3779b9u) ^ seed);
     return static_cast<float>(h & 0x00ffffffu) * (1.f / 16777216.f);
 }
 
@@ -680,7 +682,7 @@ static __forceinline__ __device__ bool select_local_suffix_candidate(const Param
         return false;
     }
     const unsigned int candidate_hash =
-        hash_u32(lane ^ (stream * 0x9e3779b9u) ^ static_cast<unsigned int>(params.seed));
+        hash_u32(hash_u32(lane) ^ (stream * 0x9e3779b9u) ^ static_cast<unsigned int>(params.seed));
     const int slot = static_cast<int>(candidate_hash % static_cast<unsigned int>(count));
     prim = (face0_valid && slot == 0) ? face0_prim : face1_prim;
     candidate_count = static_cast<float>(count);
@@ -1101,10 +1103,10 @@ static __forceinline__ __device__ bool load_chain_primal(const DfrChainAccumADPa
         return false;
     }
     p.first_idx = lane % params.state_count;
-    const unsigned int second_hash = hash_u32(static_cast<unsigned int>(lane) ^
+    const unsigned int second_hash = hash_u32(hash_u32(static_cast<unsigned int>(lane)) ^
                                               (static_cast<unsigned int>(params.seed) * 0x9e3779b9u) ^ 0x51ed270bu);
     p.second_idx = static_cast<int>(second_hash % static_cast<unsigned int>(params.recursive_state_count));
-    const unsigned int third_hash = hash_u32(static_cast<unsigned int>(lane) ^
+    const unsigned int third_hash = hash_u32(hash_u32(static_cast<unsigned int>(lane)) ^
                                              (static_cast<unsigned int>(params.seed) * 0x85ebca6bu) ^ 0xc2b2ae35u);
     p.third_idx = static_cast<int>(third_hash % static_cast<unsigned int>(params.recursive_state_count));
 

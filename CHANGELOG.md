@@ -109,6 +109,13 @@ shim remains. The C++ boundary `rayd/integration.h` is unchanged. Of the `torch.
   half-planes and cubes, it made the shadow 1-4 dB too dark. The corner sigmoid width stays 0.03. Deterministic and
   path diffraction values that use the corner model move; the Monte Carlo path is unchanged.
 
+#### Sample streams (ADR-0049)
+
+- The diffraction accumulation samplers (Torch, Dr.Jit and the AD companions) and the stochastic reflection sampler
+  hash the lane before combining it with the stream and seed. Before, seeds closer together than the lane count only
+  permuted one set of draws, so averages over seeds `1..K` were correlated. Every sampled diffraction and stochastic
+  reflection value moves for a given seed; results are statistically equivalent.
+
 ### Added
 
 #### Python API

@@ -780,7 +780,7 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(const DfrStatesT<Detached>& states, 
             return value;
         };
         auto uniform01 = [&](const UIntAD& sample_lane, unsigned int stream) -> FloatAD {
-            const UIntAD h = hash_u32(sample_lane ^ (UIntAD(stream) * UIntAD(0x9e3779b9u)) ^
+            const UIntAD h = hash_u32(hash_u32(sample_lane) ^ (UIntAD(stream) * UIntAD(0x9e3779b9u)) ^
                                       UIntAD(static_cast<unsigned int>(options.seed)));
             return FloatAD(h & UIntAD(0x00ffffffu)) * FloatAD(1.f / 16777216.f);
         };
@@ -1271,7 +1271,7 @@ DfrAccumT<Detached> Scene::accum_dfr(const DfrStatesT<Detached>& initial_states,
             return value;
         };
         auto uniform01 = [&](const UIntAD& sample_lane, unsigned int stream) -> FloatAD {
-            const UIntAD h = hash_u32(sample_lane ^ (UIntAD(stream) * UIntAD(0x9e3779b9u)) ^
+            const UIntAD h = hash_u32(hash_u32(sample_lane) ^ (UIntAD(stream) * UIntAD(0x9e3779b9u)) ^
                                       UIntAD(static_cast<unsigned int>(options.seed)));
             return FloatAD(h & UIntAD(0x00ffffffu)) * FloatAD(1.f / 16777216.f);
         };
@@ -1310,11 +1310,13 @@ DfrAccumT<Detached> Scene::accum_dfr(const DfrStatesT<Detached>& initial_states,
         const MaskAD is_keller = !is_direct && (lane_i < IntAD(direct_samples + keller_samples));
         const MaskAD is_suffix = !is_direct && !is_keller && (lane_i < IntAD(launch_count));
         const IntAD first_idx = IntAD(lane % UIntAD(initial_count));
-        const UIntAD second_hash = hash_u32(
-            lane ^ (UIntAD(static_cast<unsigned int>(options.seed)) * UIntAD(0x9e3779b9u)) ^ UIntAD(0x51ed270bu));
+        const UIntAD second_hash =
+            hash_u32(hash_u32(lane) ^ (UIntAD(static_cast<unsigned int>(options.seed)) * UIntAD(0x9e3779b9u)) ^
+                     UIntAD(0x51ed270bu));
         const IntAD second_idx = IntAD(second_hash % UIntAD(recursive_count));
-        const UIntAD third_hash = hash_u32(
-            lane ^ (UIntAD(static_cast<unsigned int>(options.seed)) * UIntAD(0x85ebca6bu)) ^ UIntAD(0xc2b2ae35u));
+        const UIntAD third_hash =
+            hash_u32(hash_u32(lane) ^ (UIntAD(static_cast<unsigned int>(options.seed)) * UIntAD(0x85ebca6bu)) ^
+                     UIntAD(0xc2b2ae35u));
         const IntAD third_idx = IntAD(third_hash % UIntAD(recursive_count));
         const IntAD cell = IntAD((lane / UIntAD(initial_count)) % UIntAD(grid_cell_count));
         const MaskAD lane_active = full<MaskAD>(true, launch_count);
