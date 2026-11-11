@@ -122,6 +122,8 @@ additive: `kIntegrationApiVersion` stays 8 and no existing `rayd/integration.h` 
   `include/rayd/scattering_table.cuh`; the table kernels call the same functions (no numerical change).
 - `legacy_slab_fresnel_dual_multi<N>` carries N tangent directions through one evaluation of the legacy slab Fresnel
   primal; tangent k follows the operation sequence of `legacy_slab_fresnel_dual` exactly.
+- Typed `ReflectionEpcRequest::min_segment_length` (default 0, bitwise the previous behaviour): an EPC path with a
+  source, interaction-point or receiver segment shorter than it is invalid (ADR-0048).
 - `rayd_torch_trace_backend_parity` CTest compares the OptiX and pure-CUDA trace backends on axial-edge visibility,
   segment penetration (both overflow policies, tapes, VJP, JVP), intersection, order-1 diffraction paths,
   diffraction accumulation, coherent accumulation, refit, and the per-state source fields.
@@ -130,6 +132,10 @@ additive: `kIntegrationApiVersion` stays 8 and no existing `rayd/integration.h` 
 
 - Axial-edge visibility and segment penetration run on the pure-CUDA trace backend too (selected by `Auto` when OptiX
   is unusable); each keeps one numerical body shared by both tracers.
+
+- Reflection EPC plane-group containment first traces a short probe along the plane normal and accepts the hit
+  triangle when it belongs to the expected group and contains the point; otherwise the exact member scan decides.
+  The accepted set is unchanged and finely subdivided planes no longer scale the launch linearly (ADR-0048).
 
 #### Behaviour changes (numerical, ADR-0047)
 
