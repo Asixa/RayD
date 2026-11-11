@@ -287,7 +287,7 @@ were added after the benchmark evidence below:
 - `accum_dfr_coherent_direct` shards its deterministic
   `state_count * grid_cell_count` lane space and sums partial complex grids and
   diagnostics on the master.
-- `accumulate_reflections` shards warp-aligned ray-batch windows and sums its
+- `accum_refl` shards warp-aligned ray-batch windows and sums its
   seven float grids plus `reflection_count` on the master in device order.
   Forward-only inputs are rejected before any replica copy. `WedgeEvents`
   retains one complete master launch because independent bounded atomic event
@@ -562,9 +562,7 @@ above by hand.
   Reducing the output helps directly: `flags=0` brings a row back in 4 bytes
   instead of 76, which takes `intersect` from 100 B to 28 B per sharded row
   and its crossover from 2.04 ns/ray to 0.57 ns/ray. (The flag is spelled `0`
-  or `getattr(rt.RayFlags, "None")` -- `RayFlags.None` is a Python syntax
-  error, because `None` is a keyword; the member is reachable as
-  `rt.RayFlags["None"]`. Verified: `flags=0` reports a 4-byte measured row.)
+  or `rt.RayFlags.Empty`. Verified: `flags=0` reports a 4-byte measured row.)
 
 - **Either way, the remote shard has to be big enough to amortize 1-2 ms of
   orchestration.** The layer applies an operation- and transfer-width-aware

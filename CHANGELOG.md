@@ -2,6 +2,98 @@
 
 All notable changes to RayD are documented in this file.
 
+## [Unreleased]
+
+### Breaking API changes
+
+The Python API of both backends changes directly: no old name is kept as an alias, no call warns, and no compatibility
+shim remains. The C++ boundary `rayd/integration.h` and the `torch.ops.rayd_torch` operator schemas are unchanged.
+
+#### `rayd.torch`
+
+| Old | New |
+|---|---|
+| `Scene(trace_backend, edge_bvh_backend, *, devices, options)` | `Scene(*, trace_backend, edge_bvh_backend, devices, options)`: the backend selectors are keyword-only |
+| `MixedScene(trace_backend, edge_bvh_backend)` | `MixedScene(*, trace_backend, edge_bvh_backend)` |
+| `Scene.nearest_edge(point)` | `Scene.nearest_edge(query, active=None)` |
+| `Scene.accumulate_reflections(...)` | `Scene.accum_refl(...)` (same parameters) |
+| `Scene.accum_dfr_direct(*, states, grid, material, active, wavelength, direct_samples, keller_samples, suffix_samples, seed, lane_offset, lane_count)` | `Scene.accum_dfr_direct(states, grid, material=None, options=None, active=None)` with `options=rt.DfrOptions(...)` |
+| `Scene.accum_dfr(initial_states=None, recursive_states=None, grid=None, ..., max_order=2, **kwargs)` | `Scene.accum_dfr(initial_states, recursive_states, grid, material=None, options=None, active=None, recursive_active=None)`; no `**kwargs`, and both state sets and the grid are required |
+| `Scene.accum_dfr_coherent_direct(*, states, grid, material, active, wavelength, select_diffraction_point, prefilter_visibility, lane_offset, lane_count)` | `Scene.accum_dfr_coherent_direct(states, grid, material=None, options=None, active=None)` with `options=rt.DfrCoherentOptions(...)` |
+| `Scene.trace_dfr_paths(*, tx_positions, rx_positions, states, material, active, max_paths, wavelength, layout)` | `Scene.trace_dfr_paths(tx_positions, rx_positions, states, material=None, options=None, *, active)` with `options=rt.DfrPathOptions(...)` |
+| `SdfGrid.intersect(ray, *, active, max_steps, relaxation, eps_hit)` | `SdfGrid.intersect(ray, options=None, active=None)` with `options=rt.SdfTraceOptions(...)` |
+| `SdfGrid.visible(start, end, active, *, max_steps, relaxation, eps_hit)` | `SdfGrid.visible(start, end, options=None, active=None)` |
+| `SdfGrid.trace_reflections(ray, max_bounces, active, *, max_steps, relaxation, eps_hit)` | `SdfGrid.trace_reflections(ray, max_bounces, options=None, active=None)` |
+| `SdfGridBatch.intersect(ray, *, active, max_steps, relaxation, eps_hit)` | `SdfGridBatch.intersect(ray, options=None, active=None)` |
+| `SceneGlobalGeometry` | `SceneGeometry` |
+| `SdfIntersection.hit_mask` | `SdfIntersection.valid` |
+| `NearestEdgesTopK.is_valid` (tensor field) | `NearestEdgesTopK.valid`, plus the method `is_valid()` |
+| `ReflEpcField.field_real` / `field_imag` | `ReflEpcField.field_re` / `field_im`, plus the complex property `field` |
+| `DfrCoherentAccum.visibility_reject_count` / `utd_reject_count` | `DfrCoherentAccum.vis_rejects` / `utd_rejects` |
+| `AccumOptions.accumulation_strategy` as an `int` | `rt.AccumStrategy.AUTO` / `ATOMIC` / `STAGED` |
+| `RayFlags.None` | `RayFlags.Empty` |
+
+#### `rayd.drjit`
+
+| Old | New |
+|---|---|
+| `Scene(edge_bvh_backend, trace_backend)` (positional) | `Scene(*, trace_backend, edge_bvh_backend)`: the backend selectors are keyword-only |
+| `MixedScene(trace_backend, edge_bvh_backend)` | `MixedScene(*, trace_backend, edge_bvh_backend)` |
+| `Scene.trace_backend_name()` | `Scene.trace_backend` (read-only property) |
+| `edge_bvh_backend` aliases `hybrid`, `mixed`, `optix_ray`, `ray_optix`, `custom_aabb`, `dr_jit`, `software`, `""` | removed; use `auto`, `drjit`, `optix`, or `optix_drjit` |
+| `Scene.visible_edge(src, edge_pos, edge_dir, ...)` | `Scene.visible_edge(source, edge_position, edge_direction, ...)` |
+| `Scene.nearest_edge(point, active=True)` | `Scene.nearest_edge(query, active=True)` |
+| `Scene.visible(start, end, ignore_prim_ids, active)` | `Scene.visible(start, end, active=True, *, ignore_prim_ids=...)` |
+| `Scene.trace_refl_epc_field(tx_position, ...)` | `Scene.trace_refl_epc_field(source, ...)`; the `Ray` overloads name it `ray` |
+| `Scene.trace_refl_epc(ray, receiver, max_bounces, active)` (mask in the options slot) | `Scene.trace_refl_epc(ray, receiver, max_bounces, options=None, active=True)`; a mask passed as `options` raises `TypeError` |
+| `Scene.accumulate_reflections(...)` | `Scene.accum_refl(...)` (same parameters) |
+| `native_launch_audit()["accumulate_reflections"]` | `native_launch_audit()["accum_refl"]` |
+| `Material` / `MaterialAD` | `ReflMaterial` / `ReflMaterialAD` (the C++ types keep their names) |
+| `DfrCoherentAccum.visibility_reject_count` / `utd_reject_count` (and the `AD` variant) | `vis_rejects` / `utd_rejects` |
+| `RAYD_DFR_DIRECT` / `RAYD_DFR_KELLER` / `RAYD_DFR_SUFFIX_REFL` | `DfrStrategy.DIRECT` / `KELLER` / `SUFFIX_REFL` (an `IntFlag`) |
+| `RAYD_DFR_HASH` / `RAYD_DFR_SOBOL` | `DfrSampleSequence.HASH` / `SOBOL` |
+| `RAYD_DFR_MATCHED_ISO` | `DfrReceiverModel.MATCHED_ISO` |
+| `REFLECTION_EXPORT_FULL` / `MINIMAL` / `COUNT_ONLY` | `ReflectionExportMode.FULL` / `MINIMAL` / `COUNT_ONLY` |
+| `DfrOptions` / `DfrPathOptions` / `DfrCoherentOptions` `strategy_mask`, `sample_sequence`, `receiver_model` as `int` | the enums above |
+| `ReflectionTraceOptions.export_mode` as `int` | `ReflectionExportMode` |
+| `RayFlags.None` | `RayFlags.Empty` |
+| `SdfIntersection.hit_mask` (and the `AD` variant) | `SdfIntersection.valid` |
+| `NearestEdgesTopK.is_valid` (field, and the `AD` variant) | `NearestEdgesTopK.valid`, plus the method `is_valid()` |
+| `MixedScene.add_surfel(cloud, ...)` | `MixedScene.add_surfel(surfel, ...)` |
+
+#### Contracts
+
+- `contracts/public_api.json` and `api_manifest()` no longer carry an `aliases` table; `accumulate_reflections` is
+  `accum_refl` in the derivative manifest.
+- `contracts/operations.json`: the operation `inputs` list the real parameter names (`query`, `active`, `max_bounces`,
+  `options`, ...), `ray_flags` names `Empty`, and the SDF intersection result names its validity field `valid` in both backends.
+
+### Behaviour changes
+
+- Torch `Scene.accum_dfr` defaults to `max_order=1` (through `DfrOptions`) instead of `2`, matching Dr.Jit. Chain
+  accumulation must ask for `max_order=2` or `3`.
+- Backend strings match exactly and case-sensitively in both backends: `"OptiX"` or `" optix"` is rejected.
+- Dr.Jit raises `ValueError` instead of `RuntimeError` for an invalid `trace_backend` or `edge_bvh_backend` value and
+  for `max_bounces < 1` in `Scene.trace_reflections`.
+- Torch `Scene.nearest_edge` takes an `active` mask with the same semantics as `nearest_edges`; inactive rows return
+  the miss sentinels.
+
+### Added
+
+- Torch result records share `repr` (field name, shape, dtype and device for tensors, value for scalars, with no device
+  synchronization), `to(device)`, and `detach()`; `ReflectionChain` has them too.
+- Every Torch record with per-row validity exposes `valid` and `is_valid()`. Records that split a complex field into
+  `<name>_re`/`<name>_im` expose the complex property `<name>`.
+- The deferred Torch intersection results are `Intersection` instances, and the mixed-scene one provides `instance_id`.
+- Torch `Scene` methods that return nothing on an offloading `MultiDeviceOptions` are annotated `X | None`.
+- Torch enums `TraceBackend`, `EdgeBVHBackend` (string enums; plain strings are still accepted) and `AccumStrategy`,
+  and the options records `DfrOptions`, `DfrCoherentOptions`, and `DfrPathOptions`.
+- Dr.Jit enums `DfrStrategy`, `DfrSampleSequence`, `DfrReceiverModel`, and `ReflectionExportMode`.
+- `tests/test_api_signature_parity.py` compares the shared `Scene` and `MixedScene` signatures of both backends
+  against a commented allowlist of accepted differences.
+- `scripts/gen_drjit_stub.sh` regenerates the Dr.Jit stub from the built extension with `nanobind.stubgen` and
+  `scripts/drjit_stub_patterns.txt`.
+
 ## [0.9.0] - 2026-11-10
 
 ### Behaviour changes

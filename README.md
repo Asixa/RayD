@@ -157,7 +157,9 @@ overlap:
 - `Mesh`: triangle geometry, transforms, UVs, and edge topology
 - `Scene`: mesh container plus OptiX acceleration structures
 - `MixedScene`: unified differentiable mesh, bounded-SDF, and surfel ray queries
-- `Ray` / `RayAD`: batched origins, directions, and optional `tmax`
+- `Ray`: batched origins, directions, and optional `tmax`; Dr.Jit adds
+  `RayAD` for its differentiable overloads, while Torch has only `Ray` and
+  selects AD from `requires_grad`
 - `scene.intersect(ray)`: closest differentiable ray-mesh hit
 - `scene.nearest_edge(query)`: nearest-edge point or ray query
 - `scene.trace_reflections(...)`: specular reflection chains
@@ -173,7 +175,7 @@ overlap:
 - `scene.set_edge_mask(mask)` / `scene.edge_mask()`
 
 Both backends expose `scene.trace_refl_epc(...)` for EPC path geometry and
-`scene.accumulate_reflections(...)` for reflected field/power accumulation.
+`scene.accum_refl(...)` for reflected field/power accumulation.
 They also expose
 `scene.add_instance(geometry_id, transform, dynamic=True)` for an independent
 transform, instance id, and scene-global primitive range over a shared OptiX
@@ -193,12 +195,17 @@ The Dr.Jit backend additionally exposes:
 
 Both backends expose standalone differentiable signed-distance-field queries:
 
-- `SdfGrid(values, position, rotation, scale)`: a caller-owned dense grid of
-  vertex-centred world-metric distances placed by an oriented box
+- `SdfGrid`: a caller-owned dense grid of vertex-centred world-metric
+  distances placed by an oriented box. Torch takes
+  `SdfGrid(values, position, rotation, scale)` with a shaped `values` tensor;
+  Dr.Jit takes `SdfGrid(values, nx, ny, nz, position, rotation, scale)` with a
+  flat `values` array and explicit grid dimensions
 - Torch `SdfGridBatch(values, position, rotation, scale)`: two or more
   shape-compatible grids packed under one native primal query owner
-- `sdf_intersect(grid, origins, directions, ...)`: sphere-traced intersection
-  returning `t`, `hit_mask`, `position`, `normal`, and a `steps` diagnostic
+- `grid.intersect(ray, options=SdfTraceOptions(...), active)`: sphere-traced
+  intersection returning `t`, a validity mask `valid`, `position`, `normal`, and a `steps` diagnostic
+- Torch-only `sdf_intersect(grid, origins, directions, ...)`: the functional
+  form of the same query
 - `grid.visible(...)` and `grid.trace_reflections(...)`: SDF-only LOS and
   specular reflection
 
@@ -243,6 +250,20 @@ the discrete winner selected during the forward pass as fixed:
 For Dr.Jit, `RayAD` selects the differentiable intersection overload. Torch
 selects AD from tensors with `requires_grad=True` and supports both backward
 VJP and forward JVP for implemented operators.
+
+## Recorded Backend Differences
+
+> [!WARNING]
+> Two numeric conventions differ between the backends on purpose and are
+> recorded in `contracts/operations.json`:
+>
+> - **Intersection `ray_tmin`.** Dr.Jit `Scene.intersect` and `shadow_test`
+>   start rays at `t = 1e-3`; Torch `Scene.intersect` starts them at
+>   `t = 1e-6`. A hit closer than `1e-3` to the origin is found by Torch only.
+> - **Reflection miss `t`.** For an invalid bounce, Torch `ReflectionChain.t`
+>   reports the trace kernel's finite `tmax` (`1e8`), while Dr.Jit
+>   `ReflectionChain.t` and `ReflectionBounce.t` report `+inf`. Detect a missing
+>   bounce from validity (`valid` / `is_valid()`), never from `t`.
 
 ## Dr.Jit Quick Start
 
@@ -372,7 +393,10 @@ query edges never pay for them. Dr.Jit's `"auto"` resolves to `drjit`, a native
 traversal of the same compact BVH launched on Dr.Jit's stream, which was faster
 than the OptiX edge backend for point, ray, and top-k queries at every measured
 size; its edge BVH is built in `build()`, and `"optix"` and `"optix_drjit"`
-(OptiX for rays only) remain available. The two default backends break exact
+(OptiX for rays only) remain available. Backend selectors are keyword-only
+(`Scene(trace_backend=..., edge_bvh_backend=...)`) and match their values
+exactly and case-sensitively; there are no aliases, and an unknown value raises
+`ValueError`. The two default backends break exact
 distance ties toward the lower global edge id (`contracts/operations.json`
 records where the OptiX backends differ). On every edge backend,
 `nearest_edge(ray)` searches a row only when its origin is finite, its

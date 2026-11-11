@@ -199,10 +199,14 @@ within its step budget, and the caller controls `max_steps`.
 | field | dtype / shape | on hit | on miss |
 | --- | --- | --- | --- |
 | `t` | float32 `[N]` | `t*` | `+inf` |
-| `hit_mask` | bool `[N]` | `true` | `false` |
+| `valid` | bool `[N]` | `true` | `false` |
 | `position` | float32 `[N, 3]` | `o + t* * wh` | `+0.0` |
 | `normal` | float32 `[N, 3]` | `grad_w D / max(||grad_w D||, eps_norm)` | `+0.0` |
 | `steps` | int32 `[N]` | field evaluations performed | field evaluations performed |
+
+The Torch `SdfIntersection` names the validity field `valid` (it was `hit_mask`
+until the 0.10 API cleanup); the Dr.Jit `SdfIntersection` keeps `hit_mask`. The
+native tape below keeps its `hit_mask` name.
 
 The `t` miss value is the `distance` miss sentinel already recorded in
 `shared/contracts/operations.json` (`miss_sentinels.distance = "inf"`); this
@@ -276,7 +280,7 @@ The output derivatives follow:
   across voxel faces, so `normal` and its derivative are those of the piecewise
   expression on the frozen voxel. That discontinuity belongs to the trilinear
   representation, not to the freezing.
-- `hit_mask` and `steps` carry no derivative.
+- `valid` (Dr.Jit `hit_mask`) and `steps` carry no derivative.
 
 Forward mode uses the same frozen decisions and the same partials pushed
 forward; JVP and VJP are exact duals on every lane.
@@ -392,7 +396,7 @@ Phase 4 of the plan lands the following, as one change:
    `sdf_intersect`; `operations.sdf_intersect` declares its inputs, its result
    contract, its `eager_native` Torch integration, its fixed-winner AD, the
    grazing clamp, and the `inf` miss sentinel; `result_contracts` gains the
-   `t / hit_mask / position / normal / steps` schema with its miss block.
+   `t / valid / position / normal / steps` schema with its miss block.
 3. `tests/test_shared_operation_contract.py`: the hard-coded operation-name set
    and the per-operation expectation tables.
 4. `backends/drjit/python/rayd/drjit/_capabilities.py` and

@@ -23,6 +23,9 @@ scripts/build_local.sh drjit                # Linux; or: torch, all
 Both helpers install editable. The build copies `python/rayd/_impl/*.py` into site-packages, so rebuild after editing
 or pulling those files; the import refuses copies that no longer match the checkout. `python -m rayd.torch.doctor` and
 `python -m rayd.drjit.doctor` check an installation, its driver, and its OptiX runtime.
+After changing a Dr.Jit binding, rebuild the backend and regenerate its committed stub
+`python/rayd/drjit/_C/__init__.pyi` with `scripts/gen_drjit_stub.sh --python <env python>` (it runs `nanobind.stubgen`
+with `scripts/drjit_stub_patterns.txt`, then `scripts/format_code.py`); never edit the stub by hand.
 
 ## Architecture
 
@@ -34,7 +37,7 @@ or pulling those files; the import refuses copies that no longer match the check
 - `Mesh`: raw triangle mesh input, transforms, edge topology, secondary edge query data
 - `Camera`: primary-ray sampling plus primary-edge preprocessing/sampling. **Torch backend only** (`python/rayd/_impl/camera.py`); the Dr.Jit backend has no `Camera`
 - `scene.intersect(ray)`: differentiable intersection query
-- `scene.nearest_edge(point)` / `scene.nearest_edge(ray)`: scene-level nearest-edge query over a GPU BVH
+- `scene.nearest_edge(query)`, with a point batch or a `Ray`: scene-level nearest-edge query over a GPU BVH
 - `scene.trace_reflections(...)`: specular reflection-path tracing; `symbolic=True` selects the bounce-level C++ path
 - `scene.visible(...)`: batched segment visibility queries
 - `scene.trace_refl_epc(...)` / `scene.trace_refl_epc_field(...)`: equivalent-path correction primitives for reflection paths
@@ -224,7 +227,7 @@ class in `contracts/operations.json`.
   bitwise unchanged; the Phase 0 device guards are the only single-GPU-path
   change. `trace_dfr_paths` uses transmitter-aligned `SourceLane` shards and
   `accum_dfr_coherent_direct` uses a deterministic lane window, and
-  `accumulate_reflections` shards warp-aligned ray batches before a
+  `accum_refl` shards warp-aligned ray batches before a
   master-ordered grid reduction. Reflection wedge collection keeps one full
   master launch because its bounded event buffer is not reducible.
   `trace_refl_epc` still raises on a multi-device scene.
@@ -252,7 +255,7 @@ Current status notes:
 
 - the treelet path is the best current tradeoff for actual nearest-edge query throughput
 - GPU treelet optimization is enabled for the verified `65,536..500,000`-primitive range; larger builds retain the valid pure LBVH topology until a dedicated large-scene primitive-coverage gate raises that bound
-- the combined public backend is named `optix_drjit`; `hybrid` is a deprecated compatibility alias and is unrelated to the removed HLBVH experiment
+- the combined public backend is named `optix_drjit`; the former `hybrid` and other `edge_bvh_backend` aliases were removed, so backend strings match exactly and case-sensitively and an unknown value raises `ValueError` (`hybrid` was unrelated to the removed HLBVH experiment)
 - the former `LBVH + top-level SAH` HLBVH experiment was removed after it made large-scene queries much slower; its historical measurements are retained below
 - the dead GPU-prepared flat-treelet prototype was removed; the supported treelet path keeps its host-prepared schedule and launches GPU treelet optimization kernels
 - the shared edge core owns the backend-neutral OptiX AABB kernel, LBVH/treelet build stages, dirty-ancestor/dirty-level/refit launchers, compact-BVH CUDA traversal, and exact-distance launchers; every API takes raw pointers, caller-owned buffers, and an explicit stream
