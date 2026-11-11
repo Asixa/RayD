@@ -206,7 +206,7 @@
       "header_sha256": "90548196726e98e7c01241af0bf7a2b994a99726de85f8932b85c91251017ceb",
       "option": "RAYD_REGENERATE_REFLECTION_ACCUMULATION_PTX",
       "regeneration_verified": true,
-      "source_sha256": "91af33351997073e64b6e479911615560708264e8fa8ae085f83cf479ce71332",
+      "source_sha256": "86916c6d27d986aaa49ef271405f201ba6b280de65301977b0edb12cab8af4af",
       "sources": [
         "include/rayd/contracts.h",
         "include/rayd/math.h",
@@ -237,10 +237,10 @@
         "vector_types.h"
       ],
       "header": "generated/drjit/ptx/reflection_epc_ptx.h",
-      "header_sha256": "88e34f4bc5f834e010cb4efe8a95a2938cafa5c03333c05defc5dba6a8bdda8e",
+      "header_sha256": "b1be064fb5d6b082f6cc6e528545c8bdff2dd0faad30c6fb0b56d8f5c20521b4",
       "option": "RAYD_REGENERATE_REFLECTION_EPC_PTX",
       "regeneration_verified": true,
-      "source_sha256": "92d4ed7070514249ac731af9e73ecffdc95e3d84b28370f3e36f14d183b7b0c2",
+      "source_sha256": "d91ac175c5768839557bfe8964b8a53b1febc0b5fc962228e5fe0da79783f45f",
       "sources": [
         "include/rayd/contracts.h",
         "include/rayd/math.h",
@@ -273,7 +273,7 @@
       "header_sha256": "5294c01d918b4f03aac79be3d2c154aa2a507f879f3b6babfc1eba7abe01dc18",
       "option": "RAYD_REGENERATE_REFLECTION_TRACE_PTX",
       "regeneration_verified": true,
-      "source_sha256": "45a6dfab58d83d9f54d6d5e6239e5c4e9939be1e16846e46dedbe6ae55606beb",
+      "source_sha256": "c67805ee2d2da6112342dc10ec02d6088ae682f38ea677e2ce30a72341be8e01",
       "sources": [
         "include/rayd/contracts.h",
         "include/rayd/math.h",

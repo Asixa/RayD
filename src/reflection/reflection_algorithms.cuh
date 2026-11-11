@@ -1482,6 +1482,21 @@ RAYD_HOST_DEVICE bool point_inside_surface_group(const ReflEpcParams& params, in
     return false;
 }
 
+// Half-length of the containment probe relative to the point's coordinate magnitude. It spans
+// the coplanar-group quantization, so every member of the group crosses the probe segment.
+constexpr float kContainmentProbeRelative = 1e-4f;
+
+/// Plane-group containment of a reflection point. A short segment along the plane normal
+/// through the point is traced against the scene: when the closest triangle it meets belongs
+/// to the expected group and contains the point, that triangle is the resolved primitive,
+/// found in O(log N). Otherwise the exact member scan decides, so the accepted set equals the
+/// scan's; only the choice among members that share the point (an internal edge) may differ.
+template <typename Config>
+RAYD_DEVICE bool point_inside_surface_group_probe(const ReflEpcParams& params,
+                                                  const typename Config::Traverser& primary,
+                                                  const typename Config::Traverser& secondary, int group, Vec3f point,
+                                                  Vec3f unit_normal, int& resolved_prim);
+
 // Segment-plane intersection with the discovery kernel's guards. Retained from the
 // device header (parallel tolerance 1e-7, segment tolerance kEpcTolerance) so
 // reflection_geometry.h's intersect_segment_plane stays host-exercised; the
@@ -1521,6 +1536,32 @@ RAYD_DEVICE ::rayd::shared::rt::TriangleHit trace_scene(const ReflEpcParams& par
     }
     const ::rayd::shared::rt::TriangleHit hit_secondary = secondary.trace_closest(origin, direction, kTraceTMin, tmax);
     return choose_nearest_hit(hit_primary, hit_secondary);
+}
+
+template <typename Config>
+RAYD_DEVICE bool point_inside_surface_group_probe(const ReflEpcParams& params,
+                                                  const typename Config::Traverser& primary,
+                                                  const typename Config::Traverser& secondary, int group, Vec3f point,
+                                                  Vec3f unit_normal, int& resolved_prim) {
+    resolved_prim = -1;
+    if (!has_surface_groups(params) || group < 0 || group >= params.surface_group_count) {
+        return false;
+    }
+    const float half_length = kContainmentProbeRelative * fmaxf(::rayd::shared::rt::coordinate_magnitude(point), 1.0f);
+    if (math::length_f32(unit_normal) > 0.0f) {
+        const Vec3f origin = math::add(point, math::scale(unit_normal, half_length));
+        const ::rayd::shared::rt::TriangleHit hit =
+            trace_scene<Config>(params, primary, secondary, origin, math::scale(unit_normal, -1.0f),
+                                2.0f * half_length);
+        if (hit.hit != 0u) {
+            const int prim = global_primitive_id(hit.instance, hit.prim, params.face_offsets, params.n_meshes);
+            if (surface_group_for_prim(params, prim) == group && point_inside_triangle(params, prim, point)) {
+                resolved_prim = prim;
+                return true;
+            }
+        }
+    }
+    return point_inside_surface_group(params, group, point, resolved_prim);
 }
 
 struct VisibilityResult {
@@ -1749,6 +1790,20 @@ RAYD_DEVICE void run_reflection_epc_algo(const ::rayd::shared::optix::ReflEpcPar
         return;
     }
 
+    // A path with a segment shorter than the request's minimum is degenerate: two interactions
+    // (or an interaction and an endpoint) coincide, as when both reflection points of a
+    // two-plane chain fall on the planes' shared edge.
+    if (params.min_segment_length > 0.0f) {
+        for (int segment = 0; segment <= B; ++segment) {
+            const Vec3f start = segment == 0 ? origin : reflection_points[segment - 1];
+            const Vec3f end = segment == B ? receiver : reflection_points[segment];
+            if (math::length_f32(math::subtract(end, start)) < params.min_segment_length) {
+                store_invalid(params, ray_index, bounce_count, -1, -1, -1);
+                return;
+            }
+        }
+    }
+
     // Freeze which primitive each interaction lands in (the discrete winner). The
     // back-trace above is pure geometry, containment is the discovery decision, so
     // they are separated. resolved_prim_ids feeds the visibility ignore lists below
@@ -1758,7 +1813,8 @@ RAYD_DEVICE void run_reflection_epc_algo(const ::rayd::shared::optix::ReflEpcPar
         int resolved_prim = -1;
         bool inside;
         if (has_surface_groups(params) && surface_group_ids[bounce] >= 0) {
-            inside = point_inside_surface_group(params, surface_group_ids[bounce], point, resolved_prim);
+            inside = point_inside_surface_group_probe<Config>(params, primary, secondary, surface_group_ids[bounce],
+                                                              point, plane_normals[bounce], resolved_prim);
         } else {
             const int expected_prim = expected_prim_for_bounce(params, base + bounce);
             const int containment_prim = expected_prim >= 0 ? expected_prim : trace_prim_ids[bounce];
