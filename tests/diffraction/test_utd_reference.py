@@ -21,7 +21,7 @@ using namespace rayd::shared::diffraction;
 // argv: n phiP phi sP s halfLength pol n0x n0y nnx nny ex ey ez [eps_r sigma]  (degrees, metres; pol 0 soft,
 // 1 hard; perfectly conducting faces unless eps_r and sigma are given)
 // prints the receiver-projected vector field of the deterministic (stationary-point) path.
-static int pair(char** a) {
+static int pair(char** a, float3a sourceSide = make_f3(0, 0, 0), float3a targetSide = make_f3(0, 0, 0)) {
     const double n = atof(a[1]), pp = atof(a[2]) * M_PI / 180.0, ph = atof(a[3]) * M_PI / 180.0;
     const double sP = atof(a[4]), s = atof(a[5]), half = atof(a[6]);
     const int pol = atoi(a[7]);
@@ -36,6 +36,8 @@ static int pair(char** a) {
     p.edgeLineMax = static_cast<float>(half);
     p.sourcePos = make_f3(sP * cos(pp), sP * sin(pp), 0);
     p.selectStationaryPoint = 1.f;
+    p.sourceSide = sourceSide;
+    p.targetSide = targetSide;
     const FaceMaterialParams face = {a[15] ? static_cast<float>(atof(a[15])) : 1.f, 1.f,
                                      a[15] ? static_cast<float>(atof(a[16])) : 1.0e9f, 1.f, 1.f, 1.f};
     p.face0Material = face;
@@ -150,7 +152,23 @@ static int jump(char** a) {
     printf("%.9e\n", sqrt(num / den));
     return 0;
 }
+// argv: f dir(3) n0(3) nn(3) edge(3) -> grazing_face_side of the ray leaving the edge along dir
+static int face_side(char** a) {
+    float v[12];
+    for (int i = 0; i < 12; ++i)
+        v[i] = static_cast<float>(atof(a[2 + i]));
+    const float3a side = grazing_face_side(make_f3(v[0], v[1], v[2]), make_f3(v[9], v[10], v[11]),
+                                           make_f3(v[3], v[4], v[5]), make_f3(v[6], v[7], v[8]));
+    printf("%.9e %.9e %.9e\n", side.x, side.y, side.z);
+    return 0;
+}
 int main(int argc, char** argv) {
+    // argv: s sourceSideY targetSideY, then the pair arguments: the pair with side hints (0, y, 0).
+    if (argc > 3 && argv[1][0] == 's')
+        return pair(argv + 3, make_f3(0, static_cast<float>(atof(argv[2])), 0),
+                    make_f3(0, static_cast<float>(atof(argv[3])), 0));
+    if (argc > 1 && argv[1][0] == 'f')
+        return face_side(argv);
     if (argc > 1 && argv[1][0] == 'j')
         return jump(argv);
     if (argc > 1 && argv[1][0] == 'd')
@@ -214,6 +232,16 @@ class UtdReferenceTests(unittest.TestCase):
         args = [self._exe, *(str(v) for v in (n, phi_p, phi, s_p, s, half, int(hard), *geometry, *material))]
         re, im = (float(v) for v in subprocess.run(args, capture_output=True, text=True, check=True).stdout.split())
         return complex(re, im)
+
+    def _sided_field(self, source_side, target_side, n, phi_p, phi, s_p, s, half, hard, geometry):
+        args = [self._exe, "s", str(source_side), str(target_side),
+                *(str(v) for v in (n, phi_p, phi, s_p, s, half, int(hard), *geometry))]
+        re, im = (float(v) for v in subprocess.run(args, capture_output=True, text=True, check=True).stdout.split())
+        return complex(re, im)
+
+    def _face_side(self, direction, n0, nn, edge):
+        args = [self._exe, "f", *(str(v) for v in (*direction, *n0, *nn, *edge))]
+        return tuple(float(v) for v in subprocess.run(args, capture_output=True, text=True, check=True).stdout.split())
 
     def _coefficient(self, n, phi_p, phi, s_p, s, half, hard, geometry):
         incident = cmath.exp(-1j * K * s_p) / (2.0 * K * s_p)
@@ -318,6 +346,46 @@ class UtdReferenceTests(unittest.TestCase):
                     value = self._field(2.0, phi_p, phi, 40.0, 12.0, 400.0, hard, HALF_PLANE)
                     with self.subTest(hard=hard, phi=phi, phi_p=phi_p):
                         self.assertLess(abs(value - grazing), 3.0e-2 * scale)
+
+    def test_a_side_hint_picks_the_face_of_a_sheet_a_grazing_ray_runs_on(self):
+        # A target or source exactly on a sheet's plane has no side of its own: the angle takes face 0 (phi = 0).
+        # A side hint selects the face; each side's value is the limit from that side, and the two differ.
+        for hard in (False, True):
+            above = self._field(2.0, 60.0, 1.0e-3, 40.0, 12.0, 400.0, hard, HALF_PLANE)
+            below = self._field(2.0, 60.0, 360.0 - 1.0e-3, 40.0, 12.0, 400.0, hard, HALF_PLANE)
+            scale = max(abs(above), abs(below), 1.0e-30)
+            unhinted = self._field(2.0, 60.0, 0.0, 40.0, 12.0, 400.0, hard, HALF_PLANE)
+            hinted_up = self._sided_field(0.0, 1.0, 2.0, 60.0, 0.0, 40.0, 12.0, 400.0, hard, HALF_PLANE)
+            hinted_down = self._sided_field(0.0, -1.0, 2.0, 60.0, 0.0, 40.0, 12.0, 400.0, hard, HALF_PLANE)
+            with self.subTest(hard=hard, end="target"):
+                self.assertEqual(unhinted, hinted_up)
+                self.assertLess(abs(hinted_up - above), 1.0e-2 * scale)
+                self.assertLess(abs(hinted_down - below), 1.0e-2 * scale)
+                if hard:
+                    self.assertGreater(abs(above - below), 0.1 * scale)
+            # The same at the source end: a source on the sheet's plane, seen from the side the hint names.
+            src_above = self._field(2.0, 1.0e-3, 120.0, 40.0, 12.0, 400.0, hard, HALF_PLANE)
+            src_below = self._field(2.0, 360.0 - 1.0e-3, 120.0, 40.0, 12.0, 400.0, hard, HALF_PLANE)
+            src_scale = max(abs(src_above), abs(src_below), 1.0e-30)
+            src_down = self._sided_field(-1.0, 0.0, 2.0, 0.0, 120.0, 40.0, 12.0, 400.0, hard, HALF_PLANE)
+            src_up = self._sided_field(1.0, 0.0, 2.0, 0.0, 120.0, 40.0, 12.0, 400.0, hard, HALF_PLANE)
+            with self.subTest(hard=hard, end="source"):
+                self.assertLess(abs(src_up - src_above), 1.0e-2 * src_scale)
+                self.assertLess(abs(src_down - src_below), 1.0e-2 * src_scale)
+        # A hint never moves a ray that is off the plane.
+        self.assertEqual(self._field(2.0, 60.0, 30.0, 40.0, 12.0, 400.0, True, HALF_PLANE),
+                         self._sided_field(0.0, -1.0, 2.0, 60.0, 30.0, 40.0, 12.0, 400.0, True, HALF_PLANE))
+
+    def test_grazing_face_side_names_the_one_face_a_ray_runs_along(self):
+        # 270-degree wedge: face 0 runs along +x (normal +y), face n along -y (normal -x); edge +z.
+        n0, nn, edge = (0.0, 1.0, 0.0), (-1.0, 0.0, 0.0), (0.0, 0.0, 1.0)
+        self.assertEqual(self._face_side((3.0, 0.0, 0.5), n0, nn, edge), n0)
+        self.assertEqual(self._face_side((0.0, -2.0, -1.0), n0, nn, edge), nn)
+        for direction in ((-1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (1.0, 1.0, 0.0), (0.0, 0.0, 1.0)):
+            with self.subTest(direction=direction):
+                self.assertEqual(self._face_side(direction, n0, nn, edge), (0.0, 0.0, 0.0))
+        # A sheet holds a ray along it on both faces: no side.
+        self.assertEqual(self._face_side((2.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, -1.0, 0.0), edge), (0.0, 0.0, 0.0))
 
     def test_the_coefficient_is_smooth_up_to_the_boundary(self):
         # Within 1e-4 rad of a GO boundary the cotangent pole and the transition zero must come from one small angle:

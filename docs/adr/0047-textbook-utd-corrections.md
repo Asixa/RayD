@@ -322,3 +322,29 @@ grazing pair now takes the side of the observation angle `phi`: the cotangent's 
 `test_grazing_incidence_keeps_one_side_for_both_terms` (sources 2e-5 deg either side of either face plane of a
 half-plane match the exactly grazing value within 3 %; 18 failures on the previous header, where a source
 2e-5 deg below the face plane gave 12x the grazing value).
+
+## Amendment: the side of a sheet a grazing ray runs on (2026-11-11)
+
+**Context.** Channel's full-wave suite: after Channel's coincident-edge fix the two ground-wall junctions of the
+`trihedral_z` corner are 270 degree wedges whose faces are the plates' outer sides, and they receive
+double-diffraction legs that run from a plate's free edge along the plate. `compute_edge_angles` measures `phi`
+and `phi'` from face 0 and takes the side of face 0 from the sign of the ray's component along `n0`. On a sheet
+(`n = 2`) both faces lie in one plane, so a ray on that plane has no side of its own: within float noise the sign
+is arbitrary, and exactly on the plane it is face 0. The free edge then evaluated the leg on its `n0` side, which
+for about two thirds of those legs was the plate's inner side, while the junction receives it on the outer side.
+`trihedral_z` plane 0 shadow NMSE went from 0.161 to 0.462 with the junction wedges.
+
+**Decision.** `PairInputs` carries two side hints, `sourceSide` and `targetSide`, vectors pointing to the side the
+source or target ray runs on. A ray within `UTD_GRAZING_SIDE_SINE` (1e-5) of the face-0 plane takes the side of
+face 0 the hint points to (`grazing_side_sign`); off the plane, or with a zero hint, the angle's own sign decides
+as before. `grazing_face_side` gives the hint for a ray between two edges: the outward normal of the one face of
+the other edge that the ray runs along (face 0 along `n0 x edgeDir`, face n along `edgeDir x nn`), or zero when it
+runs along no face or along a sheet, whose two faces both hold it. A zero-initialized pair sets no hint, so every
+caller that does not set one is unchanged bit for bit.
+
+**Evidence.** `tests/diffraction/test_utd_reference.py::test_a_side_hint_picks_the_face_of_a_sheet_a_grazing_ray_runs_on`
+(a target or source exactly on a half-plane's plane equals the limit from the side the hint names, within 1 %, for
+both polarizations; the hard-polarized sides differ by more than 10 %) and
+`::test_grazing_face_side_names_the_one_face_a_ray_runs_along`. The Channel double-diffraction kernels set the hints
+from the frozen leg; the full-wave effect is recorded in Channel's design record for the sheet-side fix.
+Regenerated the diffraction_paths and diffraction_accumulation Dr.Jit PTX.

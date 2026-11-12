@@ -110,6 +110,11 @@ template <typename T> struct PairInputsT {
     // together. Reflection-boundary terms are untouched. Default 0 preserves
     // every existing caller bit-for-bit (aggregate zero-init).
     float isbTaperWidthScale;
+    // Side hints for a source or target on the plane of face 0, where the angle alone cannot tell a sheet's two
+    // faces apart: a vector pointing to the side the ray runs on (see grazing_face_side), or zero for none. Zero
+    // (the aggregate zero-init) keeps the sign of the angle, so a caller that sets no hint is unchanged.
+    Vec3T<T> sourceSide;
+    Vec3T<T> targetSide;
 };
 using PairInputs = PairInputsT<float>;
 
@@ -1203,15 +1208,56 @@ template <typename T> UTD_DINLINE T oriented_angle_positive(T y, T x) {
     return a < 0.f ? a + T(UTD_TWO_PI) : a;
 }
 
+// A ray within this sine of the face-0 plane lies on it within float noise: a sheet's two faces cannot be told apart
+// from its angle, and a side hint (PairInputs::sourceSide / targetSide) decides between them.
+constexpr float UTD_GRAZING_SIDE_SINE = 1.0e-5f;
+
+// Side of face 0 (+1 the side n0 points to, -1 the other) a ray with n0-component `along` takes: its own sign
+// `own`, unless it lies on the face-0 plane and the hint `side` has a component along n0.
+template <typename T> UTD_DINLINE float grazing_side_sign(float along, Vec3T<T> side, Vec3T<T> n0, float own) {
+    if (!(fabsf(along) <= UTD_GRAZING_SIDE_SINE))
+        return own;
+    const float hint = scalar_value(f3_dot(side, n0));
+    if (hint == 0.f)
+        return own;
+    return hint > 0.f ? 1.f : -1.f;
+}
+
+// The outward normal of the one face of a wedge (edge direction edgeDir, face normals n0 and nn) that a ray leaving
+// the edge along dirFromEdge runs along, or zero when it runs along no face or along a sheet, whose two faces both
+// hold it. A ray between two edges that runs along such a face at one end runs on the side this normal points to,
+// so it is the side hint for the ray's other end. Face 0 runs along n0 x edgeDir and face n along edgeDir x nn.
+template <typename T>
+UTD_DINLINE Vec3T<T> grazing_face_side(Vec3T<T> dirFromEdge, Vec3T<T> edgeDir, Vec3T<T> n0, Vec3T<T> nn) {
+    const Vec3T<T> zero = v3_const<T>(0, 0, 0);
+    const Vec3T<T> e = safe_normalize(edgeDir, v3_const<T>(0, 0, 1));
+    const Vec3T<T> projected = project_to_wedge_plane(dirFromEdge, e);
+    const T length = safe_length(projected);
+    if (!(scalar_value(length) > UTD_SMALL_EPS))
+        return zero;
+    const Vec3T<T> d = f3_div(projected, length);
+    const Vec3T<T> face0 = safe_normalize(f3_cross(n0, e), zero);
+    const Vec3T<T> faceN = safe_normalize(f3_cross(e, nn), zero);
+    const bool on0 =
+        fabsf(scalar_value(f3_dot(d, n0))) <= UTD_GRAZING_SIDE_SINE && scalar_value(f3_dot(d, face0)) > 0.f;
+    const bool onN =
+        fabsf(scalar_value(f3_dot(d, nn))) <= UTD_GRAZING_SIDE_SINE && scalar_value(f3_dot(d, faceN)) > 0.f;
+    if (on0 == onN)
+        return zero;
+    return on0 ? n0 : nn;
+}
+
 template <typename T>
 UTD_DINLINE void compute_edge_angles(Vec3T<T> srcPos, Vec3T<T> edgePos, Vec3T<T> edgeDir, Vec3T<T> n0, Vec3T<T> tgtPos,
-                                     T& phi, T& phiP, T& s, T& sP) {
+                                     T& phi, T& phiP, T& s, T& sP, Vec3T<T> sourceSide = v3_const<T>(0, 0, 0),
+                                     Vec3T<T> targetSide = v3_const<T>(0, 0, 0)) {
     Vec3T<T> srcToEdge = f3_sub(edgePos, srcPos);
     Vec3T<T> srcProj = project_to_wedge_plane(srcToEdge, edgeDir);
     sP = safe_length(srcProj) + T(UTD_EPS);
     Vec3T<T> toHat = safe_normalize(f3_cross(n0, edgeDir), v3_const<T>(0, 1, 0));
     Vec3T<T> kiProj = f3_div(srcProj, sP);
-    float signP = (scalar_value(-f3_dot(kiProj, n0)) >= 0.f ? 1.f : -1.f);
+    const float sourceAlong = scalar_value(-f3_dot(kiProj, n0));
+    float signP = grazing_side_sign(sourceAlong, sourceSide, n0, sourceAlong >= 0.f ? 1.f : -1.f);
     phiP = UTD_PI - safe_acos(-f3_dot(kiProj, toHat));
     phiP = phiP * (-signP) + UTD_PI;
 
@@ -1219,16 +1265,19 @@ UTD_DINLINE void compute_edge_angles(Vec3T<T> srcPos, Vec3T<T> edgePos, Vec3T<T>
     Vec3T<T> tgtProj = project_to_wedge_plane(edgeToTgt, edgeDir);
     s = safe_length(tgtProj) + T(UTD_EPS);
     Vec3T<T> koProj = f3_div(tgtProj, s);
-    float signPhi = (scalar_value(f3_dot(koProj, n0)) >= 0.f ? 1.f : -1.f);
+    const float targetAlong = scalar_value(f3_dot(koProj, n0));
+    float signPhi = grazing_side_sign(targetAlong, targetSide, n0, targetAlong >= 0.f ? 1.f : -1.f);
     phi = UTD_PI - safe_acos(f3_dot(koProj, toHat));
     phi = phi * (-signPhi) + UTD_PI;
 }
 
 template <typename T>
 UTD_DINLINE void compute_edge_geometry_3d(Vec3T<T> srcPos, Vec3T<T> edgePos, Vec3T<T> edgeDir, Vec3T<T> n0,
-                                          Vec3T<T> tgtPos, T& phi, T& phiP, T& s, T& sP, T& sinBeta0) {
+                                          Vec3T<T> tgtPos, T& phi, T& phiP, T& s, T& sP, T& sinBeta0,
+                                          Vec3T<T> sourceSide = v3_const<T>(0, 0, 0),
+                                          Vec3T<T> targetSide = v3_const<T>(0, 0, 0)) {
     T sProj, sPProj;
-    compute_edge_angles(srcPos, edgePos, edgeDir, n0, tgtPos, phi, phiP, sProj, sPProj);
+    compute_edge_angles(srcPos, edgePos, edgeDir, n0, tgtPos, phi, phiP, sProj, sPProj, sourceSide, targetSide);
     Vec3T<T> srcToEdge = f3_sub(edgePos, srcPos);
     Vec3T<T> edgeToTgt = f3_sub(tgtPos, edgePos);
     sP = safe_length(srcToEdge) + T(UTD_EPS);
@@ -1406,7 +1455,8 @@ UTD_DINLINE JonesOperatorT<T> face_reflection_dyadic(ComplexT<T> rTE, ComplexT<T
 template <typename T>
 UTD_DINLINE void pair_face_cosines(PairInputsT<T> state, Vec3T<T> targetPos, T& face0Cos, T& face1Cos) {
     T phi, phiP, s, sP, sb;
-    compute_edge_geometry_3d(state.sourcePos, state.edgePos, state.edgeDir, state.n0, targetPos, phi, phiP, s, sP, sb);
+    compute_edge_geometry_3d(state.sourcePos, state.edgePos, state.edgeDir, state.n0, targetPos, phi, phiP, s, sP, sb,
+                             state.sourceSide, state.targetSide);
     const T npi = state.wedgeN * UTD_PI;
     if (phi > npi)
         phi = (phi - npi < 2.f * UTD_PI - phi) ? npi : T(0);
@@ -1782,7 +1832,8 @@ UTD_DINLINE void compute_pair_field_terms(PairInputsT<T> state, Vec3T<T> tgtPos,
 
     bool srcExt = wedge_exterior_mask(f3_sub(state.sourcePos, state.edgePos), state.edgeDir, state.n0, state.nn);
     T phi, phiP, s, sP, sb;
-    compute_edge_geometry_3d(state.sourcePos, state.edgePos, state.edgeDir, state.n0, tgtPos, phi, phiP, s, sP, sb);
+    compute_edge_geometry_3d(state.sourcePos, state.edgePos, state.edgeDir, state.n0, tgtPos, phi, phiP, s, sP, sb,
+                             state.sourceSide, state.targetSide);
 
     geomValid = srcExt && (sP > UTD_MIN_DISTANCE) && (s > UTD_MIN_DISTANCE);
     if (!geomValid)
@@ -1997,7 +2048,8 @@ UTD_DINLINE Complex3T<T> compute_pair_vector_contribution_faces(PairInputsT<T> s
 
     bool srcExt = wedge_exterior_mask(f3_sub(state.sourcePos, state.edgePos), state.edgeDir, state.n0, state.nn);
     T phi, phiP, s, sP, sb;
-    compute_edge_geometry_3d(state.sourcePos, state.edgePos, state.edgeDir, state.n0, tgtPos, phi, phiP, s, sP, sb);
+    compute_edge_geometry_3d(state.sourcePos, state.edgePos, state.edgeDir, state.n0, tgtPos, phi, phiP, s, sP, sb,
+                             state.sourceSide, state.targetSide);
     bool geomValid = srcExt && (sP > UTD_MIN_DISTANCE) && (s > UTD_MIN_DISTANCE);
     if (!geomValid)
         return c3_zero<T>();

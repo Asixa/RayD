@@ -371,6 +371,8 @@ template <typename Policy, typename Traverser> struct DiffractionAccumulationAlg
     RAYD_HOST_DEVICE static ::rayd::shared::diffraction::PairInputs load_coherent_pair_inputs(int sIdx) {
         namespace utd = ::rayd::shared::diffraction;
         utd::PairInputs p;
+        p.sourceSide = utd::make_f3(0.f, 0.f, 0.f);
+        p.targetSide = utd::make_f3(0.f, 0.f, 0.f);
         p.edgePos = utd::make_f3(Policy::params().utd_epx[sIdx], Policy::params().utd_epy[sIdx],
                                  Policy::params().utd_epz[sIdx]);
         p.edgeDir = utd::make_f3(Policy::params().utd_edx[sIdx], Policy::params().utd_edy[sIdx],
