@@ -348,3 +348,38 @@ both polarizations; the hard-polarized sides differ by more than 10 %) and
 `::test_grazing_face_side_names_the_one_face_a_ray_runs_along`. The Channel double-diffraction kernels set the hints
 from the frozen leg; the full-wave effect is recorded in Channel's design record for the sheet-side fix.
 Regenerated the diffraction_paths and diffraction_accumulation Dr.Jit PTX.
+
+## Amendment: the incident terms of a penetrable wedge (2026-11-11)
+
+**Context.** Channel's full-wave suite. Behind a dielectric or concrete wedge the caller's straight-through
+transmission paths carry `T E_i`, with `T` the thin-sheet wall product of the faces the ray crosses, so the GO field
+at the incident shadow boundary steps by `(I - T) E_i`. The pair's incident terms compensated `E_i`, as for an opaque
+wedge, so the total stepped by `T E_i` (`|T|` 0.69-0.88 of the LoS for a 2 cm eps_r 4 wall; `cube_dielectric_z` ISB
+p95 jump excess 4.45 dB).
+
+**Decision.** A face-coefficient provider may also describe transmission: `transmission_depth()` (the wall
+crossings the caller's transmission paths carry, 0 for none) and `transmission(face, material, cosTheta, out)` (the
+face wall's TE / TM coefficients and thickness, false for a face those paths cannot cross). For such a provider, on
+the stationary path with the direct source, `compute_pair_vector_at_angles_faces` adds `D_inc T` to the operator
+(`-D_inc (I - T)` in all). Here `T` (`wedge_incident_transmission`) is the wall product along the incident ray
+continued through the wedge, in the incident edge-fixed basis: `diag(tTE, tTM)` in each wall's s / p basis (`s`
+along `n x d`) times `exp(+j k d cos(theta))`.
+
+- A sheet is crossed once.
+- A wedge with one lit face is entered through it and left through the other.
+- With both or neither face lit, too many crossings, or a face that cannot be crossed, nothing is added.
+- The reflection terms are unchanged: no field of the transmission paths continues a reflection past the edge.
+
+`TransmittingFaceCoefficients` (`src/diffraction/face_coefficients.cuh`) gives the transmission sequence's own
+coefficient: the face's layer-store row through `stack_rt`, and the summed layer thickness. The order-1 export uses
+it on both tracers when `DfrPathParams::face_transmission_material` is set. So do the wedge field, its JVP and its
+VJP, whose forward-mode twin uses `stack_rt_dual` with angle and frequency tangents (the layer store is a constant of
+the companions, as for the face stack). It is selected by the optional
+`DiffractionFaceLayers::transmission_material` and `transmission_crossings`. Every other provider (half-space,
+layered, Dr.Jit, Channel's chain and double-diffraction providers) lacks the two members and is unchanged by
+construction; so is any pair without the table or with zero crossings. The Dr.Jit PTX regenerates byte-identical.
+
+**Evidence.** `tests/diffraction/diffraction_wedge_test.cpp::test_face_transmission_weights_incident_terms`: the
+field changes; one crossing for a two-wall wedge, or a face with row -1, is bitwise the unweighted coefficient; the
+source-position JVP matches the central difference of the weighted forward; JVP/VJP duality holds. Channel's design
+record `adr-0xx-fw-penetrable-wedge` holds the full-wave effect and the backend-parity, AD and boundary tests.

@@ -491,6 +491,64 @@ void test_face_layers_forward_and_ad() {
                    "face0 and face1 layers must be supplied together");
 }
 
+// With straight-through transmission paths the incident terms of a wedge lit on one face are weighted by (I - T):
+// the field changes; a crossing limit below the wedge's two walls, or a face those paths cannot cross, gives the
+// unweighted coefficient bit for bit; the JVP of the source position matches the weighted forward's central
+// difference and the JVP/VJP duality holds.
+void test_face_transmission_weights_incident_terms() {
+    auto plain = wedge_request(false);
+    const auto store = wedge_face_layers(0.006F, -1, {0.004F, 0.004F});
+    plain.face0_layers = store;
+    plain.face1_layers = store;
+    const auto rows = at::zeros({1}, store.layer_material.options());
+    auto weighted = plain;
+    for (auto* layers : {&weighted.face0_layers, &weighted.face1_layers}) {
+        (*layers)->transmission_material = rows;
+        (*layers)->transmission_crossings = 2;
+    }
+    const auto base = rayd::torch::field_diffraction_wedge(plain).field_vector;
+    const auto field = rayd::torch::field_diffraction_wedge(weighted).field_vector;
+    require((field - base).abs().max().item<float>() > 1.0e-2F * base.abs().max().item<float>(),
+            "transmitting faces must weight the incident terms");
+
+    auto shallow = weighted;
+    shallow.face0_layers->transmission_crossings = 1;
+    shallow.face1_layers->transmission_crossings = 1;
+    require(at::equal(rayd::torch::field_diffraction_wedge(shallow).field_vector, base),
+            "a crossing limit below the wedge's two walls must leave the coefficient unweighted");
+    auto blocked = weighted;
+    blocked.face0_layers->transmission_material = at::full({1}, -1, rows.options());
+    require(at::equal(rayd::torch::field_diffraction_wedge(blocked).field_vector, base),
+            "a face the transmission paths cannot cross must leave the coefficient unweighted");
+
+    const float step = 1.0e-3F;
+    const auto direction = at::tensor({0.3F, -0.5F, 0.2F}, plain.source.options()).reshape({1, 3});
+    auto plus = weighted;
+    plus.source = weighted.source + step * direction;
+    auto minus = weighted;
+    minus.source = weighted.source - step * direction;
+    const auto difference = (rayd::torch::field_diffraction_wedge(plus).field_vector -
+                             rayd::torch::field_diffraction_wedge(minus).field_vector) /
+                            (2.0F * step);
+    rayd::torch::DiffractionWedgeJvpRequest jvp;
+    jvp.primal = weighted;
+    jvp.tangent_source = direction;
+    const auto tangent = rayd::torch::field_diffraction_wedge_jvp(jvp).tangent_field_vector;
+    require((tangent - difference).abs().max().item<float>() <= 2.0e-2F * difference.abs().max().item<float>(),
+            "weighted wedge JVP must match the weighted forward's central difference");
+
+    rayd::torch::DiffractionWedgeBackwardRequest backward;
+    backward.primal = weighted;
+    backward.grad_field_vector = at::ones({1, 3}, plain.source.options().dtype(at::kComplexFloat));
+    backward.need_grad_geometry = true;
+    const auto gradients = rayd::torch::field_diffraction_wedge_backward(backward);
+    require(gradients.grad_source.has_value(), "weighted wedge backward must give a source gradient");
+    const double lhs = at::view_as_real(tangent).select(-1, 0).sum().item<double>();
+    const double rhs = (*gradients.grad_source * direction).sum().item<double>();
+    require(std::fabs(lhs - rhs) <= 1.0e-3 * std::max({1.0, std::fabs(lhs), std::fabs(rhs)}),
+            "weighted wedge JVP/VJP duality differs");
+}
+
 int main() {
     try {
         require(at::cuda::is_available(), "CUDA is required for wedge tests");
@@ -504,6 +562,8 @@ int main() {
         test_nondefault_stream_dependency();
         std::cout << "[RUN] test_face_layers_forward_and_ad\n";
         test_face_layers_forward_and_ad();
+        std::cout << "[RUN] test_face_transmission_weights_incident_terms\n";
+        test_face_transmission_weights_incident_terms();
         std::cout << "[RUN] test_invalid_row_short_circuits_poison\n";
         test_invalid_row_short_circuits_poison();
         std::cout << "rayd::torch pure-wedge direct contracts passed\n";

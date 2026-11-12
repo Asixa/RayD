@@ -1520,6 +1520,86 @@ UTD_DINLINE JonesOperatorT<T> pair_face_operator(const FaceCoefficients& coeffic
                                   state.edgeDir);
 }
 
+// Straight-through transmission of one wedge face along a ray: the TE / TM coefficients of the face's wall and the
+// wall's total thickness, which sets the thin-sheet carrier correction exp(+j k d cos(theta)).
+template <typename T> struct FaceTransmissionT {
+    ComplexT<T> tTE;
+    ComplexT<T> tTM;
+    float thicknessM;
+};
+
+// A face-coefficient provider that also has transmission_depth() and transmission(face, material, cosTheta, out)
+// describes faces that transmit: the caller's solve carries straight-through transmission paths with at most
+// transmission_depth() wall crossings, and transmission() gives a face's wall coefficients (false for a face those
+// paths cannot cross).
+template <typename FaceCoefficients, typename = void> struct transmits_through_wedge : std::false_type {};
+template <typename FaceCoefficients>
+struct transmits_through_wedge<FaceCoefficients,
+                               std::void_t<decltype(std::declval<const FaceCoefficients&>().transmission_depth())>>
+    : std::true_type {};
+
+template <typename T> UTD_DINLINE JonesOperatorT<T> jop_compose(JonesOperatorT<T> second, JonesOperatorT<T> first) {
+    return {cplx_add(cplx_mul(second.m00, first.m00), cplx_mul(second.m01, first.m10)),
+            cplx_add(cplx_mul(second.m00, first.m01), cplx_mul(second.m01, first.m11)),
+            cplx_add(cplx_mul(second.m10, first.m00), cplx_mul(second.m11, first.m10)),
+            cplx_add(cplx_mul(second.m10, first.m01), cplx_mul(second.m11, first.m11))};
+}
+
+// Jones operator, in the incident edge-fixed basis inEB, of the transmission paths' wall product along the incident
+// ray continued past the edge: diag(tTE, tTM) in each crossed wall's s / p basis (s along n x d) times the carrier
+// correction exp(+j k d cos(theta)) of each wall. Those paths carry this times the incident field just past the
+// incident shadow boundary. A sheet (n = 2) is crossed once; a wedge with one lit face is entered through it and left
+// through the other. Returns false, leaving `out` unset, when the boundary does not lie in the exterior (both or
+// neither face lit), when the crossings exceed the provider's depth, or when a crossed face does not transmit.
+template <typename T, typename FaceCoefficients>
+UTD_DINLINE bool wedge_incident_transmission(const FaceCoefficients& faces, const PairInputsT<T>& state,
+                                             Basis3T<T> inEB, T k, JonesOperatorT<T>& out) {
+    const int depth = faces.transmission_depth();
+    if (depth <= 0)
+        return false;
+    const Vec3T<T> d = inEB.k;
+    const float d0 = scalar_value(f3_dot(d, state.n0));
+    const float dn = scalar_value(f3_dot(d, state.nn));
+    int crossings[2] = {-1, -1};
+    int count = 0;
+    if (fabsf(scalar_value(state.wedgeN) - 2.f) < 1.0e-4f) {
+        crossings[count++] = 0;
+    } else if (d0 < 0.f && dn > 0.f) {
+        crossings[count++] = 0;
+        crossings[count++] = 1;
+    } else if (dn < 0.f && d0 > 0.f) {
+        crossings[count++] = 1;
+        crossings[count++] = 0;
+    } else {
+        return false;
+    }
+    if (count > depth)
+        return false;
+    JonesOperatorT<T> total = jop_identity<T>();
+    for (int i = 0; i < count; ++i) {
+        const int face = crossings[i];
+        const FaceMaterialParamsT<T>& material = face == 0 ? state.face0Material : state.face1Material;
+        const Vec3T<T> normal = face == 0 ? state.n0 : state.nn;
+        const T cosTheta = fminf(fmaxf(fabsf(f3_dot(d, normal)), T(UTD_SMALL_EPS)), T(1.f));
+        FaceTransmissionT<T> wall;
+        if (!(material.present > 0.5f) || !faces.transmission(face, material, cosTheta, wall))
+            return false;
+        const Vec3T<T> sAxis = safe_normalize(f3_cross(normal, d), inEB.u);
+        const Vec3T<T> pAxis = f3_cross(d, sAxis);
+        const ComplexT<T> carrier = cplx_exp_phase(k * T(wall.thicknessM) * cosTheta);
+        const ComplexT<T> te = cplx_mul(wall.tTE, carrier);
+        const ComplexT<T> tm = cplx_mul(wall.tTM, carrier);
+        const T su = f3_dot(sAxis, inEB.u), sv = f3_dot(sAxis, inEB.v);
+        const T pu = f3_dot(pAxis, inEB.u), pv = f3_dot(pAxis, inEB.v);
+        const ComplexT<T> cross = cplx_add(cplx_mul_real(te, su * sv), cplx_mul_real(tm, pu * pv));
+        const JonesOperatorT<T> wallOp = {cplx_add(cplx_mul_real(te, su * su), cplx_mul_real(tm, pu * pu)), cross,
+                                          cross, cplx_add(cplx_mul_real(te, sv * sv), cplx_mul_real(tm, pv * pv))};
+        total = jop_compose(wallOp, total);
+    }
+    out = total;
+    return true;
+}
+
 template <typename T>
 UTD_DINLINE JonesOperatorT<T> fallback_face_operator(JonesOperatorT<T> stored, Vec3T<T> normal, Vec3T<T> inHat,
                                                      Vec3T<T> outHat, Basis3T<T> inEdgeBasis, Basis3T<T> outEdgeBasis) {
@@ -2002,6 +2082,13 @@ UTD_DINLINE Complex3T<T> compute_pair_vector_at_angles_faces(PairInputsT<T> stat
                 : compute_op_terms_2d(safePhi, safePhiP, state.wedgeN, k, s, sP, T(1.f), truncEven);
     JonesOperatorT<T> directOp =
         assemble_diff_operator(cplx_mul_real(terms.direct, -1.f), terms.face0, terms.face1, f0Op, f1Op);
+    if constexpr (transmits_through_wedge<FaceCoefficients>::value) {
+        // Past the incident shadow boundary the caller's transmission paths carry T times the incident field, so the
+        // incident terms compensate the GO step (I - T) times it, not the whole incident field.
+        JonesOperatorT<T> transmitted;
+        if (selectedStationary && !externalIncident && wedge_incident_transmission(faces, state, inEB, k, transmitted))
+            directOp = jop_add(directOp, jop_scale(transmitted, terms.direct));
+    }
     ComplexT<T> slopeFactor = cplx(T(0), -1.f / k);
     JonesOperatorT<T> slopeOp =
         hasSlope ? assemble_diff_operator(cplx_mul(slopeFactor, cplx_mul_real(slopeTerms.directDphiPrime, -1.f)),

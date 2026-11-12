@@ -64,6 +64,13 @@ struct DiffractionFaceLayers {
     at::Tensor layer_eps_r;       // float32 [L]
     at::Tensor layer_sigma_e;     // float32 [L]
     at::Tensor layer_mu_r;        // float32 [L]
+    // When the caller's solve also carries straight-through transmission paths with at most transmission_crossings
+    // wall crossings, transmission_material (int32 [rows], like layer_material) is the layer-store row those paths
+    // cross each face with, -1 for a face they cannot cross. The incident-boundary terms then compensate only the GO
+    // step the paths leave, (I - T) times the incident field, T the wall product of the incident ray continued through
+    // the wedge. Absent (or zero crossings) leaves every coefficient unchanged.
+    std::optional<at::Tensor> transmission_material;
+    std::int64_t transmission_crossings = 0;
 };
 
 struct DiffractionPathConfig {

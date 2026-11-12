@@ -255,8 +255,9 @@ static __forceinline__ __device__ utd::FaceMaterialParams face_material_params(i
 }
 
 // Slab / layer-stack face coefficients of a state when the launch carries a face-layer table.
-static __forceinline__ __device__ shared::diffraction_faces::LayeredFaceCoefficients face_coefficients(int state_idx) {
-    shared::diffraction_faces::LayeredFaceCoefficients coefficients;
+static __forceinline__ __device__ shared::diffraction_faces::TransmittingFaceCoefficients face_coefficients(
+    int state_idx) {
+    shared::diffraction_faces::TransmittingFaceCoefficients coefficients;
     coefficients.layered = params.face_thickness_m != nullptr;
     coefficients.omega = params.omega;
     coefficients.frequency_hz = 299792458.0f / params.wavelength;
@@ -272,6 +273,14 @@ static __forceinline__ __device__ shared::diffraction_faces::LayeredFaceCoeffici
             if (prim >= 0 && prim < params.material_count) {
                 faces[face]->thickness_m = params.face_thickness_m[prim];
                 faces[face]->row = params.face_layer_material != nullptr ? params.face_layer_material[prim] : -1;
+            }
+        }
+        if (params.face_transmission_material != nullptr) {
+            coefficients.transmission_crossings = params.face_transmission_crossings;
+            int* rows[2] = {&coefficients.transmission_row0, &coefficients.transmission_row1};
+            for (int face = 0; face < 2; ++face) {
+                if (prims[face] >= 0 && prims[face] < params.material_count)
+                    *rows[face] = params.face_transmission_material[prims[face]];
             }
         }
     }

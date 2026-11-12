@@ -166,6 +166,11 @@ template <typename Params>
 struct has_face_layers<Params, std::void_t<decltype(std::declval<const Params&>().face_thickness_m)>> : std::true_type {
 };
 
+template <typename Params, typename = void> struct has_face_transmission : std::false_type {};
+template <typename Params>
+struct has_face_transmission<Params, std::void_t<decltype(std::declval<const Params&>().face_transmission_material)>>
+    : std::true_type {};
+
 template <typename Params, typename = void> struct has_isb_taper : std::false_type {};
 template <typename Params>
 struct has_isb_taper<Params, std::void_t<decltype(std::declval<const Params&>().isb_taper_width_scale)>>
@@ -229,7 +234,10 @@ RAYD_HOST_DEVICE utd::PairInputs direct_pair_inputs(const Params& params, int st
 // otherwise the half-space coefficient of the face materials.
 template <typename Params> RAYD_DEVICE auto paths_face_coefficients(const Params& params, int state_idx) {
     if constexpr (has_face_layers<Params>::value) {
-        ::rayd::shared::diffraction_faces::LayeredFaceCoefficients coefficients;
+        using Coefficients = std::conditional_t<has_face_transmission<Params>::value,
+                                                ::rayd::shared::diffraction_faces::TransmittingFaceCoefficients,
+                                                ::rayd::shared::diffraction_faces::LayeredFaceCoefficients>;
+        Coefficients coefficients;
         coefficients.layered = params.face_thickness_m != nullptr;
         coefficients.omega = params.omega;
         coefficients.frequency_hz = 299792458.0f / params.wavelength;
@@ -244,6 +252,16 @@ template <typename Params> RAYD_DEVICE auto paths_face_coefficients(const Params
                 if (prim >= 0 && prim < params.material_count) {
                     faces[face]->thickness_m = params.face_thickness_m[prim];
                     faces[face]->row = params.face_layer_material != nullptr ? params.face_layer_material[prim] : -1;
+                }
+            }
+            if constexpr (has_face_transmission<Params>::value) {
+                if (params.face_transmission_material != nullptr) {
+                    coefficients.transmission_crossings = params.face_transmission_crossings;
+                    int* rows[2] = {&coefficients.transmission_row0, &coefficients.transmission_row1};
+                    for (int face = 0; face < 2; ++face) {
+                        if (prims[face] >= 0 && prims[face] < params.material_count)
+                            *rows[face] = params.face_transmission_material[prims[face]];
+                    }
                 }
             }
         }

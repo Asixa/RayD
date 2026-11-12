@@ -45,6 +45,23 @@ RAYD_DEVICE bool face_stack(const FaceLayerStore& store, const FaceLayers& face,
     return em::layer_material_usable(view, store.layer_total);
 }
 
+// The wall a transmission path crosses a face with: layer-store row `row` (one or more usable layers).
+__device__ __forceinline__ bool face_wall(const FaceLayerStore& store, int row, em::LayerView& view) {
+    if (store.count == nullptr || row < 0 || row >= store.row_count || store.count[row] < 1)
+        return false;
+    view = {store.offset, store.count, store.thickness_m, store.eps_r, store.sigma_e, store.mu_r, row};
+    return em::layer_material_usable(view, store.layer_total);
+}
+
+// Total thickness of a wall, as the transmission paths sum it for their carrier correction.
+__device__ __forceinline__ float wall_thickness(const em::LayerView& view) {
+    float thickness = 0.f;
+    const int first = view.layer_offset[view.material];
+    for (int layer = 0; layer < view.layer_count[view.material]; ++layer)
+        thickness += fmaxf(view.layer_thickness_m[first + layer], 0.f);
+    return thickness;
+}
+
 // Reflection coefficients (s / p = s x k convention, gain included) of one face at an incidence cosine.
 RAYD_DEVICE utd::FaceFresnelT<float> face_fresnel(const FaceLayerStore& store, const FaceLayers& face,
                                                   const utd::FaceMaterialParams& material, float cos_theta,
@@ -80,6 +97,29 @@ struct LayeredFaceCoefficients {
         if (!layered)
             return utd::HalfSpaceFaceCoefficients<float>{omega}(face, material, cos_theta);
         return face_fresnel(store, face == 0 ? face0 : face1, material, cos_theta, frequency_hz);
+    }
+};
+
+// The layered provider of a caller whose solve also carries straight-through transmission paths (with at most
+// `transmission_crossings` wall crossings): each face also names the layer-store row those paths cross it with
+// (-1 for a face they cannot cross), so the pair's incident terms compensate only the GO step the paths leave (see
+// utd::wedge_incident_transmission).
+struct TransmittingFaceCoefficients : LayeredFaceCoefficients {
+    int transmission_crossings = 0;
+    int transmission_row0 = -1;
+    int transmission_row1 = -1;
+
+    __device__ __forceinline__ int transmission_depth() const { return layered ? transmission_crossings : 0; }
+    // The face's wall transmission as the transmission paths evaluate it (TE and TM of its layer-store row).
+    __device__ __forceinline__ bool transmission(int face, const utd::FaceMaterialParams&, float cos_theta,
+                                                 utd::FaceTransmissionT<float>& out) const {
+        em::LayerView view;
+        if (!face_wall(store, face == 0 ? transmission_row0 : transmission_row1, view))
+            return false;
+        out.tTE = em::stack_rt(cos_theta, view, frequency_hz, em::kPolTE).t;
+        out.tTM = em::stack_rt(cos_theta, view, frequency_hz, em::kPolTM).t;
+        out.thicknessM = wall_thickness(view);
+        return true;
     }
 };
 

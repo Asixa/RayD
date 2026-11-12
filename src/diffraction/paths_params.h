@@ -124,6 +124,11 @@ struct DfrPathParams {
     const float* face_layer_mu_r;
     int face_layer_rows;
     int64_t face_layer_total;
+    // Optional layer-store row (rows like the material rows, -1: cannot be crossed) with which the caller's
+    // straight-through transmission paths cross each face, and their wall-crossing limit. Null keeps every
+    // incident-boundary term unweighted.
+    const int* face_transmission_material;
+    int face_transmission_crossings;
 
     float wavelength;
     float k;

@@ -12,6 +12,7 @@
 #include <src/diffraction/face_coefficients.cuh>
 #include <src/field_transport_ad.cuh>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <utility>
@@ -50,6 +51,10 @@ struct WedgeFaceLayerArgs {
     const float* thickness1 = nullptr;
     const int* layer0 = nullptr;
     const int* layer1 = nullptr;
+    // Layer-store rows the transmission paths cross each face with (null: the solve has no transmission paths).
+    const int* transmission0 = nullptr;
+    const int* transmission1 = nullptr;
+    int transmission_crossings = 0;
     faces::FaceLayerStore store;
 };
 
@@ -127,6 +132,9 @@ struct WedgeRowInputs {
     faces::FaceLayerStore store;
     faces::FaceLayers face0_layers;
     faces::FaceLayers face1_layers;
+    int transmission_crossings;
+    int transmission_row0;
+    int transmission_row1;
 };
 
 struct WedgeRowSeeds {
@@ -251,7 +259,12 @@ __device__ __forceinline__ field::ComplexT<Dual> from_dual_c(ad::DualC value) {
 template <typename T> struct WedgeFaceCoefficients;
 
 template <> struct WedgeFaceCoefficients<float> {
-    faces::LayeredFaceCoefficients base;
+    faces::TransmittingFaceCoefficients base;
+    __device__ __forceinline__ int transmission_depth() const { return base.transmission_depth(); }
+    __device__ __forceinline__ bool transmission(int face, const field::FaceMaterialParamsT<float>& material,
+                                                 float cos_theta, field::FaceTransmissionT<float>& out) const {
+        return base.transmission(face, material, cos_theta, out);
+    }
     __device__ __forceinline__ bool evaluates(int face, const field::FaceMaterialParamsT<float>& material) const {
         return base.evaluates(face, material);
     }
@@ -263,10 +276,28 @@ template <> struct WedgeFaceCoefficients<float> {
 };
 
 template <> struct WedgeFaceCoefficients<Dual> {
-    faces::LayeredFaceCoefficients base;
+    faces::TransmittingFaceCoefficients base;
     Dual frequency;
     __device__ __forceinline__ bool evaluates(int, const field::FaceMaterialParamsT<Dual>& material) const {
         return material.present > 0.5f && base.omega > 0.f;
+    }
+    __device__ __forceinline__ int transmission_depth() const { return base.transmission_depth(); }
+    // The float provider's wall transmission in forward mode: the angle and frequency carry tangents; the wall's
+    // layers, read from the layer store like the face stack, are constants of the companions.
+    __device__ __forceinline__ bool transmission(int face, const field::FaceMaterialParamsT<Dual>&, Dual cos_theta,
+                                                 field::FaceTransmissionT<Dual>& out) const {
+        rayd::shared::transmission::LayerView view;
+        if (!faces::face_wall(base.store, face == 0 ? base.transmission_row0 : base.transmission_row1, view))
+            return false;
+        const auto seed = [](int) { return ad::LayerSeed{0.f, 0.f, 0.f}; };
+        const ad::DualStackRT te = ad::stack_rt_dual(cos_theta.v, view, frequency.v, cos_theta.d, frequency.d,
+                                                     rayd::shared::transmission::kPolTE, seed);
+        const ad::DualStackRT tm = ad::stack_rt_dual(cos_theta.v, view, frequency.v, cos_theta.d, frequency.d,
+                                                     rayd::shared::transmission::kPolTM, seed);
+        out.tTE = from_dual_c(te.t);
+        out.tTM = from_dual_c(tm.t);
+        out.thicknessM = faces::wall_thickness(view);
+        return true;
     }
     __device__ __forceinline__ field::FaceFresnelT<Dual> operator()(int face,
                                                                     const field::FaceMaterialParamsT<Dual>& material,
@@ -312,6 +343,9 @@ __device__ WedgeFaceCoefficients<float> wedge_face_coefficients<float>(const Wed
     out.base.face1 = in.face1_layers;
     out.base.omega = 2.0f * field::UTD_PI * frequency;
     out.base.frequency_hz = frequency;
+    out.base.transmission_crossings = in.transmission_crossings;
+    out.base.transmission_row0 = in.transmission_row0;
+    out.base.transmission_row1 = in.transmission_row1;
     return out;
 }
 
@@ -324,6 +358,9 @@ __device__ WedgeFaceCoefficients<Dual> wedge_face_coefficients<Dual>(const Wedge
     out.base.face1 = in.face1_layers;
     out.base.omega = 2.0f * field::UTD_PI * frequency.v;
     out.base.frequency_hz = frequency.v;
+    out.base.transmission_crossings = in.transmission_crossings;
+    out.base.transmission_row0 = in.transmission_row0;
+    out.base.transmission_row1 = in.transmission_row1;
     out.frequency = frequency;
     return out;
 }
@@ -452,9 +489,17 @@ __device__ __forceinline__ WedgeRowInputs load_wedge_row(
     }
     in.layered = face_layers.thickness0 != nullptr;
     in.store = face_layers.store;
+    in.transmission_crossings = 0;
+    in.transmission_row0 = -1;
+    in.transmission_row1 = -1;
     if (in.layered) {
         in.face0_layers = {face_layers.thickness0[index], face_layers.layer0[index]};
         in.face1_layers = {face_layers.thickness1[index], face_layers.layer1[index]};
+        if (face_layers.transmission0 != nullptr) {
+            in.transmission_row0 = face_layers.transmission0[index];
+            in.transmission_row1 = face_layers.transmission1[index];
+            in.transmission_crossings = face_layers.transmission_crossings;
+        }
     }
     return in;
 }
@@ -835,6 +880,24 @@ WedgeFaceLayerArgs wedge_face_layers(const rayd::torch::DiffractionWedgeRequest&
     args.thickness1 = tables[1]->thickness_m.data_ptr<float>();
     args.layer0 = tables[0]->layer_material.data_ptr<int>();
     args.layer1 = tables[1]->layer_material.data_ptr<int>();
+    TORCH_CHECK(tables[0]->transmission_material.has_value() == tables[1]->transmission_material.has_value() &&
+                    tables[0]->transmission_crossings == tables[1]->transmission_crossings,
+                "face0_layers and face1_layers must carry the same transmission paths");
+    TORCH_CHECK(tables[0]->transmission_crossings >= 0, "face_layers.transmission_crossings must be non-negative");
+    if (tables[0]->transmission_material.has_value() && tables[0]->transmission_crossings > 0) {
+        for (const rayd::torch::DiffractionFaceLayers* table : tables) {
+            const at::Tensor& rows = *table->transmission_material;
+            rayd::torch_backend::require_cuda(rows, "face_layers.transmission_material");
+            rayd::torch_backend::require_contiguous(rows, "face_layers.transmission_material");
+            rayd::torch_backend::require_dtype(rows, at::kInt, "face_layers.transmission_material");
+            rayd::torch_backend::require_rank(rows, 1, "face_layers.transmission_material");
+            require_same_device(rows, request.source, "face_layers.transmission_material");
+            require_rows(rows, count, "face_layers.transmission_material");
+        }
+        args.transmission0 = tables[0]->transmission_material->data_ptr<int>();
+        args.transmission1 = tables[1]->transmission_material->data_ptr<int>();
+        args.transmission_crossings = static_cast<int>(std::min<int64_t>(tables[0]->transmission_crossings, 8));
+    }
     args.store = {tables[0]->layer_offset.data_ptr<int>(),           tables[0]->layer_count.data_ptr<int>(),
                   tables[0]->layer_thickness_m.data_ptr<float>(),    tables[0]->layer_eps_r.data_ptr<float>(),
                   tables[0]->layer_sigma_e.data_ptr<float>(),        tables[0]->layer_mu_r.data_ptr<float>(),

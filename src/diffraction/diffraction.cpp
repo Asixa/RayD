@@ -470,6 +470,14 @@ void require_face_layers(const rayd::torch::DiffractionFaceLayers& layers, int64
          {&layers.thickness_m, &layers.layer_material, &layers.layer_offset, &layers.layer_count,
           &layers.layer_thickness_m, &layers.layer_eps_r, &layers.layer_sigma_e, &layers.layer_mu_r})
         require_scene_device(scene, *tensor, "face_layers");
+    if (layers.transmission_crossings < 0)
+        throw std::runtime_error("face_layers.transmission_crossings must be non-negative.");
+    if (layers.transmission_material.has_value()) {
+        require_flat_i32(*layers.transmission_material, "face_layers.transmission_material");
+        if (layers.transmission_material->size(0) != rows)
+            throw std::runtime_error("face_layers.transmission_material must have one row per material row.");
+        require_scene_device(scene, *layers.transmission_material, "face_layers.transmission_material");
+    }
 }
 
 DiffractionPathOutputs diffraction_paths_order1_forward_impl(
@@ -746,6 +754,11 @@ DiffractionPathOutputs diffraction_paths_order1_forward_impl(
         params.face_layer_mu_r = face_layers->layer_mu_r.data_ptr<float>();
         params.face_layer_rows = checked_i32(face_layers->layer_offset.size(0), "face_layer_rows");
         params.face_layer_total = face_layers->layer_thickness_m.size(0);
+        if (face_layers->transmission_material.has_value() && face_layers->transmission_crossings > 0) {
+            params.face_transmission_material = face_layers->transmission_material->data_ptr<int>();
+            params.face_transmission_crossings =
+                static_cast<int>(std::min<int64_t>(face_layers->transmission_crossings, 8));
+        }
     }
     params.wavelength = static_cast<float>(wavelength);
     params.k = static_cast<float>(2.0 * 3.14159265358979323846 / wavelength);
