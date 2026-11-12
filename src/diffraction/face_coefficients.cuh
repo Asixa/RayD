@@ -46,7 +46,7 @@ RAYD_DEVICE bool face_stack(const FaceLayerStore& store, const FaceLayers& face,
 }
 
 // The wall a transmission path crosses a face with: layer-store row `row` (one or more usable layers).
-__device__ __forceinline__ bool face_wall(const FaceLayerStore& store, int row, em::LayerView& view) {
+RAYD_DEVICE bool face_wall(const FaceLayerStore& store, int row, em::LayerView& view) {
     if (store.count == nullptr || row < 0 || row >= store.row_count || store.count[row] < 1)
         return false;
     view = {store.offset, store.count, store.thickness_m, store.eps_r, store.sigma_e, store.mu_r, row};
@@ -54,7 +54,7 @@ __device__ __forceinline__ bool face_wall(const FaceLayerStore& store, int row, 
 }
 
 // Total thickness of a wall, as the transmission paths sum it for their carrier correction.
-__device__ __forceinline__ float wall_thickness(const em::LayerView& view) {
+RAYD_DEVICE float wall_thickness(const em::LayerView& view) {
     float thickness = 0.f;
     const int first = view.layer_offset[view.material];
     for (int layer = 0; layer < view.layer_count[view.material]; ++layer)
@@ -109,10 +109,10 @@ struct TransmittingFaceCoefficients : LayeredFaceCoefficients {
     int transmission_row0 = -1;
     int transmission_row1 = -1;
 
-    __device__ __forceinline__ int transmission_depth() const { return layered ? transmission_crossings : 0; }
+    RAYD_DEVICE int transmission_depth() const { return layered ? transmission_crossings : 0; }
     // The face's wall transmission as the transmission paths evaluate it (TE and TM of its layer-store row).
-    __device__ __forceinline__ bool transmission(int face, const utd::FaceMaterialParams&, float cos_theta,
-                                                 utd::FaceTransmissionT<float>& out) const {
+    RAYD_DEVICE bool transmission(int face, const utd::FaceMaterialParams&, float cos_theta,
+                                  utd::FaceTransmissionT<float>& out) const {
         em::LayerView view;
         if (!face_wall(store, face == 0 ? transmission_row0 : transmission_row1, view))
             return false;

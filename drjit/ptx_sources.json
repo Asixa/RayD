@@ -119,8 +119,8 @@
       "header": "generated/drjit/ptx/diffraction_paths_ptx.h",
       "header_sha256": "e62cfe436e9d7a93a2ed112130b2d5c14132df5d75abd56c74e00b8c222af65b",
       "option": "RAYD_REGENERATE_DIFFRACTION_PATHS_PTX",
-      "regeneration_verified": false,
-      "source_sha256": "b7a3656485d1ab0b3fa866eac97f8ea9ed67b15a54b40ea1a18f99dfd093d7d2",
+      "regeneration_verified": true,
+      "source_sha256": "eacaf7c37b099ddeee382449de699f9bad0c4bd7a7461e5240d94e2a52f224d4",
       "sources": [
         "include/rayd/contracts.h",
         "include/rayd/field_transport.cuh",
