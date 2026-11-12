@@ -2,6 +2,28 @@
 
 All notable changes to RayD are documented in this file.
 
+## [0.10.2] - 2026-11-12
+
+The Python API and the typed C++ integration boundary (API version 8) are unchanged; every change below is a
+numerical fix or an additive typed input. Diffraction values move only for the inputs named below.
+
+### Added
+
+- Penetrable-wedge transmission rows (ADR-0047 amendment): `DiffractionFaceLayers` optionally carries
+  `transmission_material` (per-face transmission layer-store rows) and `transmission_crossings`. With them the pair's
+  incident terms take `D_inc (I - T)`, where `T` is the straight-through wall product of the incident ray continued
+  through the wedge, so a thin wall's incident term compensates only the field the wall blocks. Without those rows
+  every pair is unchanged bit for bit. The order-1 OptiX launch parameters keep their former size.
+
+### Fixed
+
+- Rays grazing a sheet (ADR-0047 amendment): a source or target in the plane of a sheet now takes the side named by
+  the other end of the ray (`PairInputs` `sourceSide`/`targetSide` hints, from `grazing_face_side`), so a
+  double-diffraction leg along a plate is evaluated on the side the junction wedge receives it. Pairs without hints
+  are unchanged.
+- The diffraction face-coefficient headers compile again in the host-only compile of the shared algorithm headers.
+- The committed Dr.Jit `diffraction_paths` and `diffraction_accumulation` PTX are regenerated.
+
 ## [0.10.1] - 2026-11-11
 
 The Python API and the typed C++ integration boundary (API version 8) are unchanged; every change below is a

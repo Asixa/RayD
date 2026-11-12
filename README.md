@@ -51,7 +51,7 @@ as above so pip keeps it instead of resolving `torch` from PyPI. The exact
 `drjit` pin can conflict with an environment that already holds another Dr.Jit
 release, such as one installed with Mitsuba; install `rayd-torch` alone there.
 
-All three distributions share version `0.10.1`. The `rayd` meta-distribution
+All three distributions share version `0.10.2`. The `rayd` meta-distribution
 pins `rayd-drjit` and `rayd-torch` to exactly the same version.
 
 Release artifacts cover CPython 3.10 through 3.14 on Windows x86-64 and
