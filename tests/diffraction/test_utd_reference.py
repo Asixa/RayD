@@ -325,8 +325,10 @@ class UtdReferenceTests(unittest.TestCase):
         # value 1e-3 deg away to 0.5 %.
         for boundary in (120.0, 240.0):
             for hard in (False, True):
-                far = {side: self._field(2.0, 60.0, boundary + side * 1.0e-3, 40.0, 12.0, 400.0, hard, HALF_PLANE)
-                       for side in (-1.0, 1.0)}
+                far = {
+                    side: self._field(2.0, 60.0, boundary + side * 1.0e-3, 40.0, 12.0, 400.0, hard, HALF_PLANE)
+                    for side in (-1.0, 1.0)
+                }
                 for side in (-1.0, 1.0):
                     for offset in (1.0e-4, 3.0e-4):
                         near = self._field(2.0, 60.0, boundary + side * offset, 40.0, 12.0, 400.0, hard, HALF_PLANE)
@@ -341,7 +343,9 @@ class UtdReferenceTests(unittest.TestCase):
             for pol in ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.6, 0.0, 0.8)):
                 out = subprocess.run(
                     [self._exe, "j", "5.24", "0.123", str(zs), str(zr), *(str(v) for v in pol)],
-                    capture_output=True, text=True, check=True,
+                    capture_output=True,
+                    text=True,
+                    check=True,
                 ).stdout
                 with self.subTest(zs=zs, zr=zr, pol=pol):
                     self.assertLess(float(out), 0.02)
