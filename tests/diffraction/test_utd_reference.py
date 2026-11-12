@@ -234,8 +234,13 @@ class UtdReferenceTests(unittest.TestCase):
         return complex(re, im)
 
     def _sided_field(self, source_side, target_side, n, phi_p, phi, s_p, s, half, hard, geometry):
-        args = [self._exe, "s", str(source_side), str(target_side),
-                *(str(v) for v in (n, phi_p, phi, s_p, s, half, int(hard), *geometry))]
+        args = [
+            self._exe,
+            "s",
+            str(source_side),
+            str(target_side),
+            *(str(v) for v in (n, phi_p, phi, s_p, s, half, int(hard), *geometry)),
+        ]
         re, im = (float(v) for v in subprocess.run(args, capture_output=True, text=True, check=True).stdout.split())
         return complex(re, im)
 
@@ -373,8 +378,10 @@ class UtdReferenceTests(unittest.TestCase):
                 self.assertLess(abs(src_up - src_above), 1.0e-2 * src_scale)
                 self.assertLess(abs(src_down - src_below), 1.0e-2 * src_scale)
         # A hint never moves a ray that is off the plane.
-        self.assertEqual(self._field(2.0, 60.0, 30.0, 40.0, 12.0, 400.0, True, HALF_PLANE),
-                         self._sided_field(0.0, -1.0, 2.0, 60.0, 30.0, 40.0, 12.0, 400.0, True, HALF_PLANE))
+        self.assertEqual(
+            self._field(2.0, 60.0, 30.0, 40.0, 12.0, 400.0, True, HALF_PLANE),
+            self._sided_field(0.0, -1.0, 2.0, 60.0, 30.0, 40.0, 12.0, 400.0, True, HALF_PLANE),
+        )
 
     def test_grazing_face_side_names_the_one_face_a_ray_runs_along(self):
         # 270-degree wedge: face 0 runs along +x (normal +y), face n along -y (normal -x); edge +z.
