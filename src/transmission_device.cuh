@@ -6,6 +6,12 @@
 #include "rayd/math.h"
 #include "rayd/utd.h"
 
+#if !defined(__CUDACC__)
+#include <cmath>
+// The host-only compile of the shared algorithm headers finds the CUDA global isfinite here.
+using std::isfinite;
+#endif
+
 // Homogeneous isotropic medium parameters (contract section 2).
 //
 // Complex relative permittivity: eps_r_c = eps_r' - j*sigma_e/(omega*eps0)
@@ -25,7 +31,7 @@ struct Medium {
     utd::Complex k;       // wave number, passive branch [rad/m]
 };
 
-__device__ __forceinline__ Medium make_medium(float eps_r, float sigma_e, float mu_r, float omega) {
+RAYD_DEVICE Medium make_medium(float eps_r, float sigma_e, float mu_r, float omega) {
     Medium medium;
     const float safe_omega = fmaxf(omega, utd::UTD_SMALL_EPS);
     medium.eps_abs =
@@ -35,7 +41,7 @@ __device__ __forceinline__ Medium make_medium(float eps_r, float sigma_e, float 
     return medium;
 }
 
-__device__ __forceinline__ Medium vacuum_medium(float omega) {
+RAYD_DEVICE Medium vacuum_medium(float omega) {
     Medium medium;
     medium.eps_abs = utd::cplx(kVacuumPermittivity, 0.0f);
     medium.mu_abs = utd::cplx(kVacuumPermeability, 0.0f);
@@ -66,23 +72,23 @@ struct InterfaceRT {
     utd::Complex t;
 };
 
-__device__ __forceinline__ utd::Complex kz_from_kpar(utd::Complex k, float k_par) {
+RAYD_DEVICE utd::Complex kz_from_kpar(utd::Complex k, float k_par) {
     return c_sqrt_passive(utd::cplx_sub(utd::cplx_mul(k, k), utd::cplx(k_par * k_par, 0.0f)));
 }
 
-__device__ __forceinline__ utd::Complex admittance_te(const Medium& medium, utd::Complex k_z, float omega) {
+RAYD_DEVICE utd::Complex admittance_te(const Medium& medium, utd::Complex k_z, float omega) {
     return c_div(k_z, utd::cplx_mul_real(medium.mu_abs, omega));
 }
 
-__device__ __forceinline__ utd::Complex admittance_tm(const Medium& medium, utd::Complex k_z, float omega) {
+RAYD_DEVICE utd::Complex admittance_tm(const Medium& medium, utd::Complex k_z, float omega) {
     return c_div(utd::cplx_mul_real(medium.eps_abs, omega), k_z);
 }
 
-__device__ __forceinline__ utd::Complex admittance(const Medium& medium, utd::Complex k_z, float omega, int pol) {
+RAYD_DEVICE utd::Complex admittance(const Medium& medium, utd::Complex k_z, float omega, int pol) {
     return pol == kPolTE ? admittance_te(medium, k_z, omega) : admittance_tm(medium, k_z, omega);
 }
 
-__device__ __forceinline__ InterfaceRT interface_rt(utd::Complex y1, utd::Complex y2) {
+RAYD_DEVICE InterfaceRT interface_rt(utd::Complex y1, utd::Complex y2) {
     const utd::Complex denom = utd::cplx_add(y1, y2);
     InterfaceRT out;
     out.r = c_div(utd::cplx_sub(y1, y2), denom);
@@ -147,7 +153,7 @@ struct LayerView {
 // out-of-range material id, consistently in primal, backward and JVP.
 // Negative, oversized or overflowing offset/count values and NaN/Inf layer
 // parameters are therefore never read through or silently clamped.
-__device__ __forceinline__ bool layer_material_usable(const LayerView& layers, int64_t layer_total) {
+RAYD_DEVICE bool layer_material_usable(const LayerView& layers, int64_t layer_total) {
     const int offset = layers.layer_offset[layers.material];
     const int count = layers.layer_count[layers.material];
     if (offset < 0 || count < 0 || static_cast<int64_t>(offset) + static_cast<int64_t>(count) > layer_total)
@@ -174,7 +180,7 @@ struct StackRT {
 // exponential; strong decay (|Im(k_z)|*d large, e.g. sigma_e up to 1e9 S/m
 // with thickness up to 10 m) underflows expf to 0 cleanly instead of
 // overflowing anywhere in the recursion.
-__device__ __forceinline__ utd::Complex layer_one_way_phase(utd::Complex k_z, float thickness_m) {
+RAYD_DEVICE utd::Complex layer_one_way_phase(utd::Complex k_z, float thickness_m) {
     const float amplitude = expf(fminf(k_z.im * thickness_m, 0.0f));
     const utd::Complex phasor = c_exp_neg_j(static_cast<double>(k_z.re) * static_cast<double>(thickness_m));
     return utd::cplx_mul_real(phasor, amplitude);
@@ -183,7 +189,7 @@ __device__ __forceinline__ utd::Complex layer_one_way_phase(utd::Complex k_z, fl
 // Evaluate the full vacuum | layers | vacuum stack at incidence angle
 // cos_theta_i (entry-medium angle; k_par = k0*sin(theta_i) is conserved).
 // Zero-layer materials are transparent: r = 0, t = 1.
-__device__ __forceinline__ StackRT stack_rt(float cos_theta_i, const LayerView& layers, float frequency_hz, int pol) {
+RAYD_DEVICE StackRT stack_rt(float cos_theta_i, const LayerView& layers, float frequency_hz, int pol) {
     const float omega = fmaxf(2.0f * utd::UTD_PI * frequency_hz, utd::UTD_SMALL_EPS);
     const float ct = fminf(fmaxf(fabsf(cos_theta_i), utd::UTD_SMALL_EPS), 1.0f);
     const float sin2 = fmaxf(0.0f, 1.0f - ct * ct);

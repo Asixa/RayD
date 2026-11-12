@@ -38,7 +38,7 @@ struct FaceLayers {
     int row = -1;
 };
 
-__device__ __forceinline__ bool face_stack(const FaceLayerStore& store, const FaceLayers& face, em::LayerView& view) {
+RAYD_DEVICE bool face_stack(const FaceLayerStore& store, const FaceLayers& face, em::LayerView& view) {
     if (store.count == nullptr || face.row < 0 || face.row >= store.row_count || store.count[face.row] < 2)
         return false;
     view = {store.offset, store.count, store.thickness_m, store.eps_r, store.sigma_e, store.mu_r, face.row};
@@ -46,9 +46,9 @@ __device__ __forceinline__ bool face_stack(const FaceLayerStore& store, const Fa
 }
 
 // Reflection coefficients (s / p = s x k convention, gain included) of one face at an incidence cosine.
-__device__ __forceinline__ utd::FaceFresnelT<float> face_fresnel(const FaceLayerStore& store, const FaceLayers& face,
-                                                                 const utd::FaceMaterialParams& material,
-                                                                 float cos_theta, float frequency_hz) {
+RAYD_DEVICE utd::FaceFresnelT<float> face_fresnel(const FaceLayerStore& store, const FaceLayers& face,
+                                                  const utd::FaceMaterialParams& material, float cos_theta,
+                                                  float frequency_hz) {
     utd::FaceFresnelT<float> out;
     em::LayerView view;
     if (face_stack(store, face, view)) {
@@ -72,11 +72,11 @@ struct LayeredFaceCoefficients {
     float omega = 0.f;
     float frequency_hz = 0.f;
 
-    __device__ __forceinline__ bool evaluates(int, const utd::FaceMaterialParams& material) const {
+    RAYD_DEVICE bool evaluates(int, const utd::FaceMaterialParams& material) const {
         return material.present > 0.5f && omega > 0.f;
     }
-    __device__ __forceinline__ utd::FaceFresnelT<float> operator()(int face, const utd::FaceMaterialParams& material,
-                                                                   float cos_theta) const {
+    RAYD_DEVICE utd::FaceFresnelT<float> operator()(int face, const utd::FaceMaterialParams& material,
+                                                    float cos_theta) const {
         if (!layered)
             return utd::HalfSpaceFaceCoefficients<float>{omega}(face, material, cos_theta);
         return face_fresnel(store, face == 0 ? face0 : face1, material, cos_theta, frequency_hz);

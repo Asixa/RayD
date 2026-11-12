@@ -5,19 +5,26 @@
 
 #include <rayd/utd.h>
 
+// Kept out of line on the device; the host-only compile of the shared algorithm headers sees a plain inline function.
+#if defined(__CUDACC__)
+#define RAYD_FIELD_TRANSPORT_NOINLINE inline __device__ __noinline__
+#else
+#define RAYD_FIELD_TRANSPORT_NOINLINE inline
+#endif
+
 namespace rayd::shared::field_transport {
 
 namespace utd = ::rayd::shared::diffraction;
 constexpr float kSpeedOfLight = 299792458.0f;
 
-__device__ __forceinline__ float precise_neg_kd(float wave_number, float distance) {
+RAYD_DEVICE float precise_neg_kd(float wave_number, float distance) {
     const double phase =
         fmod(static_cast<double>(wave_number) * static_cast<double>(distance), 6.283185307179586476925287);
     return -static_cast<float>(phase);
 }
 
-__device__ __forceinline__ utd::Complex3 free_space_complex3(utd::float3a source, utd::float3a target,
-                                                             float wave_number, utd::float3a polarization) {
+RAYD_DEVICE utd::Complex3 free_space_complex3(utd::float3a source, utd::float3a target, float wave_number,
+                                              utd::float3a polarization) {
     const utd::float3a offset = utd::f3_sub(target, source);
     const float distance = utd::safe_length(offset);
     const utd::float3a direction = utd::safe_normalize(offset, utd::make_f3(0.0f, 0.0f, 1.0f));
@@ -29,8 +36,7 @@ __device__ __forceinline__ utd::Complex3 free_space_complex3(utd::float3a source
     return utd::cplx_scale_real(axis, utd::cplx_mul_real(phase, amplitude));
 }
 
-__device__ __forceinline__ utd::Complex project_receiver(utd::Complex3 value, utd::float3a direction,
-                                                         utd::float3a polarization) {
+RAYD_DEVICE utd::Complex project_receiver(utd::Complex3 value, utd::float3a direction, utd::float3a polarization) {
     // F1: coherent receiver scalar = p_rx . E. E is transverse, so projecting
     // onto the unnormalized transverse of p_rx equals the raw dot with p_rx
     // and keeps the receiver-side sin(theta) pattern weight.
@@ -39,7 +45,7 @@ __device__ __forceinline__ utd::Complex project_receiver(utd::Complex3 value, ut
                          utd::cplx_mul_real(value.z, axis.z));
 }
 
-__device__ __forceinline__ utd::Complex exp_neg_2i(utd::Complex value) {
+RAYD_DEVICE utd::Complex exp_neg_2i(utd::Complex value) {
     const float amplitude = expf(fminf(2.0f * value.im, 80.0f));
     float sine;
     float cosine;
@@ -48,9 +54,9 @@ __device__ __forceinline__ utd::Complex exp_neg_2i(utd::Complex value) {
 }
 
 // This path preserves the original operation order used by the radiomap estimator.
-__device__ __forceinline__ void legacy_interface_fresnel(float cos_theta_in, float eps_r, float sigma_e, float mu_r,
-                                                         float omega, float vacuum_permittivity, float epsilon,
-                                                         utd::Complex& r_te, utd::Complex& r_tm) {
+RAYD_DEVICE void legacy_interface_fresnel(float cos_theta_in, float eps_r, float sigma_e, float mu_r, float omega,
+                                          float vacuum_permittivity, float epsilon, utd::Complex& r_te,
+                                          utd::Complex& r_tm) {
     const float cos_theta = fminf(fmaxf(cos_theta_in, epsilon), 1.0f);
     const float sin2 = fmaxf(0.0f, 1.0f - cos_theta * cos_theta);
     const LegacySlabComplex eta = {eps_r, -sigma_e / (omega * vacuum_permittivity)};
@@ -63,9 +69,8 @@ __device__ __forceinline__ void legacy_interface_fresnel(float cos_theta_in, flo
     r_tm = utd::cplx(result_tm.re, result_tm.im);
 }
 
-__device__ __forceinline__ void legacy_slab_fresnel(float cos_theta, float eps_r, float sigma_e, float gain,
-                                                    float thickness, float wavelength, utd::Complex& r_te,
-                                                    utd::Complex& r_tm) {
+RAYD_DEVICE void legacy_slab_fresnel(float cos_theta, float eps_r, float sigma_e, float gain, float thickness,
+                                     float wavelength, utd::Complex& r_te, utd::Complex& r_tm) {
     const float omega = 2.0f * utd::UTD_PI * kSpeedOfLight / fmaxf(wavelength, utd::UTD_SMALL_EPS);
     const LegacySlabComplex eta = {fmaxf(eps_r, utd::UTD_SMALL_EPS),
                                    -fmaxf(sigma_e, 0.0f) / (omega * utd::UTD_EPSILON_0)};
@@ -93,9 +98,8 @@ __device__ __forceinline__ void legacy_slab_fresnel(float cos_theta, float eps_r
     r_tm = utd::cplx(result_tm.re, result_tm.im);
 }
 
-__device__ __forceinline__ void slab_fresnel(float cos_theta, float eps_r, float sigma_e, float mu_r, float gain,
-                                             float thickness, float frequency_hz, utd::Complex& r_te,
-                                             utd::Complex& r_tm) {
+RAYD_DEVICE void slab_fresnel(float cos_theta, float eps_r, float sigma_e, float mu_r, float gain, float thickness,
+                              float frequency_hz, utd::Complex& r_te, utd::Complex& r_tm) {
     const float omega = fmaxf(2.0f * utd::UTD_PI * frequency_hz, utd::UTD_SMALL_EPS);
     const float wavelength = kSpeedOfLight / frequency_hz;
     const float ct = fminf(fmaxf(fabsf(cos_theta), utd::UTD_SMALL_EPS), 1.0f);
@@ -123,7 +127,7 @@ __device__ __forceinline__ void slab_fresnel(float cos_theta, float eps_r, float
                               gain);
 }
 
-__device__ __forceinline__ utd::Complex complex3_dot_real(utd::Complex3 value, utd::float3a axis) {
+RAYD_DEVICE utd::Complex complex3_dot_real(utd::Complex3 value, utd::float3a axis) {
     return utd::cplx_add(utd::cplx_add(utd::cplx_mul_real(value.x, axis.x), utd::cplx_mul_real(value.y, axis.y)),
                          utd::cplx_mul_real(value.z, axis.z));
 }
@@ -142,7 +146,7 @@ struct ReflectFrame {
     float cos_theta;
 };
 
-__device__ __forceinline__ ReflectFrame reflect_frame(utd::float3a incident_direction, utd::float3a normal) {
+RAYD_DEVICE ReflectFrame reflect_frame(utd::float3a incident_direction, utd::float3a normal) {
     ReflectFrame frame;
     frame.incident = utd::safe_normalize(incident_direction, utd::make_f3(0.0f, 0.0f, 1.0f));
     utd::float3a oriented_normal = utd::safe_normalize(normal, utd::make_f3(0.0f, 0.0f, 1.0f));
@@ -162,10 +166,9 @@ __device__ __forceinline__ ReflectFrame reflect_frame(utd::float3a incident_dire
     return frame;
 }
 
-__device__ __forceinline__ utd::Complex3 reflect_complex3(utd::Complex3 value, utd::float3a incident_direction,
-                                                          utd::float3a normal, float eps_r, float sigma_e, float mu_r,
-                                                          float gain, float thickness, float frequency_hz,
-                                                          utd::float3a& reflected_direction) {
+RAYD_DEVICE utd::Complex3 reflect_complex3(utd::Complex3 value, utd::float3a incident_direction, utd::float3a normal,
+                                           float eps_r, float sigma_e, float mu_r, float gain, float thickness,
+                                           float frequency_hz, utd::float3a& reflected_direction) {
     const ReflectFrame frame = reflect_frame(incident_direction, normal);
     reflected_direction = frame.reflected_direction;
     utd::Complex r_te;
@@ -193,24 +196,24 @@ struct WallFrame {
 // the established safe_normalize result is returned unchanged; below that,
 // down to the shared 1e-6 fallback threshold, the axis is divided by its exact
 // length. The dual and adjoint wall frames mirror these branches.
-__device__ __forceinline__ bool wall_axis_uses_exact_length(utd::float3a v) {
+RAYD_DEVICE bool wall_axis_uses_exact_length(utd::float3a v) {
     const float length = utd::safe_length(v);
     return length > utd::UTD_SMALL_EPS && length + utd::UTD_EPS != length;
 }
 
 // The exact branch is kept out of line so it does not perturb the code (and
 // FMA contraction) generated for the established path.
-inline __device__ __noinline__ utd::float3a wall_exact_unit_axis(utd::float3a v) {
+RAYD_FIELD_TRANSPORT_NOINLINE utd::float3a wall_exact_unit_axis(utd::float3a v) {
     return utd::f3_div(v, utd::safe_length(v));
 }
 
-__device__ __forceinline__ utd::float3a wall_unit_axis(utd::float3a v, utd::float3a fallback) {
+RAYD_DEVICE utd::float3a wall_unit_axis(utd::float3a v, utd::float3a fallback) {
     if (wall_axis_uses_exact_length(v))
         return wall_exact_unit_axis(v);
     return utd::safe_normalize(v, fallback);
 }
 
-__device__ __forceinline__ WallFrame wall_frame(utd::float3a direction, utd::float3a raw_normal) {
+RAYD_DEVICE WallFrame wall_frame(utd::float3a direction, utd::float3a raw_normal) {
     utd::float3a normal = utd::safe_normalize(raw_normal, utd::make_f3(0.0f, 0.0f, 1.0f));
     if (utd::f3_dot(direction, normal) > 0.0f)
         normal = utd::f3_neg(normal);
@@ -223,11 +226,10 @@ __device__ __forceinline__ WallFrame wall_frame(utd::float3a direction, utd::flo
     return frame;
 }
 
-__device__ __forceinline__ utd::JonesOperator slab_face_operator(float cos_theta, float eps_r, float sigma_e,
-                                                                 float mu_r, float gain, float thickness,
-                                                                 float frequency_hz, utd::float3a normal,
-                                                                 utd::float3a in_direction, utd::float3a out_direction,
-                                                                 utd::Basis3 in_edge, utd::Basis3 out_edge) {
+RAYD_DEVICE utd::JonesOperator slab_face_operator(float cos_theta, float eps_r, float sigma_e, float mu_r, float gain,
+                                                  float thickness, float frequency_hz, utd::float3a normal,
+                                                  utd::float3a in_direction, utd::float3a out_direction,
+                                                  utd::Basis3 in_edge, utd::Basis3 out_edge) {
     utd::Complex r_te;
     utd::Complex r_tm;
     slab_fresnel(cos_theta, eps_r, sigma_e, mu_r, gain, thickness, frequency_hz, r_te, r_tm);

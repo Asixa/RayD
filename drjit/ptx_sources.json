@@ -120,7 +120,7 @@
       "header_sha256": "b89e40bc1298b9013f469a0edda40764cf505eaab87a9cd175bbdfc3d9946279",
       "option": "RAYD_REGENERATE_DIFFRACTION_PATHS_PTX",
       "regeneration_verified": true,
-      "source_sha256": "a1330689dde30b14c73472f00b29f48cbaf8bc984f1702d1a36dd3a6c867e7cb",
+      "source_sha256": "6503d88e62232bca53e4ba7ff66d3979acee104ac4a2310296ef4f4647e26765",
       "sources": [
         "include/rayd/contracts.h",
         "include/rayd/field_transport.cuh",
