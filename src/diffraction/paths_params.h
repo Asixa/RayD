@@ -88,8 +88,8 @@ struct DfrPathParams {
     int state_prim0_stride;
     const int* state_prim1;
     int state_prim1_stride;
-    const float* state_exterior_angle;
     int state_exterior_angle_stride;
+    const float* state_exterior_angle;
     const float* state_src_x;
     const float* state_src_y;
     const float* state_src_z;
@@ -123,12 +123,12 @@ struct DfrPathParams {
     const float* face_layer_sigma_e;
     const float* face_layer_mu_r;
     int face_layer_rows;
-    int64_t face_layer_total;
-    // Optional layer-store row (rows like the material rows, -1: cannot be crossed) with which the caller's
-    // straight-through transmission paths cross each face, and their wall-crossing limit. Null keeps every
-    // incident-boundary term unweighted.
-    const int* face_transmission_material;
+    // Wall-crossing limit of the caller's straight-through transmission paths (see face_transmission_material).
     int face_transmission_crossings;
+    int64_t face_layer_total;
+    // Optional layer-store row (rows like the material rows, -1: cannot be crossed) with which those paths cross
+    // each face. Null keeps every incident-boundary term unweighted.
+    const int* face_transmission_material;
 
     float wavelength;
     float k;
