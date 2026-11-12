@@ -23,7 +23,7 @@ class DistributionMetadataTests(unittest.TestCase):
 
     def test_all_distributions_share_one_version(self):
         versions = {self.meta["project"]["version"], self.drjit["project"]["version"], self.torch["project"]["version"]}
-        self.assertEqual(versions, {"0.10.0"})
+        self.assertEqual(versions, {"0.10.1"})
 
     def test_meta_distribution_pins_both_backends(self):
         version = self.meta["project"]["version"]

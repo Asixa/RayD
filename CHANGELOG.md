@@ -2,6 +2,39 @@
 
 All notable changes to RayD are documented in this file.
 
+## [0.10.1] - 2026-11-11
+
+The Python API and the typed C++ integration boundary (API version 8) are unchanged; every change below is a
+numerical fix or an additive typed input. Diffraction and EPC values near the affected boundaries move.
+
+### Added
+
+- Typed diffraction face layers (ADR-0047 amendment): `DiffractionPathConfig::face_layers` and
+  `DiffractionWedgeRequest::face0_layers`/`face1_layers` take an optional `DiffractionFaceLayers` table (slab
+  thickness and layer-store row per face). The order-1 exporter and the wedge field with its JVP/VJP then reflect
+  the face terms with the face's slab or layer stack, using the same `slab_fresnel`/`stack_rt` evaluation as the
+  specular kernels, so a face term cancels the reflected field's step at thin walls, glass and multilayer walls.
+  Without the table the half-space face coefficients are used as before.
+
+### Fixed
+
+- UTD face term under oblique incidence (ADR-0047 amendment): the face coefficients are taken at the 3D incidence
+  angle and the operator is the reciprocal specular dyadic in the edge-fixed bases. Before, a dielectric edge left
+  26-28 % of the reflected field uncancelled at its reflection shadow boundary at 45 degree skew. Perfect conductors
+  and normal incidence keep `-diag(r_TM, r_TE)`.
+- UTD geometric-optics boundaries (ADR-0047 amendments):
+  - Only the term at its pole takes the one-sided boundary limit. A band of about 2e-6 rad around every incident
+    and reflection shadow boundary no longer carries a spurious term, and inside the float band the reflection
+    boundary takes its lit side and the incident boundary its shadow side.
+  - Near a pole, the cotangent and the transition argument derive from one small angle, removing an error of up
+    to 8 % within about 1e-4 rad of a boundary.
+  - Under grazing incidence, where the incident and reflection boundaries of a face coincide, the term pair keeps
+    one side, the side of the observation angle.
+- Reflection EPC in-face slack (ADR-0048 amendment): the slack is a distance of a few float roundings of the
+  coordinate magnitude outside each edge line, not a barycentric fraction of 1e-4, which accepted reflection points
+  up to 4 mm past the edge of a 40 m face.
+- The committed Dr.Jit `diffraction_paths`, `diffraction_accumulation` and `reflection_epc` PTX are regenerated.
+
 ## [0.10.0] - 2026-11-11
 
 ### Breaking API changes
