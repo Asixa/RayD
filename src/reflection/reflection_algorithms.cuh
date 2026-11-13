@@ -1805,12 +1805,15 @@ RAYD_DEVICE void run_reflection_epc_algo(const ::rayd::shared::optix::ReflEpcPar
         return;
     }
 
-    // A path with a segment shorter than the request's minimum is degenerate: two interactions
-    // (or an interaction and an endpoint) coincide, as when both reflection points of a
-    // two-plane chain fall on the planes' shared edge.
+    // A path whose segment between two interactions is shorter than the request's minimum is
+    // degenerate: the interactions coincide, as when both reflection points of a two-plane chain
+    // fall on the planes' shared edge. The source and receiver are endpoints, not interactions, so
+    // their segments are exempt: an endpoint on or near a reflecting plane keeps its reflection.
+    // A receiver that is itself an interaction (a diffraction point) brings the last segment back.
     if (params.min_segment_length > 0.0f) {
-        for (int segment = 0; segment <= B; ++segment) {
-            const Vec3f start = segment == 0 ? origin : reflection_points[segment - 1];
+        const int last_segment = params.receiver_is_interaction != 0 ? B : B - 1;
+        for (int segment = 1; segment <= last_segment; ++segment) {
+            const Vec3f start = reflection_points[segment - 1];
             const Vec3f end = segment == B ? receiver : reflection_points[segment];
             if (math::length_f32(math::subtract(end, start)) < params.min_segment_length) {
                 store_invalid(params, ray_index, bounce_count, -1, -1, -1);

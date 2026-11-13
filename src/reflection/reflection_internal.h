@@ -371,8 +371,12 @@ struct ReflEpcParams {
     int n_rays;
     int max_bounces;
     float plane_tolerance;
-    // Every segment of a valid path (source, interaction points, receiver) is at least this long.
+    // Every segment between two interactions of a valid path is at least this long; the source and
+    // receiver segments are exempt unless receiver_is_interaction is set.
     float min_segment_length;
+    // Nonzero when the receiver is an interaction (a diffraction point), so the minimum also
+    // applies to the last segment.
+    int receiver_is_interaction;
     std::uint8_t* out_valid;
     int* out_bounce_count;
     float* out_path_length;

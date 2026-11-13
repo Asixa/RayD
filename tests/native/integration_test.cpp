@@ -767,14 +767,19 @@ void test_reflection_accumulation_and_epc_typed_contracts() {
     require_tensor_exact(path.hit_positions, at::zeros({1, 1, 3}, floats), "reflection EPC hit");
     require_tensor_exact(path.normals, at::tensor({0.0F, 0.0F, 1.0F}, floats).reshape({1, 1, 3}),
                          "reflection EPC normal");
-    // Both segments are 1 m long: a 0.5 m minimum keeps the path, a 1.5 m minimum rejects it.
+    // Both segments are 1 m long and both touch an endpoint, so no minimum rejects the path. A receiver
+    // that is an interaction brings its segment under the minimum: 0.5 m keeps the path, 1.5 m rejects it.
     rayd::torch::ReflectionEpcRequest short_segments = epc;
+    short_segments.min_segment_length = 1.5;
+    require_tensor_exact(rayd::torch::reflection_epc_paths_forward(scene, short_segments).valid, at::ones({1}, bools),
+                         "reflection EPC minimum segment exempts the endpoint segments");
+    short_segments.receiver_is_interaction = true;
     short_segments.min_segment_length = 0.5;
     require_tensor_exact(rayd::torch::reflection_epc_paths_forward(scene, short_segments).valid, at::ones({1}, bools),
-                         "reflection EPC minimum segment below the segments");
+                         "reflection EPC minimum segment below the interaction segment");
     short_segments.min_segment_length = 1.5;
     require_tensor_exact(rayd::torch::reflection_epc_paths_forward(scene, short_segments).valid, at::zeros({1}, bools),
-                         "reflection EPC minimum segment above the segments");
+                         "reflection EPC minimum segment above the interaction segment");
 
     rayd::torch::ReflectionEpcBackwardRequest backward;
     backward.source = epc.source;
@@ -815,6 +820,110 @@ void test_reflection_accumulation_and_epc_typed_contracts() {
                          "reflection EPC rigid-translation normal tangent");
     require_tensor_exact(tangents.tangent_path_length, at::zeros({1}, floats),
                          "reflection EPC rigid-translation length tangent");
+}
+
+// Two 4 m walls meeting at a vertical edge on the z axis: wall A in x = 0 (faces 0, 1, y in [0, 4]) and wall B in
+// y = 0 (faces 2, 3, x in [0, 4]), both with z in [-2, 2].
+MeshFixture make_corner() {
+    const auto float_options = at::TensorOptions().dtype(at::kFloat).device(at::Device(at::kCUDA, 0));
+    const auto int_options = at::TensorOptions().dtype(at::kInt).device(at::Device(at::kCUDA, 0));
+    return {
+        at::tensor({0.0F, 0.0F, -2.0F, 0.0F, 4.0F, -2.0F, 0.0F, 4.0F, 2.0F, 0.0F, 0.0F, 2.0F,
+                    0.0F, 0.0F, -2.0F, 4.0F, 0.0F, -2.0F, 4.0F, 0.0F, 2.0F, 0.0F, 0.0F, 2.0F},
+                   float_options)
+            .reshape({8, 3}),
+        at::tensor({0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7}, int_options).reshape({4, 3}),
+        at::empty({0, 2}, float_options),
+        at::empty({0, 3}, int_options),
+        at::empty({0, 4}, float_options),
+        at::empty({0, 4}, float_options),
+    };
+}
+
+// One direct-plane EPC lane per (source, receiver) row through the corner's walls `walls` (0 = A, 1 = B).
+rayd::torch::ReflectionEpcRequest corner_epc(const std::vector<float>& source, const std::vector<float>& receiver,
+                                             const std::vector<int>& walls, double min_segment_length) {
+    const auto floats = at::TensorOptions().dtype(at::kFloat).device(at::Device(at::kCUDA, 0));
+    const auto ints = at::TensorOptions().dtype(at::kInt).device(at::Device(at::kCUDA, 0));
+    const int64_t rows = static_cast<int64_t>(source.size() / 3);
+    const int64_t depth = static_cast<int64_t>(walls.size());
+    std::vector<int> faces;
+    std::vector<float> normals;
+    for (int64_t row = 0; row < rows; ++row) {
+        for (const int wall : walls) {
+            faces.push_back(wall == 0 ? 0 : 2);
+            normals.insert(normals.end(), {wall == 0 ? 1.0F : 0.0F, wall == 0 ? 0.0F : 1.0F, 0.0F});
+        }
+    }
+    rayd::torch::ReflectionEpcRequest request;
+    request.source = at::tensor(source, floats).reshape({rows, 3});
+    request.receiver = at::tensor(receiver, floats).reshape({rows, 3});
+    request.active = std::nullopt;
+    request.expected_prim_ids = at::tensor(faces, ints).reshape({rows, depth});
+    request.direct_plane_points = at::zeros({rows, depth, 3}, floats);
+    request.direct_plane_normals = at::tensor(normals, floats).reshape({rows, depth, 3});
+    request.surface_group_id = at::tensor({0, 0, 1, 1}, ints);
+    request.surface_group_size = at::tensor({2, 2}, ints);
+    request.surface_group_members = at::tensor({0, 1, 2, 3}, ints);
+    request.max_bounces = depth;
+    request.visibility_ignore_mode = 1;
+    request.plane_tolerance = 1.0e-3;
+    request.min_segment_length = min_segment_length;
+    return request;
+}
+
+void test_reflection_epc_minimum_segment_exempts_endpoints() {
+    const MeshFixture corner = make_corner();
+    const auto bools = corner.vertices.options().dtype(at::kBool);
+    // 1e-5 of the corner's 6.93 m diagonal.
+    const double min_segment = 6.93e-5;
+    const float near = 6.93e-6F; // 1e-6 of the diagonal
+    std::vector<rayd::torch::SceneTraceBackend> backends = {rayd::torch::SceneTraceBackend::Cuda};
+    if (rayd::torch::optix_availability(0).available)
+        backends.push_back(rayd::torch::SceneTraceBackend::Optix);
+    for (const auto backend : backends) {
+        const std::string tracer = backend == rayd::torch::SceneTraceBackend::Optix ? " (OptiX)" : " (CUDA)";
+        auto scene = rayd::torch::create_scene({mesh_input(corner)}, {backend});
+
+        // Depth 1 off wall A. Rows: receiver on the plane, receiver 1e-6 of the diagonal in front of it, source on
+        // the plane, and a control 1 m away. An endpoint segment is exempt, so every row keeps its reflection; a
+        // zero-length endpoint segment yields its endpoint as the reflection point and a finite length.
+        const std::vector<float> source = {1.0F, 2.0F, 0.0F, 1.0F, 2.0F, 0.0F, 0.0F, 1.0F, 0.5F, 1.0F, 2.0F, 0.0F};
+        const std::vector<float> receiver = {0.0F, 1.0F, 0.5F, near, 1.0F, 0.5F, 1.0F, 2.0F, 0.0F, 1.0F, 1.0F, 0.5F};
+        const auto endpoint =
+            rayd::torch::reflection_epc_paths_forward(scene, corner_epc(source, receiver, {0}, min_segment));
+        require_tensor_exact(endpoint.valid, at::ones({4}, bools), "EPC endpoint segments are exempt" + tracer);
+        require_finite(endpoint.path_length, "EPC endpoint-on-plane path length" + tracer);
+        require_finite(endpoint.hit_positions, "EPC endpoint-on-plane reflection point" + tracer);
+        const at::Tensor expected_on_plane = at::tensor({0.0F, 1.0F, 0.5F}, corner.vertices.options());
+        require(at::allclose(endpoint.hit_positions[0][0], expected_on_plane, 0.0, 1.0e-6),
+                "EPC receiver on the plane is its own reflection point" + tracer);
+        require(at::allclose(endpoint.hit_positions[2][0], expected_on_plane, 0.0, 1.0e-6),
+                "EPC source on the plane is its own reflection point" + tracer);
+        const float direct = std::sqrt(1.0F + 1.0F + 0.25F);
+        require(std::abs(endpoint.path_length[0].item<float>() - direct) < 1.0e-5F,
+                "EPC receiver on the plane has the direct length" + tracer);
+
+        // A receiver that is an interaction brings the last segment back under the minimum.
+        rayd::torch::ReflectionEpcRequest interaction = corner_epc(source, receiver, {0}, min_segment);
+        interaction.receiver_is_interaction = true;
+        require_tensor_exact(rayd::torch::reflection_epc_paths_forward(scene, interaction).valid,
+                             at::tensor({0, 0, 1, 1}, corner.faces.options()).to(at::kBool),
+                             "EPC interaction receiver keeps the minimum on the last segment" + tracer);
+
+        // Depth 2 [A, B]: source (1, 1, 0) and receiver (2, 2, 0) put both reflection points on the shared edge at
+        // the origin, so the middle segment has zero length; receiver (3, 1, 0) is a regular corner path.
+        const std::vector<float> chain_source = {1.0F, 1.0F, 0.0F, 1.0F, 1.0F, 0.0F};
+        const std::vector<float> chain_receiver = {2.0F, 2.0F, 0.0F, 3.0F, 1.0F, 0.0F};
+        const auto chain = rayd::torch::reflection_epc_paths_forward(scene, corner_epc(chain_source, chain_receiver,
+                                                                                       {0, 1}, min_segment));
+        require_tensor_exact(chain.valid, at::tensor({0, 1}, corner.faces.options()).to(at::kBool),
+                             "EPC rejects the coincident-edge two-plane chain" + tracer);
+        const auto unchecked =
+            rayd::torch::reflection_epc_paths_forward(scene, corner_epc(chain_source, chain_receiver, {0, 1}, 0.0));
+        require_tensor_exact(unchecked.valid, at::ones({2}, bools),
+                             "EPC without a minimum accepts the coincident-edge chain" + tracer);
+    }
 }
 
 void test_error_and_lifecycle_contracts() {
@@ -2154,6 +2263,8 @@ int main() {
         test_axial_edge_visibility_legacy_parity();
         std::cout << "[RUN] test_reflection_accumulation_and_epc_typed_contracts" << std::endl;
         test_reflection_accumulation_and_epc_typed_contracts();
+        std::cout << "[RUN] test_reflection_epc_minimum_segment_exempts_endpoints" << std::endl;
+        test_reflection_epc_minimum_segment_exempts_endpoints();
         std::cout << "[RUN] test_error_and_lifecycle_contracts" << std::endl;
         test_error_and_lifecycle_contracts();
         std::cout << "[RUN] test_diffraction_paths_typed_contracts" << std::endl;

@@ -136,8 +136,12 @@ struct ReflectionEpcRequest {
     std::int64_t max_bounces = 1;
     std::int64_t visibility_ignore_mode = 0;
     double plane_tolerance = 0.0;
-    // Paths with a segment (source, interaction points, receiver) shorter than this are invalid.
+    // Paths with a segment between two interactions shorter than this are invalid. The source and
+    // receiver are endpoints, so their segments are exempt: an endpoint on a plane keeps its reflection.
     double min_segment_length = 0.0;
+    // The receiver is itself an interaction (a diffraction point), so min_segment_length also applies
+    // to the last segment.
+    bool receiver_is_interaction = false;
 };
 
 struct ReflectionEpcResult {

@@ -1105,6 +1105,7 @@ struct EpcPathsTrace {
     int64_t visibility_ignore_mode = 0;
     double plane_tolerance = 1e-5;
     double min_segment_length = 0.0;
+    bool receiver_is_interaction = false;
 };
 
 std::vector<at::Tensor> run_reflection_epc_paths(SceneCache& scene, const at::Tensor& source,
@@ -1272,6 +1273,7 @@ std::vector<at::Tensor> run_reflection_epc_paths(SceneCache& scene, const at::Te
     epc_params.max_bounces = static_cast<int32_t>(max_bounces);
     epc_params.plane_tolerance = static_cast<float>(trace.plane_tolerance);
     epc_params.min_segment_length = static_cast<float>(trace.min_segment_length);
+    epc_params.receiver_is_interaction = trace.receiver_is_interaction ? 1 : 0;
     epc_params.out_valid = mutable_mask_ptr(valid);
     epc_params.out_bounce_count = bounce_count.data_ptr<int>();
     epc_params.out_path_length = path_length.data_ptr<float>();
@@ -1335,7 +1337,8 @@ std::vector<at::Tensor> reflection_epc_paths_forward_native_impl(
     SceneCache& scene, const at::Tensor& source, const at::Tensor& receiver, const at::Tensor* active_ptr,
     const at::Tensor& expected_prim_ids, const at::Tensor& direct_plane_points, const at::Tensor& direct_plane_normals,
     const at::Tensor& surface_group_id, const at::Tensor& surface_group_size, const at::Tensor& surface_group_members,
-    int64_t max_bounces, int64_t visibility_ignore_mode, double plane_tolerance, double min_segment_length = 0.0) {
+    int64_t max_bounces, int64_t visibility_ignore_mode, double plane_tolerance, double min_segment_length = 0.0,
+    bool receiver_is_interaction = false) {
     require_vec3f(source, "source");
     require_vec3f(receiver, "receiver");
     require_same_batch(source, receiver, "reflection_epc_paths");
@@ -1375,6 +1378,7 @@ std::vector<at::Tensor> reflection_epc_paths_forward_native_impl(
     trace.visibility_ignore_mode = visibility_ignore_mode;
     trace.plane_tolerance = plane_tolerance;
     trace.min_segment_length = min_segment_length;
+    trace.receiver_is_interaction = receiver_is_interaction;
     return run_reflection_epc_paths(scene, source, receiver, active_ptr, max_bounces, trace);
 }
 
@@ -2152,7 +2156,8 @@ ReflectionEpcResult reflection_epc_paths_forward(const SceneResource& scene, con
                                                                 request.surface_group_size,
                                                                 request.surface_group_members, request.max_bounces,
                                                                 request.visibility_ignore_mode, request.plane_tolerance,
-                                                                request.min_segment_length);
+                                                                request.min_segment_length,
+                                                                request.receiver_is_interaction);
     require_output_count<6>(values, "rayd::torch::reflection_epc_paths_forward");
     return {values[0], values[1], values[2], values[3], values[4], values[5]};
 }
