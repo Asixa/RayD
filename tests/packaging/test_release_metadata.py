@@ -30,14 +30,14 @@ class ReleaseMetadataTests(unittest.TestCase):
     def test_exact_v_prefixed_project_version_matches(self):
         with tempfile.TemporaryDirectory() as temporary:
             pyproject = Path(temporary) / "pyproject.toml"
-            pyproject.write_text('[project]\nname = "rayd"\nversion = "0.10.2"\n', encoding="utf-8", newline="\n")
-            self.assertEqual(self.validator.validate_release_tag("v0.10.2", pyproject), "v0.10.2")
+            pyproject.write_text('[project]\nname = "rayd"\nversion = "0.10.3"\n', encoding="utf-8", newline="\n")
+            self.assertEqual(self.validator.validate_release_tag("v0.10.3", pyproject), "v0.10.3")
 
     def test_mismatched_or_unprefixed_release_tag_fails(self):
         with tempfile.TemporaryDirectory() as temporary:
             pyproject = Path(temporary) / "pyproject.toml"
-            pyproject.write_text('[project]\nname = "rayd"\nversion = "0.10.2"\n', encoding="utf-8", newline="\n")
-            for tag in ("0.10.2", "v0.10.3", "release-0.10.2"):
+            pyproject.write_text('[project]\nname = "rayd"\nversion = "0.10.3"\n', encoding="utf-8", newline="\n")
+            for tag in ("0.10.3", "v0.10.4", "release-0.10.3"):
                 with self.subTest(tag=tag), self.assertRaisesRegex(RuntimeError, "does not match"):
                     self.validator.validate_release_tag(tag, pyproject)
 

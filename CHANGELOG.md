@@ -2,6 +2,30 @@
 
 All notable changes to RayD are documented in this file.
 
+## [0.10.3] - 2026-11-12
+
+The Python API and the typed C++ integration boundary (API version 8) are unchanged apart from one additive request
+field. Reflection EPC validity moves only for callers that set `min_segment_length`.
+
+### Changed
+
+- Reflection EPC minimum segment (ADR-0048 amendment): `ReflectionEpcRequest::min_segment_length` applies only to
+  segments between two interactions. The source and receiver segments are exempt, so an endpoint on a reflecting
+  plane, or within the minimum of it, keeps its reflection (the image-method limit), while coincident interactions
+  (both points of a two-plane chain on the shared edge, or a repeated plane) are still rejected. A depth-1 path is no
+  longer rejected by the minimum. An endpoint exactly on the plane yields itself as the reflection point and a finite
+  path length.
+
+### Added
+
+- `ReflectionEpcRequest::receiver_is_interaction` (default `false`): for a receiver that is itself an interaction, such
+  as the diffraction point that ends one half of a reflection-diffraction chain, the minimum also applies to the last
+  segment.
+
+### Fixed
+
+- The committed Dr.Jit `reflection_epc` PTX is regenerated (its launch parameters grow by the new field).
+
 ## [0.10.2] - 2026-11-12
 
 The Python API and the typed C++ integration boundary (API version 8) are unchanged; every change below is a

@@ -66,7 +66,7 @@ class SourceBundleTests(unittest.TestCase):
 
     @staticmethod
     def _generate_metadata(module, workspace: Path, output: Path) -> dict:
-        module.generate(workspace, output, distribution_version="0.10.2", commit=None, repository_url=None)
+        module.generate(workspace, output, distribution_version="0.10.3", commit=None, repository_url=None)
         return json.loads((output / "rayd-source.json").read_text(encoding="utf-8"))
 
     def test_bundle_is_relocatable_complete_and_integrity_described(self):
@@ -77,7 +77,7 @@ class SourceBundleTests(unittest.TestCase):
             module.generate(
                 ROOT,
                 output,
-                distribution_version="0.10.2",
+                distribution_version="0.10.3",
                 commit="1" * 40,
                 repository_url="https://github.com/Asixa/RayD.git",
             )
@@ -87,7 +87,7 @@ class SourceBundleTests(unittest.TestCase):
             source_root = output / metadata["source_root"]
 
             self.assertEqual(metadata["schema_version"], 2)
-            self.assertEqual(metadata["distribution"], {"name": "rayd-torch", "version": "0.10.2"})
+            self.assertEqual(metadata["distribution"], {"name": "rayd-torch", "version": "0.10.3"})
             self.assertEqual(metadata["commit"], "1" * 40)
             self.assertEqual(metadata["source_manifest"]["sha256"], sha256(manifest_path))
             integration_abi = metadata["integration_abi"]
